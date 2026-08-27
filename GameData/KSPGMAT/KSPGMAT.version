@@ -1,0 +1,20 @@
+{
+  "NAME": "KSPGMAT",
+  "VERSION": {
+    "MAJOR": 1,
+    "MINOR": 1,
+    "PATCH": 0,
+    "BUILD": 0
+  },
+  "KSP_VERSION": {
+    "MAJOR": 1,
+    "MINOR": 12,
+    "PATCH": 5
+  },
+  "DEPENDENCIES": [
+    { "NAME": "Principia" },
+    { "NAME": "MechJeb2" },
+    { "NAME": "RealismOverhaul" },
+    { "NAME": "RealFuels" }
+  ]
+}

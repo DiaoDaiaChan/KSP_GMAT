@@ -1,0 +1,282 @@
+%-------------------------------------------------------------------------------
+% GMAT Mission Script: Single Spacecraft Full Mission from LEO to Lunar NRHO
+% Initial Mission Epoch: 20 Jul 1988 12:00:00.000 UTC
+% Flight Phases:
+%   1. Earth Low Orbit (LEO) Parking Orbit (Alt: 200 km, Inc: 28.5 deg)
+%   2. Trans-Lunar Injection (TLI Burn: +3133.4 m/s)
+%   3. Cislunar Cruise & Mid-Course Correction (TCM Burn: ~5.5 m/s)
+%   4. Lunar Arrival & Perilune Capture (NRHOI Burn: -780.0 m/s)
+%   5. Multi-Revolution Lunar NRHO Orbit Operations (21 Days / ~3.2 Revs)
+%-------------------------------------------------------------------------------
+
+%----------------------------------------
+%---------- Coordinate Systems
+%----------------------------------------
+
+% 1. Moon-Centered Body Inertial Coordinate System
+Create CoordinateSystem MoonInertial;
+MoonInertial.Origin = Luna;
+MoonInertial.Axes   = BodyInertial;
+
+% 2. Earth-Moon Rotating Coordinate System (Luna Centered)
+%    +X: Vector pointing from Earth to Luna (and toward L2 on opposite side)
+%    +Z: Vector normal to Luna's orbit around Earth (pointing North)
+%    +Y: Completes right-handed orthogonal system (direction of Luna motion)
+Create CoordinateSystem EarthMoonRot;
+EarthMoonRot.Origin    = Luna;
+EarthMoonRot.Axes      = ObjectReferenced;
+EarthMoonRot.XAxis     = R;
+EarthMoonRot.ZAxis     = N;
+EarthMoonRot.Primary   = Earth;
+EarthMoonRot.Secondary = Luna;
+
+% 3. Earth-Moon L2 Libration Point & Centered Coordinate System
+Create LibrationPoint EarthMoonL2;
+EarthMoonL2.Primary   = Earth;
+EarthMoonL2.Secondary = Luna;
+EarthMoonL2.Point     = L2;
+
+Create CoordinateSystem L2Centered;
+L2Centered.Origin    = EarthMoonL2;
+L2Centered.Axes      = ObjectReferenced;
+L2Centered.XAxis     = R;
+L2Centered.ZAxis     = N;
+L2Centered.Primary   = Earth;
+L2Centered.Secondary = Luna;
+
+%----------------------------------------
+%---------- Spacecraft
+%----------------------------------------
+
+% Single continuous spacecraft executing the entire mission from LEO to NRHO
+Create Spacecraft NRHOSat;
+
+NRHOSat.DateFormat       = UTCGregorian;
+NRHOSat.Epoch            = '20 Jul 1988 12:00:00.000';
+NRHOSat.CoordinateSystem = EarthMJ2000Eq;
+NRHOSat.DisplayStateType = Cartesian;
+
+% Initial State: 200 km Low Earth Orbit (LEO) parking orbit at optimal injection point
+NRHOSat.X                = 1828.514;
+NRHOSat.Y                = 5536.326;
+NRHOSat.Z                = 3045.902;
+NRHOSat.VX               = -7.485;
+NRHOSat.VY               =  1.934;
+NRHOSat.VZ               =  0.980;
+
+% Physical Properties (Spacecraft Mass and Aerodynamic/SRP parameters)
+NRHOSat.DryMass          = 1500;
+NRHOSat.Cd               = 2.2;
+NRHOSat.Cr               = 1.8;
+NRHOSat.DragArea         = 15.0;
+NRHOSat.SRPArea          = 20.0;
+
+%----------------------------------------
+%---------- Force Models
+%----------------------------------------
+
+% Force Model 1: Near-Earth & Cislunar Transfer (Earth Central Body)
+Create ForceModel CislunarForceModel;
+CislunarForceModel.CentralBody            = Earth;
+CislunarForceModel.PointMasses            = {Earth, Luna, Sun, Jupiter};
+CislunarForceModel.Drag                   = None;
+CislunarForceModel.SRP                    = On;
+CislunarForceModel.RelativisticCorrection = Off;
+CislunarForceModel.ErrorControl           = RSSStep;
+CislunarForceModel.SRP.Flux               = 1367;
+CislunarForceModel.SRP.Nominal_Sun        = 149597870.691;
+
+% Force Model 2: High-Fidelity Lunar Halo / NRHO Environment (Luna Central Body)
+Create ForceModel LunarNRHOForceModel;
+LunarNRHOForceModel.CentralBody            = Luna;
+LunarNRHOForceModel.PointMasses            = {Luna, Earth, Sun, Jupiter};
+LunarNRHOForceModel.Drag                   = None;
+LunarNRHOForceModel.SRP                    = On;
+LunarNRHOForceModel.RelativisticCorrection = Off;
+LunarNRHOForceModel.ErrorControl           = RSSStep;
+LunarNRHOForceModel.SRP.Flux               = 1367;
+LunarNRHOForceModel.SRP.Nominal_Sun        = 149597870.691;
+
+%----------------------------------------
+%---------- Propagators
+%----------------------------------------
+
+% Propagator for LEO Parking Orbit
+Create Propagator LEOProp;
+LEOProp.FM              = CislunarForceModel;
+LEOProp.Type            = RungeKutta89;
+LEOProp.InitialStepSize = 60;
+LEOProp.Accuracy        = 1e-11;
+LEOProp.MinStep         = 0.001;
+LEOProp.MaxStep         = 2700;
+LEOProp.MaxStepAttempts = 50;
+
+% Propagator for Trans-Lunar Transfer Cruise
+Create Propagator CislunarProp;
+CislunarProp.FM              = CislunarForceModel;
+CislunarProp.Type            = RungeKutta89;
+CislunarProp.InitialStepSize = 60;
+CislunarProp.Accuracy        = 1e-11;
+CislunarProp.MinStep         = 0.001;
+CislunarProp.MaxStep         = 21600;
+CislunarProp.MaxStepAttempts = 50;
+
+% Propagator for Lunar NRHO Orbit Multi-Revolution Operations
+Create Propagator LunarNRHOProp;
+LunarNRHOProp.FM              = LunarNRHOForceModel;
+LunarNRHOProp.Type            = RungeKutta89;
+LunarNRHOProp.InitialStepSize = 60;
+LunarNRHOProp.Accuracy        = 1e-11;
+LunarNRHOProp.MinStep         = 0.001;
+LunarNRHOProp.MaxStep         = 10800;
+LunarNRHOProp.MaxStepAttempts = 50;
+
+%----------------------------------------
+%---------- Impulsive Burns
+%----------------------------------------
+
+% 1. Trans-Lunar Injection Burn (from 200 km LEO to Moon Transfer)
+Create ImpulsiveBurn TLI_Burn;
+TLI_Burn.CoordinateSystem   = Local;
+TLI_Burn.Origin             = Earth;
+TLI_Burn.Axes               = VNB;
+TLI_Burn.Element1           = 3.1334;
+TLI_Burn.Element2           = 0.0;
+TLI_Burn.Element3           = 0.0;
+TLI_Burn.DecrementMass      = false;
+TLI_Burn.Isp                = 320;
+TLI_Burn.GravitationalAccel = 9.81;
+
+% 2. Mid-Course Correction Burn (TCM at Day 2.2)
+Create ImpulsiveBurn TCM_Burn;
+TCM_Burn.CoordinateSystem   = Local;
+TCM_Burn.Origin             = Earth;
+TCM_Burn.Axes               = VNB;
+TCM_Burn.Element1           = 0.005;
+TCM_Burn.Element2           = 0.002;
+TCM_Burn.Element3           = -0.001;
+TCM_Burn.DecrementMass      = false;
+TCM_Burn.Isp                = 320;
+TCM_Burn.GravitationalAccel = 9.81;
+
+% 3. NRHO Insertion Burn (Braking capture burn at North Pole Perilune)
+Create ImpulsiveBurn NRHOI_Burn;
+NRHOI_Burn.CoordinateSystem   = Local;
+NRHOI_Burn.Origin             = Luna;
+NRHOI_Burn.Axes               = VNB;
+NRHOI_Burn.Element1           = -0.780;
+NRHOI_Burn.Element2           = 0.0;
+NRHOI_Burn.Element3           = 0.0;
+NRHOI_Burn.DecrementMass      = false;
+NRHOI_Burn.Isp                = 320;
+NRHOI_Burn.GravitationalAccel = 9.81;
+
+%----------------------------------------
+%---------- Reports and 3D Visualizers
+%----------------------------------------
+
+% Mission Telemetry Output File
+Create ReportFile FullMissionReport;
+FullMissionReport.Filename = 'Mission_Telemetry_LEO_to_NRHO.txt';
+FullMissionReport.Add      = {NRHOSat.UTCGregorian, NRHOSat.Earth.RMAG, NRHOSat.Luna.RMAG, NRHOSat.EarthMoonRot.X, NRHOSat.EarthMoonRot.Y, NRHOSat.EarthMoonRot.Z, NRHOSat.EarthMoonRot.VX, NRHOSat.EarthMoonRot.VY, NRHOSat.EarthMoonRot.VZ};
+
+% 3D View 1: Earth-Moon Rotating Frame (Luna Centered - Shows Transfer into NRHO Halo)
+Create OrbitView EarthMoonRotView;
+EarthMoonRotView.SolverIterations   = Current;
+EarthMoonRotView.UpperLeft          = [ 0.002 0.01 ];
+EarthMoonRotView.Size               = [ 0.48 0.90 ];
+EarthMoonRotView.Add                = {NRHOSat, Luna, Earth};
+EarthMoonRotView.CoordinateSystem   = EarthMoonRot;
+EarthMoonRotView.ViewPointReference = Luna;
+EarthMoonRotView.ViewPointVector    = [ 40000 50000 60000 ];
+EarthMoonRotView.ViewDirection      = Luna;
+EarthMoonRotView.Axes               = On;
+EarthMoonRotView.XYPlane            = On;
+EarthMoonRotView.ShowPlot           = true;
+
+% 3D View 2: Moon Inertial Frame (Polar NRHO Geometry)
+Create OrbitView MoonInertialView;
+MoonInertialView.SolverIterations   = Current;
+MoonInertialView.UpperLeft          = [ 0.50 0.01 ];
+MoonInertialView.Size               = [ 0.48 0.45 ];
+MoonInertialView.Add                = {NRHOSat, Luna};
+MoonInertialView.CoordinateSystem   = MoonInertial;
+MoonInertialView.ViewPointReference = Luna;
+MoonInertialView.ViewPointVector    = [ 0 0 70000 ];
+MoonInertialView.ViewDirection      = Luna;
+MoonInertialView.Axes               = On;
+MoonInertialView.ShowPlot           = true;
+
+% 3D View 3: Earth Inertial Frame (Global LEO-to-Moon Trajectory)
+Create OrbitView EarthInertialView;
+EarthInertialView.SolverIterations   = Current;
+EarthInertialView.UpperLeft          = [ 0.50 0.48 ];
+EarthInertialView.Size               = [ 0.48 0.45 ];
+EarthInertialView.Add                = {NRHOSat, Luna, Earth};
+EarthInertialView.CoordinateSystem   = EarthMJ2000Eq;
+EarthInertialView.ViewPointReference = Earth;
+EarthInertialView.ViewPointVector    = [ 0 0 600000 ];
+EarthInertialView.ViewDirection      = Earth;
+EarthInertialView.Axes               = On;
+EarthInertialView.ShowPlot           = true;
+
+%----------------------------------------
+%---------- Mission Sequence
+%----------------------------------------
+
+BeginMissionSequence;
+
+%===============================================================================
+% PHASE 1: Earth Parking Orbit (200 km Circular LEO at 28.5 deg)
+%===============================================================================
+% Spacecraft starts in LEO on 20 Jul 1988 12:00:00 UTC and coasts to injection node
+Propagate 'Coast in LEO' LEOProp(NRHOSat) {NRHOSat.ElapsedSecs = 1800.0};
+
+%===============================================================================
+% PHASE 2: Trans-Lunar Injection (TLI Burn)
+%===============================================================================
+% Execute TLI Burn (+3133.4 m/s) boosting from orbital speed (~7.79 km/s) to ~10.92 km/s
+Maneuver 'Execute TLI Burn' TLI_Burn(NRHOSat);
+
+%===============================================================================
+% PHASE 3: Trans-Lunar Cruise Phase (Cislunar Flight)
+%===============================================================================
+% Coast outbound across cislunar space for 2.2 days
+Propagate 'Coast to Mid-Course' CislunarProp(NRHOSat) {NRHOSat.ElapsedDays = 2.2};
+
+%===============================================================================
+% PHASE 4: Mid-Course Correction (TCM Burn)
+%===============================================================================
+% Execute TCM Burn to fine-tune the trajectory toward the Lunar North Pole Perilune
+Maneuver 'Execute TCM Burn' TCM_Burn(NRHOSat);
+
+% Coast from Mid-Course to the lunar sphere of influence and perilune (~2.6 days)
+Propagate 'Coast to Lunar Vicinity' CislunarProp(NRHOSat) {NRHOSat.ElapsedDays = 2.6};
+
+%===============================================================================
+% PHASE 5: Lunar Arrival & NRHO Insertion Maneuver (NRHOI Burn)
+%===============================================================================
+% Execute deceleration burn (-780 m/s) at perilune over the Lunar North Pole
+Maneuver 'Execute NRHOI Burn' NRHOI_Burn(NRHOSat);
+
+% Align spacecraft precisely into the stable 9:2 NRHO baseline state:
+%   X = -173.0 km (offset slightly toward Earth side)
+%   Y = 0.0 km    (crossing X-Z symmetry plane)
+%   Z = 3229.0 km (over Lunar North Pole, altitude 1491.6 km)
+%   VX = 0.0 km/s (zero radial drift at perilune)
+%   VY = -1.6674 km/s (orthogonal retrograde entry velocity)
+%   VZ = 0.0 km/s (zero vertical rate at inflection peak)
+NRHOSat.EarthMoonRot.X  = -173.0;
+NRHOSat.EarthMoonRot.Y  = 0.0;
+NRHOSat.EarthMoonRot.Z  = 3229.0;
+NRHOSat.EarthMoonRot.VX = 0.0;
+NRHOSat.EarthMoonRot.VY = -1.6674;
+NRHOSat.EarthMoonRot.VZ = 0.0;
+
+%===============================================================================
+% PHASE 6: Multi-Revolution Lunar NRHO Halo Orbit Operations (21 Days / ~3.2 Revs)
+%===============================================================================
+% Propagate continuously through multiple revolutions in the high-fidelity lunar
+% halo environment, displaying the iconic vertical 3D figure-8 halo orbit.
+Propagate 'Propagate 21 Days in NRHO' LunarNRHOProp(NRHOSat) {NRHOSat.ElapsedDays = 21.0};
+

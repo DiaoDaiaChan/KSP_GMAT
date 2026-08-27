@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>月球 NRHO 轨道近月点六状态参数交互式三维可视化解析</title>
+    <meta name="description" content="深入理解月球近直线晕道（NRHO）近月点笛卡尔六状态参数（X, Y, Z, VX, VY, VZ）的三体物理机理与三维空间几何关系交互式系统。" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <!-- 3D 渲染画布容器 -->
+      <div id="canvas-container"></div>
+
+      <!-- 顶部状态栏 Header -->
+      <header class="header-hud">
+        <div class="brand">
+          <div class="pulse-dot"></div>
+          <div>
+            <h1 class="app-title">月球 NRHO 轨道近月点参数解析</h1>
+            <p class="app-subtitle">地月旋转坐标系 (EarthMoonRot) · 1988-07-20 任务历元 · 三体 Halo 晕道</p>
+          </div>
+        </div>
+        <div class="header-actions">
+          <div class="view-mode-selector">
+            <button id="btn-mode-perilune" class="mode-btn active" title="北极近月点特写剖析">
+              <span class="icon">🔍</span> 近月点特写
+            </button>
+            <button id="btn-mode-full" class="mode-btn" title="查看延伸至7万公里的全NRHO晕道">
+              <span class="icon">🌐</span> 全轨道全景
+            </button>
+          </div>
+          <button id="btn-toggle-anim" class="action-btn" title="播放/暂停沿轨运行动画">
+            <span id="anim-icon">▶</span> <span id="anim-text">模拟沿轨运行</span>
+          </button>
+          <button id="btn-reset-cam" class="action-btn icon-only" title="重置视角">
+            🔄
+          </button>
+        </div>
+      </header>
+
+      <!-- 左侧悬浮：6个状态参数深度交互卡片 -->
+      <aside class="left-panel glass-panel">
+        <div class="panel-header">
+          <div class="panel-tag">CARTESIAN STATE VECTOR</div>
+          <h2 class="panel-title">近月点六状态参数定义</h2>
+          <p class="panel-desc">点击卡片可在 3D 空间中高亮对应几何标尺与矢量指示</p>
+        </div>
+
+        <div class="param-cards-grid">
+          <!-- 卡片 1: X 坐标 -->
+          <div class="param-card active-card" id="card-param-x" data-param="x">
+            <div class="card-top">
+              <span class="badge badge-x">X 轴 (连线向)</span>
+              <span class="param-val highlight-x">-173.0 <small>km</small></span>
+            </div>
+            <div class="card-meaning">相对月球质心略微偏向地球侧</div>
+            <div class="card-detail">
+              月球半径 1737 km，偏向 -X（地球/L1 侧）仅 173 km（约 10% 月球半径），航天器依然位于北极正顶上空。“身在 L2，头微探 L1”的引力绕颈特征。
+            </div>
+            <div class="card-indicator">
+              <div class="bar-fill x-bar"></div>
+            </div>
+          </div>
+
+          <!-- 卡片 2: Y 坐标 -->
+          <div class="param-card" id="card-param-y" data-param="y">
+            <div class="card-top">
+              <span class="badge badge-y">Y 轴 (公转向)</span>
+              <span class="param-val highlight-y">0.0 <small>km</small></span>
+            </div>
+            <div class="card-meaning">恰好穿过地月对称主截面 (X-Z 平面)</div>
+            <div class="card-detail">
+              三体周期晕道的严格几何对称性。近月点位于 Y=0 的镜像对称剖面上，无侧向偏移。
+            </div>
+            <div class="card-indicator">
+              <div class="bar-fill y-bar"></div>
+            </div>
+          </div>
+
+          <!-- 卡片 3: Z 坐标 -->
+          <div class="param-card" id="card-param-z" data-param="z">
+            <div class="card-top">
+              <span class="badge badge-z">Z 轴 (竖直法向)</span>
+              <span class="param-val highlight-z">+3229.0 <small>km</small></span>
+            </div>
+            <div class="card-meaning">位于月球北极正上方 (极区高空)</div>
+            <div class="card-detail">
+              = 月球平均半径 (1,737.4 km) + 距表面净高度 (1,491.6 km)。是整个轨道在竖直向上的最高点（北端拐角点）。
+            </div>
+            <div class="card-indicator">
+              <div class="bar-fill z-bar"></div>
+            </div>
+          </div>
+
+          <!-- 卡片 4: VX 速度 -->
+          <div class="param-card" id="card-param-vx" data-param="vx">
+            <div class="card-top">
+              <span class="badge badge-vx">VX 径向速度</span>
+              <span class="param-val highlight-vx">0.0 <small>km/s</small></span>
+            </div>
+            <div class="card-meaning">对称截面上无地月径向漂移速度</div>
+            <div class="card-detail">
+              根据 CR3BP 对称性定理，穿过 Y=0 面时速度必须严格垂直于对称面，因此沿连线方向分速度必须为零。
+            </div>
+            <div class="card-indicator">
+              <div class="bar-fill vx-bar"></div>
+            </div>
+          </div>
+
+          <!-- 卡片 5: VY 速度 -->
+          <div class="param-card" id="card-param-vy" data-param="vy">
+            <div class="card-top">
+              <span class="badge badge-vy">VY 切向速度</span>
+              <span class="param-val highlight-vy">-1.6674 <small>km/s</small></span>
+            </div>
+            <div class="card-meaning">垂直于 X-Z 截面的主要切向近月速度</div>
+            <div class="card-detail">
+              负号表示逆向切入，提供绕过月球北极并甩向南极 L2 深空所需的精准离心平衡。二体估算为 1.70 km/s，地月三体摄动微调至 1.6674 km/s。
+            </div>
+            <div class="card-indicator">
+              <div class="bar-fill vy-bar"></div>
+            </div>
+          </div>
+
+          <!-- 卡片 6: VZ 速度 -->
+          <div class="param-card" id="card-param-vz" data-param="vz">
+            <div class="card-top">
+              <span class="badge badge-vz">VZ 竖向速度</span>
+              <span class="param-val highlight-vz">0.0 <small>km/s</small></span>
+            </div>
+            <div class="card-meaning">最高点近月点处竖直升降速度为零</div>
+            <div class="card-detail">
+              航天器在北极达到 Z 轴最大高度时的拐点（dZ/dt = 0），随后将转为向下俯冲奔向南极远月点（-70,000 km）。
+            </div>
+            <div class="card-indicator">
+              <div class="bar-fill vz-bar"></div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- 右侧悬浮：3D 控制与图层调节面板 -->
+      <aside class="right-panel glass-panel">
+        <div class="panel-header">
+          <div class="panel-tag">VISUAL CONTROLS</div>
+          <h2 class="panel-title">图层与视角控制器</h2>
+        </div>
+
+        <div class="control-group">
+          <div class="group-title">视角预设 (Preset Cameras)</div>
+          <div class="btn-grid">
+            <button class="preset-btn" id="btn-cam-iso">📐 3D 自由鸟瞰</button>
+            <button class="preset-btn" id="btn-cam-top">🔝 北极俯视 (X-Y)</button>
+            <button class="preset-btn" id="btn-cam-side">➡️ 镜像正视 (X-Z)</button>
+            <button class="preset-btn" id="btn-cam-front">👀 迎速侧视 (Y-Z)</button>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <div class="group-title">空间几何参考层 (Layers)</div>
+          <label class="toggle-item">
+            <input type="checkbox" id="chk-sym-plane" checked />
+            <span class="toggle-switch"></span>
+            <span class="toggle-label">显示 X-Z 镜像对称面 (Y = 0)</span>
+          </label>
+          <label class="toggle-item">
+            <input type="checkbox" id="chk-rulers" checked />
+            <span class="toggle-switch"></span>
+            <span class="toggle-label">显示高度与偏移尺寸标尺</span>
+          </label>
+          <label class="toggle-item">
+            <input type="checkbox" id="chk-vel-arrow" checked />
+            <span class="toggle-switch"></span>
+            <span class="toggle-label">显示 VY 速度动量矢量箭头</span>
+          </label>
+          <label class="toggle-item">
+            <input type="checkbox" id="chk-axes" checked />
+            <span class="toggle-switch"></span>
+            <span class="toggle-label">显示地月旋转三维坐标轴</span>
+          </label>
+          <label class="toggle-item">
+            <input type="checkbox" id="chk-orbit-trail" checked />
+            <span class="toggle-switch"></span>
+            <span class="toggle-label">显示 NRHO 全周期完整轨迹环</span>
+          </label>
+        </div>
+
+        <div class="control-group info-box">
+          <div class="info-title">💡 坐标轴速记指南</div>
+          <div class="info-row"><span class="dot dot-x"></span><strong>X 轴（红色）</strong>：沿地月连线指向月球背后的 L2 点，负向指向地球</div>
+          <div class="info-row"><span class="dot dot-y"></span><strong>Y 轴（绿色）</strong>：沿月球公转前进方向，垂直对称面</div>
+          <div class="info-row"><span class="dot dot-z"></span><strong>Z 轴（蓝色）</strong>：垂直公转面指向北方（竖直主中轴）</div>
+        </div>
+      </aside>
+
+      <!-- 底部 HUD 信息卡片 -->
+      <footer class="bottom-hud glass-panel">
+        <div class="hud-item">
+          <span class="hud-lbl">天体基准</span>
+          <span class="hud-val">月球 Luna (R = 1,737.4 km)</span>
+        </div>
+        <div class="hud-divider"></div>
+        <div class="hud-item">
+          <span class="hud-lbl">航天器净空高度</span>
+          <span class="hud-val highlight-z">1,491.6 km (北极上空)</span>
+        </div>
+        <div class="hud-divider"></div>
+        <div class="hud-item">
+          <span class="hud-lbl">连线向偏移量</span>
+          <span class="hud-val highlight-x">-173.0 km (朝地侧)</span>
+        </div>
+        <div class="hud-divider"></div>
+        <div class="hud-item">
+          <span class="hud-lbl">切向动能初速度</span>
+          <span class="hud-val highlight-vy">1.6674 km/s (6,002.6 km/h)</span>
+        </div>
+        <div class="hud-divider"></div>
+        <div class="hud-item">
+          <span class="hud-lbl">远月点极限 (南极)</span>
+          <span class="hud-val highlight-apolune">Z ≈ -70,000 km (L2 侧)</span>
+        </div>
+      </footer>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

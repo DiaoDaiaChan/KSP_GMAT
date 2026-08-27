@@ -1,0 +1,41 @@
+Create CoordinateSystem EarthMoonRot;
+EarthMoonRot.Origin = Luna;
+EarthMoonRot.Axes = ObjectReferenced;
+EarthMoonRot.XAxis = R;
+EarthMoonRot.ZAxis = N;
+EarthMoonRot.Primary = Earth;
+EarthMoonRot.Secondary = Luna;
+
+Create Spacecraft Sc;
+Sc.DateFormat = UTCGregorian;
+Sc.Epoch = '20 Jul 1988 12:00:00.000';
+Sc.CoordinateSystem = EarthMoonRot;
+Sc.DisplayStateType = Cartesian;
+Sc.X = -173;
+Sc.Y = 0;
+Sc.Z = 3229;
+Sc.VX = 0;
+Sc.VY = -1.6674;
+Sc.VZ = 0;
+
+Create ForceModel fm;
+fm.CentralBody = Luna;
+fm.PointMasses = {Sun, Earth, Luna};
+fm.SRP = Off;
+fm.ErrorControl = RSSStep;
+
+Create Propagator prop;
+prop.FM = fm;
+prop.Type = RungeKutta89;
+prop.InitialStepSize = 60;
+prop.Accuracy = 1e-11;
+
+Create ReportFile rf;
+rf.Filename = 'nrho_14days.txt';
+rf.Add = {Sc.UTCGregorian, Sc.EarthMoonRot.X, Sc.EarthMoonRot.Y, Sc.EarthMoonRot.Z, Sc.Luna.RMAG};
+
+BeginMissionSequence;
+While Sc.ElapsedDays < 14.0
+   Report rf Sc.UTCGregorian Sc.EarthMoonRot.X Sc.EarthMoonRot.Y Sc.EarthMoonRot.Z Sc.Luna.RMAG;
+   Propagate prop(Sc) {Sc.ElapsedDays = 0.5};
+EndWhile;
