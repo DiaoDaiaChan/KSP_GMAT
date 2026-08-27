@@ -437,6 +437,7 @@ def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None):
     gmat.RunScript()
 
     sat_name = sanitize_gmat_identifier(craft_data.get("name", "Vessel"), prefix="Sat")
+    central_body = map_body_name(craft_data.get("central_body", "Earth"))
     sat = gmat.GetRuntimeObject(sat_name)
 
     final_state = {}
@@ -511,8 +512,8 @@ def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None):
                 cum_time += 5400.0
             else:
                 cum_time += float(step.get("duration", 3600.0))
-        elif stype in ("ImpulsiveBurn", "TargetApoapsis"):
-            if stype == "TargetApoapsis" and "_targets_burn_idx" in step:
+        elif stype in ("ImpulsiveBurn", "TargetApoapsis", "Targeter"):
+            if stype in ("TargetApoapsis", "Targeter") and "_targets_burn_idx" in step:
                 continue
             dv_v = float(step.get("dv_v", 0.0))
             dv_n = float(step.get("dv_n", 0.0))
