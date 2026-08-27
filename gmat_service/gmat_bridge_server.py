@@ -121,13 +121,15 @@ class GMATBridgeHandler(BaseHTTPRequestHandler):
 
         elif self.path == "/api/render_trajectory":
             view_mode = req_data.get("view_mode", "dual")
+            central_body = req_data.get("central_body", "Earth")
+            body_radius = req_data.get("body_radius", None)
             gmat_root = os.path.dirname(BIN_DIR)
             output_dir = os.path.join(gmat_root, "output")
             traj_file = os.path.join(output_dir, "mission_traj.txt")
             img_file = os.path.join(output_dir, "gmat_orbit_render.png")
             try:
                 from orbit_renderer import render_gmat_trajectory
-                ok, msg = render_gmat_trajectory(traj_file, img_file, view_mode=view_mode)
+                ok, msg = render_gmat_trajectory(traj_file, img_file, view_mode=view_mode, central_body=central_body, body_radius=body_radius)
                 self._send_json({"success": ok, "image_path": img_file, "message": msg})
             except Exception as e:
                 self._send_json({"success": False, "error": str(e)}, 500)

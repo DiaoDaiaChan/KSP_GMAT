@@ -470,10 +470,12 @@ namespace KSPGMAT {
             return res;
         }
 
-        public static void RenderTrajectory(string viewMode, Action<bool, string> callback) {
+        public static void RenderTrajectory(string viewMode, string centralBody, double bodyRadiusKm, Action<bool, string> callback) {
             ThreadPool.QueueUserWorkItem(_ => {
                 try {
-                    string payload = $"{{\"view_mode\": \"{viewMode}\"}}";
+                    string cBody = string.IsNullOrEmpty(centralBody) ? "Earth" : centralBody;
+                    string rKm = bodyRadiusKm > 0 ? bodyRadiusKm.ToString("F1", System.Globalization.CultureInfo.InvariantCulture) : "6378.1";
+                    string payload = $"{{\"view_mode\": \"{viewMode}\", \"central_body\": \"{cBody}\", \"body_radius\": {rKm}}}";
                     string json = PostJson(ServerUrl + "/api/render_trajectory", payload);
                     string path = ExtractString(json, "image_path");
                     bool ok = json.Contains("\"success\": true");
@@ -482,6 +484,10 @@ namespace KSPGMAT {
                     KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(false, ex.Message));
                 }
             });
+        }
+
+        public static void RenderTrajectory(string viewMode, Action<bool, string> callback) {
+            RenderTrajectory(viewMode, "Earth", 6378.14, callback);
         }
 
         private static string ExtractString(string json, string key) {

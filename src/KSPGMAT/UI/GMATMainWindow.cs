@@ -67,9 +67,9 @@ namespace KSPGMAT.UI {
         };
 
         private static readonly string[] PropagatorLabels = new string[] {
-            "🌍 LEOProp (地球近地)",
-            "🌌 CislunarProp (地月巡航)",
-            "🌙 LunarNRHOProp (月球Halo)"
+            "🪐 近轨高保真积分 (NearBody)",
+            "🌌 深空多体巡航积分 (DeepSpace)",
+            "🌙 复杂三体/Halo积分 (LagrangeHalo)"
         };
 
         // Stop condition types and labels
@@ -1081,14 +1081,17 @@ namespace KSPGMAT.UI {
             // View Mode Toolbar
             GUILayout.BeginHorizontal();
             GUILayout.Label("切换视图:", labelValueStyle, GUILayout.Width(65));
-            string[] modes = new string[] { "dual", "cislunar", "nrho" };
-            string[] modeLabels = new string[] { "🌐 双视角 (地月+3D)", "🌍 地月全景 (2D)", "🌙 月球近心点" };
+            string[] modes = new string[] { "dual", "planar", "target" };
+            string[] modeLabels = new string[] { "🌐 双视角 (平面+3D)", "🪐 轨道全景 (2D)", "🎯 目标端点特写" };
+            string bodyName = FlightGlobals.ActiveVessel != null ? FlightGlobals.ActiveVessel.mainBody.name : "Earth";
+            double bodyRadiusKm = FlightGlobals.ActiveVessel != null ? (FlightGlobals.ActiveVessel.mainBody.Radius / 1000.0) : 6378.14;
+
             for (int i = 0; i < modes.Length; i++) {
                 bool isCur = (currentViewMode == modes[i]);
                 GUI.backgroundColor = isCur ? new Color(0.2f, 0.7f, 0.9f) : Color.white;
                 if (GUILayout.Button(modeLabels[i], secondaryButtonStyle, GUILayout.Height(24))) {
                     currentViewMode = modes[i];
-                    GMATClient.RenderTrajectory(currentViewMode, (ok, path) => {
+                    GMATClient.RenderTrajectory(currentViewMode, bodyName, bodyRadiusKm, (ok, path) => {
                         if (ok) LoadSimulationTexture(path);
                     });
                 }
@@ -1096,7 +1099,7 @@ namespace KSPGMAT.UI {
             }
             GUILayout.FlexibleSpace();
             if (GUILayout.Button("🔄 重新渲染", actionButtonStyle, GUILayout.Width(90), GUILayout.Height(24))) {
-                GMATClient.RenderTrajectory(currentViewMode, (ok, path) => {
+                GMATClient.RenderTrajectory(currentViewMode, bodyName, bodyRadiusKm, (ok, path) => {
                     if (ok) LoadSimulationTexture(path);
                 });
             }
@@ -1154,7 +1157,7 @@ namespace KSPGMAT.UI {
             // Propagator Selector Tabs
             GUILayout.BeginHorizontal();
             string[] propKeys = new string[] { "LEOProp", "CislunarProp", "LunarNRHOProp" };
-            string[] propTabLabels = new string[] { "🌍 LEOProp (近地轨道)", "🌌 CislunarProp (地月巡航)", "🌙 LunarNRHOProp (月球Halo)" };
+            string[] propTabLabels = new string[] { "🪐 近轨高保真 (NearBody)", "🌌 深空多体巡航 (DeepSpace)", "🌙 复杂三体/Halo (LagrangeHalo)" };
             for (int i = 0; i < propKeys.Length; i++) {
                 bool isSel = (selectedPropagatorKey == propKeys[i]);
                 GUI.backgroundColor = isSel ? new Color(0.2f, 0.7f, 0.9f) : Color.white;
@@ -1393,11 +1396,11 @@ namespace KSPGMAT.UI {
                 // Section 4: GMAT Force Models
                 GUILayout.BeginVertical(cardBoxStyle);
                 GUILayout.Label("🌌 GMAT 动力学模型与传播子配置", subHeaderStyle);
-                GUILayout.Label("• <b>CislunarForceModel</b>: 中心天体 Earth, 质点引力 {Earth, Luna, Sun, Jupiter}, 太阳光压 SRP 开启", labelValueStyle);
-                GUILayout.Label("• <b>LunarNRHOForceModel</b>: 中心天体 Luna, 质点引力 {Luna, Earth, Sun, Jupiter}, 太阳光压 SRP 开启", labelValueStyle);
-                GUILayout.Label("• <b>LEOProp</b>: 地球近地轨道RungeKutta89积分器 (最大步长 2700s)", labelValueStyle);
-                GUILayout.Label("• <b>CislunarProp</b>: 地月转移高效率RungeKutta89积分器 (最大步长 21600s / 6小时)", labelValueStyle);
-                GUILayout.Label("• <b>LunarNRHOProp</b>: 月球NRHO高精度Halo晕轮轨道积分器 (最大步长 10800s / 3小时)", labelValueStyle);
+                GUILayout.Label("• <b>NearBodyForceModel</b>: 中心天体动态自适应，多体引力摄动 {中心天体, 伴星, 太阳, 木星}, 太阳光压 SRP 开启", labelValueStyle);
+                GUILayout.Label("• <b>DeepSpaceForceModel</b>: 行星际深空多体巡航动力学模型，多星体点质量与光压扰动", labelValueStyle);
+                GUILayout.Label("• <b>LEOProp / NearBody</b>: 中心天体近轨RungeKutta89自适应高精度积分器", labelValueStyle);
+                GUILayout.Label("• <b>CislunarProp / DeepSpace</b>: 行星际/多体巡航高效率RungeKutta89积分器 (最大步长 21600s / 6小时)", labelValueStyle);
+                GUILayout.Label("• <b>LunarNRHOProp / LagrangeHalo</b>: 复杂三体/Halo晕轮轨道专用高精度保真积分器", labelValueStyle);
                 GUILayout.EndVertical();
             } else {
                 GUILayout.Label("无活跃飞船数据。", labelValueStyle);

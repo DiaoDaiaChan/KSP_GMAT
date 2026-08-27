@@ -250,8 +250,7 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
             bname = f"Burn_{burn_idx}"
             step["_obj_name"] = bname
             burn_idx += 1
-            lbl = (step.get("label") or step.get("name") or "").upper()
-            origin_body = "Luna" if ("NRHO" in lbl or "LOI" in lbl or "LUNAR" in lbl) else central_body
+            origin_body = map_body_name(step.get("origin") or central_body)
             step["origin"] = origin_body
             # GMAT ImpulsiveBurn elements are in km/s. Input from KSP is m/s.
             dv_v_kms = float(step.get('dv_v', 0.0)) / 1000.0
@@ -390,11 +389,13 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
                 lines.append(f"  Maneuver {bname}({sat_name});")
                 lines.append(f"  Propagate DefaultProp({sat_name}) {{{sat_name}.Apoapsis}};")
                 lines.append(f"  Achieve DC({sat_name}.{central_body}.RMAG = {target_val}, {{Tolerance = 1.0}});")
-            elif target_goal == "LunarPerilune":
-                lines.append(f"  Vary DC({bname}.Element1 = 3.13, {{Perturbation = 0.0001, Lower = 3.0, Upper = 3.3, MaxStep = 0.05}});")
+            elif target_goal in ("TargetBodyPeriapsis", "LunarPerilune"):
+                target_body = map_body_name(step.get("target_body") or ("Luna" if central_body == "Earth" else "Mars"))
+                coast_days = float(step.get("duration", 6.0)) if float(step.get("duration", 0.0)) > 0.0 else 6.0
+                lines.append(f"  Vary DC({bname}.Element1 = {init_guess:.4f}, {{Perturbation = 0.0001, Lower = {max(0.1, init_guess - 1.0):.2f}, Upper = {init_guess + 1.5:.2f}, MaxStep = 0.05}});")
                 lines.append(f"  Maneuver {bname}({sat_name});")
-                lines.append(f"  Propagate CislunarProp({sat_name}) {{{sat_name}.Luna.Periapsis, {sat_name}.ElapsedDays = 6.0}};")
-                lines.append(f"  Achieve DC({sat_name}.Luna.RMAG = {target_val}, {{Tolerance = 100.0}});")
+                lines.append(f"  Propagate CislunarProp({sat_name}) {{{sat_name}.{target_body}.Periapsis, {sat_name}.ElapsedDays = {coast_days}}};")
+                lines.append(f"  Achieve DC({sat_name}.{target_body}.RMAG = {target_val}, {{Tolerance = 100.0}});")
             else: # Apoapsis (default)
                 lines.append(f"  Vary DC({bname}.Element1 = {init_guess:.4f}, {{Perturbation = 0.0001, Lower = 0.0, Upper = 5.0, MaxStep = 0.2}});")
                 lines.append(f"  Maneuver {bname}({sat_name});")
@@ -518,7 +519,7 @@ def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None):
             dv_b = float(step.get("dv_b", 0.0))
             mag = (dv_v**2 + dv_n**2 + dv_b**2) ** 0.5
             lbl = (step.get("label") or step.get("name") or "").upper()
-            origin = step.get("origin") or ("Luna" if ("NRHO" in lbl or "LOI" in lbl or "LUNAR" in lbl) else "Earth")
+            origin = map_body_name(step.get("origin") or central_body)
             solved_burns.append({
                 "type": "Impulsive",
                 "name": step.get("label") or step.get("name") or "Burn",
@@ -537,7 +538,7 @@ def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None):
             mdot = thrust / (isp * 9.80665)
             m_final = max(float(craft_data.get("dry_mass", 1000.0)), m_init - mdot * dur)
             dv = isp * 9.80665 * (m_init / m_final if m_final > 0 else 1.0)
-            origin = step.get("origin", "Earth")
+            origin = map_body_name(step.get("origin") or central_body)
             solved_burns.append({
                 "type": "Finite",
                 "name": step.get("label") or "FiniteBurn",
@@ -558,7 +559,7 @@ def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None):
     render_image_path = os.path.join(output_dir, "gmat_orbit_render.png")
     try:
         from orbit_renderer import render_gmat_trajectory
-        render_gmat_trajectory(report_file, render_image_path, view_mode="dual")
+        render_gmat_trajectory(report_file, render_image_path, view_mode="dual", central_body=central_body)
     except Exception as ex:
         print(f"[gmat_engine] Render trajectory error: {ex}")
 
