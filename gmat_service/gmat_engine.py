@@ -285,6 +285,16 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
         elif step_type == "DifferentialCorrector":
             dc_needed = True
 
+    # Register time tracking variables for all maneuvers to capture exact GMAT physics epoch
+    time_vars = []
+    for step in mission_sequence:
+        bname = step.get("_obj_name")
+        if bname:
+            time_vars.append(f"{bname}_Time")
+
+    if time_vars:
+        lines.append(f"Create Variable {' '.join(time_vars)};\n")
+
     if dc_needed:
         lines.append("Create DifferentialCorrector DC;\n")
 
@@ -344,11 +354,13 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
             bname = step.get("_obj_name")
             label = step.get("label", "").replace("'", "")
             label_str = f"'{label}' " if label else ""
+            lines.append(f"{bname}_Time = {sat_name}.ElapsedSecs;")
             lines.append(f"Maneuver {label_str}{bname}({sat_name});")
 
         elif step_type == "FiniteBurn":
             fbname = step.get("_obj_name")
             duration = float(step.get("duration", 60.0))
+            lines.append(f"{fbname}_Time = {sat_name}.ElapsedSecs;")
             lines.append(f"BeginFiniteBurn {fbname}({sat_name});")
             lines.append(f"Propagate DefaultProp({sat_name}) {{{sat_name}.ElapsedSecs = {duration}}};")
             lines.append(f"EndFiniteBurn {fbname}({sat_name});")
@@ -362,6 +374,7 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
             init_guess = float(targeted_step.get("dv_v", 150.0)) / 1000.0
             if init_guess <= 0.0: init_guess = 0.5
 
+            lines.append(f"{bname}_Time = {sat_name}.ElapsedSecs;")
             lines.append("Target DC {SolveMode = Solve, ExitMode = SaveAndContinue};")
 
             if target_goal == "Periapsis":
@@ -515,11 +528,20 @@ def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None):
         elif stype in ("ImpulsiveBurn", "TargetApoapsis", "Targeter"):
             if stype in ("TargetApoapsis", "Targeter") and "_targets_burn_idx" in step:
                 continue
+            bname = step.get("_obj_name")
+            burn_epoch_offset = cum_time
+            if bname:
+                try:
+                    t_var = gmat.GetRuntimeObject(f"{bname}_Time")
+                    if t_var:
+                        burn_epoch_offset = float(t_var.GetRealParameter("Value"))
+                except Exception as ex:
+                    print(f"[gmat_engine] Could not get {bname}_Time: {ex}")
+
             dv_v = float(step.get("dv_v", 0.0))
             dv_n = float(step.get("dv_n", 0.0))
             dv_b = float(step.get("dv_b", 0.0))
             mag = (dv_v**2 + dv_n**2 + dv_b**2) ** 0.5
-            lbl = (step.get("label") or step.get("name") or "").upper()
             origin = map_body_name(step.get("origin") or central_body)
             solved_burns.append({
                 "type": "Impulsive",
@@ -529,9 +551,21 @@ def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None):
                 "dv_n": dv_n,
                 "dv_b": dv_b,
                 "magnitude": round(mag, 1),
-                "epoch_offset": cum_time
+                "epoch_offset": burn_epoch_offset
             })
+            cum_time = burn_epoch_offset
+
         elif stype == "FiniteBurn":
+            fbname = step.get("_obj_name")
+            burn_epoch_offset = cum_time
+            if fbname:
+                try:
+                    t_var = gmat.GetRuntimeObject(f"{fbname}_Time")
+                    if t_var:
+                        burn_epoch_offset = float(t_var.GetRealParameter("Value"))
+                except Exception as ex:
+                    print(f"[gmat_engine] Could not get {fbname}_Time: {ex}")
+
             dur = float(step.get("duration", 60.0))
             thrust = float(craft_data.get("thrust", 50000.0))
             isp = float(craft_data.get("isp", 310.0))
@@ -552,9 +586,9 @@ def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None):
                 "dv_n": 0.0,
                 "dv_b": 0.0,
                 "magnitude": dv,
-                "epoch_offset": cum_time
+                "epoch_offset": burn_epoch_offset
             })
-            cum_time += dur
+            cum_time = burn_epoch_offset + dur
 
     # Auto-render trajectory plot image for KSP sub-window
     render_image_path = os.path.join(output_dir, "gmat_orbit_render.png")
