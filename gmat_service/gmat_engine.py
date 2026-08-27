@@ -382,6 +382,14 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
                 lines.append(f"  Maneuver {bname}({sat_name});")
                 lines.append(f"  Propagate DefaultProp({sat_name}) {{{sat_name}.Periapsis}};")
                 lines.append(f"  Achieve DC({sat_name}.{central_body}.Altitude = {target_val}, {{Tolerance = 0.5}});")
+            elif target_goal == "GEO_CAM":
+                # Combined Apogee Maneuver (CAM): Simultaneously raise Periapsis to 35786 km and eliminate Inclination to 0 deg
+                lines.append(f"  Vary DC({bname}.Element1 = 1.45, {{Perturbation = 0.0001, Lower = 0.0, Upper = 3.5, MaxStep = 0.2}});")
+                lines.append(f"  Vary DC({bname}.Element2 = -1.2, {{Perturbation = 0.0001, Lower = -3.5, Upper = 3.5, MaxStep = 0.2}});")
+                lines.append(f"  Maneuver {bname}({sat_name});")
+                lines.append(f"  Propagate DefaultProp({sat_name}) {{{sat_name}.Periapsis}};")
+                lines.append(f"  Achieve DC({sat_name}.{central_body}.Altitude = {target_val}, {{Tolerance = 5.0}});")
+                lines.append(f"  Achieve DC({sat_name}.INC = 0.05, {{Tolerance = 0.05}});")
             elif target_goal == "SMA":
                 lines.append(f"  Vary DC({bname}.Element1 = {init_guess:.4f}, {{Perturbation = 0.0001, Lower = -5.0, Upper = 5.0, MaxStep = 0.2}});")
                 lines.append(f"  Maneuver {bname}({sat_name});")
@@ -481,9 +489,13 @@ def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None):
                     if "_targeted_by_idx" in step:
                         t_idx = step["_targeted_by_idx"]
                         mission_sequence[t_idx]["dv_v"] = step["dv_v"]
+                        mission_sequence[t_idx]["dv_n"] = step["dv_n"]
+                        mission_sequence[t_idx]["dv_b"] = step["dv_b"]
                     if "_targets_burn_idx" in step:
                         b_idx = step["_targets_burn_idx"]
                         mission_sequence[b_idx]["dv_v"] = step["dv_v"]
+                        mission_sequence[b_idx]["dv_n"] = step["dv_n"]
+                        mission_sequence[b_idx]["dv_b"] = step["dv_b"]
             except Exception as ex:
                 print(f"[gmat_engine] Error reading runtime burn {bname}: {ex}")
 

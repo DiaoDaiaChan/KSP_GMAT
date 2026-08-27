@@ -101,6 +101,7 @@ namespace KSPGMAT.UI {
         private static readonly string[] TargetGoalTypes = new string[] {
             "Apoapsis",      // 远拱点高度 (Ap Alt)
             "Periapsis",     // 近拱点高度 (Pe Alt)
+            "GEO_CAM",       // 🌍 GEO联合变轨(圆化+倾角归零)
             "SMA",           // 半长轴 (SMA)
             "ECC",           // 离心率 (ECC)
             "INC",           // 轨道倾角 (INC)
@@ -111,6 +112,7 @@ namespace KSPGMAT.UI {
         private static readonly string[] TargetGoalLabels = new string[] {
             "🔺 远拱点高度 (Ap Alt)",
             "🔻 近拱点高度 (Pe Alt)",
+            "🌍 GEO圆化+倾角清零 (CAM)",
             "📏 轨道半长轴 (SMA)",
             "⭕ 轨道离心率 (ECC)",
             "📐 轨道倾角 (INC)",
@@ -568,12 +570,12 @@ namespace KSPGMAT.UI {
             if (GUILayout.Button("🌙 地月NRHO任务 (1988)", secondaryButtonStyle, GUILayout.Height(24))) {
                 ImportScriptFile(@"D:\nocomp\gmat-win-R2026a\bin\Mission_EarthToLunarNRHO_1988.script");
             }
-            if (GUILayout.Button("🛰️ GTO 地球同步转移", secondaryButtonStyle, GUILayout.Height(24))) {
+            if (GUILayout.Button("🛰️ GTO/GEO (交点点火+联合变轨消除倾角)", secondaryButtonStyle, GUILayout.Height(24))) {
                 missionSequence.Clear();
-                missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LEOProp", stop_type = "Time", duration = 1800.0 });
-                missionSequence.Add(new MissionStep { type = "TargetApoapsis", target_alt = 35786.0 });
-                missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LEOProp", stop_type = "Apoapsis" });
-                ScreenMessages.PostScreenMessage("✅ 已载入 GTO 地球同步转移求解模板", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LEOProp", stop_type = "Node", label = "Coast to Node" });
+                missionSequence.Add(new MissionStep { type = "TargetApoapsis", target_goal = "Apoapsis", target_alt = 35786.0, label = "GTO Injection at Node" });
+                missionSequence.Add(new MissionStep { type = "Targeter", target_goal = "GEO_CAM", target_alt = 35786.0, label = "GEO Circularize & Plane Change" });
+                ScreenMessages.PostScreenMessage("✅ 已载入 GTO 交点入轨 + GEO 远地点联合圆化与倾角清零模板", 4.0f, ScreenMessageStyle.UPPER_CENTER);
             }
             if (GUILayout.Button("🔄 基础轨道积分", secondaryButtonStyle, GUILayout.Height(24))) {
                 missionSequence.Clear();
@@ -875,7 +877,7 @@ namespace KSPGMAT.UI {
                     GUILayout.Label($"目标数值 {unitStr}:", labelValueStyle, GUILayout.Width(100));
 
                     double curVal = (step.target_goal == "Apoapsis") ? step.target_alt : step.target_val;
-                    if (curVal == 0.0 && step.target_goal == "Apoapsis") curVal = 35786.0;
+                    if (curVal == 0.0 && (step.target_goal == "Apoapsis" || step.target_goal == "GEO_CAM")) curVal = 35786.0;
                     if (curVal == 0.0 && step.target_goal == "Periapsis") curVal = 200.0;
                     if (curVal == 0.0 && step.target_goal == "SMA") curVal = 24368.0;
                     if (curVal == 0.0 && step.target_goal == "LunarPerilune") curVal = 3229.0;
@@ -886,8 +888,13 @@ namespace KSPGMAT.UI {
                         step.target_alt = parsedVal;
                         step.target_val = parsedVal;
                     }
-                    if (step.dv_v > 0) {
-                        GUILayout.Label($"<color=#55ff55>▶ 求解结果: ΔV = {step.dv_v:F1} m/s</color>", labelValueStyle);
+                    double totalDv = Math.Sqrt(step.dv_v * step.dv_v + step.dv_n * step.dv_n + step.dv_b * step.dv_b);
+                    if (totalDv > 0.1) {
+                        if (Math.Abs(step.dv_n) > 0.1 || Math.Abs(step.dv_b) > 0.1) {
+                            GUILayout.Label($"<color=#55ff55>▶ 求解: 总ΔV={totalDv:F1} (顺行:{step.dv_v:F1}, 法向:{step.dv_n:F1}) m/s</color>", labelValueStyle);
+                        } else {
+                            GUILayout.Label($"<color=#55ff55>▶ 求解结果: ΔV = {step.dv_v:F1} m/s</color>", labelValueStyle);
+                        }
                     } else {
                         GUILayout.Label("(微分校正器自动求解)", labelValueStyle);
                     }
