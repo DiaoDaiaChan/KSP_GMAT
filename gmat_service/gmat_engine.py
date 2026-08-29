@@ -344,8 +344,29 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
             th_thrust = float(th.get("thrust") or thrust or 3000.0)
             th_isp = float(th.get("isp") or isp or 316.0)
             th_bound_tank = th.get("bound_tank")
-            if not th_bound_tank or th_bound_tank not in created_tank_names:
-                th_bound_tank = created_tank_names[0] if created_tank_names else "MainTank"
+            if th_bound_tank and th_bound_tank not in created_tank_names:
+                # Try matching by sanitized id or substring
+                san_th_tank = sanitize_gmat_identifier(th_bound_tank, "Tank")
+                matched = None
+                for ctk in created_tank_names:
+                    if san_th_tank in ctk or ctk in san_th_tank:
+                        matched = ctk
+                        break
+                if matched:
+                    th_bound_tank = matched
+                else:
+                    th_bound_tank = None
+
+            if not th_bound_tank:
+                # Auto-select the tank with the largest fuel mass
+                best_tk = created_tank_names[0] if created_tank_names else "MainTank"
+                best_fuel = -1.0
+                for tk_info, tk_nm in zip(craft_data.get("tanks", []), created_tank_names):
+                    fm = float(tk_info.get("fuel_mass", 0.0) or 0.0)
+                    if fm > best_fuel:
+                        best_fuel = fm
+                        best_tk = tk_nm
+                th_bound_tank = best_tk
             
             if thname not in created_thruster_names:
                 created_thruster_names.append(thname)
@@ -361,8 +382,8 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
                 lines.append(f"{thname}.DecrementMass = true;")
                 lines.append(f"{thname}.Tank = {{{th_bound_tank}}};")
                 lines.append(f"{thname}.GravitationalAccel = 9.81;")
-                # Convert kN to Newtons for GMAT C1 if passed in kN (< 50000)
-                th_c1_newtons = th_thrust * 1000.0 if th_thrust < 50000.0 else th_thrust
+                # Thrust in craft_data["thrusters"] is in Newtons (N)
+                th_c1_newtons = float(th_thrust)
                 lines.append(f"{thname}.C1 = {th_c1_newtons:.2f};")
                 lines.append(f"{thname}.K1 = {th_isp:.2f};")
     elif created_tank_names and bool(engine_name):
@@ -630,16 +651,26 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
             bound_thruster = None
             if raw_th:
                 clean_th = sanitize_gmat_identifier(raw_th, "MainEngine")
+                norm_raw = clean_th.lower().replace("_", "").replace("-", "")
                 if clean_th in created_thruster_names:
                     bound_thruster = clean_th
                 else:
-                    # Case-insensitive or fuzzy match
+                    # Case-insensitive or fuzzy match with normalized underscores
                     for c_th in created_thruster_names:
-                        if c_th.lower() == clean_th.lower() or clean_th.lower() in c_th.lower() or c_th.lower() in clean_th.lower():
+                        norm_c = c_th.lower().replace("_", "").replace("-", "")
+                        if norm_c == norm_raw or norm_raw in norm_c or norm_c in norm_raw:
                             bound_thruster = c_th
                             break
             if not bound_thruster:
-                bound_thruster = created_thruster_names[0] if created_thruster_names else "MainEngine"
+                # Pick the thruster with highest thrust (main engine)
+                best_th = created_thruster_names[0] if created_thruster_names else "MainEngine"
+                best_t = -1.0
+                for th_info, th_nm in zip(craft_data.get("thrusters", []), created_thruster_names):
+                    tv = float(th_info.get("thrust", 0.0) or 0.0)
+                    if tv > best_t:
+                        best_t = tv
+                        best_th = th_nm
+                bound_thruster = best_th
             fbname = sanitize_gmat_identifier(step.get("burn_name") or f"Finite_{finite_idx}", "FiniteBurn")
             step["_obj_name"] = fbname
             if fbname not in created_finite_names:
@@ -770,6 +801,7 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
     # Mission Sequence Commands
     lines.append("BeginMissionSequence;\n")
     state_report = f"Report TrajReport {sat_name}.ElapsedSecs {sat_name}.X {sat_name}.Y {sat_name}.Z {sat_name}.VX {sat_name}.VY {sat_name}.VZ;"
+    current_active_dc_name = "DefaultDC"
     lines.append(state_report)
 
     for step in mission_sequence:
@@ -862,15 +894,14 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
         elif step_type == "Target":
             label = sanitize_gmat_label(step.get("label"), "Target")
             label_str = f"'{label}' " if label else ""
-            dc_name = "DC"
+            current_active_dc_name = sanitize_gmat_identifier(step.get("dc_name") or "DefaultDC", "DC")
             solve_mode = step.get("solve_mode") or "Solve"
             exit_mode = step.get("exit_mode") or "SaveAndContinue"
-            lines.append(f"Target {label_str}{dc_name} {{SolveMode = {solve_mode}, ExitMode = {exit_mode}}};")
+            lines.append(f"Target {label_str}{current_active_dc_name} {{SolveMode = {solve_mode}, ExitMode = {exit_mode}}};")
 
         elif step_type == "Vary":
             label = sanitize_gmat_label(step.get("label"), "Vary")
             label_str = f"'{label}' " if label else ""
-            dc_name = step.get("dc_name") or step.get("vary_solver") or "DC"
             var = (step.get("vary_variable") or step.get("variable") or "burntime").strip()
 
             # Clean craft prefix if present
@@ -900,22 +931,20 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
             if add_scale != 0.0 or mul_scale != 1.0:
                 scale_opts = f", AdditiveScaleFactor = {add_scale:.8g}, MultiplicativeScaleFactor = {mul_scale:.8g}"
 
-            lines.append(f"   Vary {label_str}{dc_name}({var_ref} = {init_val}, {{Perturbation = {pert}, Lower = {lower}, Upper = {upper}, MaxStep = {max_step}{scale_opts}}});")
+            lines.append(f"   Vary {label_str}{current_active_dc_name}({var_ref} = {init_val}, {{Perturbation = {pert}, Lower = {lower}, Upper = {upper}, MaxStep = {max_step}{scale_opts}}});")
 
         elif step_type == "Achieve":
             label = sanitize_gmat_label(step.get("label"), "Achieve")
             label_str = f"'{label}' " if label else ""
-            dc_name = "DC"
             goal_param = step.get("achieve_param") or step.get("target_goal") or "RMAG"
             goal_ref = resolve_gmat_target_param(sat_name, central_body, goal_param)
 
             target_val = float(step.get("achieve_val", step.get("target_val", step.get("target_alt", 40000.0))))
             tol = float(step.get("achieve_tolerance", step.get("target_tolerance", 0.1)) or 0.1)
-            lines.append(f"   Achieve {label_str}{dc_name}({goal_ref} = {target_val}, {{Tolerance = {tol}}});")
+            lines.append(f"   Achieve {label_str}{current_active_dc_name}({goal_ref} = {target_val}, {{Tolerance = {tol}}});")
 
         elif step_type == "EndTarget":
-            dc_name = "DC"
-            lines.append(f"EndTarget;  % For targeter {dc_name}")
+            lines.append(f"EndTarget;  % For targeter {current_active_dc_name}")
 
         elif step_type in ("StageSeparation", "Staging", "Decouple"):
             label = sanitize_gmat_label(step.get("label"), "StageSep")
