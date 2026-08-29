@@ -145,6 +145,8 @@ namespace KSPGMAT {
     public class MissionResult {
         public bool success;
         public string error;
+        public string error_details;
+        public string gmat_log;
         public string script_path;
         public double final_sma;
         public double final_ecc;

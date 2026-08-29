@@ -1437,7 +1437,7 @@ namespace KSPGMAT.UI {
                     }
                     if (isHoldingDrag && dropTargetIndex == i && draggedStepIndex != i && stepCardRects.ContainsKey(i)) {
                         Rect r = stepCardRects[i];
-                        GUI.Box(new Rect(r.x, r.y, r.width, 4), "", tabButtonActiveStyle);
+                        GUI.Box(new Rect(r.x, r.y - 4, r.width, 8), "<color=#38bdf8><b>⬇ 插入到步骤 #{i + 1} ⬇</b></color>", tabButtonActiveStyle);
                     }
 
                     // DO NOT call GUILayout.EndVertical() here: keep the prominent group container OPEN for child steps!
@@ -1584,7 +1584,7 @@ namespace KSPGMAT.UI {
                     }
                     if (isHoldingDrag && dropTargetIndex == i && draggedStepIndex != i && stepCardRects.ContainsKey(i)) {
                         Rect r = stepCardRects[i];
-                        GUI.Box(new Rect(r.x, r.y, r.width, 4), "", tabButtonActiveStyle);
+                        GUI.Box(new Rect(r.x, r.y - 4, r.width, 8), "<color=#38bdf8><b>⬇ 插入到步骤 #{i + 1} ⬇</b></color>", tabButtonActiveStyle);
                     }
                     GUILayout.Space(4);
                     continue;
@@ -1917,7 +1917,7 @@ namespace KSPGMAT.UI {
 
             GUILayout.Space(6);
 
-            // Pinned Live Solution Summary Box
+            // Pinned Live Solution Summary Box & Detailed Error Diagnostic
             GUILayout.BeginVertical(cardBoxStyle);
             GUILayout.Label("📊 最新轨道求解结果", headerStyle);
 
@@ -1930,9 +1930,67 @@ namespace KSPGMAT.UI {
                     GUILayout.Label($"<color=#f87171>⚠️ 燃料赤字: {latestResult.fuel_deficit:F1} kg</color>", labelValueStyle);
                 }
             } else if (latestResult != null && !latestResult.success) {
-                GUILayout.Label($"<color=#f87171>求解报错: {latestResult.error}</color>", labelValueStyle);
+                GUILayout.Label($"<color=#f87171><b>❌ GMAT 求解失败:</b> {latestResult.error}</color>", labelValueStyle);
+                
+                // Detailed Error Diagnostic Box
+                string errDetails = !string.IsNullOrEmpty(latestResult.error_details) ? latestResult.error_details : latestResult.error;
+                GUILayout.Space(2);
+                GUILayout.Label("<color=#94a3b8><b>📋 详细错误诊断与引擎日志:</b></color>", labelValueStyle);
+                GUILayout.BeginVertical(GUI.skin.box);
+                GUILayout.Label($"<color=#fca5a5><size=11>{errDetails}</size></color>", labelValueStyle);
+                GUILayout.EndVertical();
+
+                if (GUILayout.Button("📋 复制完整报错日志", secondaryButtonStyle, GUILayout.Height(22))) {
+                    GUIUtility.systemCopyBuffer = $"[GMAT Error]\nSummary: {latestResult.error}\nDetails:\n{errDetails}\nScript: {latestResult.script_path}";
+                    ScreenMessages.PostScreenMessage("📋 完整报错日志已复制至系统剪贴板！", 2.5f, ScreenMessageStyle.UPPER_CENTER);
+                }
             } else {
                 GUILayout.Label("<color=#64748b>点击上方按钮启动计算，结果将实时显示于此。</color>", labelValueStyle);
+            }
+            GUILayout.EndVertical();
+
+            GUILayout.Space(6);
+
+            // =========================================================================
+            // VEHICLE & PROPULSION SNAPSHOT (MATCHING IMAGE 2 DIRECTLY IN RIGHT PANEL)
+            // =========================================================================
+            GUILayout.BeginVertical(cardBoxStyle);
+            GUILayout.BeginHorizontal();
+            var selStages = GetSelectedStagesList();
+            GUILayout.Label($"<b>🚀 多级火箭质量与 ΔV 组合 (已选 {selStages.Count} 个分级)</b>", headerStyle);
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button("🔄 刷新", secondaryButtonStyle, GUILayout.Width(50), GUILayout.Height(18))) {
+                cachedEngines = ROEngineInterop.ScanVesselEngines(vessel);
+                ScreenMessages.PostScreenMessage("✅ 硬件参数快照已实时刷新！", 2.0f, ScreenMessageStyle.UPPER_CENTER);
+            }
+            GUILayout.EndHorizontal();
+
+            if (selStages != null && selStages.Count > 0) {
+                double sumDv = 0, sumFuel = 0, maxWet = 0, minDry = double.MaxValue;
+                foreach (var st in selStages) {
+                    sumDv += st.deltaV;
+                    sumFuel += st.fuelMassTonnes;
+                    if (st.wetMassTonnes > maxWet) maxWet = st.wetMassTonnes;
+                    if (st.dryMassTonnes < minDry) minDry = st.dryMassTonnes;
+                    GUILayout.Label($" • <b>Stage {st.stageNumber}</b>: <color=#38bdf8>ΔV={st.deltaV:F0} m/s</color> | 湿重=<b>{st.wetMassTonnes:F2}t</b> | 燃料=<b>{st.fuelMassTonnes:F2}t</b> | 干重=<b>{st.dryMassTonnes:F2}t</b>", labelValueStyle);
+                }
+                if (minDry == double.MaxValue) minDry = 0;
+                GUILayout.Label($"<color=#34d399>组合初始湿重: <b>{maxWet:F2} 吨</b> | 最终干重: <b>{minDry:F2} 吨</b> | 推进剂: <b>{sumFuel:F2} 吨</b> | 总设计ΔV: <b>{sumDv:F0} m/s</b></color>", labelValueStyle);
+            } else if (vessel != null) {
+                GUILayout.Label($"飞船总质量: <b>{vessel.GetTotalMass():F2} 吨</b>", labelValueStyle);
+            }
+
+            GUILayout.Space(4);
+
+            // RealismOverhaul Propulsion Architecture
+            GUILayout.Label("<b>🔥 RealismOverhaul 推进系统动力学</b>", headerStyle);
+            var curEng = (cachedEngines != null && selectedEngineIndex < cachedEngines.Count) ? cachedEngines[selectedEngineIndex] : (cachedEngines != null && cachedEngines.Count > 0 ? cachedEngines[0] : null);
+            if (curEng != null) {
+                GUILayout.Label($"主发动机: <b>{curEng.title}</b> | 真空推力: <color=#38bdf8><b>{curEng.thrustKN:F1} kN</b></color> | 真空比冲: <color=#38bdf8><b>{curEng.ispVac:F0} s</b></color>", labelValueStyle);
+                GUILayout.Label($"推进剂组元: <color=#facc15><b>{curEng.propellantDesc}</b></color>", labelValueStyle);
+                GUILayout.Label($"推进剂混合密度: <b>{curEng.fuelDensityKgM3:F1} kg/m³</b> | 储罐容积: <b>{curEng.tankVolumeM3:F3} m³</b> | 调节压力: <b>{curEng.tankPressureKPa:F0} kPa</b>", labelValueStyle);
+            } else {
+                GUILayout.Label("<color=#64748b>未检测到 RealismOverhaul 发动机配置或处于纯惯性段。</color>", labelValueStyle);
             }
             GUILayout.EndVertical();
 
@@ -2139,9 +2197,22 @@ namespace KSPGMAT.UI {
 
                 GUILayout.FlexibleSpace();
                 if (GUILayout.Button("🔄 重新同步飞船硬件", secondaryButtonStyle, GUILayout.Width(130), GUILayout.Height(20))) {
+                    cachedEngines = ROEngineInterop.ScanVesselEngines(v);
+                    allEngines = cachedEngines;
                     allTanks = ROEngineInterop.ScanVesselTanks(v);
-                    allEngines = ROEngineInterop.ScanVesselEngines(v);
-                    ScreenMessages.PostScreenMessage("✅ 已实时同步当前飞船发动机与储罐！", 2.5f, ScreenMessageStyle.UPPER_CENTER);
+                    
+                    if (allEngines != null && allEngines.Count > 0) {
+                        var activeEng = allEngines[0];
+                        string cleanId = GMATParameterRegistry.SanitizeGmatIdentifier(activeEng.title);
+                        step.bound_thruster = cleanId;
+                        step.burn_isp = activeEng.ispVac;
+                    }
+                    if (allTanks != null && allTanks.Count > 0) {
+                        var activeTk = allTanks[0];
+                        string cleanTk = GMATParameterRegistry.SanitizeGmatIdentifier(activeTk.id);
+                        step.bound_tank = cleanTk;
+                    }
+                    ScreenMessages.PostScreenMessage("✅ 已重新扫描并实时同步飞船所有发动机与级段储罐！", 2.5f, ScreenMessageStyle.UPPER_CENTER);
                 }
                 GUILayout.EndHorizontal();
 
