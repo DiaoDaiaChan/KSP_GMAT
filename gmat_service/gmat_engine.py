@@ -53,10 +53,12 @@ def get_coord_system_for_body(body_name):
 
 def sanitize_gmat_identifier(raw_name, prefix="Sat"):
     """Sanitizes any vessel/engine name into a strict, valid GMAT ASCII identifier [A-Za-z][A-Za-z0-9_]*."""
-    ascii_str = "".join(c for c in (raw_name or "") if c.isascii() and (c.isalnum() or c == '_'))
-    if not ascii_str or not ascii_str[0].isalpha():
-        return f"{prefix}_{ascii_str or '1'}"
-    return ascii_str
+    import re
+    clean = re.sub(r'[^a-zA-Z0-9_]', '_', str(raw_name or ""))
+    clean = re.sub(r'_+', '_', clean).strip('_')
+    if not clean or not clean[0].isalpha():
+        return f"{prefix}_{clean or '1'}"
+    return clean
 
 def sanitize_gmat_label(raw_label, fallback="Step"):
     """Keep UI labels readable while ensuring GMAT scripts remain ASCII-only."""
@@ -154,6 +156,14 @@ def resolve_gmat_target_param(sat_name: str, central_body: str, goal_param: str)
     while correctly preserving body-dependent coordinates like 'Sat.Earth.Altitude' and 'Sat.Luna.RMAG'.
     """
     p = (goal_param or "RMAG").strip()
+
+    # Map Apoapsis/Periapsis events to numeric Altitude parameter in Achieve
+    if p.endswith(".Apoapsis") or p == "Apoapsis":
+        body = p.split(".")[0] if ("." in p and not p.startswith("Apoapsis") and p.split(".")[0] not in (sat_name, "Sat", "Vessel")) else central_body
+        return f"{sat_name}.{body}.Altitude"
+    if p.endswith(".Periapsis") or p == "Periapsis":
+        body = p.split(".")[0] if ("." in p and not p.startswith("Periapsis") and p.split(".")[0] not in (sat_name, "Sat", "Vessel")) else central_body
+        return f"{sat_name}.{body}.Altitude"
     # Strip any existing spacecraft prefix (e.g. Sat., Vessel., Sat_1.)
     for sp in [sat_name + ".", "Sat.", "Vessel."]:
         if p.startswith(sp):
@@ -346,7 +356,9 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
                 lines.append(f"{thname}.DecrementMass = true;")
                 lines.append(f"{thname}.Tank = {{{th_bound_tank}}};")
                 lines.append(f"{thname}.GravitationalAccel = 9.81;")
-                lines.append(f"{thname}.C1 = {th_thrust:.2f};")
+                # Convert kN to Newtons for GMAT C1 if passed in kN (< 50000)
+                th_c1_newtons = th_thrust * 1000.0 if th_thrust < 50000.0 else th_thrust
+                lines.append(f"{thname}.C1 = {th_c1_newtons:.2f};")
                 lines.append(f"{thname}.K1 = {th_isp:.2f};")
     elif created_tank_names and bool(engine_name):
         eng_id = sanitize_gmat_identifier(engine_name, "MainEngine")
@@ -363,7 +375,8 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
         lines.append(f"{eng_id}.DecrementMass = true;")
         lines.append(f"{eng_id}.Tank = {{{created_tank_names[0]}}};")
         lines.append(f"{eng_id}.GravitationalAccel = 9.81;")
-        lines.append(f"{eng_id}.C1 = {thrust:.2f};")
+        eng_c1_newtons = thrust * 1000.0 if thrust < 50000.0 else thrust
+        lines.append(f"{eng_id}.C1 = {eng_c1_newtons:.2f};")
         lines.append(f"{eng_id}.K1 = {isp:.2f};")
 
     # Attach all hardware to Spacecraft
@@ -608,7 +621,20 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
                     burn_defs.append(f"{bname}.Isp = {burn_isp_val:.2f};")
             burn_idx += 1
         elif step_type == "FiniteBurn":
-            bound_thruster = step.get("bound_thruster") or (created_thruster_names[0] if created_thruster_names else "MainEngine")
+            raw_th = step.get("bound_thruster")
+            bound_thruster = None
+            if raw_th:
+                clean_th = sanitize_gmat_identifier(raw_th, "MainEngine")
+                if clean_th in created_thruster_names:
+                    bound_thruster = clean_th
+                else:
+                    # Case-insensitive or fuzzy match
+                    for c_th in created_thruster_names:
+                        if c_th.lower() == clean_th.lower() or clean_th.lower() in c_th.lower() or c_th.lower() in clean_th.lower():
+                            bound_thruster = c_th
+                            break
+            if not bound_thruster:
+                bound_thruster = created_thruster_names[0] if created_thruster_names else "MainEngine"
             fbname = sanitize_gmat_identifier(step.get("burn_name") or f"Finite_{finite_idx}", "FiniteBurn")
             step["_obj_name"] = fbname
             if fbname not in created_finite_names:
@@ -789,7 +815,20 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
                 body = clean_stop.split(".")[0] if ("." in clean_stop and not clean_stop.startswith("Node")) else central_body
                 lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.{body}.Latitude = 0.0{tol_str}}};")
             elif "." in clean_stop:
-                # Multi-dot parameter (e.g. "Luna.RMAG", "Earth.Altitude", "EarthMoonRot.Z", "EarthMoonRot.Y")
+                # Multi-dot parameter (e.g. "Luna.RMAG", "Earth.Altitude", "EarthMoonRot.Z", "Earth.Z")
+                parts = clean_stop.split(".")
+                prefix = parts[0]
+                prop_field = parts[1] if len(parts) > 1 else ""
+
+                # Auto-heal Cartesian coordinate on body (e.g. Earth.Z -> EarthMJ2000Eq.Z, Luna.Z -> MoonInertial.Z)
+                if prop_field in ("X", "Y", "Z", "VX", "VY", "VZ", "AX", "AY", "AZ"):
+                    if prefix.lower() in ("earth", "kerbin"):
+                        clean_stop = f"EarthMJ2000Eq.{prop_field}"
+                    elif prefix.lower() in ("luna", "mun", "moon"):
+                        clean_stop = f"MoonInertial.{prop_field}"
+                    elif prefix.lower() in ("sun", "sol"):
+                        clean_stop = f"EarthMJ2000Eq.{prop_field}"
+
                 lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.{clean_stop} = {target_val}{tol_str}}};")
             elif clean_stop in ("Altitude", "Alt"):
                 lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.{central_body}.Altitude = {target_val}{tol_str}}};")
