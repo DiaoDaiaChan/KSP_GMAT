@@ -636,74 +636,58 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
             label = sanitize_gmat_label(step.get("label"), "Propagate")
             label_str = f"'{label}' " if label else ""
 
-            stop_type = step.get("stop_type", "Time")
+            raw_stop = (step.get("stop_type") or "Time").strip()
             tol = float(step.get("stop_tolerance") or 1e-5)
             tol_str = f", StopTolerance = {tol:.8g}" if tol > 0 else ""
             target_val = float(step.get("target_val", 0.0) if step.get("target_val") is not None else step.get("duration", 0.0))
 
-            if stop_type in ("Time", "ElapsedSecs"):
+            # 1. Clean any leading Spacecraft name prefix (e.g. "Sat.", "Sat_3.", "Vessel.", "Spacecraft.")
+            clean_stop = raw_stop
+            # Case insensitive prefix check
+            for pfx in ("sat.", "sat_3.", "spacecraft.", "sc.", "vessel.", f"{sat_name.lower()}."):
+                if clean_stop.lower().startswith(pfx):
+                    clean_stop = clean_stop[len(pfx):].strip()
+
+            # 2. Check for explicit equals expression (e.g. "Luna.RMAG = 6000")
+            if "=" in clean_stop:
+                parts = clean_stop.split("=", 1)
+                clean_stop = parts[0].strip()
+                try:
+                    target_val = float(parts[1].strip())
+                except:
+                    pass
+
+            # 3. Universal Stop Condition Matching
+            if clean_stop in ("Time", "ElapsedSecs"):
                 duration = float(step.get("duration", target_val))
                 lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.ElapsedSecs = {duration}}};")
-            elif stop_type in ("Days", "ElapsedDays"):
+            elif clean_stop in ("Days", "ElapsedDays"):
                 days = float(step.get("duration", target_val))
                 lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.ElapsedDays = {days}}};")
-            elif stop_type == "Apoapsis":
-                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.{central_body}.Apoapsis, {sat_name}.ElapsedDays = 3.0}};")
-            elif stop_type == "Periapsis":
-                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.{central_body}.Periapsis, {sat_name}.ElapsedDays = 3.0}};")
-            elif stop_type in ("Node", "Latitude_Zero", "EquatorialNode"):
-                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.{central_body}.Latitude = 0.0{tol_str}}};")
-            elif stop_type in ("Z", "Z_Zero", "Z_Cross"):
-                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.Z = {target_val}{tol_str}}};")
-            elif stop_type in ("VZ", "VZ_Zero", "VZ_Cross"):
-                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.VZ = {target_val}{tol_str}}};")
-            elif stop_type in ("X", "Y", "VX", "VY", "RA", "DEC", "C3Energy", "Energy"):
-                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.{stop_type} = {target_val}{tol_str}}};")
-            elif stop_type in ("Altitude", "Alt"):
+            elif clean_stop.endswith(".Periapsis") or clean_stop == "Periapsis":
+                body = clean_stop.split(".")[0] if "." in clean_stop else central_body
+                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.{body}.Periapsis}};")
+            elif clean_stop.endswith(".Apoapsis") or clean_stop == "Apoapsis":
+                body = clean_stop.split(".")[0] if "." in clean_stop else central_body
+                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.{body}.Apoapsis}};")
+            elif clean_stop in ("Node", "Latitude_Zero", "EquatorialNode") or clean_stop.endswith(".Latitude_Zero") or clean_stop.endswith(".Node"):
+                body = clean_stop.split(".")[0] if ("." in clean_stop and not clean_stop.startswith("Node")) else central_body
+                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.{body}.Latitude = 0.0{tol_str}}};")
+            elif "." in clean_stop:
+                # Multi-dot parameter (e.g. "Luna.RMAG", "Earth.Altitude", "EarthMoonRot.Z", "EarthMoonRot.Y")
+                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.{clean_stop} = {target_val}{tol_str}}};")
+            elif clean_stop in ("Altitude", "Alt"):
                 lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.{central_body}.Altitude = {target_val}{tol_str}}};")
-            elif stop_type in ("RMAG", "Radius"):
+            elif clean_stop in ("RMAG", "Radius"):
                 lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.{central_body}.RMAG = {target_val}{tol_str}}};")
-            elif stop_type in ("TA", "TrueAnomaly"):
-                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.TA = {target_val}{tol_str}}};")
-            elif stop_type in ("EA", "EccentricAnomaly"):
-                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.EA = {target_val}{tol_str}}};")
-            elif stop_type in ("MA", "MeanAnomaly"):
-                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.MA = {target_val}{tol_str}}};")
-            elif stop_type in ("SMA", "SemiMajorAxis"):
-                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.SMA = {target_val}{tol_str}}};")
-            elif stop_type in ("ECC", "Eccentricity"):
-                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.ECC = {target_val}{tol_str}}};")
-            elif stop_type in ("INC", "Inclination"):
-                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.INC = {target_val}{tol_str}}};")
-            elif stop_type in ("RAAN",):
-                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.RAAN = {target_val}{tol_str}}};")
-            elif stop_type in ("AOP", "ArgOfPeriapsis"):
-                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.AOP = {target_val}{tol_str}}};")
-            elif stop_type in ("OrbitPeriod",):
-                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.OrbitPeriod = {target_val}{tol_str}}};")
-            elif stop_type in ("A1ModJulian", "A1MJD"):
-                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.A1ModJulian = {target_val}{tol_str}}};")
-            elif stop_type in ("RadApo", "RadPer", "VelApoapsis", "VelPeriapsis", "Latitude", "Longitude", "BetaAngle"):
-                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.{central_body}.{stop_type} = {target_val}{tol_str}}};")
-            elif stop_type in ("UTCGregorian", "Epoch"):
-                utc_val = step.get("utc_epoch") or step.get("expression") or step.get("target_val")
-                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.UTCGregorian = '{utc_val}'}};")
+            elif clean_stop in ("TA", "TrueAnomaly", "EA", "EccentricAnomaly", "MA", "MeanAnomaly", "SMA", "SemiMajorAxis", "ECC", "Eccentricity", "INC", "Inclination", "RAAN", "AOP", "ArgOfPeriapsis", "OrbitPeriod", "RadApo", "RadPer", "VelApoapsis", "VelPeriapsis", "Latitude", "Longitude", "BetaAngle", "BdotT", "BdotR"):
+                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.{central_body}.{clean_stop} = {target_val}{tol_str}}};")
+            elif clean_stop in ("X", "Y", "Z", "VX", "VY", "VZ", "AX", "AY", "AZ", "RA", "DEC", "C3Energy", "Energy"):
+                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.{clean_stop} = {target_val}{tol_str}}};")
+            elif clean_stop in ("UTCGregorian", "Epoch"):
+                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.{clean_stop} = {target_val}{tol_str}}};")
             else:
-                # Direct object property pass-through
-                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.{stop_type} = {target_val}{tol_str}}};")
-
-        elif step_type == "Report":
-            step_idx = mission_sequence.index(step)
-            lines.append(f"Report StepReport_{step_idx} {sat_name}.ElapsedSecs {sat_name}.Altitude {sat_name}.SMA {sat_name}.ECC {sat_name}.INC {sat_name}.RAAN {sat_name}.AOP {sat_name}.TA {sat_name}.RMAG {sat_name}.TotalMass {sat_name}.X {sat_name}.Y {sat_name}.Z {sat_name}.VX {sat_name}.VY {sat_name}.VZ;")
-            lines.append(state_report)
-
-        elif step_type == "Equation":
-            var = step.get("variable", "")
-            expr = step.get("expression", "0.0")
-            if not var.startswith(sat_name):
-                var = f"{sat_name}.{var}"
-            lines.append(f"{var} = {expr};")
-
+                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.{clean_stop} = {target_val}{tol_str}}};")
         elif step_type == "ImpulsiveBurn":
             if step.get("_targeted_by_idx") is not None:
                 continue

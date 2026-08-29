@@ -9,6 +9,8 @@ namespace KSPGMAT.UI {
         // Decluttering & Collapsible Cards State
         private readonly HashSet<int> expandedStepPills = new HashSet<int>();
         private readonly HashSet<int> expandedSolverSettings = new HashSet<int>();
+        private readonly HashSet<int> expandedPropSettings = new HashSet<int>();
+        private int propCategoryTab = 0;
 
         // Floating IDE-Style IntelliSense State
         private bool intelliSenseOpen = false;
@@ -1359,9 +1361,9 @@ namespace KSPGMAT.UI {
                 // ==========================================
                 if (step.type == "EndTarget") {
                     if (!targetGroupCollapsed) {
-                        // Render EndTarget footer inside the group container
+                        // Render EndTarget footer inside the group container with visual hierarchy guide
                         GUILayout.BeginHorizontal();
-                        GUILayout.Space(8);
+                        GUILayout.Space(14);
                         GUILayout.BeginVertical(nestedCardBoxStyle);
                         GUILayout.BeginHorizontal();
 
@@ -1799,10 +1801,10 @@ namespace KSPGMAT.UI {
         }
 
         private void DrawStepCardDetails(int i, MissionStep step) {
-            if (step.type == "Propagate") {
-                // Propagator Function Selection Call
+if (step.type == "Propagate") {
+                // 1. Propagator Function Selection Call
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("传播子 (Propagator):", labelValueStyle, GUILayout.Width(125));
+                GUILayout.Label("<color=#94a3b8>传播子 (Propagator):</color>", labelValueStyle, GUILayout.Width(130));
                 string[] qProps = new string[] { "LEOProp", "CislunarProp", "LunarNRHOProp", "DefaultProp" };
                 for (int qp = 0; qp < qProps.Length; qp++) {
                     string pName = qProps[qp];
@@ -1814,202 +1816,151 @@ namespace KSPGMAT.UI {
                     GUI.backgroundColor = Color.white;
                 }
                 GUILayout.FlexibleSpace();
+
+                bool showPropCfg = expandedPropSettings.Contains(i);
+                if (GUILayout.Button(showPropCfg ? "⚙️ 积分力模型 ▲" : "⚙️ 积分力模型 ▼", secondaryButtonStyle, GUILayout.Width(95), GUILayout.Height(20))) {
+                    if (showPropCfg) expandedPropSettings.Remove(i);
+                    else expandedPropSettings.Add(i);
+                }
                 GUILayout.EndHorizontal();
 
-                // Stop Condition
-                GUILayout.BeginHorizontal();
-                GUILayout.Label("停止条件:", labelValueStyle, GUILayout.Width(75));
-                GUILayout.Label($"<b>{step.stop_type}</b>", labelValueStyle, GUILayout.Width(80));
+                // Expandable Integrator & ForceModel Details
+                if (expandedPropSettings.Contains(i)) {
+                    GUILayout.Space(2);
+                    GUILayout.BeginVertical(nestedCardBoxStyle);
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label("<b>积分器参数:</b>", labelValueStyle, GUILayout.Width(75));
+                    GUILayout.Label($"类型: <color=#38bdf8>RungeKutta89</color> | 精度: <color=#38bdf8>1e-11</color> | 最大步长: <color=#38bdf8>{(step.propagator == "LEOProp" ? "2700s" : step.propagator == "CislunarProp" ? "7200s" : "10800s")}</color>", labelValueStyle);
+                    GUILayout.FlexibleSpace();
+                    GUILayout.EndHorizontal();
 
-                if (GUILayout.Button("📋 选择参数 (GMAT 官方动力学库)...", secondaryButtonStyle, GUILayout.Height(20))) {
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label("<b>引力场微扰:</b>", labelValueStyle, GUILayout.Width(75));
+                    GUILayout.Label($"中心天体: <b>{(step.propagator == "LunarNRHOProp" ? "Luna" : "Earth")}</b> | 摄动质点: {{Earth, Luna, Sun, Jupiter}} | 太阳光压: 开启", labelValueStyle);
+                    GUILayout.FlexibleSpace();
+                    GUILayout.EndHorizontal();
+                    GUILayout.EndVertical();
+                    GUILayout.Space(2);
+                }
+
+                // 2. Stop Condition Input with Floating Autocomplete
+                GUILayout.Space(3);
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("<color=#38bdf8><b>停止条件 (Stop Condition):</b></color>", labelValueStyle, GUILayout.Width(155));
+
+                GUI.SetNextControlName($"PropStopInput_{i}");
+                string prevStop = step.stop_type ?? "Time";
+                string newStop = GUILayout.TextField(prevStop, GUILayout.Width(220), GUILayout.Height(20));
+                if (newStop != prevStop) {
+                    step.stop_type = newStop;
+                }
+
+
+
+                if (GUILayout.Button("📋 参数库...", secondaryButtonStyle, GUILayout.Width(75), GUILayout.Height(20))) {
                     OpenParamPicker(i, "stop");
                 }
+
+                GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
 
-                if (step.stop_type == "Time" || step.stop_type == "ElapsedSecs") {
+                // 3. Quick Preset Pills for Fast Common Setup
+                GUILayout.Space(2);
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("<color=#94a3b8>快捷预设:</color>", labelValueStyle, GUILayout.Width(60));
+
+                string[] stopPills = new string[] { "⏱️ 秒数", "📅 天数", "🔻 近拱点", "🔺 远拱点", "🌐 升交点", "📏 高度", "📐 距离" };
+                string[] stopPillVals = new string[] { "ElapsedSecs", "ElapsedDays", "Periapsis", "Apoapsis", "Node", "Altitude", "RMAG" };
+
+                for (int sp = 0; sp < stopPills.Length; sp++) {
+                    string pv = stopPillVals[sp];
+                    bool isPillActive = (step.stop_type == pv) || (step.stop_type != null && step.stop_type.EndsWith(pv));
+                    GUI.backgroundColor = isPillActive ? new Color(0.2f, 0.7f, 0.9f) : Color.white;
+                    if (GUILayout.Button(stopPills[sp], secondaryButtonStyle, GUILayout.Height(18))) {
+                        step.stop_type = pv;
+                        if (pv == "ElapsedSecs" && step.duration <= 0) step.duration = 1800.0;
+                        if (pv == "ElapsedDays" && step.duration <= 0) step.duration = 4.5;
+                        if (pv == "Altitude" && step.target_val <= 0) step.target_val = 35786.0;
+                        if (pv == "RMAG" && step.target_val <= 0) step.target_val = 6000.0;
+                    }
+                    GUI.backgroundColor = Color.white;
+                }
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+
+                // 4. Reference Body Chips (for Periapsis, Apoapsis, RMAG, Altitude, etc.)
+                bool hasBodyRef = (step.stop_type != null && (step.stop_type.Contains("Periapsis") || step.stop_type.Contains("Apoapsis") || step.stop_type.Contains("RMAG") || step.stop_type.Contains("Altitude") || step.stop_type.Contains("Rad") || step.stop_type.Contains("Node")));
+                if (hasBodyRef) {
+                    GUILayout.Space(2);
                     GUILayout.BeginHorizontal();
-                    GUILayout.Label("经过秒数 (s):", labelValueStyle, GUILayout.Width(90));
-                    string sVal = GUILayout.TextField(step.duration.ToString("F0"), GUILayout.Width(75));
-                    double.TryParse(sVal, out step.duration);
-                    GUILayout.Label("(指定秒数后停止)", labelValueStyle);
+                    GUILayout.Label("<color=#94a3b8>参考天体:</color>", labelValueStyle, GUILayout.Width(60));
+
+                    string[] refBodies = new string[] { "Earth", "Luna", "Sun", "Mars", "Jupiter" };
+                    string[] refBodyLabels = new string[] { "🌍 Earth", "🌙 Luna", "☀️ Sun", "🔴 Mars", "⚡ Jupiter" };
+
+                    for (int rb = 0; rb < refBodies.Length; rb++) {
+                        string rbn = refBodies[rb];
+                        bool hasPrefix = step.stop_type.StartsWith(rbn + ".") || step.stop_type.StartsWith("Sat." + rbn + ".");
+                        GUI.backgroundColor = hasPrefix ? new Color(0.2f, 0.8f, 0.5f) : Color.white;
+                        if (GUILayout.Button(refBodyLabels[rb], secondaryButtonStyle, GUILayout.Height(18))) {
+                            // Extract pure parameter without body
+                            string pureParam = step.stop_type;
+                            if (pureParam.Contains(".")) {
+                                pureParam = pureParam.Substring(pureParam.LastIndexOf('.') + 1);
+                            }
+                            step.stop_type = $"{rbn}.{pureParam}";
+                        }
+                        GUI.backgroundColor = Color.white;
+                    }
+                    GUILayout.FlexibleSpace();
                     GUILayout.EndHorizontal();
-                } else if (step.stop_type == "Days" || step.stop_type == "ElapsedDays") {
+                }
+
+                // 5. Dynamic Value & Tolerance Section
+                GUILayout.Space(2);
+                string curStopType = step.stop_type ?? "Time";
+                bool isTimeType = (curStopType == "Time" || curStopType == "ElapsedSecs" || curStopType.EndsWith(".ElapsedSecs"));
+                bool isDaysType = (curStopType == "Days" || curStopType == "ElapsedDays" || curStopType.EndsWith(".ElapsedDays"));
+                bool isApoType = (curStopType == "Apoapsis" || curStopType.EndsWith(".Apoapsis"));
+                bool isPeriType = (curStopType == "Periapsis" || curStopType.EndsWith(".Periapsis"));
+                bool isNodeType = (curStopType == "Node" || curStopType == "Latitude_Zero" || curStopType.EndsWith(".Node") || curStopType.EndsWith(".Latitude"));
+
+                if (isTimeType) {
                     GUILayout.BeginHorizontal();
-                    GUILayout.Label("经过天数 (d):", labelValueStyle, GUILayout.Width(90));
-                    string sVal = GUILayout.TextField(step.duration.ToString("F2"), GUILayout.Width(75));
+                    GUILayout.Label("持续秒数 (s):", labelValueStyle, GUILayout.Width(90));
+                    string sVal = GUILayout.TextField(step.duration.ToString("F1"), GUILayout.Width(80));
                     double.TryParse(sVal, out step.duration);
-                    GUILayout.Label("(地月转移/星际巡航)", labelValueStyle);
+                    GUILayout.Label("<color=#94a3b8>(积分运行指定时间秒数后停止)</color>", labelValueStyle);
+                    GUILayout.FlexibleSpace();
                     GUILayout.EndHorizontal();
-                } else if (step.stop_type == "Apoapsis") {
-                    GUILayout.Label("<color=#38bdf8>▶ 自动积分至轨道最高点 (远地点/远心点)</color>", labelValueStyle);
-                } else if (step.stop_type == "Periapsis") {
-                    GUILayout.Label("<color=#38bdf8>▶ 自动积分至轨道最低点 (近地点/近心点)</color>", labelValueStyle);
-                } else if (step.stop_type == "Node") {
-                    GUILayout.Label("<color=#38bdf8>▶ 自动积分至赤道交点 (Latitude = 0°)</color>", labelValueStyle);
+                } else if (isDaysType) {
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label("持续天数 (d):", labelValueStyle, GUILayout.Width(90));
+                    string sVal = GUILayout.TextField(step.duration.ToString("F3"), GUILayout.Width(80));
+                    double.TryParse(sVal, out step.duration);
+                    GUILayout.Label("<color=#94a3b8>(地月转移 / 深空星际巡航飞行时间)</color>", labelValueStyle);
+                    GUILayout.FlexibleSpace();
+                    GUILayout.EndHorizontal();
+                } else if (isApoType) {
+                    GUILayout.Label("<color=#38bdf8>▶ 自动数值积分至轨道最高点 (远地点 / 远心点 Apoapsis 瞬时状态)</color>", labelValueStyle);
+                } else if (isPeriType) {
+                    GUILayout.Label("<color=#38bdf8>▶ 自动数值积分至轨道最低点 (近地点 / 近心点 Periapsis 瞬时状态)</color>", labelValueStyle);
+                } else if (isNodeType) {
+                    GUILayout.Label("<color=#38bdf8>▶ 自动数值积分至赤道交点 (Latitude = 0.0° / Equatorial Crossing)</color>", labelValueStyle);
                 } else {
                     GUILayout.BeginHorizontal();
-                    GUILayout.Label("目标数值:", labelValueStyle, GUILayout.Width(75));
-                    string sVal = GUILayout.TextField(step.target_val.ToString("F2"), GUILayout.Width(75));
+                    GUILayout.Label("目标数值:", labelValueStyle, GUILayout.Width(70));
+                    string sVal = GUILayout.TextField(step.target_val.ToString("F2"), GUILayout.Width(80));
                     double.TryParse(sVal, out step.target_val);
-                    GUILayout.Label("容差:", labelValueStyle, GUILayout.Width(40));
-                    string sTol = GUILayout.TextField(step.stop_tolerance.ToString("G3"), GUILayout.Width(65));
+
+                    GUILayout.Label("停止容差:", labelValueStyle, GUILayout.Width(65));
+                    string sTol = GUILayout.TextField(step.stop_tolerance.ToString("G4"), GUILayout.Width(70));
                     double.TryParse(sTol, out step.stop_tolerance);
+
+                    GUILayout.Label("<color=#94a3b8>(支持如 Altitude [km], RMAG [km], TA [deg], Z [km] 等)</color>", labelValueStyle);
+                    GUILayout.FlexibleSpace();
                     GUILayout.EndHorizontal();
                 }
-            } else if (step.type == "Vary") {
-                GUILayout.BeginHorizontal();
-                GUILayout.Label("寻优变量:", labelValueStyle, GUILayout.Width(75));
-                GUI.SetNextControlName($"VaryInput_{i}");
-                string prevVary = step.vary_variable ?? "burntime";
-                string newVary = GUILayout.TextField(prevVary, GUILayout.Width(160));
-                step.vary_variable = newVary;
-
-                if (Event.current.type == EventType.Repaint) {
-                    Rect r = GUILayoutUtility.GetLastRect();
-                    if (GUI.GetNameOfFocusedControl() == $"VaryInput_{i}") {
-                        intelliSenseAnchorRect = r;
-                    }
-                }
-                string focusedVary = GUI.GetNameOfFocusedControl();
-                if (focusedVary == $"VaryInput_{i}") {
-                    if (focusedVary != intelliSenseLastFocusedControl) {
-                        intelliSenseLastFocusedControl = focusedVary;
-                        intelliSenseDismissed = false;
-                    }
-                    if (!intelliSenseDismissed) {
-                        if (!intelliSenseOpen || intelliSenseTargetStepIndex != i || intelliSenseFieldName != "vary" || intelliSenseLastQuery != newVary) {
-                            intelliSenseOpen = true;
-                            intelliSenseTargetStepIndex = i;
-                            intelliSenseFieldName = "vary";
-                            intelliSenseLastQuery = newVary;
-                            intelliSenseItems = GMATParameterRegistry.QueryIntelliSense(newVary, FlightGlobals.ActiveVessel);
-                            intelliSenseSelectedIndex = 0;
-                            intelliSenseScroll = Vector2.zero;
-                        }
-                    } else if (newVary != intelliSenseLastQuery) {
-                        intelliSenseDismissed = false;
-                        intelliSenseOpen = true;
-                        intelliSenseTargetStepIndex = i;
-                        intelliSenseFieldName = "vary";
-                        intelliSenseLastQuery = newVary;
-                        intelliSenseItems = GMATParameterRegistry.QueryIntelliSense(newVary, FlightGlobals.ActiveVessel);
-                        intelliSenseSelectedIndex = 0;
-                        intelliSenseScroll = Vector2.zero;
-                    }
-                }
-
-                if (GUILayout.Button("📋 参数库...", secondaryButtonStyle, GUILayout.Width(80), GUILayout.Height(20))) {
-                    OpenParamPicker(i, "variable");
-                }
-
-                GUILayout.Label("初猜:", labelValueStyle, GUILayout.Width(40));
-                string sInit = GUILayout.TextField(step.vary_initial.ToString("F1"), GUILayout.Width(55));
-                double.TryParse(sInit, out step.vary_initial);
-
-                GUILayout.Label("扰动:", labelValueStyle, GUILayout.Width(40));
-                string sPert = GUILayout.TextField(step.vary_perturbation.ToString("G2"), GUILayout.Width(50));
-                double.TryParse(sPert, out step.vary_perturbation);
-                GUILayout.EndHorizontal();
-
-                GUILayout.BeginHorizontal();
-                GUILayout.Label("下界 (Lower):", labelValueStyle, GUILayout.Width(75));
-                string sLow = GUILayout.TextField(step.vary_lower.ToString("F1"), GUILayout.Width(55));
-                double.TryParse(sLow, out step.vary_lower);
-
-                GUILayout.Label("上界 (Upper):", labelValueStyle, GUILayout.Width(75));
-                string sUp = GUILayout.TextField(step.vary_upper.ToString("F1"), GUILayout.Width(55));
-                double.TryParse(sUp, out step.vary_upper);
-
-                GUILayout.Label("最大步长:", labelValueStyle, GUILayout.Width(60));
-                string sMax = GUILayout.TextField(step.vary_max_step.ToString("F1"), GUILayout.Width(50));
-                double.TryParse(sMax, out step.vary_max_step);
-                bool showVaryPills = expandedStepPills.Contains(i);
-                if (GUILayout.Button(showVaryPills ? "💡 收起标签 ▴" : "💡 变量推荐 ▾", secondaryButtonStyle, GUILayout.Height(20))) {
-                    if (showVaryPills) expandedStepPills.Remove(i);
-                    else expandedStepPills.Add(i);
-                }
-                GUILayout.EndHorizontal();
-
-                // Collapsible Vary Helper Pills (Floating IntelliSense is available at cursor)
-                if (showVaryPills) {
-                    DrawVaryAutocompleteBar(step);
-                }
-            } else if (step.type == "Achieve") {
-                GUILayout.BeginHorizontal();
-                GUILayout.Label("约束目标:", labelValueStyle, GUILayout.Width(75));
-                GUI.SetNextControlName($"AchieveInput_{i}");
-                string prevAchieve = step.achieve_param ?? "Earth.RMAG";
-                string newAchieve = GUILayout.TextField(prevAchieve, GUILayout.Width(180));
-                step.achieve_param = newAchieve;
-
-                if (Event.current.type == EventType.Repaint) {
-                    Rect r = GUILayoutUtility.GetLastRect();
-                    if (GUI.GetNameOfFocusedControl() == $"AchieveInput_{i}") {
-                        intelliSenseAnchorRect = r;
-                    }
-                }
-                string focusedAchieve = GUI.GetNameOfFocusedControl();
-                if (focusedAchieve == $"AchieveInput_{i}") {
-                    if (focusedAchieve != intelliSenseLastFocusedControl) {
-                        intelliSenseLastFocusedControl = focusedAchieve;
-                        intelliSenseDismissed = false;
-                    }
-                    if (!intelliSenseDismissed) {
-                        if (!intelliSenseOpen || intelliSenseTargetStepIndex != i || intelliSenseFieldName != "achieve" || intelliSenseLastQuery != newAchieve) {
-                            intelliSenseOpen = true;
-                            intelliSenseTargetStepIndex = i;
-                            intelliSenseFieldName = "achieve";
-                            intelliSenseLastQuery = newAchieve;
-                            intelliSenseItems = GMATParameterRegistry.QueryIntelliSense(newAchieve, FlightGlobals.ActiveVessel);
-                            intelliSenseSelectedIndex = 0;
-                            intelliSenseScroll = Vector2.zero;
-                        }
-                    } else if (newAchieve != intelliSenseLastQuery) {
-                        intelliSenseDismissed = false;
-                        intelliSenseOpen = true;
-                        intelliSenseTargetStepIndex = i;
-                        intelliSenseFieldName = "achieve";
-                        intelliSenseLastQuery = newAchieve;
-                        intelliSenseItems = GMATParameterRegistry.QueryIntelliSense(newAchieve, FlightGlobals.ActiveVessel);
-                        intelliSenseSelectedIndex = 0;
-                        intelliSenseScroll = Vector2.zero;
-                    }
-                }
-
-                if (GUILayout.Button("📋 目标参数库...", secondaryButtonStyle, GUILayout.Width(95), GUILayout.Height(20))) {
-                    OpenParamPicker(i, "achieve");
-                }
-
-                GUILayout.Label("目标值:", labelValueStyle, GUILayout.Width(50));
-                string sVal = GUILayout.TextField(step.achieve_val.ToString("F2"), GUILayout.Width(70));
-                double.TryParse(sVal, out step.achieve_val);
-
-                GUILayout.Label("容差:", labelValueStyle, GUILayout.Width(40));
-                string sTol = GUILayout.TextField(step.achieve_tolerance.ToString("G2"), GUILayout.Width(55));
-                double.TryParse(sTol, out step.achieve_tolerance);
-                bool showAchievePills = expandedStepPills.Contains(i);
-                if (GUILayout.Button(showAchievePills ? "💡 收起标签 ▴" : "💡 常用标签 ▾", secondaryButtonStyle, GUILayout.Height(20))) {
-                    if (showAchievePills) expandedStepPills.Remove(i);
-                    else expandedStepPills.Add(i);
-                }
-                GUILayout.EndHorizontal();
-
-                // Collapsible Helper Pills (Floating IntelliSense is available at cursor)
-                if (showAchievePills) {
-                    DrawAchieveAutocompleteBar(step);
-                }
-            } else if (step.type == "FiniteBurn") {
-                GUILayout.BeginHorizontal();
-                step.burn_use_vary_var = GUILayout.Toggle(step.burn_use_vary_var, " 使用 Vary 变量控制时长: ", labelValueStyle, GUILayout.Width(170));
-                if (step.burn_use_vary_var) {
-                    step.burn_vary_var_name = GUILayout.TextField(step.burn_vary_var_name ?? "burntime", GUILayout.Width(100));
-                } else {
-                    GUILayout.Label("点火秒数 (s):", labelValueStyle, GUILayout.Width(80));
-                    string sDur = GUILayout.TextField(step.duration.ToString("F0"), GUILayout.Width(65));
-                    double.TryParse(sDur, out step.duration);
-                }
-                GUILayout.Label("(真实质量流与比冲积分)", labelValueStyle);
-                GUILayout.EndHorizontal();
             } else if (step.type == "ImpulsiveBurn") {
                 GUILayout.BeginHorizontal();
                 GUILayout.Label("顺行ΔV (m/s):", labelValueStyle, GUILayout.Width(85));
@@ -3149,6 +3100,110 @@ namespace KSPGMAT.UI {
         }
         private int achieveCategoryTab = 0; // 0: 天体, 1: 坐标系, 2: 航天器, 3: 传播子, 4: 求解器
         private bool showAllBodiesPopup = false;
+
+        private void DrawPropStopAutocompleteBar(MissionStep step) {
+            GUILayout.Space(2);
+            Vessel v = FlightGlobals.ActiveVessel;
+            List<string> allBodies = GMATParameterRegistry.GetAllBodies(v);
+            List<string> allCoords = GMATParameterRegistry.GetAllCoordinateSystems();
+            List<string> allCraft = GMATParameterRegistry.GetAllSpacecraft(v);
+
+            // Row 1: Entity Category Tabs
+            GUILayout.BeginHorizontal();
+            GUILayout.Space(75);
+            GUILayout.Label("<color=#64748b>对象类型:</color>", labelValueStyle, GUILayout.Width(60));
+
+            string[] catTabs = new string[] { "🪐 天体", "📐 坐标系", "🛰️ 航天器" };
+            for (int t = 0; t < catTabs.Length; t++) {
+                bool isSel = (propCategoryTab == t);
+                GUI.backgroundColor = isSel ? new Color(0.2f, 0.7f, 0.9f) : Color.white;
+                if (GUILayout.Button(catTabs[t], secondaryButtonStyle, GUILayout.Height(18))) {
+                    propCategoryTab = t;
+                }
+                GUI.backgroundColor = Color.white;
+            }
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+
+            // Row 2: Selected Category's Chips
+            GUILayout.BeginHorizontal();
+            GUILayout.Space(75);
+            GUILayout.Label("<color=#64748b>补全对象:</color>", labelValueStyle, GUILayout.Width(60));
+
+            if (propCategoryTab == 0) { // 🪐 天体
+                int chipLimit = Math.Min(6, allBodies.Count);
+                for (int b = 0; b < chipLimit; b++) {
+                    string bName = allBodies[b];
+                    string icon = (bName == "Earth") ? "🌍 " : (bName == "Luna" || bName == "Moon") ? "🌙 " : (bName == "Sun") ? "☀️ " : (bName == "Mars") ? "🔴 " : (bName == "Venus") ? "🟡 " : (bName == "Jupiter") ? "⚡ " : "🪐 ";
+                    bool hasPrefix = !string.IsNullOrEmpty(step.stop_type) && step.stop_type.StartsWith(bName + ".");
+                    GUI.backgroundColor = hasPrefix ? new Color(0.2f, 0.7f, 0.9f) : Color.white;
+                    if (GUILayout.Button(icon + bName + ".", secondaryButtonStyle, GUILayout.Height(18))) {
+                        ApplyPropStopPrefix(step, bName);
+                    }
+                    GUI.backgroundColor = Color.white;
+                }
+            } else if (propCategoryTab == 1) { // 📐 坐标系
+                for (int c = 0; c < Math.Min(5, allCoords.Count); c++) {
+                    string cName = allCoords[c];
+                    bool hasPrefix = !string.IsNullOrEmpty(step.stop_type) && step.stop_type.StartsWith(cName + ".");
+                    GUI.backgroundColor = hasPrefix ? new Color(0.2f, 0.7f, 0.9f) : Color.white;
+                    if (GUILayout.Button("📐 " + cName + ".", secondaryButtonStyle, GUILayout.Height(18))) {
+                        ApplyPropStopPrefix(step, cName);
+                    }
+                    GUI.backgroundColor = Color.white;
+                }
+            } else if (propCategoryTab == 2) { // 🛰️ 航天器
+                for (int sc = 0; sc < allCraft.Count; sc++) {
+                    string scName = allCraft[sc];
+                    bool hasPrefix = !string.IsNullOrEmpty(step.stop_type) && step.stop_type.StartsWith(scName + ".");
+                    GUI.backgroundColor = hasPrefix ? new Color(0.2f, 0.7f, 0.9f) : Color.white;
+                    if (GUILayout.Button("🛰️ " + scName + ".", secondaryButtonStyle, GUILayout.Height(18))) {
+                        ApplyPropStopPrefix(step, scName);
+                    }
+                    GUI.backgroundColor = Color.white;
+                }
+            }
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+
+            // Row 3: Dynamic Smart Suggestions based on ALL GMAT cached & realtime objects
+            string curStop = (step.stop_type ?? "").Trim();
+            List<IntelliSenseItem> suggestions = GMATParameterRegistry.QueryIntelliSense(curStop, v);
+            if (suggestions.Count > 0) {
+                GUILayout.Space(1);
+                GUILayout.BeginHorizontal();
+                GUILayout.Space(75);
+                GUILayout.Label("<color=#38bdf8>智能推荐:</color>", labelValueStyle, GUILayout.Width(60));
+                for (int s = 0; s < Math.Min(6, suggestions.Count); s++) {
+                    var sug = suggestions[s];
+                    if (GUILayout.Button(sug.GetIcon() + " " + sug.InsertText, secondaryButtonStyle, GUILayout.Height(18))) {
+                        step.stop_type = sug.InsertText;
+                        if (sug.RecommendedValue != 0) {
+                            step.target_val = sug.RecommendedValue;
+                            step.duration = sug.RecommendedValue;
+                        }
+                    }
+                }
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+            }
+        }
+
+        private void ApplyPropStopPrefix(MissionStep step, string objectPrefix) {
+            string cur = (step.stop_type ?? "").Trim();
+            if (string.IsNullOrEmpty(cur)) {
+                step.stop_type = objectPrefix + ".";
+                return;
+            }
+
+            int dotIdx = cur.IndexOf('.');
+            if (dotIdx >= 0) {
+                string baseParam = cur.Substring(dotIdx + 1);
+                step.stop_type = objectPrefix + "." + baseParam;
+            } else {
+                step.stop_type = objectPrefix + "." + cur;
+            }
+        }
 
         private void DrawAchieveAutocompleteBar(MissionStep step) {
             GUILayout.Space(2);
