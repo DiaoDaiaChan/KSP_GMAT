@@ -3706,7 +3706,7 @@ namespace KSPGMAT.UI {
             intelliSenseTargetStepIndex = stepIndex;
             intelliSenseFieldName = fieldName;
             intelliSenseLastQuery = query;
-            intelliSenseItems = GMATParameterRegistry.QueryIntelliSense(query, FlightGlobals.ActiveVessel);
+            intelliSenseItems = GMATParameterRegistry.QueryIntelliSense(query, FlightGlobals.ActiveVessel, fieldName);
             intelliSenseSelectedIndex = 0;
             intelliSenseOpen = (intelliSenseItems != null && intelliSenseItems.Count > 0);
         }

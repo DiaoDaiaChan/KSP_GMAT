@@ -405,6 +405,10 @@ namespace KSPGMAT {
                 List<GMATParam> newParams = new List<GMATParam>();
 
                 foreach (var p in rawParams) {
+                    // Filter out pure stopping condition events from Achieve catalog
+                    if (p.name == "Apoapsis" || p.name == "Periapsis" || p.name == "Node" || p.name == "AscendingNode" || p.name == "DescendingNode") {
+                        continue;
+                    }
                     string cat = (I18n.Current == I18n.Lang.EN) ? p.category_en : p.category_zh;
                     if (string.IsNullOrEmpty(cat)) cat = p.category_zh ?? "动力学参数";
                     catSet.Add(cat);
@@ -1001,7 +1005,7 @@ namespace KSPGMAT {
             return res;
         }
 
-        public static List<IntelliSenseItem> QueryIntelliSense(string text, Vessel vessel = null) {
+        public static List<IntelliSenseItem> QueryIntelliSense(string text, Vessel vessel = null, string contextMode = null) {
             List<IntelliSenseItem> items = new List<IntelliSenseItem>();
             List<string> allBodies = GetAllBodies(vessel);
             List<string> allCoords = GetAllCoordinateSystems();
@@ -1081,19 +1085,66 @@ namespace KSPGMAT {
                         // Sub-case A2: p1 is a Celestial Body (e.g. "Sat.Earth.SMA", "Sat.Luna.RadApo")
                         bool isBody = allBodies.Exists(b => b.Equals(p1, StringComparison.OrdinalIgnoreCase));
                         if (isBody) {
-                            string[] bodyElements = new string[] { "SMA", "ECC", "INC", "RAAN", "AOP", "TA", "Altitude", "RMAG", "RadApo", "RadPer", "Apoapsis", "Periapsis", "OrbitPeriod", "C3Energy", "Energy" };
-                            string[] bodyUnits = new string[] { "[Km]", "[Unitless]", "[Deg]", "[Deg]", "[Deg]", "[Deg]", "[Km]", "[Km]", "[Km]", "[Km]", "[Km]", "[Km]", "[s]", "[Km²/s²]", "[Km²/s²]" };
-                            string[] bodyDocsZh = new string[] {
-                                "开普勒轨道半长轴", "轨道偏心率", "轨道倾角", "升交点赤经", "近心点幅角", "真近点角",
-                                "距海平面高度", "距质心轨道半径模长", "远心点半径", "近心点半径", "远拱点高度", "近拱点高度",
-                                "开普勒轨道运行周期", "特征能量 C3 (双曲线逃逸指标)", "轨道比机械能"
-                            };
-                            string[] bodyDocsEn = new string[] {
-                                "Semi-major axis", "Orbital eccentricity", "Orbit inclination", "RAAN", "Argument of periapsis", "True anomaly",
-                                "Altitude above surface", "Radial distance from center", "Apoapsis radius", "Periapsis radius", "Apoapsis altitude", "Periapsis altitude",
-                                "Orbital period", "Characteristic energy C3", "Specific mechanical energy"
-                            };
-                            double[] bodyDefs = new double[] { 42164.0, 0.0, 28.5, 0.0, 0.0, 0.0, 35786.0, 42164.0, 42164.0, 6578.0, 35786.0, 200.0, 86164.0, 0.0, -10.0 };
+                            string[] bodyElements;
+                            string[] bodyUnits;
+                            string[] bodyDocsZh;
+                            string[] bodyDocsEn;
+                            double[] bodyDefs;
+
+                            if (contextMode == "achieve") {
+                                // STRICT ACHIEVE PARAMETERS: Continuous differentiable goals only! (NO Apoapsis/Periapsis/Node events)
+                                bodyElements = new string[] {
+                                    "Altitude", "RMAG", "RadApo", "RadPer", "SMA", "ECC", "INC", "RAAN", "AOP", "TA", "EA", "MA",
+                                    "VelApoapsis", "VelPeriapsis", "VMAG", "OrbitPeriod", "C3Energy", "Energy", "Latitude", "Longitude", "BetaAngle", "BdotT", "BdotR"
+                                };
+                                bodyUnits = new string[] {
+                                    "[Km]", "[Km]", "[Km]", "[Km]", "[Km]", "[Unitless]", "[Deg]", "[Deg]", "[Deg]", "[Deg]", "[Deg]", "[Deg]",
+                                    "[Km/s]", "[Km/s]", "[Km/s]", "[s]", "[Km²/s²]", "[Km²/s²]", "[Deg]", "[Deg]", "[Deg]", "[Km]", "[Km]"
+                                };
+                                bodyDocsZh = new string[] {
+                                    "距天体地表高度 (如 35786 km GTO / 400 km LEO)", "距天体质心地心距模长 (如 42164 km GEO)", "远心点地心距 (Apoapsis Radius)", "近心点地心距 (Periapsis Radius)",
+                                    "开普勒轨道半长轴", "轨道偏心率", "轨道倾角", "升交点赤经", "近心点幅角", "真近点角", "偏近点角", "平近点角",
+                                    "远心点轨道速度", "近心点轨道速度", "轨道瞬时速度模长", "开普勒轨道运行周期", "特征能量 C3 (逃逸指标)", "轨道比机械能",
+                                    "空间大地纬度 (赤道面夹角)", "空间大地经度", "太阳Beta角 (光照几何)", "深空飞越 B平面 T 轴截距", "深空飞越 B平面 R 轴截距"
+                                };
+                                bodyDocsEn = new string[] {
+                                    "Altitude above surface", "Radial distance from center", "Apoapsis radius", "Periapsis radius",
+                                    "Semi-major axis", "Orbital eccentricity", "Orbit inclination", "RAAN", "Argument of periapsis", "True anomaly", "Eccentric anomaly", "Mean anomaly",
+                                    "Velocity at apoapsis", "Velocity at periapsis", "Instantaneous velocity magnitude", "Orbital period", "Characteristic energy C3", "Specific mechanical energy",
+                                    "Latitude relative to equator", "Longitude", "Sun beta angle", "B-plane BdotT", "B-plane BdotR"
+                                };
+                                bodyDefs = new double[] {
+                                    35786.0, 42164.0, 42164.14, 6578.14, 24371.0, 0.73, 28.5, 105.0, 180.0, 0.0, 0.0, 0.0,
+                                    1.60, 10.2, 7.78, 37800.0, 0.0, -8.18, 0.0, 120.0, 23.5, 0.0, 6000.0
+                                };
+                            } else {
+                                // PROP STOP CONDITIONS: Includes pure orbital root-finding events + thresholds!
+                                bodyElements = new string[] {
+                                    "Apoapsis", "Periapsis", "Node", "AscendingNode", "DescendingNode",
+                                    "Altitude", "RMAG", "RadApo", "RadPer", "SMA", "ECC", "INC", "RAAN", "AOP", "TA", "Latitude",
+                                    "OrbitPeriod", "C3Energy", "Energy"
+                                };
+                                bodyUnits = new string[] {
+                                    "[Event]", "[Event]", "[Event]", "[Event]", "[Event]",
+                                    "[Km]", "[Km]", "[Km]", "[Km]", "[Km]", "[Unitless]", "[Deg]", "[Deg]", "[Deg]", "[Deg]", "[Deg]",
+                                    "[s]", "[Km²/s²]", "[Km²/s²]"
+                                };
+                                bodyDocsZh = new string[] {
+                                    "● 极值事件: 自动精确积分至远地点 (无需设值)", "● 极值事件: 自动精确积分至近地点 (无需设值)", "● 极值事件: 自动精确积分至赤道交点 (纬度=0)", "● 几何事件: 升交点", "● 几何事件: 降交点",
+                                    "到达目标高度", "到达目标地心距模长", "到达远心点半径", "到达近心点半径", "到达目标半长轴", "到达目标偏心率", "到达目标轨道倾角", "到达目标升交点赤经", "到达目标近心点幅角", "到达目标真近点角", "到达目标纬度",
+                                    "到达轨道周期", "到达特征能量 C3", "到达比机械能"
+                                };
+                                bodyDocsEn = new string[] {
+                                    "Event: Coast to Apoapsis", "Event: Coast to Periapsis", "Event: Coast to Equatorial Node", "Event: Ascending Node", "Event: Descending Node",
+                                    "Target altitude", "Target radial distance", "Target apoapsis radius", "Target periapsis radius", "Target semi-major axis", "Target eccentricity", "Target inclination", "Target RAAN", "Target AOP", "Target true anomaly", "Target latitude",
+                                    "Target orbital period", "Target C3 energy", "Target specific energy"
+                                };
+                                bodyDefs = new double[] {
+                                    0.0, 0.0, 0.0, 0.0, 0.0,
+                                    35786.0, 42164.0, 42164.0, 6578.0, 42164.0, 0.0, 28.5, 0.0, 0.0, 0.0, 0.0,
+                                    86164.0, 0.0, -10.0
+                                };
+                            }
 
                             for (int k = 0; k < bodyElements.Length; k++) {
                                 string be = bodyElements[k];
