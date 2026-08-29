@@ -2167,6 +2167,11 @@ namespace KSPGMAT.UI {
                     OpenParamPicker(i, "prop_stop");
                 }
 
+                string propBadge = GMATParameterRegistry.GetParamBadgeI18n(step.stop_type);
+                if (!string.IsNullOrEmpty(propBadge)) {
+                    GUILayout.Label($"<color=#38bdf8><b>| {propBadge}</b></color>", labelValueStyle);
+                }
+
                 if (IsPureOrbitalEvent(step.stop_type)) {
                     GUILayout.Label("<color=#34d399><b>● 极值事件 (自动精确积分至最高/低点，无需设值)</b></color>", labelValueStyle);
                 } else {
@@ -2188,7 +2193,12 @@ namespace KSPGMAT.UI {
 
                 GUI.SetNextControlName($"Field_Vary_{i}");
                 string prevVary = step.vary_variable ?? "burntime";
-                string newVary = GUILayout.TextField(prevVary, GUILayout.Width(180), GUILayout.Height(20));
+                string newVary = GUILayout.TextField(prevVary, GUILayout.Width(150), GUILayout.Height(20));
+
+                string varyBadge = GMATParameterRegistry.GetParamBadgeI18n(step.vary_variable);
+                if (!string.IsNullOrEmpty(varyBadge)) {
+                    GUILayout.Label($"<color=#38bdf8><b>| {varyBadge}</b></color>", labelValueStyle);
+                }
 
                 if (Event.current.type == EventType.Repaint) {
                     if (GUI.GetNameOfFocusedControl() == $"Field_Vary_{i}") {
@@ -2300,6 +2310,11 @@ namespace KSPGMAT.UI {
 
                 if (GUILayout.Button("📋 参数库...", secondaryButtonStyle, GUILayout.Width(75), GUILayout.Height(20))) {
                     OpenParamPicker(i, "achieve");
+                }
+
+                string achBadge = GMATParameterRegistry.GetParamBadgeI18n(step.achieve_param);
+                if (!string.IsNullOrEmpty(achBadge)) {
+                    GUILayout.Label($"<color=#38bdf8><b>| {achBadge}</b></color>", labelValueStyle);
                 }
 
                 GUILayout.FlexibleSpace();

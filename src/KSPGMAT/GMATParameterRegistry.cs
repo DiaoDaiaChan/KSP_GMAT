@@ -632,6 +632,112 @@ namespace KSPGMAT {
             };
         }
 
+                private static readonly Dictionary<string, string> ParameterI18nMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+            { "apoapsis", "远心点 / 远地点 (速度极小值点)" },
+            { "apo", "远心点 (速度极小值点)" },
+            { "radapo", "远心点半径 (km)" },
+            { "velapoapsis", "远心点速度 (km/s)" },
+            { "periapsis", "近心点 / 近地点 (速度极大值点)" },
+            { "per", "近心点 (速度极大值点)" },
+            { "radper", "近心点半径 (km)" },
+            { "velperiapsis", "近心点速度 (km/s)" },
+            { "node", "赤道升降交点 (纬度=0°)" },
+            { "ascendingnode", "升交点 (纬度自南向北穿过赤道)" },
+            { "descendingnode", "降交点 (纬度自北向南穿过赤道)" },
+            { "latitude_zero", "赤道面穿过点 (纬度=0°)" },
+            { "equatorialnode", "赤道面升降交点 (纬度=0°)" },
+            { "altitude", "几何高度 (km)" },
+            { "alt", "高度 (km)" },
+            { "rmag", "质心距离矢径模长 (km)" },
+            { "radius", "质心距离 (km)" },
+            { "sma", "轨道半长轴 (km)" },
+            { "semimajoraxis", "轨道半长轴 (km)" },
+            { "ecc", "轨道偏心率 / 离心率" },
+            { "eccentricity", "偏心率" },
+            { "inc", "轨道倾角 (°)" },
+            { "inclination", "轨道倾角 (°)" },
+            { "raan", "升交点赤经 (°)" },
+            { "aop", "近心点幅角 (°)" },
+            { "argofperiapsis", "近地点/近心点幅角 (°)" },
+            { "ta", "真近点角 (°)" },
+            { "trueanomaly", "真近点角 (°)" },
+            { "ea", "偏近点角 (°)" },
+            { "eccentricanomaly", "偏近点角 (°)" },
+            { "ma", "平近点角 (°)" },
+            { "meananomaly", "平近点角 (°)" },
+            { "orbitperiod", "轨道周期 (s)" },
+            { "period", "轨道周期 (s)" },
+            { "latitude", "星下点地理纬度 (°)" },
+            { "lat", "地理纬度 (°)" },
+            { "longitude", "星下点地理经度 (°)" },
+            { "lon", "地理经度 (°)" },
+            { "elapsedsecs", "任务流逝时间 (s)" },
+            { "elapseddays", "任务流逝天数 (d)" },
+            { "time", "传播时长 (s)" },
+            { "days", "传播天数 (d)" },
+            { "epoch", "绝对历元 (UTCGregorian)" },
+            { "utc_epoch", "绝对历元 (UTCGregorian)" },
+            { "utc", "世界时 UTC" },
+            { "utcgregorian", "公历历元字符串" },
+            { "a1modjulian", "A1 修正儒略日 (MJD)" },
+            { "taimodjulian", "TAI 修正儒略日 (MJD)" },
+            { "utcmodjulian", "UTC 修正儒略日 (MJD)" },
+            { "totalmass", "航天器总质量 (kg)" },
+            { "drymass", "航天器干质量 (kg)" },
+            { "fuelmass", "推进剂剩余质量 (kg)" },
+            { "burntime", "主发动机有限点火时长 (s)" },
+            { "duration", "持续时长 (s)" },
+            { "energy", "比轨道能量 (km²/s²)" },
+            { "c3energy", "逃逸特征能量 C3 (km²/s²)" },
+            { "c3", "特征能量 C3 (km²/s²)" },
+            { "betaangle", "轨道太阳 Beta 角 (°)" },
+            { "bdott", "B 平面 T 轴截距 (km)" },
+            { "bdotr", "B 平面 R 轴截距 (km)" },
+            { "x", "位置 X 分量 (km)" },
+            { "y", "位置 Y 分量 (km)" },
+            { "z", "位置 Z 分量 (km)" },
+            { "vx", "速度 VX 分量 (km/s)" },
+            { "vy", "速度 VY 分量 (km/s)" },
+            { "vz", "速度 VZ 分量 (km/s)" },
+            { "ax", "加速度 AX (km/s²)" },
+            { "ay", "加速度 AY (km/s²)" },
+            { "az", "加速度 AZ (km/s²)" },
+            { "delta_v", "机动速度增量 ΔV (m/s)" }
+        };
+
+        /// <summary>
+        /// Retrieves concise Chinese technical annotation for any parameter, stop condition, or variable.
+        /// Handles dot-syntax paths (e.g. Sat.Earth.Apoapsis, Sat.Luna.Altitude, EarthMoonRot.Z, burntime).
+        /// </summary>
+        public static string GetParamBadgeI18n(string key) {
+            if (string.IsNullOrEmpty(key)) return "";
+            string clean = key.Trim();
+            string[] parts = clean.Split('.');
+            string field = parts[parts.Length - 1].Trim();
+            string bodyOrCoord = parts.Length >= 2 ? parts[parts.Length - 2].Trim() : "";
+
+            string badge = "";
+            string normField = field.ToLower().Replace("_", "");
+            if (ParameterI18nMap.ContainsKey(normField)) {
+                badge = ParameterI18nMap[normField];
+            } else {
+                foreach (var kv in ParameterI18nMap) {
+                    if (normField.Contains(kv.Key) || kv.Key.Contains(normField)) {
+                        badge = kv.Value;
+                        break;
+                    }
+                }
+            }
+
+            if (!string.IsNullOrEmpty(badge)) {
+                if (!string.IsNullOrEmpty(bodyOrCoord) && !bodyOrCoord.Equals("Sat", StringComparison.OrdinalIgnoreCase) && !bodyOrCoord.Equals("Vessel", StringComparison.OrdinalIgnoreCase)) {
+                    return $"{bodyOrCoord} | {badge}";
+                }
+                return badge;
+            }
+            return "";
+        }
+
         public static PropStopDef GetStopDef(string key) {
             if (string.IsNullOrEmpty(key)) return AllPropStopDefs.Count > 0 ? AllPropStopDefs[0] : new PropStopDef();
             for (int i = 0; i < AllPropStopDefs.Count; i++) {
