@@ -2334,6 +2334,47 @@ namespace KSPGMAT.UI {
                 GUILayout.Label("<color=#94a3b8>(NASA GMAT 工业打靶收敛门限)</color>", labelValueStyle);
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
+
+                // Achieve Solver Selector Row (NASA GMAT Standard)
+                GUILayout.Space(2);
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("绑定求解器 (Solver):", labelValueStyle, GUILayout.Width(130));
+
+                string parentDcAch = GetParentTargetDcName(i);
+                string currentAchDc = string.IsNullOrEmpty(step.dc_name) ? parentDcAch : step.dc_name;
+
+                List<string> activeSolversAch = GetActiveSolverNames();
+                for (int s = 0; s < activeSolversAch.Count; s++) {
+                    string sName = activeSolversAch[s];
+                    bool isSel = (currentAchDc == sName);
+                    if (GUILayout.Button(sName, isSel ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(18))) {
+                        step.dc_name = sName;
+                    }
+                }
+
+                GUILayout.Label("自定义:", labelValueStyle, GUILayout.Width(45));
+                string newAchDc = GUILayout.TextField(currentAchDc, GUILayout.Width(90), GUILayout.Height(18));
+                if (newAchDc != currentAchDc) {
+                    step.dc_name = newAchDc;
+                }
+
+                if (!string.IsNullOrEmpty(parentDcAch) && step.dc_name != parentDcAch) {
+                    if (GUILayout.Button($"↺ 重置为所在 Target 块 ({parentDcAch})", secondaryButtonStyle, GUILayout.Height(18))) {
+                        step.dc_name = parentDcAch;
+                    }
+                }
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+
+                // Display Solved Achieve Goal if Available
+                if (latestResult != null && latestResult.success && latestResult.dc_summary != null && latestResult.dc_summary.achieved > 0) {
+                    var dcs = latestResult.dc_summary;
+                    GUILayout.Space(2);
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label($"<color=#34d399><b>🎯 打靶达成值: {dcs.achieved:F2}</b></color> <color=#94a3b8>(目标值: {dcs.desired:F2} | 残差: {dcs.variance:F4} | 迭代: {dcs.iterations} 次收敛)</color>", labelValueStyle);
+                    GUILayout.FlexibleSpace();
+                    GUILayout.EndHorizontal();
+                }
             }
 
             // =========================================================================
