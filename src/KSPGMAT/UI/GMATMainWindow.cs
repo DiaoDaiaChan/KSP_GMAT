@@ -2409,6 +2409,15 @@ namespace KSPGMAT.UI {
                         bool isCurTank = (step.bound_tank == tkId) || (string.IsNullOrEmpty(step.bound_tank) && tk == 0);
                         if (GUILayout.Button($"⛽ Stage {tnk.stageNumber} ({tnk.fuelMassKg:F0}kg 燃料)", isCurTank ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
                             step.bound_tank = tkId;
+                            // Auto-select stage with this fuel tank
+                            if (cachedStages != null) {
+                                for (int s = 0; s < cachedStages.Count; s++) {
+                                    if (cachedStages[s].stageNumber == tnk.stageNumber && !selectedStageIndices.Contains(s)) {
+                                        selectedStageIndices.Add(s);
+                                    }
+                                }
+                            }
+                            ScreenMessages.PostScreenMessage($"⛽ 已同步供油储罐: Stage {tnk.stageNumber} ({tnk.fuelMassKg:F0}kg)", 2.0f, ScreenMessageStyle.UPPER_CENTER);
                         }
                     }
                 } else {
@@ -2475,6 +2484,19 @@ namespace KSPGMAT.UI {
                         if (GUILayout.Button($"🚀 {eng.title} ({eng.thrustKN:F0}kN / {eng.ispVac:F0}s)", isCurEng ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
                             step.bound_thruster = engId;
                             step.burn_isp = eng.ispVac;
+                            step.burn_decrement_mass = true;
+                            selectedEngineIndex = eg;
+                            // Auto-sync staging to the active engine stage
+                            selectedStageIndices.Clear();
+                            if (cachedStages != null) {
+                                for (int s = 0; s < cachedStages.Count; s++) {
+                                    if (cachedStages[s].stageNumber == eng.stageNumber || cachedStages[s].fuelMassTonnes > 0.05) {
+                                        selectedStageIndices.Add(s);
+                                    }
+                                }
+                            }
+                            if (selectedStageIndices.Count == 0) selectedStageIndices.Add(0);
+                            ScreenMessages.PostScreenMessage($"🚀 已同步发动机: {eng.title} (推力: {eng.thrustKN:F0}kN | 比冲: {eng.ispVac:F0}s)", 2.0f, ScreenMessageStyle.UPPER_CENTER);
                         }
                     }
                 } else {

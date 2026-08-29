@@ -356,26 +356,31 @@ namespace KSPGMAT {
 
                     double ut = Planetarium.GetUniversalTime();
 
-                    // Multi-stage mass calculation
-                    double dryMassKg = 0;
-                    double fuelMassKg = 0;
+                    // Ground-Truth Physical Spacecraft Mass Calculation
+                    double totalVesselWetMassKg = (vessel != null) ? vessel.totalMass * 1000.0 : 0.0;
+                    double fuelMassKg = 0.0;
+                    double dryMassKg = 0.0;
 
-                    if (selectedStages != null && selectedStages.Count > 0) {
-                        double minDryTonnes = double.MaxValue;
-                        double sumFuelTonnes = 0.0;
+                    // Determine active fuel mass from selected engine or stage
+                    if (engine != null && engine.fuelMassKg > 0) {
+                        fuelMassKg = engine.fuelMassKg;
+                    } else if (selectedStages != null && selectedStages.Count > 0) {
                         foreach (var st in selectedStages) {
-                            sumFuelTonnes += st.fuelMassTonnes;
-                            if (st.dryMassTonnes < minDryTonnes) minDryTonnes = st.dryMassTonnes;
+                            if (st.fuelMassTonnes > 0.01) {
+                                fuelMassKg += st.fuelMassTonnes * 1000.0;
+                            }
                         }
-                        dryMassKg = minDryTonnes * 1000.0;
-                        fuelMassKg = sumFuelTonnes * 1000.0;
-                    } else {
-                        fuelMassKg = engine != null ? Math.Max(0.0, engine.fuelMassKg) : 0.0;
-                        dryMassKg = Math.Max(0.0, vessel.totalMass * 1000.0 - fuelMassKg);
                     }
 
-                    if (engine != null && engine.fuelMassKg > 0) {
-                        fuelMassKg = Math.Max(fuelMassKg, engine.fuelMassKg);
+                    // Physical Law: Active Stage Dry Mass = Current Total Wet Mass - Available Propellant Mass
+                    if (totalVesselWetMassKg > fuelMassKg && totalVesselWetMassKg > 0) {
+                        dryMassKg = totalVesselWetMassKg - fuelMassKg;
+                    } else if (selectedStages != null && selectedStages.Count > 0) {
+                        var activeSt = selectedStages.Find(s => s.fuelMassTonnes > 0.05) ?? selectedStages[0];
+                        dryMassKg = activeSt.dryMassTonnes * 1000.0;
+                        if (fuelMassKg <= 0) fuelMassKg = activeSt.fuelMassTonnes * 1000.0;
+                    } else {
+                        dryMassKg = Math.Max(100.0, totalVesselWetMassKg - fuelMassKg);
                     }
                     double fuelDensity = engine != null ? engine.fuelDensityKgM3 : 0.0;
                     double tankVolume = engine != null ? engine.tankVolumeM3 : 0.0;
