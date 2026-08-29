@@ -1130,6 +1130,28 @@ namespace KSPGMAT.UI {
             GUI.Label(barRect, $"<b>{fullBarLabel}</b>", centerStyle);
         }
 
+                private string GetParentTargetDcName(int stepIndex) {
+            for (int j = stepIndex - 1; j >= 0; j--) {
+                if (missionSequence[j].type == "Target") {
+                    return string.IsNullOrEmpty(missionSequence[j].dc_name) ? "DefaultDC" : missionSequence[j].dc_name;
+                }
+                if (missionSequence[j].type == "EndTarget") break;
+            }
+            return "DefaultDC";
+        }
+
+        private List<string> GetActiveSolverNames() {
+            List<string> list = new List<string>();
+            for (int j = 0; j < missionSequence.Count; j++) {
+                if (missionSequence[j].type == "Target") {
+                    string sName = string.IsNullOrEmpty(missionSequence[j].dc_name) ? "DefaultDC" : missionSequence[j].dc_name;
+                    if (!list.Contains(sName)) list.Add(sName);
+                }
+            }
+            if (list.Count == 0) list.Add("DefaultDC");
+            return list;
+        }
+
         private void DrawStepReorderControls(int i) {
             bool isBeingDragged = (draggedStepIndex == i);
 
@@ -1440,10 +1462,16 @@ namespace KSPGMAT.UI {
                             GUILayout.Space(2);
                             GUILayout.BeginHorizontal();
                             GUILayout.Space(8);
-                            GUILayout.Label("求解器:", labelValueStyle, GUILayout.Width(50));
-                            string curDc = step.dc_name ?? "DefaultDC";
-                            if (GUILayout.Button($"🎯 {curDc}", secondaryButtonStyle, GUILayout.Width(100), GUILayout.Height(20))) {
-                                step.dc_name = (curDc == "DefaultDC") ? "DC" : "DefaultDC";
+                            GUILayout.Label("求解器名称 (Solver):", labelValueStyle, GUILayout.Width(130));
+                            string curDc = string.IsNullOrEmpty(step.dc_name) ? "DefaultDC" : step.dc_name;
+                            step.dc_name = GUILayout.TextField(curDc, GUILayout.Width(105), GUILayout.Height(20));
+
+                            string[] commonSolvers = new string[] { "DefaultDC", "DC_GTO", "DC_GEO", "DC_TLI", "DC_LOI" };
+                            for (int c = 0; c < commonSolvers.Length; c++) {
+                                string cs = commonSolvers[c];
+                                if (GUILayout.Button(cs, (step.dc_name == cs) ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
+                                    step.dc_name = cs;
+                                }
                             }
 
                             GUILayout.Label("寻优算法:", labelValueStyle, GUILayout.Width(65));
@@ -2185,6 +2213,37 @@ namespace KSPGMAT.UI {
                 string sStep = GUILayout.TextField(mStep.ToString("F1"), GUILayout.Width(50));
                 if (double.TryParse(sStep, out mStep)) step.vary_max_step = mStep;
 
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+
+                // Vary Solver Selector Row
+                GUILayout.Space(2);
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("绑定求解器 (Solver):", labelValueStyle, GUILayout.Width(130));
+
+                string parentDc = GetParentTargetDcName(i);
+                string currentVaryDc = string.IsNullOrEmpty(step.dc_name) ? parentDc : step.dc_name;
+
+                List<string> activeSolvers = GetActiveSolverNames();
+                for (int s = 0; s < activeSolvers.Count; s++) {
+                    string sName = activeSolvers[s];
+                    bool isSel = (currentVaryDc == sName);
+                    if (GUILayout.Button(sName, isSel ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(18))) {
+                        step.dc_name = sName;
+                    }
+                }
+
+                GUILayout.Label("自定义:", labelValueStyle, GUILayout.Width(45));
+                string newVaryDc = GUILayout.TextField(currentVaryDc, GUILayout.Width(90), GUILayout.Height(18));
+                if (newVaryDc != currentVaryDc) {
+                    step.dc_name = newVaryDc;
+                }
+
+                if (!string.IsNullOrEmpty(parentDc) && step.dc_name != parentDc) {
+                    if (GUILayout.Button($"↺ 重置为所在 Target 块 ({parentDc})", secondaryButtonStyle, GUILayout.Height(18))) {
+                        step.dc_name = parentDc;
+                    }
+                }
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
             }

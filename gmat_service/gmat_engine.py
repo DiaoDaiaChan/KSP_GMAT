@@ -740,18 +740,22 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
     if dc_needed:
         active_solvers = {}
         for s in mission_sequence:
-            if s.get("type") in ("Target", "TargetApoapsis", "Targeter"):
-                s_name = s.get("dc_name") or "DefaultDC"
-                active_solvers[s_name] = {
-                    "algorithm": s.get("dc_algorithm") or "NewtonRaphson",
-                    "derivative_method": s.get("dc_derivative_method") or "ForwardDifference",
-                    "max_iter": int(s.get("dc_max_iter") or 50)
-                }
+            stype = s.get("type")
+            s_name = s.get("dc_name") or s.get("vary_solver") or s.get("achieve_solver")
+            if s_name:
+                clean_sname = sanitize_gmat_identifier(s_name, "DC")
+                if clean_sname not in active_solvers:
+                    active_solvers[clean_sname] = {
+                        "algorithm": s.get("dc_algorithm") or "NewtonRaphson",
+                        "derivative_method": s.get("dc_derivative_method") or "ForwardDifference",
+                        "max_iter": int(s.get("dc_max_iter") or 50)
+                    }
 
         if solver_configs:
             for s_name, s_cfg in solver_configs.items():
-                if s_name not in active_solvers:
-                    active_solvers[s_name] = {
+                clean_cfg_name = sanitize_gmat_identifier(s_name, "DC")
+                if clean_cfg_name not in active_solvers:
+                    active_solvers[clean_cfg_name] = {
                         "algorithm": s_cfg.get("algorithm", "NewtonRaphson"),
                         "derivative_method": s_cfg.get("derivative_method", "ForwardDifference"),
                         "max_iter": int(s_cfg.get("max_iterations", 50))
@@ -759,10 +763,6 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
 
         if not active_solvers:
             active_solvers["DefaultDC"] = {"algorithm": "NewtonRaphson", "derivative_method": "ForwardDifference", "max_iter": 50}
-
-        # Also declare generic 'DC' alias if referenced
-        if "DC" not in active_solvers:
-            active_solvers["DC"] = {"algorithm": "NewtonRaphson", "derivative_method": "ForwardDifference", "max_iter": 50}
 
         for s_name, s_info in active_solvers.items():
             lines.append(f"Create DifferentialCorrector {s_name};")
@@ -902,6 +902,7 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
         elif step_type == "Vary":
             label = sanitize_gmat_label(step.get("label"), "Vary")
             label_str = f"'{label}' " if label else ""
+            vary_dc_name = sanitize_gmat_identifier(step.get("dc_name") or step.get("vary_solver") or current_active_dc_name, "DC")
             var = (step.get("vary_variable") or step.get("variable") or "burntime").strip()
 
             # Clean craft prefix if present
@@ -931,17 +932,18 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
             if add_scale != 0.0 or mul_scale != 1.0:
                 scale_opts = f", AdditiveScaleFactor = {add_scale:.8g}, MultiplicativeScaleFactor = {mul_scale:.8g}"
 
-            lines.append(f"   Vary {label_str}{current_active_dc_name}({var_ref} = {init_val}, {{Perturbation = {pert}, Lower = {lower}, Upper = {upper}, MaxStep = {max_step}{scale_opts}}});")
+            lines.append(f"   Vary {label_str}{vary_dc_name}({var_ref} = {init_val}, {{Perturbation = {pert}, Lower = {lower}, Upper = {upper}, MaxStep = {max_step}{scale_opts}}});")
 
         elif step_type == "Achieve":
             label = sanitize_gmat_label(step.get("label"), "Achieve")
             label_str = f"'{label}' " if label else ""
+            achieve_dc_name = sanitize_gmat_identifier(step.get("dc_name") or step.get("achieve_solver") or current_active_dc_name, "DC")
             goal_param = step.get("achieve_param") or step.get("target_goal") or "RMAG"
             goal_ref = resolve_gmat_target_param(sat_name, central_body, goal_param)
 
             target_val = float(step.get("achieve_val", step.get("target_val", step.get("target_alt", 40000.0))))
             tol = float(step.get("achieve_tolerance", step.get("target_tolerance", 0.1)) or 0.1)
-            lines.append(f"   Achieve {label_str}{current_active_dc_name}({goal_ref} = {target_val}, {{Tolerance = {tol}}});")
+            lines.append(f"   Achieve {label_str}{achieve_dc_name}({goal_ref} = {target_val}, {{Tolerance = {tol}}});")
 
         elif step_type == "EndTarget":
             lines.append(f"EndTarget;  % For targeter {current_active_dc_name}")
