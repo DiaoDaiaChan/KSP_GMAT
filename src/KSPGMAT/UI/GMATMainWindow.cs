@@ -137,6 +137,8 @@ namespace KSPGMAT.UI {
         private string customScriptPath = "";
         private bool showCustomScriptInput = false;
         private int draggedStepIndex = -1;
+        private int stepToMoveUp = -1;
+        private int stepToMoveDown = -1;
 
         // Propagator names and labels
         private static readonly string[] PropagatorNames = new string[] {
@@ -330,6 +332,12 @@ namespace KSPGMAT.UI {
             for (int i = 0; i < cachedStages.Count; i++) {
                 if (selectedStageIndices.Contains(i)) {
                     list.Add(cachedStages[i]);
+                }
+            }
+            if (list.Count == 0 || (list.Count == 1 && list[0].fuelMassTonnes <= 0.01)) {
+                var realFuelStage = cachedStages.Find(s => s.fuelMassTonnes > 0.05);
+                if (realFuelStage != null && !list.Contains(realFuelStage)) {
+                    list.Add(realFuelStage);
                 }
             }
             if (list.Count == 0 && cachedStages.Count > 0) {
@@ -1122,7 +1130,42 @@ namespace KSPGMAT.UI {
             GUI.Label(barRect, $"<b>{fullBarLabel}</b>", centerStyle);
         }
 
-        private void DrawTabMissionSequence(Vessel vessel) {
+        private void DrawStepReorderControls(int i) {
+            bool isBeingDragged = (draggedStepIndex == i);
+
+            // Up / Down arrows
+            GUI.enabled = (i > 0);
+            if (GUILayout.Button("↑", secondaryButtonStyle, GUILayout.Width(20), GUILayout.Height(20))) {
+                stepToMoveUp = i;
+            }
+            GUI.enabled = (i < missionSequence.Count - 1);
+            if (GUILayout.Button("↓", secondaryButtonStyle, GUILayout.Width(20), GUILayout.Height(20))) {
+                stepToMoveDown = i;
+            }
+            GUI.enabled = true;
+
+            // Reorder / Drag Action Button
+            string dragBtnText = isBeingDragged ? "✊ 移动中" : (draggedStepIndex >= 0 ? "⬇ 放置于此" : "≡ 排序");
+            GUIStyle dragBtnStyle = isBeingDragged ? successButtonStyle : (draggedStepIndex >= 0 ? tabButtonActiveStyle : secondaryButtonStyle);
+            float dragBtnW = (draggedStepIndex >= 0 && !isBeingDragged) ? 82f : 50f;
+
+            if (GUILayout.Button(dragBtnText, dragBtnStyle, GUILayout.Width(dragBtnW), GUILayout.Height(20))) {
+                if (draggedStepIndex == i) {
+                    draggedStepIndex = -1; // Cancel
+                } else if (draggedStepIndex >= 0) {
+                    var moveItem = missionSequence[draggedStepIndex];
+                    missionSequence.RemoveAt(draggedStepIndex);
+                    missionSequence.Insert(i, moveItem);
+                    ScreenMessages.PostScreenMessage($"✅ 步骤已成功移动至 #{i + 1}！", 2.0f, ScreenMessageStyle.UPPER_CENTER);
+                    draggedStepIndex = -1;
+                } else {
+                    draggedStepIndex = i;
+                    ScreenMessages.PostScreenMessage($"✊ 已选定步骤 #{i + 1}，请点击目标位置卡片的 [ ⬇ 放置于此 ] 完成移动", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                }
+            }
+        }
+
+        void DrawTabMissionSequence(Vessel vessel) {
             float totalW = windowRect.width - 36f;
             float rightColW = Mathf.Clamp(totalW * 0.32f, 310f, 420f);
             float leftColW = totalW - rightColW - 12f;
@@ -1288,8 +1331,8 @@ namespace KSPGMAT.UI {
                 GUILayout.Space(40);
             }
 
-            int stepToMoveUp = -1;
-            int stepToMoveDown = -1;
+            // stepToMoveUp field used
+            // stepToMoveDown field used
             int stepToDelete = -1;
             int dropTargetIndex = -1;
             int stepToInsertVary = -1;
@@ -1303,6 +1346,18 @@ namespace KSPGMAT.UI {
             for (int i = 0; i < missionSequence.Count; i++) {
                 var step = missionSequence[i];
                 bool isBeingDragged = (draggedStepIndex == i);
+
+                // Animated insertion divider bar when in Reorder Mode
+                if (draggedStepIndex >= 0 && draggedStepIndex != i) {
+                    if (GUILayout.Button($"⬇ 插入步骤 #{draggedStepIndex + 1} 到步骤 #{i + 1} 之前 ⬇", tabButtonActiveStyle, GUILayout.Height(22))) {
+                        var moveItem = missionSequence[draggedStepIndex];
+                        missionSequence.RemoveAt(draggedStepIndex);
+                        int targetIdx = (draggedStepIndex < i) ? i - 1 : i;
+                        missionSequence.Insert(targetIdx, moveItem);
+                        ScreenMessages.PostScreenMessage($"✅ 步骤 #{draggedStepIndex + 1} 已成功移动至 #{i + 1} 之前！", 2.0f, ScreenMessageStyle.UPPER_CENTER);
+                        draggedStepIndex = -1;
+                    }
+                }
 
                 // ==========================================
                 // CASE 1: TARGET GROUP ROOT CONTAINER
@@ -1698,14 +1753,17 @@ namespace KSPGMAT.UI {
                 missionSequence.Insert(stepToInsertProp, new MissionStep { type = "Propagate", propagator = "LEOProp", stop_type = "Apoapsis", label = "轨道积分" });
             }
 
-            if (stepToMoveUp > 0) {
+            if (stepToMoveUp > 0 && stepToMoveUp < missionSequence.Count) {
                 var temp = missionSequence[stepToMoveUp];
                 missionSequence[stepToMoveUp] = missionSequence[stepToMoveUp - 1];
                 missionSequence[stepToMoveUp - 1] = temp;
-            } else if (stepToMoveDown >= 0 && stepToMoveDown < missionSequence.Count - 1) {
+                stepToMoveUp = -1;
+            }
+            if (stepToMoveDown >= 0 && stepToMoveDown < missionSequence.Count - 1) {
                 var temp = missionSequence[stepToMoveDown];
                 missionSequence[stepToMoveDown] = missionSequence[stepToMoveDown + 1];
                 missionSequence[stepToMoveDown + 1] = temp;
+                stepToMoveDown = -1;
             } else if (stepToDelete >= 0 && stepToDelete < missionSequence.Count) {
                 missionSequence.RemoveAt(stepToDelete);
                 if (draggedStepIndex == stepToDelete) draggedStepIndex = -1;
@@ -2235,6 +2293,17 @@ namespace KSPGMAT.UI {
                             step.bound_thruster = engId;
                             step.burn_isp = eng.ispVac;
                             step.burn_decrement_mass = true;
+                            selectedEngineIndex = eg;
+                            selectedStageIndices.Clear();
+                            if (cachedStages != null) {
+                                for (int s = 0; s < cachedStages.Count; s++) {
+                                    if (cachedStages[s].stageNumber == eng.stageNumber || cachedStages[s].fuelMassTonnes > 0.05) {
+                                        selectedStageIndices.Add(s);
+                                    }
+                                }
+                            }
+                            if (selectedStageIndices.Count == 0) selectedStageIndices.Add(0);
+                            ScreenMessages.PostScreenMessage($"🚀 已同步机动发动机: {eng.title}", 2.0f, ScreenMessageStyle.UPPER_CENTER);
                         }
                     }
                 } else {

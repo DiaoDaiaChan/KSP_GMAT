@@ -317,7 +317,7 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
                 lines.append(f"{tname}.FuelDensity = {fdens:.2f};")
                 lines.append(f"{tname}.Temperature = 20;")
                 lines.append(f"{tname}.RefTemperature = 20;")
-                lines.append(f"{tname}.Pressure = {tank_pressure:.1f};")
+                lines.append(f"{tname}.Pressure = {max(1500.0, tank_pressure):.1f};")
                 lines.append(f"{tname}.Volume = {fvol:.6g};")
                 lines.append(f"{tname}.PressureModel = 'PressureRegulated';")
     else:
@@ -331,7 +331,7 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
             lines.append(f"MainTank.FuelDensity = {fuel_density:.2f};")
             lines.append("MainTank.Temperature = 20;")
             lines.append("MainTank.RefTemperature = 20;")
-            lines.append(f"MainTank.Pressure = {tank_pressure:.1f};")
+            lines.append(f"MainTank.Pressure = {max(1500.0, tank_pressure):.1f};")
             calc_fb_v = (fuel_mass / fuel_density) if (fuel_mass > 0 and fuel_density > 0) else 1.0
             safe_fb_v = max(float(tank_volume or calc_fb_v), calc_fb_v * 1.10 + 0.1)
             lines.append(f"MainTank.Volume = {safe_fb_v:.4f};")
@@ -680,6 +680,7 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
             if step.get("type") == "FiniteBurn":
                 time_vars.extend([
                     f"{bname}_Duration",
+                    f"{bname}_EndTime",
                     f"{bname}_DeltaV",
                     f"{bname}_DeltaV_V",
                     f"{bname}_DeltaV_N",
