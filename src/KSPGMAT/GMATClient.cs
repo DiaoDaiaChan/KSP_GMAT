@@ -33,6 +33,9 @@ namespace KSPGMAT {
         public double vary_lower = 0.0;
         public double vary_upper = 0.0;
         public double vary_max_step = 0.0;
+        public double vary_additive_scale = 0.0;
+        public double vary_multiplicative_scale = 1.0;
+        public string vary_solver = "DefaultDC";
         public double epoch_offset = 0.0;
         public string variable = ""; // for Equation, e.g. "Sat.SMA" or "burntime"
         public string expression = ""; // for Equation, e.g. "-173.0"

@@ -500,24 +500,27 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
             else:
                 raise ValueError("Targeter must immediately follow a FiniteBurn or ImpulsiveBurn")
 
+    created_burn_names = set()
     for step_index, step in enumerate(mission_sequence):
         step_type = step.get("type")
-        if step_type == "ImpulsiveBurn":
-            requested_name = sanitize_gmat_label(step.get("burn_name"), "")
-            bname = requested_name or f"IB_{burn_idx}"
+        if step_type in ("ImpulsiveBurn", "Maneuver"):
+            requested_name = sanitize_gmat_identifier(step.get("burn_name") or step.get("name"), "")
+            bname = requested_name if requested_name and requested_name not in ("Maneuver", "ImpulsiveBurn") else f"IB_{burn_idx}"
             step["_obj_name"] = bname
-            burn_defs.append(f"Create ImpulsiveBurn {bname};")
-            burn_defs.append(f"{bname}.CoordinateSystem = {step.get('burn_coordinate_system', 'Local')};")
-            burn_defs.append(f"{bname}.Origin = {step.get('burn_origin') or central_body};")
-            burn_defs.append(f"{bname}.Axes = {step.get('burn_axes', 'VNB')};")
-            burn_defs.append(f"{bname}.Element1 = {float(step.get('dv_v', 0.0)) / 1000.0:.8g};")
-            burn_defs.append(f"{bname}.Element2 = {float(step.get('dv_n', 0.0)) / 1000.0:.8g};")
-            burn_defs.append(f"{bname}.Element3 = {float(step.get('dv_b', 0.0)) / 1000.0:.8g};")
-            dec_mass = "true" if step.get("burn_decrement_mass", False) else "false"
-            burn_defs.append(f"{bname}.DecrementMass = {dec_mass};")
-            if dec_mass == "true" and has_hardware:
-                burn_defs.append(f"{bname}.Tank = {{MainTank}};")
-                burn_defs.append(f"{bname}.Isp = {isp:.2f};")
+            if bname not in created_burn_names:
+                created_burn_names.add(bname)
+                burn_defs.append(f"Create ImpulsiveBurn {bname};")
+                burn_defs.append(f"{bname}.CoordinateSystem = {step.get('burn_coordinate_system', 'Local')};")
+                burn_defs.append(f"{bname}.Origin = {step.get('burn_origin') or central_body};")
+                burn_defs.append(f"{bname}.Axes = {step.get('burn_axes', 'VNB')};")
+                burn_defs.append(f"{bname}.Element1 = {float(step.get('dv_v', 0.0)) / 1000.0:.8g};")
+                burn_defs.append(f"{bname}.Element2 = {float(step.get('dv_n', 0.0)) / 1000.0:.8g};")
+                burn_defs.append(f"{bname}.Element3 = {float(step.get('dv_b', 0.0)) / 1000.0:.8g};")
+                dec_mass = "true" if step.get("burn_decrement_mass", False) else "false"
+                burn_defs.append(f"{bname}.DecrementMass = {dec_mass};")
+                if dec_mass == "true" and has_hardware:
+                    burn_defs.append(f"{bname}.Tank = {{MainTank}};")
+                    burn_defs.append(f"{bname}.Isp = {isp:.2f};")
             burn_idx += 1
         elif step_type == "FiniteBurn":
             if not has_hardware: raise ValueError("finite burn requires complete engine and tank parameters")
@@ -550,9 +553,11 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
     # Register time tracking variables for all maneuvers to capture exact GMAT
     # physics epochs. Finite burns also expose a targetable duration variable.
     time_vars = []
+    seen_time_vars = set()
     for step in mission_sequence:
         bname = step.get("_obj_name")
-        if bname:
+        if bname and f"{bname}_Time" not in seen_time_vars:
+            seen_time_vars.add(f"{bname}_Time")
             time_vars.append(f"{bname}_Time")
             if step.get("type") == "FiniteBurn":
                 time_vars.extend([
@@ -710,12 +715,18 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
         elif step_type == "Vary":
             label = sanitize_gmat_label(step.get("label"), "Vary")
             label_str = f"'{label}' " if label else ""
-            dc_name = "DC"
-            var = step.get("vary_variable") or step.get("variable", "burntime")
-            if "." not in var and not "_" in var:
+            dc_name = step.get("dc_name") or step.get("vary_solver") or "DC"
+            var = (step.get("vary_variable") or step.get("variable") or "burntime").strip()
+
+            # Clean craft prefix if present
+            if var.startswith(f"{sat_name}."):
                 var_ref = var
             elif "." in var:
-                if not var.startswith(sat_name) and not var.startswith("Finite") and not var.startswith("Impulsive") and not var.startswith("Maneuver"):
+                # e.g. LOI.Element1, Change6.AOP, EarthMoonRot.Z
+                parts = var.split(".", 1)
+                if parts[0].lower() in ("sat", "vessel", "spacecraft", "sc"):
+                    var_ref = f"{sat_name}.{parts[1]}"
+                elif parts[0] in ("AOP", "RAAN", "SMA", "ECC", "INC", "TA", "Altitude", "RMAG"):
                     var_ref = f"{sat_name}.{var}"
                 else:
                     var_ref = var
@@ -727,7 +738,14 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
             lower = float(step.get("vary_lower") or 0.0)
             upper = float(step.get("vary_upper") or 1000.0)
             max_step = float(step.get("vary_max_step") or 2.0)
-            lines.append(f"   Vary {label_str}{dc_name}({var_ref} = {init_val}, {{Perturbation = {pert}, Lower = {lower}, Upper = {upper}, MaxStep = {max_step}}});")
+            add_scale = float(step.get("vary_additive_scale", 0.0))
+            mul_scale = float(step.get("vary_multiplicative_scale", 1.0))
+
+            scale_opts = ""
+            if add_scale != 0.0 or mul_scale != 1.0:
+                scale_opts = f", AdditiveScaleFactor = {add_scale:.8g}, MultiplicativeScaleFactor = {mul_scale:.8g}"
+
+            lines.append(f"   Vary {label_str}{dc_name}({var_ref} = {init_val}, {{Perturbation = {pert}, Lower = {lower}, Upper = {upper}, MaxStep = {max_step}{scale_opts}}});")
 
         elif step_type == "Achieve":
             label = sanitize_gmat_label(step.get("label"), "Achieve")
