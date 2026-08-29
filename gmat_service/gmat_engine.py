@@ -198,9 +198,18 @@ def resolve_gmat_target_param(sat_name: str, central_body: str, goal_param: str)
             # Orbital parameters like Altitude, RMAG, SMA, ECC, RadApo, RadPer
             return f"{sat_name}.{central_body}.{p}"
 
-def default_propagator(step=None):
+def default_propagator(step=None, central_body="Earth"):
     if step and step.get("propagator"):
         return step.get("propagator")
+    if step:
+        stop_t = str(step.get("stop_type", "")).lower()
+        b_orig = str(step.get("burn_origin", "")).lower()
+        if "luna" in stop_t or "moon" in stop_t or "luna" in b_orig or "moon" in b_orig:
+            return "LunarNRHOProp"
+        if "cislunar" in stop_t or "sun" in stop_t:
+            return "CislunarProp"
+    if central_body and ("luna" in central_body.lower() or "moon" in central_body.lower()):
+        return "LunarNRHOProp"
     return "LEOProp"
 
 def build_gmat_script(craft_data, mission_sequence, report_path, propagator_configs=None, custom_coordinate_systems=None):
@@ -702,7 +711,7 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
         if step_type == "Propagate":
             prop_func = step.get("propagator")
             if not prop_func:
-                prop_func = default_propagator(step) or "LEOProp"
+                prop_func = default_propagator(step, central_body) or "LEOProp"
             if prop_func not in ("LEOProp", "CislunarProp", "LunarNRHOProp") and not (propagator_configs and prop_func in propagator_configs):
                 prop_func = "LEOProp"
             label = sanitize_gmat_label(step.get("label"), "Propagate")
@@ -881,7 +890,7 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
             lines.append(f"BeginFiniteBurn {fbname}({sat_name});")
             prop_func = step.get("propagator")
             if not prop_func:
-                prop_func = default_propagator(step)
+                prop_func = default_propagator(step, central_body)
             lines.append(f"Propagate {prop_func}({sat_name}) {{{sat_name}.ElapsedSecs = {dur_var}}};")
             lines.append(f"EndFiniteBurn {fbname}({sat_name});")
             lines.append(f"{fbname}_EndMass = {sat_name}.TotalMass;")

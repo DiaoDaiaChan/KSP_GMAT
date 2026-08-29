@@ -1160,44 +1160,43 @@ namespace KSPGMAT.UI {
                 missionSequence.Add(new MissionStep { type = "EndTarget", label = "结束 GEO 打靶" });
                 missionSequence.Add(new MissionStep { type = "Report", label = "GEO 入轨报告" });
             }
-            if (GUILayout.Button("🌖 嫦娥六号 3次近月制动", secondaryButtonStyle, GUILayout.Height(24))) {
+            if (GUILayout.Button("🌖 嫦娥六号 3次近月制动 (有限推力)", secondaryButtonStyle, GUILayout.Height(24))) {
                 missionSequence.Clear();
-                missionSequence.Add(new MissionStep { type = "Propagate", propagator = "CislunarProp", stop_type = "Luna.Periapsis", label = "地月转移巡航至近月点" });
+                missionSequence.Add(new MissionStep { type = "Propagate", propagator = "CislunarProp", stop_type = "Sat.Luna.Periapsis", label = "地月转移巡航至近月点" });
                 
-                // 1st LOI: Lunar Orbit Capture (to 30,000 km Apoapsis)
-                missionSequence.Add(new MissionStep { type = "Target", label = "第一次近月制动 (捕获)", dc_name = "DefaultDC", dc_algorithm = "NewtonRaphson", dc_max_iter = 50 });
-                missionSequence.Add(new MissionStep { type = "Vary", vary_variable = "LOI.Element1", vary_initial = -272.5, vary_lower = -1500.0, vary_upper = 1000.0, vary_max_step = 20.0, vary_perturbation = 0.0001, label = "Vary LOI.v (第1次制动)" });
-                missionSequence.Add(new MissionStep { type = "ImpulsiveBurn", burn_name = "LOI", dv_v = -272.5, burn_decrement_mass = true, burn_isp = 316.0, label = "执行 LOI 减速点火" });
-                missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LunarNRHOProp", stop_type = "Luna.Apoapsis", label = "传播至远月点" });
-                missionSequence.Add(new MissionStep { type = "Achieve", achieve_param = "Luna.RMAG", achieve_val = 30000.0, achieve_tolerance = 5.0, label = "约束远月点半径=30000km" });
+                // 1st LOI: Lunar Orbit Capture (12h Ellipse, RMAG = 30000 km)
+                missionSequence.Add(new MissionStep { type = "Target", label = "第一次近月制动 (大椭圆捕获)", dc_name = "DefaultDC", dc_algorithm = "NewtonRaphson", dc_max_iter = 50 });
+                missionSequence.Add(new MissionStep { type = "Vary", vary_variable = "LOI_Duration1", vary_initial = 180.0, vary_lower = 10.0, vary_upper = 1200.0, vary_max_step = 30.0, vary_perturbation = 0.0001, label = "Vary 第1次点火时长" });
+                missionSequence.Add(new MissionStep { type = "FiniteBurn", propagator = "LunarNRHOProp", burn_name = "LOI_1", burn_direction = "Retrograde", burn_use_vary_var = true, burn_vary_var_name = "LOI_Duration1", bound_thruster = "YF37_Service", bound_tank = "MMH_Tank", label = "执行第1次近月制动点火" });
+                missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LunarNRHOProp", stop_type = "Sat.Luna.Apoapsis", label = "传播至远月点" });
+                missionSequence.Add(new MissionStep { type = "Achieve", achieve_param = "Sat.Luna.RMAG", achieve_val = 30000.0, achieve_tolerance = 5.0, label = "约束远月点半径=30000km" });
                 missionSequence.Add(new MissionStep { type = "EndTarget", label = "完成第1次近月制动" });
 
                 // Coast back to Periapsis
-                missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LunarNRHOProp", stop_type = "Luna.Periapsis", label = "环月椭圆滑行至近月点" });
+                missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LunarNRHOProp", stop_type = "Sat.Luna.Periapsis", label = "环月椭圆滑行至近月点" });
 
                 // 2nd LOI: Lower Apoapsis to 7,000 km
-                missionSequence.Add(new MissionStep { type = "Target", label = "第二次近月制动 (降轨)", dc_name = "DefaultDC", dc_algorithm = "NewtonRaphson", dc_max_iter = 50 });
-                missionSequence.Add(new MissionStep { type = "Vary", vary_variable = "LOI.Element1", vary_initial = -320.2, vary_lower = -1500.0, vary_upper = 1000.0, vary_max_step = 20.0, vary_perturbation = 0.0001, label = "Vary LOI.v (第2次制动)" });
-                missionSequence.Add(new MissionStep { type = "ImpulsiveBurn", burn_name = "LOI", dv_v = -320.2, burn_decrement_mass = true, burn_isp = 316.0, label = "复用 LOI 减速点火" });
-                missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LunarNRHOProp", stop_type = "Luna.Apoapsis", label = "传播至远月点" });
-                missionSequence.Add(new MissionStep { type = "Achieve", achieve_param = "Luna.RMAG", achieve_val = 7000.0, achieve_tolerance = 2.0, label = "约束远月点半径=7000km" });
+                missionSequence.Add(new MissionStep { type = "Target", label = "第二次近月制动 (中椭圆降轨)", dc_name = "DefaultDC", dc_algorithm = "NewtonRaphson", dc_max_iter = 50 });
+                missionSequence.Add(new MissionStep { type = "Vary", vary_variable = "LOI_Duration2", vary_initial = 120.0, vary_lower = 10.0, vary_upper = 1200.0, vary_max_step = 30.0, vary_perturbation = 0.0001, label = "Vary 第2次点火时长" });
+                missionSequence.Add(new MissionStep { type = "FiniteBurn", propagator = "LunarNRHOProp", burn_name = "LOI_2", burn_direction = "Retrograde", burn_use_vary_var = true, burn_vary_var_name = "LOI_Duration2", bound_thruster = "YF37_Service", bound_tank = "MMH_Tank", label = "复用发动机执行第2次降轨点火" });
+                missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LunarNRHOProp", stop_type = "Sat.Luna.Apoapsis", label = "传播至远月点" });
+                missionSequence.Add(new MissionStep { type = "Achieve", achieve_param = "Sat.Luna.RMAG", achieve_val = 7000.0, achieve_tolerance = 2.0, label = "约束远月点半径=7000km" });
                 missionSequence.Add(new MissionStep { type = "EndTarget", label = "完成第2次近月制动" });
 
                 // Coast to Periapsis
-                missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LunarNRHOProp", stop_type = "Luna.Periapsis", label = "滑行至近月点" });
+                missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LunarNRHOProp", stop_type = "Sat.Luna.Periapsis", label = "滑行至近月点" });
 
                 // 3rd LOI: Circularize into 200km Lunar Orbit
-                missionSequence.Add(new MissionStep { type = "Target", label = "第三次近月制动 (圆化)", dc_name = "DefaultDC", dc_algorithm = "NewtonRaphson", dc_max_iter = 50 });
-                missionSequence.Add(new MissionStep { type = "Vary", vary_variable = "LOI.Element1", vary_initial = -185.0, vary_lower = -1500.0, vary_upper = 1000.0, vary_max_step = 20.0, vary_perturbation = 0.0001, label = "Vary LOI.v (第3次制动)" });
-                missionSequence.Add(new MissionStep { type = "ImpulsiveBurn", burn_name = "LOI", dv_v = -185.0, burn_decrement_mass = true, burn_isp = 316.0, label = "复用 LOI 圆化点火" });
-                missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LunarNRHOProp", stop_type = "Luna.Apoapsis", label = "传播至远月点" });
-                missionSequence.Add(new MissionStep { type = "Achieve", achieve_param = "Luna.RMAG", achieve_val = 1937.0, achieve_tolerance = 1.0, label = "约束200km环月圆轨道" });
+                missionSequence.Add(new MissionStep { type = "Target", label = "第三次近月制动 (200km圆化)", dc_name = "DefaultDC", dc_algorithm = "NewtonRaphson", dc_max_iter = 50 });
+                missionSequence.Add(new MissionStep { type = "Vary", vary_variable = "LOI_Duration3", vary_initial = 65.0, vary_lower = 5.0, vary_upper = 600.0, vary_max_step = 15.0, vary_perturbation = 0.0001, label = "Vary 第3次圆化点火时长" });
+                missionSequence.Add(new MissionStep { type = "FiniteBurn", propagator = "LunarNRHOProp", burn_name = "LOI_3", burn_direction = "Retrograde", burn_use_vary_var = true, burn_vary_var_name = "LOI_Duration3", bound_thruster = "YF37_Service", bound_tank = "MMH_Tank", label = "执行第3次环月圆化点火" });
+                missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LunarNRHOProp", stop_type = "Sat.Luna.Apoapsis", label = "传播至远月点" });
+                missionSequence.Add(new MissionStep { type = "Achieve", achieve_param = "Sat.Luna.RMAG", achieve_val = 1937.0, achieve_tolerance = 1.0, label = "约束200km环月圆轨道" });
                 missionSequence.Add(new MissionStep { type = "EndTarget", label = "完成环月圆化" });
 
                 missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LunarNRHOProp", stop_type = "ElapsedDays", duration = 7.0, label = "环月科学巡航 7 天" });
                 missionSequence.Add(new MissionStep { type = "Report", label = "嫦娥六号环月科学状态报告" });
             }
-            
             if (GUILayout.Button("🌙 地月转移 TLI", secondaryButtonStyle, GUILayout.Height(24))) {
                 missionSequence.Clear();
                 missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LEOProp", stop_type = "Node", label = "传播至升交点" });
@@ -1747,7 +1746,7 @@ namespace KSPGMAT.UI {
             GUILayout.Space(4);
 
             // ==========================================
-            // Add Step Buttons Bar (Full Palette)
+            // Add Step Buttons Bar (Unified Finite Thrust & Staging Palette)
             // ==========================================
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("➕ 轨道积分", secondaryButtonStyle, GUILayout.Height(26))) {
@@ -1756,17 +1755,18 @@ namespace KSPGMAT.UI {
             if (GUILayout.Button("🎯 新建 Target 打靶组...", actionButtonStyle, GUILayout.Height(26))) {
                 OpenTargeterSetupModal(-1);
             }
-            if (GUILayout.Button("✏️ 变量寻优", secondaryButtonStyle, GUILayout.Height(26))) {
-                missionSequence.Add(new MissionStep { type = "Vary", vary_variable = "burntime", vary_initial = 150.0, vary_lower = 0.0, vary_upper = 1000.0, vary_max_step = 2.0, label = "寻优变量" });
+            if (GUILayout.Button("✏️ 寻优变量", secondaryButtonStyle, GUILayout.Height(26))) {
+                missionSequence.Add(new MissionStep { type = "Vary", vary_variable = "burntime", vary_initial = 150.0, vary_lower = 0.0, vary_upper = 1000.0, vary_max_step = 20.0, label = "寻优点火时长" });
+            }
+            if (GUILayout.Button("🔥 发动机点火", secondaryButtonStyle, GUILayout.Height(26))) {
+                missionSequence.Add(new MissionStep { type = "FiniteBurn", duration = 120.0, propagator = "LEOProp", burn_direction = "Prograde", label = "发动机点火变轨" });
+            }
+            if (GUILayout.Button("🚀 级段分离", secondaryButtonStyle, GUILayout.Height(26))) {
+                double curDry = vessel != null ? vessel.totalMass * 1000.0 * 0.4 : 1500.0;
+                missionSequence.Add(new MissionStep { type = "StageSeparation", separated_mass = 2500.0, remaining_dry_mass = curDry, label = "分离助推级段 / 抛整流罩" });
             }
             if (GUILayout.Button("🎯 达成目标", secondaryButtonStyle, GUILayout.Height(26))) {
-                missionSequence.Add(new MissionStep { type = "Achieve", achieve_param = "Earth.RMAG", achieve_val = 42164.0, achieve_tolerance = 0.1, label = "达成目标" });
-            }
-            if (GUILayout.Button("🔥 有限推力", secondaryButtonStyle, GUILayout.Height(26))) {
-                missionSequence.Add(new MissionStep { type = "FiniteBurn", duration = 60.0, propagator = "LEOProp", label = "有限推力点火" });
-            }
-            if (GUILayout.Button("💥 脉冲机动", secondaryButtonStyle, GUILayout.Height(26))) {
-                missionSequence.Add(new MissionStep { type = "ImpulsiveBurn", dv_v = 150.0, dv_n = 0.0, dv_b = 0.0, label = "脉冲机动" });
+                missionSequence.Add(new MissionStep { type = "Achieve", achieve_param = "Sat.Earth.RMAG", achieve_val = 42164.0, achieve_tolerance = 0.1, label = "达成目标" });
             }
             if (GUILayout.Button("↵ 结束打靶", secondaryButtonStyle, GUILayout.Height(26))) {
                 missionSequence.Add(new MissionStep { type = "EndTarget", label = "结束打靶" });
