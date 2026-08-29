@@ -64,12 +64,11 @@ NRHOSat.VX               = -7.485;
 NRHOSat.VY               =  1.934;
 NRHOSat.VZ               =  0.980;
 
-% Physical Properties (Spacecraft Mass and Aerodynamic/SRP parameters)
+% Physical Properties (Spacecraft Mass and aerodynamic parameters)
 NRHOSat.DryMass          = 1500;
 NRHOSat.Cd               = 2.2;
 NRHOSat.Cr               = 1.8;
 NRHOSat.DragArea         = 15.0;
-NRHOSat.SRPArea          = 20.0;
 
 %----------------------------------------
 %---------- Force Models
@@ -80,22 +79,14 @@ Create ForceModel CislunarForceModel;
 CislunarForceModel.CentralBody            = Earth;
 CislunarForceModel.PointMasses            = {Earth, Luna, Sun, Jupiter};
 CislunarForceModel.Drag                   = None;
-CislunarForceModel.SRP                    = On;
-CislunarForceModel.RelativisticCorrection = Off;
 CislunarForceModel.ErrorControl           = RSSStep;
-CislunarForceModel.SRP.Flux               = 1367;
-CislunarForceModel.SRP.Nominal_Sun        = 149597870.691;
 
 % Force Model 2: High-Fidelity Lunar Halo / NRHO Environment (Luna Central Body)
 Create ForceModel LunarNRHOForceModel;
 LunarNRHOForceModel.CentralBody            = Luna;
 LunarNRHOForceModel.PointMasses            = {Luna, Earth, Sun, Jupiter};
 LunarNRHOForceModel.Drag                   = None;
-LunarNRHOForceModel.SRP                    = On;
-LunarNRHOForceModel.RelativisticCorrection = Off;
 LunarNRHOForceModel.ErrorControl           = RSSStep;
-LunarNRHOForceModel.SRP.Flux               = 1367;
-LunarNRHOForceModel.SRP.Nominal_Sun        = 149597870.691;
 
 %----------------------------------------
 %---------- Propagators
@@ -279,4 +270,3 @@ NRHOSat.EarthMoonRot.VZ = 0.0;
 % Propagate continuously through multiple revolutions in the high-fidelity lunar
 % halo environment, displaying the iconic vertical 3D figure-8 halo orbit.
 Propagate 'Propagate 21 Days in NRHO' LunarNRHOProp(NRHOSat) {NRHOSat.ElapsedDays = 21.0};
-

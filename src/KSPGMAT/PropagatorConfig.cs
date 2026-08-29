@@ -11,19 +11,39 @@ namespace KSPGMAT {
         public double minStep = 0.001;
         public double maxStep = 2700.0;
         public int maxStepAttempts = 50;
-        public string errorControl = "RSSStep";
+        public bool stopIfAccuracyIsViolated = false;
+        public double errorThreshold = 0.0;
+        public double smallestInterval = 0.0;
+        public double lowerError = 0.0;
+        public double targetError = 0.0;
+        public double stepSize = 0.0;
+        public double minimumReduction = 0.0;
+        public double maximumReduction = 0.0;
+        public double minimumTolerance = 0.0;
 
-        // Force Model & Perturbations
+        // ForceModel properties exposed by GMAT.
         public string centralBody = "Earth";
+        public string errorControl = "RSSStep";
         public bool gravityEarth = true;
         public bool gravityLuna = true;
         public bool gravitySun = true;
         public bool gravityJupiter = true;
         public bool gravityVenus = false;
         public bool gravityMars = false;
-        public bool enableSRP = true;
+        public string gravityModel = "";
+        public int gravityDegree = 0;
+        public int gravityOrder = 0;
+        public int gravityStmLimit = 0;
+        public string gravityPotentialFile = "";
+        public string tideModel = "";
+        public string tidePotentialFile = "";
+        public string dragModel = "None";
+        public string dragAtmosphereModel = "";
+        public double dragF107 = 0.0;
+        public double dragF107A = 0.0;
+        public double dragMagneticIndex = 0.0;
+        public bool enableSRP = false;
         public double srpFlux = 1367.0;
-        public string dragModel = "None"; // None, Exponential, MSISE90
         public bool enableRelativity = false;
 
         public PropagatorConfig Clone() {
@@ -46,9 +66,7 @@ namespace KSPGMAT {
                 gravityLuna = true,
                 gravitySun = true,
                 gravityJupiter = true,
-                enableSRP = true,
-                dragModel = "None",
-                enableRelativity = false
+                dragModel = "None"
             };
             dict["LEOProp"] = leo;
 
@@ -65,9 +83,7 @@ namespace KSPGMAT {
                 gravityLuna = true,
                 gravitySun = true,
                 gravityJupiter = true,
-                enableSRP = true,
-                dragModel = "None",
-                enableRelativity = false
+                dragModel = "None"
             };
             dict["CislunarProp"] = cisl;
 
@@ -84,9 +100,7 @@ namespace KSPGMAT {
                 gravityLuna = true,
                 gravitySun = true,
                 gravityJupiter = true,
-                enableSRP = true,
-                dragModel = "None",
-                enableRelativity = false
+                dragModel = "None"
             };
             dict["LunarNRHOProp"] = nrho;
 
@@ -102,11 +116,30 @@ namespace KSPGMAT {
             sb.Append($"\"accuracy\": {accuracy.ToString("E2", System.Globalization.CultureInfo.InvariantCulture)},");
             sb.Append($"\"min_step\": {minStep.ToString(System.Globalization.CultureInfo.InvariantCulture)},");
             sb.Append($"\"max_step\": {maxStep.ToString(System.Globalization.CultureInfo.InvariantCulture)},");
+            sb.Append($"\"max_step_attempts\": {maxStepAttempts},");
+            sb.Append($"\"stop_if_accuracy_is_violated\": {(stopIfAccuracyIsViolated ? "true" : "false")},");
+            sb.Append($"\"error_threshold\": {errorThreshold.ToString(System.Globalization.CultureInfo.InvariantCulture)},");
+            sb.Append($"\"smallest_interval\": {smallestInterval.ToString(System.Globalization.CultureInfo.InvariantCulture)},");
+            sb.Append($"\"lower_error\": {lowerError.ToString(System.Globalization.CultureInfo.InvariantCulture)},");
+            sb.Append($"\"target_error\": {targetError.ToString(System.Globalization.CultureInfo.InvariantCulture)},");
+            sb.Append($"\"step_size\": {stepSize.ToString(System.Globalization.CultureInfo.InvariantCulture)},");
+            sb.Append($"\"minimum_reduction\": {minimumReduction.ToString(System.Globalization.CultureInfo.InvariantCulture)},");
+            sb.Append($"\"maximum_reduction\": {maximumReduction.ToString(System.Globalization.CultureInfo.InvariantCulture)},");
+            sb.Append($"\"minimum_tolerance\": {minimumTolerance.ToString(System.Globalization.CultureInfo.InvariantCulture)},");
             sb.Append($"\"central_body\": \"{centralBody}\",");
-            sb.Append($"\"enable_srp\": {(enableSRP ? "true" : "false")},");
-            sb.Append($"\"srp_flux\": {srpFlux.ToString(System.Globalization.CultureInfo.InvariantCulture)},");
+            sb.Append($"\"error_control\": \"{errorControl}\",");
+            sb.Append($"\"gravity_model\": \"{gravityModel}\",");
+            sb.Append($"\"gravity_degree\": {gravityDegree},");
+            sb.Append($"\"gravity_order\": {gravityOrder},");
+            sb.Append($"\"gravity_stm_limit\": {gravityStmLimit},");
+            sb.Append($"\"gravity_potential_file\": \"{gravityPotentialFile}\",");
+            sb.Append($"\"tide_model\": \"{tideModel}\",");
+            sb.Append($"\"tide_potential_file\": \"{tidePotentialFile}\",");
             sb.Append($"\"drag_model\": \"{dragModel}\",");
-            sb.Append($"\"enable_relativity\": {(enableRelativity ? "true" : "false")},");
+            sb.Append($"\"drag_atmosphere_model\": \"{dragAtmosphereModel}\",");
+            sb.Append($"\"drag_f107\": {dragF107.ToString(System.Globalization.CultureInfo.InvariantCulture)},");
+            sb.Append($"\"drag_f107a\": {dragF107A.ToString(System.Globalization.CultureInfo.InvariantCulture)},");
+            sb.Append($"\"drag_magnetic_index\": {dragMagneticIndex.ToString(System.Globalization.CultureInfo.InvariantCulture)},");
             sb.Append("\"point_masses\": {");
             sb.Append($"\"Earth\": {(gravityEarth ? "true" : "false")},");
             sb.Append($"\"Luna\": {(gravityLuna ? "true" : "false")},");

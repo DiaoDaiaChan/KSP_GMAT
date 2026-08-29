@@ -16,8 +16,6 @@ Create ForceModel EarthMoonFM;
 EarthMoonFM.CentralBody            = Earth;
 EarthMoonFM.PointMasses            = {Earth, Luna, Sun};
 EarthMoonFM.Drag                   = None;
-EarthMoonFM.SRP                    = On;
-EarthMoonFM.RelativisticCorrection = Off;
 EarthMoonFM.ErrorControl           = RSSStep;
 
 Create Propagator LEOProp;

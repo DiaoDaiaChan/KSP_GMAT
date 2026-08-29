@@ -1,0 +1,231 @@
+private void DrawWindow(int windowID) {
+            try {
+                Vessel vessel = FlightGlobals.ActiveVessel;
+
+                // Top Status Bar
+                GUILayout.BeginHorizontal();
+                GUILayout.Label($"🛰️ 目标: <b>{(vessel != null ? vessel.vesselName : "无活跃飞船")}</b>", headerStyle);
+                GUILayout.FlexibleSpace();
+                Color statusColor = GMATClient.IsConnected ? Color.green : Color.red;
+                GUI.contentColor = statusColor;
+                GUILayout.Label(GMATClient.ServerStatusText, GUILayout.Height(20));
+                GUI.contentColor = Color.white;
+                if (GUILayout.Button("✕", deleteButtonStyle, GUILayout.Width(24), GUILayout.Height(20))) {
+                    visible = false;
+                }
+                GUILayout.EndHorizontal();
+
+                GUILayout.Space(4);
+
+                // Tab Bar
+                GUILayout.BeginHorizontal();
+                for (int i = 0; i < tabNames.Length; i++) {
+                    GUIStyle style = (activeTab == i) ? tabButtonActiveStyle : tabButtonStyle;
+                    if (GUILayout.Button(tabNames[i], style, GUILayout.Height(28))) {
+                        activeTab = i;
+                        if (activeTab == 0) RefreshCraftData();
+                    }
+                }
+                GUILayout.EndHorizontal();
+
+                GUILayout.Space(6);
+
+                // Tab Content
+                switch (activeTab) {
+                    case 0:
+                        DrawTabCraftAndOrbit(vessel);
+                        break;
+                    case 1:
+                        DrawTabMissionSequence(vessel);
+                        break;
+                    case 2:
+                        DrawTabResultsAndPrincipia(vessel);
+                        break;
+                    case 3:
+                        DrawTabSettings();
+                        break;
+                }
+
+                GUI.DragWindow();
+            } catch (Exception ex) {
+                GUILayout.Label("渲染异常: " + ex.Message, labelValueStyle);
+                GUI.DragWindow();
+            }
+        }
+
+        private void DrawTabCraftAndOrbit(Vessel vessel) {
+            if (vessel == null) {
+                GUILayout.Label("请在飞行场景中选择一艘飞船。", labelValueStyle);
+                return;
+            }
+
+            // Two-column layout: Left = Orbit & Staging, Right = RO Engines & Tanks
+            GUILayout.BeginHorizontal();
+
+            // Left Column (Width: 425px)
+            GUILayout.BeginVertical(GUILayout.Width(425));
+
+            // Orbit & ICRF
+            GUILayout.BeginVertical(cardBoxStyle);
+            GUILayout.Label("🌍 轨道根数与引力环境 (Principia ICRF)", headerStyle);
+            GUILayout.Label($"中心天体: <b>{vessel.mainBody.name}</b> (SOI) | UT: {Planetarium.GetUniversalTime():F1} s", labelValueStyle);
+
+            Vector3d pos_km, vel_kms;
+            bool ok = PrincipiaInterop.GetVesselStateICRF(vessel, out pos_km, out vel_kms);
+            if (ok) {
+                GUILayout.Label($"ICRF 相对位置: r={pos_km.magnitude:F1} km (X={pos_km.x:F1}, Y={pos_km.y:F1}, Z={pos_km.z:F1})", labelValueStyle);
+                GUILayout.Label($"ICRF 速度矢量: v={vel_kms.magnitude:F3} km/s (Vx={vel_kms.x:F3}, Vy={vel_kms.y:F3}, Vz={vel_kms.z:F3})", labelValueStyle);
+            } else {
+                GUILayout.Label("无法获取 Principia 状态向量，使用备用开普勒根数。", labelValueStyle);
+            }
+
+            if (vessel.orbit != null) {
+                GUILayout.Label($"半长轴: <b>{vessel.orbit.semiMajorAxis / 1000.0:F1} km</b> | 离心率: <b>{vessel.orbit.eccentricity:F4}</b> | 倾角: <b>{vessel.orbit.inclination:F2}°</b>", labelValueStyle);
+                GUILayout.Label($"近拱点高度: <b>{vessel.orbit.PeA / 1000.0:F1} km</b> | 远拱点高度: <b>{vessel.orbit.ApA / 1000.0:F1} km</b>", labelValueStyle);
+            }
+            GUILayout.EndVertical();
+
+            GUILayout.Space(6);
+
+            // MechJeb Staging with Multi-Stage Checkboxes
+            GUILayout.BeginVertical(cardBoxStyle);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("🚀 MechJeb 分级多选 (勾选包含的分级)", headerStyle);
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button("🔄 刷新", secondaryButtonStyle, GUILayout.Width(50), GUILayout.Height(20))) {
+                RefreshCraftData();
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.Label($"飞船当前总湿重: <b>{vessel.totalMass:F3} 吨</b>", labelValueStyle);
+            if (cachedStages != null && cachedStages.Count > 0) {
+                double combinedDv = 0.0;
+                double combinedFuel = 0.0;
+                double combinedStartMass = 0.0;
+                double minDry = double.MaxValue;
+
+                for (int i = 0; i < cachedStages.Count; i++) {
+                    var st = cachedStages[i];
+                    bool isSel = selectedStageIndices.Contains(i);
+                    GUILayout.BeginHorizontal();
+                    bool newSel = GUILayout.Toggle(isSel, $" <b>Stage {st.stageNumber}</b>: Δv <b>{st.deltaV:F0}</b>m/s | 湿重 {st.wetMassTonnes:F2}t | 燃料 {st.fuelMassTonnes:F2}t | 干重 {st.dryMassTonnes:F2}t", GUILayout.Height(22));
+                    if (newSel != isSel) {
+                        if (newSel) selectedStageIndices.Add(i);
+                        else if (selectedStageIndices.Count > 1) selectedStageIndices.Remove(i);
+                    }
+                    GUILayout.EndHorizontal();
+
+                    if (selectedStageIndices.Contains(i)) {
+                        combinedDv += st.deltaV;
+                        combinedFuel += st.fuelMassTonnes;
+                        if (st.wetMassTonnes > combinedStartMass) combinedStartMass = st.wetMassTonnes;
+                        if (st.dryMassTonnes < minDry) minDry = st.dryMassTonnes;
+                    }
+                }
+
+                if (minDry == double.MaxValue) minDry = vessel.totalMass * 0.4;
+                if (combinedStartMass <= 0) combinedStartMass = vessel.totalMass;
+
+                GUILayout.Space(4);
+                GUILayout.BeginVertical(GUI.skin.box);
+                GUILayout.Label("<color=#55ffff><b>已选多级组合统计 (Combined Staging Stack):</b></color>", labelValueStyle);
+                GUILayout.Label($"总设计 ΔV: <b>{combinedDv:F0} m/s</b> | 初始湿重: <b>{combinedStartMass:F2} 吨</b>", labelValueStyle);
+                GUILayout.Label($"可用推进剂: <b>{combinedFuel:F2} 吨</b> | 最终干重: <b>{minDry:F2} 吨</b>", labelValueStyle);
+                GUILayout.EndVertical();
+            } else {
+                GUILayout.Label("未检测到 MechJeb 分级，使用当前飞船整体作为单阶段。", labelValueStyle);
+            }
+            GUILayout.EndVertical();
+
+            GUILayout.EndVertical();
+
+            GUILayout.Space(8);
+
+            // Right Column (Width: 425px)
+            GUILayout.BeginVertical(GUILayout.Width(425));
+
+            // RO Engines & Tanks
+            GUILayout.BeginVertical(cardBoxStyle);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("🔥 RealismOverhaul 推进系统", headerStyle);
+            GUILayout.FlexibleSpace();
+            bool roOk = ROEngineInterop.IsRealismOverhaulInstalled();
+            GUI.contentColor = roOk ? Color.green : new Color(1f, 0.6f, 0.2f);
+            GUILayout.Label(roOk ? "✅ RO/RealFuels 就绪" : "⚠️ 未检测到 RO", GUILayout.Height(20));
+            GUI.contentColor = Color.white;
+            GUILayout.EndHorizontal();
+
+            if (cachedEngines != null && cachedEngines.Count > 0) {
+                GUILayout.Label("选择机动发动机 (自动匹配推进剂储罐与推力参数):", labelValueStyle);
+                for (int i = 0; i < cachedEngines.Count; i++) {
+                    var eng = cachedEngines[i];
+                    bool isSel = (selectedEngineIndex == i);
+                    GUI.backgroundColor = isSel ? new Color(0.2f, 0.8f, 0.5f) : Color.white;
+                    string engBtn = $"{(isSel ? "🔘 " : "")}[Stage {eng.stageNumber}] {eng.title} ({eng.thrustKN:F1}kN, Isp {eng.ispVac:F0}s)";
+                    if (GUILayout.Button(engBtn, GUILayout.Height(24))) {
+                        selectedEngineIndex = i;
+                    }
+                    GUI.backgroundColor = Color.white;
+                }
+
+                if (selectedEngineIndex < cachedEngines.Count) {
+                    var curEng = cachedEngines[selectedEngineIndex];
+                    GUILayout.Space(4);
+                    GUILayout.BeginVertical(GUI.skin.box);
+                    GUILayout.Label($"推进剂组合: <color=#55ffff>{curEng.propellantDesc}</color>", labelValueStyle);
+
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label("推进剂质量:", labelValueStyle, GUILayout.Width(75));
+                    string sMass = GUILayout.TextField(curEng.fuelMassKg.ToString("F1"), GUILayout.Width(70));
+                    double.TryParse(sMass, out curEng.fuelMassKg);
+                    GUILayout.Label("kg", labelValueStyle, GUILayout.Width(25));
+
+                    GUILayout.Label("推进剂密度:", labelValueStyle, GUILayout.Width(75));
+                    string sRho = GUILayout.TextField(curEng.fuelDensityKgM3.ToString("F1"), GUILayout.Width(70));
+                    double.TryParse(sRho, out curEng.fuelDensityKgM3);
+                    GUILayout.Label("kg/m³", labelValueStyle, GUILayout.Width(40));
+                    GUILayout.EndHorizontal();
+
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label("储罐容积:", labelValueStyle, GUILayout.Width(75));
+                    string sVol = GUILayout.TextField(curEng.tankVolumeM3.ToString("F3"), GUILayout.Width(70));
+                    double.TryParse(sVol, out curEng.tankVolumeM3);
+                    GUILayout.Label("m³", labelValueStyle, GUILayout.Width(25));
+
+                    GUILayout.Label("调节压力:", labelValueStyle, GUILayout.Width(75));
+                    string sPres = GUILayout.TextField(curEng.tankPressureKPa.ToString("F0"), GUILayout.Width(70));
+                    double.TryParse(sPres, out curEng.tankPressureKPa);
+                    GUILayout.Label("kPa", labelValueStyle, GUILayout.Width(40));
+                    GUILayout.EndHorizontal();
+
+                    GUILayout.Label($"真空推力: <b>{curEng.thrustKN:F1} kN</b> | 真空比冲: <b>{curEng.ispVac:F0} s</b>", labelValueStyle);
+                    GUILayout.EndVertical();
+                }
+            } else {
+                GUILayout.Label("当前飞船未发现可用发动机，将使用默认动力学参数。", labelValueStyle);
+            }
+            GUILayout.EndVertical();
+
+            GUILayout.Space(6);
+
+            // Synchronize & Sub-window Button Card
+            GUILayout.BeginVertical(cardBoxStyle);
+            if (GUILayout.Button("🚀 同步航天器动力学至 GMAT (前往任务序列)", actionButtonStyle, GUILayout.Height(34))) {
+                string engTitle = (cachedEngines != null && selectedEngineIndex < cachedEngines.Count) ? cachedEngines[selectedEngineIndex].title : "默认动力";
+                syncStatusMessage = $"已同步飞船！中心天体: {vessel.mainBody.name}, 选定 {selectedStageIndices.Count} 个分级, 发动机: {engTitle}";
+                activeTab = 1; // jump to mission sequence
+            }
+            if (GUILayout.Button("🔍 查看已同步航天器详细参数 (快照子界面)", secondaryButtonStyle, GUILayout.Height(26))) {
+                showCraftDetailsWindow = true;
+            }
+            if (!string.IsNullOrEmpty(syncStatusMessage)) {
+                GUILayout.Label(syncStatusMessage, labelValueStyle);
+            }
+            GUILayout.EndVertical();
+
+            GUILayout.EndVertical();
+
+            GUILayout.EndHorizontal();
+        }
+
+        

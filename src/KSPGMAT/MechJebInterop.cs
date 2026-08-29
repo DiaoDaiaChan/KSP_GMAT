@@ -55,19 +55,6 @@ namespace KSPGMAT {
                     sd.displayName = $"Stage {fs.KSPStage} (Δv: {fs.DeltaV:F0} m/s, Fuel: {fs.ResourceMass:F2}t, Dry: {fs.EndMass:F2}t)";
                     result.Add(sd);
                 }
-            } else {
-                // Fallback: estimate single stage from active vessel
-                StageData sd = new StageData();
-                sd.stageNumber = 0;
-                sd.wetMassTonnes = vessel.totalMass;
-                sd.dryMassTonnes = Math.Max(0.1, vessel.totalMass * 0.4);
-                sd.fuelMassTonnes = Math.Max(0.0, vessel.totalMass - sd.dryMassTonnes);
-                sd.deltaV = 3000.0;
-                sd.thrustKN = 50.0;
-                sd.isp = 310.0;
-                sd.burnTimeSeconds = 120.0;
-                sd.displayName = $"Vessel (Total: {vessel.totalMass:F2}t)";
-                result.Add(sd);
             }
 
             return result;
@@ -83,9 +70,8 @@ namespace KSPGMAT {
             if (currentTotalMass < stage.wetMassTonnes && currentTotalMass > stage.dryMassTonnes) {
                 stage.wetMassTonnes = currentTotalMass;
                 stage.fuelMassTonnes = Math.Max(0.0, currentTotalMass - stage.dryMassTonnes);
-                if (stage.dryMassTonnes > 0 && stage.isp > 0) {
-                    stage.deltaV = stage.isp * 9.80665 * Math.Log(stage.wetMassTonnes / stage.dryMassTonnes);
-                }
+                // MechJeb's stage delta-v is intentionally not recomputed here.
+                // All trajectory and maneuver results must come from GMAT.
             }
         }
     }

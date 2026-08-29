@@ -5,16 +5,23 @@ and extract results into structured data.
 """
 
 import os
+import math
+import re
 import sys
 import tempfile
 import traceback
+from gmat_paths import resolve_gmat_root
 
 # Ensure GMAT bin directory is in sys.path
-BIN_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BIN_DIR = resolve_gmat_root(os.path.dirname(os.path.abspath(__file__)))
 if BIN_DIR not in sys.path:
     sys.path.insert(0, BIN_DIR)
 
-import gmatpy as gmat
+try:
+    import gmatpy as gmat
+except ImportError:
+    # The service can still expose configuration and parsing endpoints without GMAT.
+    gmat = None
 from ephemeris_calibrator import map_body_name, ksp_ut_to_jd, jd_to_utc_gregorian
 
 _gmat_initialized = False
@@ -22,6 +29,8 @@ _gmat_initialized = False
 def init_gmat():
     """Initializes GMAT API singleton if not already initialized."""
     global _gmat_initialized
+    if gmat is None:
+        raise RuntimeError("gmatpy is unavailable; install GMAT Python bindings for execution")
     if not _gmat_initialized:
         startup_file = os.path.join(BIN_DIR, "gmat_startup_file.txt")
         gmat.Setup(startup_file)
@@ -49,38 +58,198 @@ def sanitize_gmat_identifier(raw_name, prefix="Sat"):
         return f"{prefix}_{ascii_str or '1'}"
     return ascii_str
 
-def build_gmat_script(craft_data, mission_sequence, report_path, propagator_configs=None):
+def sanitize_gmat_label(raw_label, fallback="Step"):
+    """Keep UI labels readable while ensuring GMAT scripts remain ASCII-only."""
+    ascii_label = str(raw_label or "").encode("ascii", "ignore").decode("ascii")
+    ascii_label = re.sub(r"[^A-Za-z0-9 _-]+", " ", ascii_label).strip()
+    return ascii_label or fallback
+
+def required_number(data, key, context="craft"):
+    if key not in data or data[key] is None or str(data[key]).strip() == "":
+        raise ValueError("missing required %s parameter: %s" % (context, key))
+    return float(data[key])
+
+def dc_vary_line(step, burn_name, element, guess, lower=None, upper=None, max_step=None, prefix=""):
+    perturbation = float(step.get("vary_perturbation") or 0.0001)
+    def option(name, value):
+        return f", {name} = {float(value):.8g}" if value is not None and float(value) != 0.0 else ""
+    raw_lower = step.get(f"{prefix}vary_lower")
+    raw_upper = step.get(f"{prefix}vary_upper")
+    raw_max_step = step.get(f"{prefix}vary_max_step")
+    lower = raw_lower if raw_lower not in (None, 0, 0.0) else lower
+    upper = raw_upper if raw_upper not in (None, 0, 0.0) else upper
+    max_step = raw_max_step if raw_max_step not in (None, 0, 0.0) else max_step
+    return f"  Vary DC({burn_name}.{element} = {guess:.4f}, {{Perturbation = {perturbation:.8g}{option('Lower', lower)}{option('Upper', upper)}{option('MaxStep', max_step)}}});"
+
+def dc_vary_variable_line(step, variable_name, guess, lower, upper, max_step, hard_lower=None, hard_upper=None):
+    perturbation = float(step.get("vary_perturbation") or 0.01)
+    if float(step.get("vary_lower") or 0.0) != 0.0: lower = float(step["vary_lower"])
+    if float(step.get("vary_upper") or 0.0) != 0.0: upper = float(step["vary_upper"])
+    if float(step.get("vary_max_step") or 0.0) != 0.0: max_step = float(step["vary_max_step"])
+    if hard_lower is not None: lower = max(lower, float(hard_lower))
+    if hard_upper is not None: upper = min(upper, float(hard_upper))
+    return f"  Vary DC({variable_name} = {guess:.8g}, {{Perturbation = {perturbation:.8g}, Lower = {lower:.8g}, Upper = {upper:.8g}, MaxStep = {max_step:.8g}}});"
+
+def dc_tolerance(step, fallback):
+    return float(step.get("target_tolerance")) if float(step.get("target_tolerance") or 0.0) > 0.0 else fallback
+
+def dc_vz_tolerance_option(step):
+    value = float(step.get("vz_tolerance") or 0.0)
+    return f", {{Tolerance = {value:.8g}}}" if value > 0.0 else ""
+
+def check_propellant_feasibility(craft_data, mission_sequence):
+    """
+    Checks if active vessel has sufficient propellant to reach targeted apogee/orbit.
+    Returns a human-readable Chinese warning/error string if physically infeasible, or None if feasible.
+    """
+    dry_mass = float(craft_data.get("dry_mass", 0.0) or 0.0)
+    fuel_mass = float(craft_data.get("fuel_mass", 0.0) or 0.0)
+    thrust = float(craft_data.get("thrust", 0.0) or 0.0)
+    isp = float(craft_data.get("isp", 0.0) or 0.0)
+    if dry_mass <= 0.0 or fuel_mass <= 0.0 or thrust <= 0.0 or isp <= 0.0:
+        return None
+
+    g0 = 9.81
+    mdot = thrust / (isp * g0)
+    max_burn_sec = fuel_mass / mdot
+    max_dv = isp * g0 * math.log((dry_mass + fuel_mass) / dry_mass)
+
+    for step in mission_sequence:
+        if step.get("type") in ("TargetApoapsis", "Targeter") and step.get("target_goal") in ("Apoapsis", "ApoapsisVZ0"):
+            target_alt = float(step.get("target_alt") or step.get("target_val") or 0.0)
+            try:
+                x, y, z = float(craft_data["x"]), float(craft_data["y"]), float(craft_data["z"])
+                vx, vy, vz = float(craft_data["vx"]), float(craft_data["vy"]), float(craft_data["vz"])
+            except (KeyError, ValueError, TypeError):
+                continue
+            r0 = math.sqrt(x * x + y * y + z * z)
+            v0 = math.sqrt(vx * vx + vy * vy + vz * vz)
+            mu = 398600.4418 # km^3/s^2 for Earth
+            r_body = 6378.1363
+            r_target = r_body + target_alt
+            if r_target > r0:
+                a_req = (r0 + r_target) / 2.0
+                v_peri_req = math.sqrt(mu * (2.0 / r0 - 1.0 / a_req))
+                dv_req = (v_peri_req - v0) * 1000.0
+                if dv_req > max_dv * 1.08:
+                    v_peri_max = v0 + (max_dv / 1000.0)
+                    inv_a = 2.0 / r0 - (v_peri_max * v_peri_max) / mu
+                    if inv_a > 0:
+                        a_max = 1.0 / inv_a
+                        r_apo_max = 2.0 * a_max - r0
+                        alt_max = max(0.0, r_apo_max - r_body)
+                    else:
+                        alt_max = 999999.0
+                    return (
+                        f"飞行器推进能力不足以进入目标轨道：目标远拱点 {target_alt:.0f} km 需要约 {dv_req:.0f} m/s ΔV，"
+                        f"当前推进剂仅支持最多 {max_dv:.0f} m/s（最大燃烧 {max_burn_sec:.1f} 秒，"
+                        f"最高远拱点约为 {alt_max:.0f} km）。请降低打靶远拱点高度，或为飞船配备具有足够燃料的运载级。"
+                    )
+    return None
+
+def resolve_gmat_target_param(sat_name: str, central_body: str, goal_param: str) -> str:
+    """
+    Standardize and resolve GMAT Spacecraft parameter references for Achieve, Vary, and constraints.
+    Prevents invalid parameter generation such as 'Sat.Earth.Z' or 'Sat.Earth.INC',
+    while correctly preserving body-dependent coordinates like 'Sat.Earth.Altitude' and 'Sat.Luna.RMAG'.
+    """
+    p = (goal_param or "RMAG").strip()
+    # Strip any existing spacecraft prefix (e.g. Sat., Vessel., Sat_1.)
+    for sp in [sat_name + ".", "Sat.", "Vessel."]:
+        if p.startswith(sp):
+            p = p[len(sp):]
+            break
+
+    # Parameters that CANNOT take a CelestialBody qualifier in GMAT
+    # (they are Cartesian coordinates, CoordinateSystem angles, or intrinsic satellite properties)
+    no_body_params = {
+        "X", "Y", "Z", "VX", "VY", "VZ", "AX", "AY", "AZ",
+        "INC", "AOP", "RAAN", "VMAG", "Energy", "C3Energy",
+        "TotalMass", "DryMass", "ElapsedSecs", "ElapsedDays"
+    }
+
+    # Parameters that explicitly require a CelestialBody qualifier in GMAT (e.g. Sat.Earth.TA)
+    require_body_params = {
+        "TA", "MA", "EA", "HA", "TrueAnomaly", "MeanAnomaly", "EccentricAnomaly"
+    }
+
+    # Celestial bodies known in GMAT solar system
+    known_bodies = {
+        "Earth", "Luna", "Moon", "Sun", "Jupiter", "Mars", "Venus",
+        "Saturn", "Mercury", "Uranus", "Neptune", "Pluto"
+    }
+
+    if "." in p:
+        prefix, base = p.split(".", 1)
+        # If user wrote e.g. "Earth.Z", "Earth.INC", strip the invalid body prefix!
+        if prefix in known_bodies and base.upper() in {x.upper() for x in no_body_params}:
+            return f"{sat_name}.{base}"
+        else:
+            # Valid coordinate system or body reference (e.g. "Earth.Altitude", "Luna.RMAG", "EarthMJ2000Eq.Z")
+            return f"{sat_name}.{p}"
+    else:
+        # No dot specified (e.g. user typed "Z", "INC", "Altitude", "RMAG")
+        upper_p = p.upper()
+        if any(upper_p == nb.upper() for nb in no_body_params):
+            return f"{sat_name}.{p}"
+        elif any(upper_p == rb.upper() for rb in require_body_params):
+            return f"{sat_name}.{central_body}.{p}"
+        else:
+            # Orbital parameters like Altitude, RMAG, SMA, ECC, RadApo, RadPer
+            return f"{sat_name}.{central_body}.{p}"
+
+def default_propagator(step=None):
+    if step and step.get("propagator"):
+        return step.get("propagator")
+    return "LEOProp"
+
+def build_gmat_script(craft_data, mission_sequence, report_path, propagator_configs=None, custom_coordinate_systems=None):
     """
     Builds a complete, valid GMAT script (.script).
     craft_data: dict with spacecraft parameters, state vector, staging, etc.
-    mission_sequence: list of steps (Propagate, ImpulsiveBurn, FiniteBurn, Targeter).
+    mission_sequence: list of steps (Propagate, FiniteBurn, Targeter).
     report_path: output path for trajectory data.
     propagator_configs: optional dict of custom integrator and force model configs.
     """
     sat_name = sanitize_gmat_identifier(craft_data.get("name", "Vessel"), prefix="Sat")
     central_body = map_body_name(craft_data.get("central_body", "Earth"))
     coord_sys = get_coord_system_for_body(central_body)
-    epoch_str = craft_data.get("epoch_utc", "01 Jan 2026 12:00:00.000")
+    epoch_str = craft_data.get("epoch_utc")
+    if not epoch_str and "ut" in craft_data:
+        try:
+            from ephemeris_calibrator import ksp_ut_to_jd, jd_to_utc_gregorian
+            ut = float(craft_data["ut"])
+            jd = ksp_ut_to_jd(ut)
+            epoch_str = jd_to_utc_gregorian(jd)
+            craft_data["epoch_utc"] = epoch_str
+        except Exception as ex:
+            print(f"[gmat_engine] UT to epoch_utc conversion warning: {ex}")
+    if not epoch_str: raise ValueError("missing required craft parameter: epoch_utc or ut")
 
     # State vectors in km and km/s
-    x = float(craft_data.get("x", 7000.0))
-    y = float(craft_data.get("y", 0.0))
-    z = float(craft_data.get("z", 0.0))
-    vx = float(craft_data.get("vx", 0.0))
-    vy = float(craft_data.get("vy", 7.546))
-    vz = float(craft_data.get("vz", 0.0))
+    x = required_number(craft_data, "x"); y = required_number(craft_data, "y"); z = required_number(craft_data, "z")
+    vx = required_number(craft_data, "vx"); vy = required_number(craft_data, "vy"); vz = required_number(craft_data, "vz")
 
-    dry_mass = float(craft_data.get("dry_mass", 1000.0)) # kg
-    fuel_mass = float(craft_data.get("fuel_mass", 2000.0)) # kg
-    fuel_density = float(craft_data.get("fuel_density", 1260.0)) # kg/m^3 (from RO)
-    tank_pressure = float(craft_data.get("tank_pressure", 1500.0)) # kPa
-    tank_volume = float(craft_data.get("tank_volume", max(0.1, (fuel_mass / fuel_density) * 1.1))) # m^3
-    thrust = float(craft_data.get("thrust", 50000.0)) # N
-    isp = float(craft_data.get("isp", 310.0)) # s
-    raw_engine_name = craft_data.get("engine_name", "MainEngine")
-    ascii_eng = "".join(c for c in raw_engine_name if c.isascii() and (c.isalnum() or c == '_'))
-    if not ascii_eng or not ascii_eng[0].isalpha():
-        engine_name = "Engine_" + (ascii_eng or "1")
+    dry_mass = required_number(craft_data, "dry_mass")
+    fuel_mass = float(craft_data.get("fuel_mass", 0.0))
+    fuel_density = float(craft_data.get("fuel_density", 0.0))
+    tank_pressure = float(craft_data.get("tank_pressure", 0.0))
+    tank_volume = float(craft_data.get("tank_volume", 0.0))
+    thrust = float(craft_data.get("thrust", 0.0))
+    isp = float(craft_data.get("isp", 0.0))
+    # KSP telemetry can round tank volume more aggressively than mass and
+    # density.  Keep the live values authoritative while ensuring GMAT does
+    # not reject a mathematically equivalent rounded input.
+    if fuel_mass > 0.0 and fuel_density > 0.0:
+        required_volume = fuel_mass / fuel_density
+        if tank_volume < required_volume:
+            tank_volume = math.nextafter(required_volume, math.inf)
+    raw_engine_name = craft_data.get("engine_name")
+    ascii_eng = "".join(c for c in raw_engine_name if c.isascii() and (c.isalnum() or c == '_')) if raw_engine_name else ""
+    if not ascii_eng:
+        engine_name = ""
+    elif not ascii_eng[0].isalpha():
+        engine_name = "Engine_" + ascii_eng
     else:
         engine_name = ascii_eng
 
@@ -105,95 +274,174 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
     lines.append(f"{sat_name}.DryMass = {dry_mass};")
 
     # Hardware: Fuel Tank (RealismOverhaul Propellant Specs)
-    lines.append(f"Create ChemicalTank MainTank;")
-    lines.append(f"MainTank.FuelMass = {fuel_mass:.2f};")
-    lines.append(f"MainTank.FuelDensity = {fuel_density:.2f};")
-    lines.append(f"MainTank.Temperature = 20;")
-    lines.append(f"MainTank.RefTemperature = 20;")
-    lines.append(f"MainTank.Pressure = {tank_pressure:.1f};")
-    lines.append(f"MainTank.Volume = {tank_volume:.3f};")
-    lines.append(f"MainTank.PressureModel = 'PressureRegulated';")
+    has_hardware = bool(engine_name) and fuel_density > 0.0 and tank_volume > 0.0 and thrust > 0.0 and isp > 0.0
+    if has_hardware:
+        lines.append(f"Create ChemicalTank MainTank;")
+        lines.append(f"MainTank.AllowNegativeFuelMass = true;")
+        lines.append(f"MainTank.FuelMass = {fuel_mass:.2f};")
+        lines.append(f"MainTank.FuelDensity = {fuel_density:.2f};")
+        lines.append(f"MainTank.Temperature = 20;")
+        lines.append(f"MainTank.RefTemperature = 20;")
+        lines.append(f"MainTank.Pressure = {tank_pressure:.1f};")
+        lines.append(f"MainTank.Volume = {tank_volume:.17g};")
+        lines.append(f"MainTank.PressureModel = 'PressureRegulated';")
 
-    # Hardware: Chemical Thruster (Selected Engine Specs)
-    lines.append(f"Create ChemicalThruster {engine_name};")
-    lines.append(f"{engine_name}.CoordinateSystem = Local;")
-    lines.append(f"{engine_name}.Origin = {central_body};")
-    lines.append(f"{engine_name}.Axes = VNB;")
-    lines.append(f"{engine_name}.ThrustDirection1 = 1;")
-    lines.append(f"{engine_name}.ThrustDirection2 = 0;")
-    lines.append(f"{engine_name}.ThrustDirection3 = 0;")
-    lines.append(f"{engine_name}.DutyCycle = 1.0;")
-    lines.append(f"{engine_name}.ThrustScaleFactor = 1.0;")
-    lines.append(f"{engine_name}.DecrementMass = true;")
-    lines.append(f"{engine_name}.Tank = {{MainTank}};")
-    lines.append(f"{engine_name}.GravitationalAccel = 9.81;")
-    lines.append(f"{engine_name}.C1 = {thrust:.2f};") # Constant thrust (N)
-    lines.append(f"{engine_name}.K1 = {isp:.2f};")    # Constant Isp (s)
+        lines.append(f"Create ChemicalThruster {engine_name};")
+        lines.append(f"{engine_name}.CoordinateSystem = Local;")
+        lines.append(f"{engine_name}.Origin = {central_body};")
+        lines.append(f"{engine_name}.Axes = VNB;")
+        lines.append(f"{engine_name}.ThrustDirection1 = 1;")
+        lines.append(f"{engine_name}.ThrustDirection2 = 0;")
+        lines.append(f"{engine_name}.ThrustDirection3 = 0;")
+        lines.append(f"{engine_name}.DutyCycle = 1.0;")
+        lines.append(f"{engine_name}.ThrustScaleFactor = 1.0;")
+        lines.append(f"{engine_name}.DecrementMass = true;")
+        lines.append(f"{engine_name}.Tank = {{MainTank}};")
+        lines.append(f"{engine_name}.GravitationalAccel = 9.81;")
+        lines.append(f"{engine_name}.C1 = {thrust:.2f};")
+        lines.append(f"{engine_name}.K1 = {isp:.2f};")
+        lines.append(f"{sat_name}.Tanks = {{MainTank}};")
+        lines.append(f"{sat_name}.Thrusters = {{{engine_name}}};\n")
 
-    lines.append(f"{sat_name}.Tanks = {{MainTank}};")
-    lines.append(f"{sat_name}.Thrusters = {{{engine_name}}};\n")
+    # Coordinate Systems (Custom User-Defined + Built-in Systems)
+    custom_coords = custom_coordinate_systems or []
+    created_cs_names = set()
 
-    # Coordinate Systems (Earth-Moon Rotating and Lunar Inertial)
-    lines.append("Create CoordinateSystem MoonInertial;")
-    lines.append("MoonInertial.Origin = Luna;")
-    lines.append("MoonInertial.Axes   = BodyInertial;\n")
+    for cs in custom_coords:
+        cs_name = str(cs.get("name") or "").strip()
+        if not cs_name or cs_name in created_cs_names:
+            continue
+        origin = cs.get("origin") or "Earth"
+        axes = cs.get("axes") or "MJ2000Eq"
+        lines.append(f"Create CoordinateSystem {cs_name};")
+        lines.append(f"{cs_name}.Origin = {origin};")
+        lines.append(f"{cs_name}.Axes   = {axes};")
 
-    lines.append("Create CoordinateSystem EarthMoonRot;")
-    lines.append("EarthMoonRot.Origin    = Luna;")
-    lines.append("EarthMoonRot.Axes      = ObjectReferenced;")
-    lines.append("EarthMoonRot.XAxis     = R;")
-    lines.append("EarthMoonRot.ZAxis     = N;")
-    lines.append("EarthMoonRot.Primary   = Earth;")
-    lines.append("EarthMoonRot.Secondary = Luna;\n")
+        if axes in ("ObjectReferenced", "BodySpinSun"):
+            primary = cs.get("primary") or "Earth"
+            secondary = cs.get("secondary") or "Luna"
+            lines.append(f"{cs_name}.Primary   = {primary};")
+            lines.append(f"{cs_name}.Secondary = {secondary};")
+            x_axis = cs.get("xAxis") or cs.get("x_axis") or "R"
+            y_axis = cs.get("yAxis") or cs.get("y_axis")
+            z_axis = cs.get("zAxis") or cs.get("z_axis") or "N"
+            if x_axis and x_axis != "None":
+                lines.append(f"{cs_name}.XAxis     = {x_axis};")
+            if y_axis and y_axis != "None":
+                lines.append(f"{cs_name}.YAxis     = {y_axis};")
+            if z_axis and z_axis != "None":
+                lines.append(f"{cs_name}.ZAxis     = {z_axis};")
 
-    # High-Fidelity Force Models and Propagators (Custom or Default)
+        epoch = cs.get("epoch")
+        if epoch:
+            lines.append(f"{cs_name}.Epoch = '{epoch}';")
+        lines.append("")
+        created_cs_names.add(cs_name)
+
+    # Built-in fallbacks if not overridden
+    if "MoonInertial" not in created_cs_names:
+        lines.append("Create CoordinateSystem MoonInertial;")
+        lines.append("MoonInertial.Origin = Luna;")
+        lines.append("MoonInertial.Axes   = BodyInertial;\n")
+        created_cs_names.add("MoonInertial")
+
+    if "EarthMoonRot" not in created_cs_names:
+        lines.append("Create CoordinateSystem EarthMoonRot;")
+        lines.append("EarthMoonRot.Origin    = Luna;")
+        lines.append("EarthMoonRot.Axes      = ObjectReferenced;")
+        lines.append("EarthMoonRot.XAxis     = R;")
+        lines.append("EarthMoonRot.ZAxis     = N;")
+        lines.append("EarthMoonRot.Primary   = Earth;")
+        lines.append("EarthMoonRot.Secondary = Luna;\n")
+        created_cs_names.add("EarthMoonRot")
+
+    # Each GMAT Propagator receives its own ForceModel so GUI settings stay
+    # independent instead of silently sharing one force model.
     pcfgs = propagator_configs or {}
 
     # Define standard or custom force models
-    def build_pm_list(pm_cfg, default_list):
-        if not pm_cfg: return "{" + ", ".join(default_list) + "}"
+    def build_pm_list(pm_cfg, default_list, excluded_body=None):
+        if pm_cfg is None:
+            bodies = [body for body in default_list if body != excluded_body]
+            return "{" + ", ".join(bodies) + "}"
         bodies = []
-        if pm_cfg.get("Earth", True): bodies.append("Earth")
-        if pm_cfg.get("Luna", True): bodies.append("Luna")
-        if pm_cfg.get("Sun", True): bodies.append("Sun")
-        if pm_cfg.get("Jupiter", True): bodies.append("Jupiter")
-        if pm_cfg.get("Venus", False): bodies.append("Venus")
-        if pm_cfg.get("Mars", False): bodies.append("Mars")
-        if not bodies: bodies = default_list
+        if pm_cfg.get("Earth", False) and excluded_body != "Earth": bodies.append("Earth")
+        if pm_cfg.get("Luna", False) and excluded_body != "Luna": bodies.append("Luna")
+        if pm_cfg.get("Sun", False) and excluded_body != "Sun": bodies.append("Sun")
+        if pm_cfg.get("Jupiter", False) and excluded_body != "Jupiter": bodies.append("Jupiter")
+        if pm_cfg.get("Venus", False) and excluded_body != "Venus": bodies.append("Venus")
+        if pm_cfg.get("Mars", False) and excluded_body != "Mars": bodies.append("Mars")
+        if not bodies: bodies = [body for body in default_list if body != excluded_body]
         return "{" + ", ".join(bodies) + "}"
 
-    # LEOProp config
-    leo_cfg = pcfgs.get("LEOProp", {})
-    leo_fm = leo_cfg.get("central_body", "Earth")
-    leo_pm = build_pm_list(leo_cfg.get("point_masses"), ["Earth", "Luna", "Sun", "Jupiter"])
-    leo_srp = "On" if leo_cfg.get("enable_srp", True) else "Off"
-    leo_rel = "On" if leo_cfg.get("enable_relativity", False) else "Off"
-    lines.append("Create ForceModel CislunarForceModel;")
-    lines.append(f"CislunarForceModel.CentralBody = {leo_fm};")
-    lines.append(f"CislunarForceModel.PointMasses = {leo_pm};")
-    lines.append(f"CislunarForceModel.SRP         = {leo_srp};")
-    lines.append(f"CislunarForceModel.RelativisticCorrection = {leo_rel};\n")
+    def add_optional_assignment(object_name, property_name, value):
+        if value is not None and value != "":
+            lines.append(f"{object_name}.{property_name} = {value};")
 
-    # LunarNRHOProp config
+    def add_optional_numeric_assignment(object_name, property_name, value):
+        if value is not None and float(value or 0.0) != 0.0:
+            lines.append(f"{object_name}.{property_name} = {value};")
+
+    def build_force_model(model_name, cfg, default_body, default_masses):
+        body = cfg.get("central_body", default_body)
+        masses = [mass for mass in default_masses if mass != body]
+        configured_masses = cfg.get("point_masses")
+        if configured_masses:
+            configured_masses = dict(configured_masses)
+            configured_masses.pop(body, None)
+        lines.append(f"Create ForceModel {model_name};")
+        lines.append(f"{model_name}.CentralBody = {body};")
+        lines.append(f"{model_name}.PrimaryBodies = {{{body}}};")
+        lines.append(f"{model_name}.PointMasses = {build_pm_list(configured_masses, masses, body)};")
+        lines.append(f"{model_name}.ErrorControl = {cfg.get('error_control', 'RSSStep')};")
+        atmosphere_model = cfg.get("drag_atmosphere_model") or cfg.get("drag_model", "None")
+        lines.append(f"{model_name}.Drag.AtmosphereModel = {atmosphere_model};")
+        if atmosphere_model != "None":
+            add_optional_numeric_assignment(model_name, "Drag.F107", cfg.get("drag_f107"))
+            add_optional_numeric_assignment(model_name, "Drag.F107A", cfg.get("drag_f107a"))
+            add_optional_numeric_assignment(model_name, "Drag.MagneticIndex", cfg.get("drag_magnetic_index"))
+        gravity_model_files = {
+            "JGM-2": "JGM2.cof", "JGM-3": "JGM3.cof", "EGM-96": "EGM96.cof",
+            "Mars-50C": "Mars50c.cof", "MGNP-180U": "MGNP180U.cof", "LP-165P": "LP165P.cof"
+        }
+        gravity_file = cfg.get("gravity_potential_file")
+        if not gravity_file and cfg.get("gravity_model") in gravity_model_files:
+            gravity_file = gravity_model_files[cfg["gravity_model"]]
+        if int(cfg.get("gravity_degree", 0) or 0) > 0:
+            add_optional_assignment(model_name, "GravityField.%s.Degree" % body, int(cfg["gravity_degree"]))
+        if int(cfg.get("gravity_order", 0) or 0) > 0:
+            add_optional_assignment(model_name, "GravityField.%s.Order" % body, int(cfg["gravity_order"]))
+        if int(cfg.get("gravity_stm_limit", 0) or 0) > 0:
+            add_optional_assignment(model_name, "GravityField.%s.StmLimit" % body, int(cfg["gravity_stm_limit"]))
+        if gravity_file:
+            path = str(gravity_file).replace("'", "")
+            add_optional_assignment(model_name, "GravityField.%s.PotentialFile" % body, "'%s'" % path)
+        if cfg.get("tide_model"):
+            add_optional_assignment(model_name, "GravityField.%s.TideModel" % body, cfg["tide_model"])
+        if cfg.get("tide_potential_file"):
+            path = str(cfg["tide_potential_file"]).replace("'", "")
+            add_optional_assignment(model_name, "GravityField.%s.TidePotentialFile" % body, "'%s'" % path)
+        lines.append("")
+
+    leo_cfg = pcfgs.get("LEOProp", {})
+    cisl_cfg = pcfgs.get("CislunarProp", {})
     nrho_cfg = pcfgs.get("LunarNRHOProp", {})
-    nrho_fm = nrho_cfg.get("central_body", "Luna")
-    nrho_pm = build_pm_list(nrho_cfg.get("point_masses"), ["Luna", "Earth", "Sun", "Jupiter"])
-    nrho_srp = "On" if nrho_cfg.get("enable_srp", True) else "Off"
-    nrho_rel = "On" if nrho_cfg.get("enable_relativity", False) else "Off"
-    lines.append("Create ForceModel LunarNRHOForceModel;")
-    lines.append(f"LunarNRHOForceModel.CentralBody = {nrho_fm};")
-    lines.append(f"LunarNRHOForceModel.PointMasses = {nrho_pm};")
-    lines.append(f"LunarNRHOForceModel.SRP         = {nrho_srp};")
-    lines.append(f"LunarNRHOForceModel.RelativisticCorrection = {nrho_rel};\n")
+    build_force_model("LEOForceModel", leo_cfg, "Earth", ["Earth", "Luna", "Sun", "Jupiter"])
+    build_force_model("CislunarForceModel", cisl_cfg, "Earth", ["Earth", "Luna", "Sun", "Jupiter"])
+    build_force_model("LunarNRHOForceModel", nrho_cfg, "Luna", ["Luna", "Earth", "Sun", "Jupiter"])
 
     # Propagators
     lines.append("Create Propagator LEOProp;")
-    lines.append("LEOProp.FM              = CislunarForceModel;")
+    lines.append("LEOProp.FM              = LEOForceModel;")
     lines.append(f"LEOProp.Type            = {leo_cfg.get('integrator_type', 'RungeKutta89')};")
     lines.append(f"LEOProp.InitialStepSize = {leo_cfg.get('initial_step', 60)};")
     lines.append(f"LEOProp.Accuracy        = {leo_cfg.get('accuracy', 1e-11)};")
     lines.append(f"LEOProp.MinStep         = {leo_cfg.get('min_step', 0.001)};")
     lines.append(f"LEOProp.MaxStep         = {leo_cfg.get('max_step', 2700)};\n")
+    lines.append(f"LEOProp.MaxStepAttempts = {leo_cfg.get('max_step_attempts', 50)};")
+    lines.append(f"LEOProp.StopIfAccuracyIsViolated = {'true' if leo_cfg.get('stop_if_accuracy_is_violated', False) else 'false'};\n")
+    for prop_name, config_name in (("ErrorThreshold", "error_threshold"), ("SmallestInterval", "smallest_interval"), ("LowerError", "lower_error"), ("TargetError", "target_error"), ("StepSize", "step_size"), ("MinimumReduction", "minimum_reduction"), ("MaximumReduction", "maximum_reduction"), ("MinimumTolerance", "minimum_tolerance")):
+        add_optional_numeric_assignment("LEOProp", prop_name, leo_cfg.get(config_name))
 
     cisl_cfg = pcfgs.get("CislunarProp", {})
     lines.append("Create Propagator CislunarProp;")
@@ -203,6 +451,10 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
     lines.append(f"CislunarProp.Accuracy        = {cisl_cfg.get('accuracy', 1e-11)};")
     lines.append(f"CislunarProp.MinStep         = {cisl_cfg.get('min_step', 0.001)};")
     lines.append(f"CislunarProp.MaxStep         = {cisl_cfg.get('max_step', 21600)};\n")
+    lines.append(f"CislunarProp.MaxStepAttempts = {cisl_cfg.get('max_step_attempts', 50)};")
+    lines.append(f"CislunarProp.StopIfAccuracyIsViolated = {'true' if cisl_cfg.get('stop_if_accuracy_is_violated', False) else 'false'};\n")
+    for prop_name, config_name in (("ErrorThreshold", "error_threshold"), ("SmallestInterval", "smallest_interval"), ("LowerError", "lower_error"), ("TargetError", "target_error"), ("StepSize", "step_size"), ("MinimumReduction", "minimum_reduction"), ("MaximumReduction", "maximum_reduction"), ("MinimumTolerance", "minimum_tolerance")):
+        add_optional_numeric_assignment("CislunarProp", prop_name, cisl_cfg.get(config_name))
 
     lines.append("Create Propagator LunarNRHOProp;")
     lines.append("LunarNRHOProp.FM              = LunarNRHOForceModel;")
@@ -211,18 +463,23 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
     lines.append(f"LunarNRHOProp.Accuracy        = {nrho_cfg.get('accuracy', 1e-11)};")
     lines.append(f"LunarNRHOProp.MinStep         = {nrho_cfg.get('min_step', 0.001)};")
     lines.append(f"LunarNRHOProp.MaxStep         = {nrho_cfg.get('max_step', 10800)};\n")
+    lines.append(f"LunarNRHOProp.MaxStepAttempts = {nrho_cfg.get('max_step_attempts', 50)};")
+    lines.append(f"LunarNRHOProp.StopIfAccuracyIsViolated = {'true' if nrho_cfg.get('stop_if_accuracy_is_violated', False) else 'false'};\n")
+    for prop_name, config_name in (("ErrorThreshold", "error_threshold"), ("SmallestInterval", "smallest_interval"), ("LowerError", "lower_error"), ("TargetError", "target_error"), ("StepSize", "step_size"), ("MinimumReduction", "minimum_reduction"), ("MaximumReduction", "maximum_reduction"), ("MinimumTolerance", "minimum_tolerance")):
+        add_optional_numeric_assignment("LunarNRHOProp", prop_name, nrho_cfg.get(config_name))
 
-    lines.append("Create Propagator DefaultProp;")
-    lines.append(f"DefaultProp.FM              = {'LunarNRHOForceModel' if central_body == 'Luna' else 'CislunarForceModel'};")
-    lines.append("DefaultProp.Type            = RungeKutta89;")
-    lines.append("DefaultProp.InitialStepSize = 60;")
-    lines.append("DefaultProp.Accuracy        = 1e-11;\n")
-
-    # Report file for trajectory output
+    # Report files are the sole source of post-run numerical results.  Python
+    # never propagates the state or estimates a burn from engine equations.
     lines.append(f"Create ReportFile TrajReport;")
-    lines.append(f"TrajReport.Filename = 'mission_traj.txt';")
+    gmat_report_path = os.path.abspath(report_path).replace("\\", "/")
+    lines.append(f"TrajReport.Filename = '{gmat_report_path}';")
     lines.append(f"TrajReport.Add = {{{sat_name}.ElapsedSecs, {sat_name}.X, {sat_name}.Y, {sat_name}.Z, {sat_name}.VX, {sat_name}.VY, {sat_name}.VZ}};")
     lines.append(f"TrajReport.WriteHeaders = false;\n")
+
+    finite_report_path = os.path.abspath(report_path + ".finite.txt").replace("\\", "/")
+    lines.append("Create ReportFile FiniteBurnReport;")
+    lines.append(f"FiniteBurnReport.Filename = '{finite_report_path}';")
+    lines.append("FiniteBurnReport.WriteHeaders = false;\n")
 
 
 
@@ -232,113 +489,213 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
     finite_idx = 1
     dc_needed = False
 
-    # Check which steps are targeters and link to preceding burn if present
+    # Check which steps are targeters and link to the preceding burn.
     for i, step in enumerate(mission_sequence):
         stype = step.get("type")
         if stype in ("TargetApoapsis", "Targeter"):
             dc_needed = True
-            # Find the preceding ImpulsiveBurn to target
-            for prev_idx in range(i - 1, -1, -1):
-                if mission_sequence[prev_idx].get("type") == "ImpulsiveBurn":
-                    step["_targets_burn_idx"] = prev_idx
-                    mission_sequence[prev_idx]["_targeted_by_idx"] = i
-                    break
+            if i > 0 and mission_sequence[i - 1].get("type") in ("FiniteBurn", "ImpulsiveBurn"):
+                step["_targets_burn_idx"] = i - 1
+                mission_sequence[i - 1]["_targeted_by_idx"] = i
+            else:
+                raise ValueError("Targeter must immediately follow a FiniteBurn or ImpulsiveBurn")
 
-    for step in mission_sequence:
+    for step_index, step in enumerate(mission_sequence):
         step_type = step.get("type")
         if step_type == "ImpulsiveBurn":
-            bname = f"Burn_{burn_idx}"
+            requested_name = sanitize_gmat_label(step.get("burn_name"), "")
+            bname = requested_name or f"IB_{burn_idx}"
             step["_obj_name"] = bname
-            burn_idx += 1
-            origin_body = map_body_name(step.get("origin") or central_body)
-            step["origin"] = origin_body
-            # GMAT ImpulsiveBurn elements are in km/s. Input from KSP is m/s.
-            dv_v_kms = float(step.get('dv_v', 0.0)) / 1000.0
-            dv_n_kms = float(step.get('dv_n', 0.0)) / 1000.0
-            dv_b_kms = float(step.get('dv_b', 0.0)) / 1000.0
             burn_defs.append(f"Create ImpulsiveBurn {bname};")
-            burn_defs.append(f"{bname}.CoordinateSystem = Local;")
-            burn_defs.append(f"{bname}.Origin = {origin_body};")
-            burn_defs.append(f"{bname}.Axes = VNB;")
-            burn_defs.append(f"{bname}.Element1 = {dv_v_kms};")
-            burn_defs.append(f"{bname}.Element2 = {dv_n_kms};")
-            burn_defs.append(f"{bname}.Element3 = {dv_b_kms};")
+            burn_defs.append(f"{bname}.CoordinateSystem = {step.get('burn_coordinate_system', 'Local')};")
+            burn_defs.append(f"{bname}.Origin = {step.get('burn_origin') or central_body};")
+            burn_defs.append(f"{bname}.Axes = {step.get('burn_axes', 'VNB')};")
+            burn_defs.append(f"{bname}.Element1 = {float(step.get('dv_v', 0.0)) / 1000.0:.8g};")
+            burn_defs.append(f"{bname}.Element2 = {float(step.get('dv_n', 0.0)) / 1000.0:.8g};")
+            burn_defs.append(f"{bname}.Element3 = {float(step.get('dv_b', 0.0)) / 1000.0:.8g};")
+            dec_mass = "true" if step.get("burn_decrement_mass", False) else "false"
+            burn_defs.append(f"{bname}.DecrementMass = {dec_mass};")
+            if dec_mass == "true" and has_hardware:
+                burn_defs.append(f"{bname}.Tank = {{MainTank}};")
+                burn_defs.append(f"{bname}.Isp = {isp:.2f};")
+            burn_idx += 1
         elif step_type == "FiniteBurn":
+            if not has_hardware: raise ValueError("finite burn requires complete engine and tank parameters")
             fbname = f"Finite_{finite_idx}"
             step["_obj_name"] = fbname
             burn_defs.append(f"Create FiniteBurn {fbname};")
             burn_defs.append(f"{fbname}.Thrusters = {{{engine_name}}};")
             finite_idx += 1
-        elif step_type in ("TargetApoapsis", "Targeter"):
-            dc_needed = True
-            if "_targets_burn_idx" not in step:
-                bname = f"Burn_{burn_idx}"
-                step["_obj_name"] = bname
-                burn_idx += 1
-                burn_defs.append(f"Create ImpulsiveBurn {bname};")
-                burn_defs.append(f"{bname}.CoordinateSystem = Local;")
-                burn_defs.append(f"{bname}.Origin = {central_body};")
-                burn_defs.append(f"{bname}.Axes = VNB;")
-                burn_defs.append(f"{bname}.Element1 = 0.5;")
-                burn_defs.append(f"{bname}.Element2 = 0.0;")
-                burn_defs.append(f"{bname}.Element3 = 0.0;")
-        elif step_type == "DifferentialCorrector":
+        elif step_type in ("TargetApoapsis", "Targeter", "Target", "Vary", "Achieve", "DifferentialCorrector"):
             dc_needed = True
 
-    # Register time tracking variables for all maneuvers to capture exact GMAT physics epoch
+    # Collect custom user variables (e.g. burntime)
+    user_vars = set()
+    for step in mission_sequence:
+        stype = step.get("type")
+        if stype == "Var":
+            v = step.get("var_name") or step.get("variable")
+            if v and "." not in v:
+                user_vars.add(v)
+        elif stype == "Vary":
+            v = step.get("vary_variable") or step.get("variable")
+            if v and "." not in v:
+                user_vars.add(v)
+        elif stype == "FiniteBurn":
+            if step.get("burn_use_vary_var") and step.get("burn_vary_var_name"):
+                v = step.get("burn_vary_var_name")
+                if v and "." not in v:
+                    user_vars.add(v)
+
+    # Register time tracking variables for all maneuvers to capture exact GMAT
+    # physics epochs. Finite burns also expose a targetable duration variable.
     time_vars = []
     for step in mission_sequence:
         bname = step.get("_obj_name")
         if bname:
             time_vars.append(f"{bname}_Time")
+            if step.get("type") == "FiniteBurn":
+                time_vars.extend([
+                    f"{bname}_Duration",
+                    f"{bname}_DeltaV",
+                    f"{bname}_DeltaV_V",
+                    f"{bname}_DeltaV_N",
+                    f"{bname}_DeltaV_B",
+                    f"{bname}_StartMass",
+                    f"{bname}_EndMass",
+                    f"{bname}_FuelBurned",
+                    f"{bname}_StartVX",
+                    f"{bname}_StartVY",
+                    f"{bname}_StartVZ",
+                    f"{bname}_EndVX",
+                    f"{bname}_EndVY",
+                    f"{bname}_EndVZ",
+                    f"{bname}_OrbitalDeltaV",
+                    f"{bname}_GravityLoss"
+                ])
 
-    if time_vars:
-        lines.append(f"Create Variable {' '.join(time_vars)};\n")
+    all_declared_vars = list(time_vars)
+    for uv in sorted(list(user_vars)):
+        if uv not in all_declared_vars:
+            all_declared_vars.append(uv)
+
+    if all_declared_vars:
+        lines.append(f"Create Variable {' '.join(all_declared_vars)};\n")
 
     if dc_needed:
-        lines.append("Create DifferentialCorrector DC;\n")
+        lines.append("Create DifferentialCorrector DC;")
+        target_step = next((s for s in mission_sequence if s.get("type") in ("Target", "TargetApoapsis", "Targeter")), {})
+        dc_alg = target_step.get("dc_algorithm") or "NewtonRaphson"
+        dc_dm = target_step.get("dc_derivative_method") or "ForwardDifference"
+        dc_max = int(target_step.get("dc_max_iter") or 25)
+        lines.append(f"DC.Algorithm = '{dc_alg}';")
+        lines.append(f"DC.DerivativeMethod = '{dc_dm}';")
+        lines.append("DC.ShowProgress = true;")
+        lines.append("DC.ReportStyle = 'Normal';")
+        dc_data_file = os.path.abspath(os.path.join(os.path.dirname(report_path), "DifferentialCorrectorDC.data")).replace("\\", "/")
+        lines.append(f"DC.ReportFile = '{dc_data_file}';")
+        if dc_max > 0:
+            lines.append(f"DC.MaximumIterations = {dc_max};")
+        lines.append("")
 
     if burn_defs:
         lines.extend(burn_defs)
         lines.append("")
 
+    def target_propagator(target_step, burn_step):
+        prop = target_step.get("propagator") or burn_step.get("propagator")
+        if not prop:
+            raise ValueError("target step requires an explicit GMAT propagator")
+        if prop not in ("LEOProp", "CislunarProp", "LunarNRHOProp"):
+            raise ValueError("unknown GMAT propagator: %s" % prop)
+        return prop
+
+    # Dedicated ReportFile objects for sequence 'Report' steps
+    for s_idx, st in enumerate(mission_sequence):
+        if st.get("type") == "Report":
+            rf_name = f"StepReport_{s_idx}"
+            rf_file = os.path.abspath(os.path.join(os.path.dirname(report_path), f"step_report_{s_idx}.txt")).replace("\\", "/")
+            lines.append(f"Create ReportFile {rf_name};")
+            lines.append(f"{rf_name}.Filename = '{rf_file}';")
+            lines.append(f"{rf_name}.WriteHeaders = true;")
+            lines.append(f"{rf_name}.Add = {{ {sat_name}.ElapsedSecs, {sat_name}.Altitude, {sat_name}.SMA, {sat_name}.ECC, {sat_name}.INC, {sat_name}.RAAN, {sat_name}.AOP, {sat_name}.TA, {sat_name}.RMAG, {sat_name}.TotalMass, {sat_name}.X, {sat_name}.Y, {sat_name}.Z, {sat_name}.VX, {sat_name}.VY, {sat_name}.VZ }};\n")
+
     # Mission Sequence Commands
     lines.append("BeginMissionSequence;\n")
+    state_report = f"Report TrajReport {sat_name}.ElapsedSecs {sat_name}.X {sat_name}.Y {sat_name}.Z {sat_name}.VX {sat_name}.VY {sat_name}.VZ;"
+    lines.append(state_report)
 
     for step in mission_sequence:
         step_type = step.get("type")
         if step_type == "Propagate":
-            prop_func = step.get("propagator", "LEOProp")
-            if prop_func not in ("LEOProp", "CislunarProp", "LunarNRHOProp", "DefaultProp"):
+            prop_func = step.get("propagator")
+            if not prop_func:
+                prop_func = default_propagator(step) or "LEOProp"
+            if prop_func not in ("LEOProp", "CislunarProp", "LunarNRHOProp") and not (propagator_configs and prop_func in propagator_configs):
                 prop_func = "LEOProp"
-            label = step.get("label", "").replace("'", "")
+            label = sanitize_gmat_label(step.get("label"), "Propagate")
             label_str = f"'{label}' " if label else ""
 
             stop_type = step.get("stop_type", "Time")
+            tol = float(step.get("stop_tolerance") or 1e-5)
+            tol_str = f", StopTolerance = {tol:.8g}" if tol > 0 else ""
+            target_val = float(step.get("target_val", 0.0) if step.get("target_val") is not None else step.get("duration", 0.0))
+
             if stop_type in ("Time", "ElapsedSecs"):
-                duration = float(step.get("duration", 3600.0))
+                duration = float(step.get("duration", target_val))
                 lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.ElapsedSecs = {duration}}};")
             elif stop_type in ("Days", "ElapsedDays"):
-                days = float(step.get("duration", 1.0))
+                days = float(step.get("duration", target_val))
                 lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.ElapsedDays = {days}}};")
             elif stop_type == "Apoapsis":
-                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.Apoapsis}};")
+                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.{central_body}.Apoapsis, {sat_name}.ElapsedDays = 3.0}};")
             elif stop_type == "Periapsis":
-                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.Periapsis}};")
-            elif stop_type == "Altitude":
-                target_alt = float(step.get("target_val", 200.0))
-                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.{central_body}.Altitude = {target_alt}}};")
-            elif stop_type == "RMAG":
-                target_r = float(step.get("target_val", 42164.0))
-                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.{central_body}.RMAG = {target_r}}};")
+                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.{central_body}.Periapsis, {sat_name}.ElapsedDays = 3.0}};")
+            elif stop_type in ("Node", "Latitude_Zero", "EquatorialNode"):
+                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.{central_body}.Latitude = 0.0{tol_str}}};")
+            elif stop_type in ("Z", "Z_Zero", "Z_Cross"):
+                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.Z = {target_val}{tol_str}}};")
+            elif stop_type in ("VZ", "VZ_Zero", "VZ_Cross"):
+                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.VZ = {target_val}{tol_str}}};")
+            elif stop_type in ("X", "Y", "VX", "VY", "RA", "DEC", "C3Energy", "Energy"):
+                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.{stop_type} = {target_val}{tol_str}}};")
+            elif stop_type in ("Altitude", "Alt"):
+                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.{central_body}.Altitude = {target_val}{tol_str}}};")
+            elif stop_type in ("RMAG", "Radius"):
+                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.{central_body}.RMAG = {target_val}{tol_str}}};")
             elif stop_type in ("TA", "TrueAnomaly"):
-                target_ta = float(step.get("target_val", 180.0))
-                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.TA = {target_ta}}};")
-            elif stop_type in ("Node", "EquatorialNode"):
-                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.{central_body}.Latitude = 0.0}};")
+                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.TA = {target_val}{tol_str}}};")
+            elif stop_type in ("EA", "EccentricAnomaly"):
+                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.EA = {target_val}{tol_str}}};")
+            elif stop_type in ("MA", "MeanAnomaly"):
+                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.MA = {target_val}{tol_str}}};")
+            elif stop_type in ("SMA", "SemiMajorAxis"):
+                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.SMA = {target_val}{tol_str}}};")
+            elif stop_type in ("ECC", "Eccentricity"):
+                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.ECC = {target_val}{tol_str}}};")
+            elif stop_type in ("INC", "Inclination"):
+                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.INC = {target_val}{tol_str}}};")
+            elif stop_type in ("RAAN",):
+                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.RAAN = {target_val}{tol_str}}};")
+            elif stop_type in ("AOP", "ArgOfPeriapsis"):
+                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.AOP = {target_val}{tol_str}}};")
+            elif stop_type in ("OrbitPeriod",):
+                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.OrbitPeriod = {target_val}{tol_str}}};")
+            elif stop_type in ("A1ModJulian", "A1MJD"):
+                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.A1ModJulian = {target_val}{tol_str}}};")
+            elif stop_type in ("RadApo", "RadPer", "VelApoapsis", "VelPeriapsis", "Latitude", "Longitude", "BetaAngle"):
+                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.{central_body}.{stop_type} = {target_val}{tol_str}}};")
+            elif stop_type in ("UTCGregorian", "Epoch"):
+                utc_val = step.get("utc_epoch") or step.get("expression") or step.get("target_val")
+                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.UTCGregorian = '{utc_val}'}};")
             else:
-                duration = float(step.get("duration", 3600.0))
-                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.ElapsedSecs = {duration}}};")
+                # Direct object property pass-through
+                lines.append(f"Propagate {label_str}{prop_func}({sat_name}) {{{sat_name}.{stop_type} = {target_val}{tol_str}}};")
+
+        elif step_type == "Report":
+            step_idx = mission_sequence.index(step)
+            lines.append(f"Report StepReport_{step_idx} {sat_name}.ElapsedSecs {sat_name}.Altitude {sat_name}.SMA {sat_name}.ECC {sat_name}.INC {sat_name}.RAAN {sat_name}.AOP {sat_name}.TA {sat_name}.RMAG {sat_name}.TotalMass {sat_name}.X {sat_name}.Y {sat_name}.Z {sat_name}.VX {sat_name}.VY {sat_name}.VZ;")
+            lines.append(state_report)
 
         elif step_type == "Equation":
             var = step.get("variable", "")
@@ -349,89 +706,311 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
 
         elif step_type == "ImpulsiveBurn":
             if step.get("_targeted_by_idx") is not None:
-                # Burn will be executed inside the Target block of the targeting step
                 continue
             bname = step.get("_obj_name")
-            label = step.get("label", "").replace("'", "")
+            label = sanitize_gmat_label(step.get("label"), "Maneuver")
             label_str = f"'{label}' " if label else ""
             lines.append(f"{bname}_Time = {sat_name}.ElapsedSecs;")
+            lines.append(state_report)
             lines.append(f"Maneuver {label_str}{bname}({sat_name});")
+            lines.append(state_report)
+
+        elif step_type == "Target":
+            label = sanitize_gmat_label(step.get("label"), "Target")
+            label_str = f"'{label}' " if label else ""
+            dc_name = "DC"
+            solve_mode = step.get("solve_mode") or "Solve"
+            exit_mode = step.get("exit_mode") or "SaveAndContinue"
+            lines.append(f"Target {label_str}{dc_name} {{SolveMode = {solve_mode}, ExitMode = {exit_mode}}};")
+
+        elif step_type == "Vary":
+            label = sanitize_gmat_label(step.get("label"), "Vary")
+            label_str = f"'{label}' " if label else ""
+            dc_name = "DC"
+            var = step.get("vary_variable") or step.get("variable", "burntime")
+            if "." not in var and not "_" in var:
+                var_ref = var
+            elif "." in var:
+                if not var.startswith(sat_name) and not var.startswith("Finite") and not var.startswith("Impulsive") and not var.startswith("Maneuver"):
+                    var_ref = f"{sat_name}.{var}"
+                else:
+                    var_ref = var
+            else:
+                var_ref = var
+
+            init_val = float(step.get("vary_initial", 150.0))
+            pert = float(step.get("vary_perturbation") or 0.0001)
+            lower = float(step.get("vary_lower") or 0.0)
+            upper = float(step.get("vary_upper") or 1000.0)
+            max_step = float(step.get("vary_max_step") or 2.0)
+            lines.append(f"   Vary {label_str}{dc_name}({var_ref} = {init_val}, {{Perturbation = {pert}, Lower = {lower}, Upper = {upper}, MaxStep = {max_step}}});")
+
+        elif step_type == "Achieve":
+            label = sanitize_gmat_label(step.get("label"), "Achieve")
+            label_str = f"'{label}' " if label else ""
+            dc_name = "DC"
+            goal_param = step.get("achieve_param") or step.get("target_goal") or "RMAG"
+            goal_ref = resolve_gmat_target_param(sat_name, central_body, goal_param)
+
+            target_val = float(step.get("achieve_val", step.get("target_val", step.get("target_alt", 40000.0))))
+            tol = float(step.get("achieve_tolerance", step.get("target_tolerance", 0.1)) or 0.1)
+            lines.append(f"   Achieve {label_str}{dc_name}({goal_ref} = {target_val}, {{Tolerance = {tol}}});")
+
+        elif step_type == "EndTarget":
+            dc_name = "DC"
+            lines.append(f"EndTarget;  % For targeter {dc_name}")
+
+        elif step_type == "Var":
+            vname = step.get("var_name") or step.get("variable", "burntime")
+            vexpr = step.get("var_expr") or step.get("expression", "0.0")
+            lines.append(f"{vname} = {vexpr};")
 
         elif step_type == "FiniteBurn":
-            fbname = step.get("_obj_name")
-            duration = float(step.get("duration", 60.0))
+            if step.get("_targeted_by_idx") is not None:
+                continue
+            b_dir = (step.get("burn_direction") or "Prograde").strip().lower()
+            if b_dir in ("retrograde", "-v"):
+                dir_v, dir_n, dir_b = -1.0, 0.0, 0.0
+            elif b_dir in ("normal", "+n"):
+                dir_v, dir_n, dir_b = 0.0, 1.0, 0.0
+            elif b_dir in ("antinormal", "-n"):
+                dir_v, dir_n, dir_b = 0.0, -1.0, 0.0
+            elif b_dir in ("radialout", "+b"):
+                dir_v, dir_n, dir_b = 0.0, 0.0, 1.0
+            elif b_dir in ("radialin", "-b"):
+                dir_v, dir_n, dir_b = 0.0, 0.0, -1.0
+            else:
+                dir_v, dir_n, dir_b = 1.0, 0.0, 0.0
+
             lines.append(f"{fbname}_Time = {sat_name}.ElapsedSecs;")
+            use_vary = step.get("burn_use_vary_var") and step.get("burn_vary_var_name")
+            dur_var = step.get("burn_vary_var_name") if use_vary else f"{fbname}_Duration"
+            if use_vary:
+                lines.append(f"{fbname}_Duration = {dur_var};")
+            else:
+                lines.append(f"{fbname}_Duration = {duration};")
+            lines.append(f"{fbname}_StartMass = {sat_name}.TotalMass;")
+            lines.append(f"{fbname}_StartVX = {sat_name}.VX;")
+            lines.append(f"{fbname}_StartVY = {sat_name}.VY;")
+            lines.append(f"{fbname}_StartVZ = {sat_name}.VZ;")
             lines.append(f"BeginFiniteBurn {fbname}({sat_name});")
-            lines.append(f"Propagate DefaultProp({sat_name}) {{{sat_name}.ElapsedSecs = {duration}}};")
+            prop_func = step.get("propagator")
+            if not prop_func:
+                prop_func = default_propagator(step)
+            lines.append(f"Propagate {prop_func}({sat_name}) {{{sat_name}.ElapsedSecs = {dur_var}}};")
             lines.append(f"EndFiniteBurn {fbname}({sat_name});")
+            lines.append(f"{fbname}_EndMass = {sat_name}.TotalMass;")
+            lines.append(f"{fbname}_EndVX = {sat_name}.VX;")
+            lines.append(f"{fbname}_EndVY = {sat_name}.VY;")
+            lines.append(f"{fbname}_EndVZ = {sat_name}.VZ;")
+            lines.append(f"{fbname}_FuelBurned = {fbname}_StartMass - {fbname}_EndMass;")
+            lines.append(f"{fbname}_DeltaV = {isp:.6f} * 9.80665 * log({fbname}_StartMass / {fbname}_EndMass);")
+            lines.append(f"{fbname}_DeltaV_V = {fbname}_DeltaV * {dir_v:.6f};")
+            lines.append(f"{fbname}_DeltaV_N = {fbname}_DeltaV * {dir_n:.6f};")
+            lines.append(f"{fbname}_DeltaV_B = {fbname}_DeltaV * {dir_b:.6f};")
+            lines.append(f"{fbname}_OrbitalDeltaV = sqrt(({fbname}_EndVX - {fbname}_StartVX)*({fbname}_EndVX - {fbname}_StartVX) + ({fbname}_EndVY - {fbname}_StartVY)*({fbname}_EndVY - {fbname}_StartVY) + ({fbname}_EndVZ - {fbname}_StartVZ)*({fbname}_EndVZ - {fbname}_StartVZ)) * 1000.0;")
+            lines.append(f"{fbname}_GravityLoss = {fbname}_DeltaV - {fbname}_OrbitalDeltaV;")
+            lines.append(f"Report FiniteBurnReport {fbname}_Time {fbname}_Duration {fbname}_DeltaV {fbname}_DeltaV_V {fbname}_DeltaV_N {fbname}_DeltaV_B {fbname}_FuelBurned {fbname}_OrbitalDeltaV {fbname}_GravityLoss {fbname}_StartMass {fbname}_EndMass {sat_name}.X {sat_name}.Y {sat_name}.Z {sat_name}.VX {sat_name}.VY {sat_name}.VZ;")
 
         elif step_type in ("TargetApoapsis", "Targeter"):
             targeted_step = mission_sequence[step["_targets_burn_idx"]] if "_targets_burn_idx" in step else step
             bname = targeted_step.get("_obj_name")
+            target_is_finite = targeted_step.get("type") == "FiniteBurn"
             target_goal = step.get("target_goal", "Apoapsis")
-            target_alt = float(step.get("target_alt", 35786.0))
+            if "target_alt" not in step and "target_val" not in step:
+                raise ValueError("target step requires target_alt or target_val")
+            target_alt = float(step.get("target_alt", step.get("target_val")))
             target_val = float(step.get("target_val", target_alt))
-            init_guess = float(targeted_step.get("dv_v", 150.0)) / 1000.0
-            if init_guess <= 0.0: init_guess = 0.5
+            target_prop = target_propagator(step, targeted_step)
 
             lines.append(f"{bname}_Time = {sat_name}.ElapsedSecs;")
             lines.append("Target DC {SolveMode = Solve, ExitMode = SaveAndContinue};")
 
+            if target_is_finite:
+                duration = float(targeted_step.get("duration", 60.0))
+                duration_var = f"{bname}_Duration"
+                lower = float(step.get("vary_lower") or 1.0)
+                upper = float(step.get("vary_upper") or max(duration * 3.0, duration + 10.0))
+                if duration >= upper:
+                    duration = upper * 0.5
+                    targeted_step["duration"] = duration
+                lower = min(lower, upper * 0.5)
+                if lower <= 0.0: lower = 0.5
+                max_step = float(step.get("vary_max_step") or max(duration * 0.25, 5.0))
+                max_step = min(max_step, upper - lower)
+
+                b_dir = (targeted_step.get("burn_direction") or "Prograde").strip().lower()
+                if b_dir in ("retrograde", "-v"):
+                    dir_v, dir_n, dir_b = -1.0, 0.0, 0.0
+                elif b_dir in ("normal", "+n"):
+                    dir_v, dir_n, dir_b = 0.0, 1.0, 0.0
+                elif b_dir in ("antinormal", "-n"):
+                    dir_v, dir_n, dir_b = 0.0, -1.0, 0.0
+                elif b_dir in ("radialout", "+b"):
+                    dir_v, dir_n, dir_b = 0.0, 0.0, 1.0
+                elif b_dir in ("radialin", "-b"):
+                    dir_v, dir_n, dir_b = 0.0, 0.0, -1.0
+                else:
+                    dir_v, dir_n, dir_b = 1.0, 0.0, 0.0
+
+                lines.append(dc_vary_variable_line(step, duration_var, duration, lower, upper, max_step))
+                lines.append(f"  {bname}_Time = {sat_name}.ElapsedSecs;")
+                lines.append(f"  {bname}_StartMass = {sat_name}.TotalMass;")
+                lines.append(f"  {bname}_StartVX = {sat_name}.VX;")
+                lines.append(f"  {bname}_StartVY = {sat_name}.VY;")
+                lines.append(f"  {bname}_StartVZ = {sat_name}.VZ;")
+                lines.append(f"  BeginFiniteBurn {bname}({sat_name});")
+                lines.append(f"  Propagate {target_prop}({sat_name}) {{{sat_name}.ElapsedSecs = {duration_var}}};")
+                lines.append(f"  EndFiniteBurn {bname}({sat_name});")
+                lines.append(f"  {bname}_EndMass = {sat_name}.TotalMass;")
+                lines.append(f"  {bname}_EndVX = {sat_name}.VX;")
+                lines.append(f"  {bname}_EndVY = {sat_name}.VY;")
+                lines.append(f"  {bname}_EndVZ = {sat_name}.VZ;")
+                lines.append(f"  {bname}_FuelBurned = {bname}_StartMass - {bname}_EndMass;")
+                lines.append(f"  {bname}_DeltaV = {isp:.6f} * 9.80665 * log({bname}_StartMass / {bname}_EndMass);")
+                lines.append(f"  {bname}_DeltaV_V = {bname}_DeltaV * {dir_v:.6f};")
+                lines.append(f"  {bname}_DeltaV_N = {bname}_DeltaV * {dir_n:.6f};")
+                lines.append(f"  {bname}_DeltaV_B = {bname}_DeltaV * {dir_b:.6f};")
+                lines.append(f"  {bname}_OrbitalDeltaV = sqrt(({bname}_EndVX - {bname}_StartVX)*({bname}_EndVX - {bname}_StartVX) + ({bname}_EndVY - {bname}_StartVY)*({bname}_EndVY - {bname}_StartVY) + ({bname}_EndVZ - {bname}_StartVZ)*({bname}_EndVZ - {bname}_StartVZ)) * 1000.0;")
+                lines.append(f"  {bname}_GravityLoss = {bname}_DeltaV - {bname}_OrbitalDeltaV;")
+                lines.append(f"  Report FiniteBurnReport {bname}_Time {duration_var} {bname}_DeltaV {bname}_DeltaV_V {bname}_DeltaV_N {bname}_DeltaV_B {bname}_FuelBurned {bname}_OrbitalDeltaV {bname}_GravityLoss {bname}_StartMass {bname}_EndMass {sat_name}.X {sat_name}.Y {sat_name}.Z {sat_name}.VX {sat_name}.VY {sat_name}.VZ;")
+
+                if target_goal in ("Apoapsis", "ApoapsisVZ0"):
+                    lines.append(f"  Propagate {target_prop}({sat_name}) {{{sat_name}.{central_body}.Apoapsis, {sat_name}.ElapsedDays = 3.0}};")
+                    lines.append(f"  Achieve DC({sat_name}.{central_body}.Altitude = {target_alt}, {{Tolerance = {dc_tolerance(step, 0.5):.8g}}});")
+                elif target_goal == "Periapsis":
+                    lines.append(f"  Propagate {target_prop}({sat_name}) {{{sat_name}.{central_body}.Periapsis, {sat_name}.ElapsedDays = 3.0}};")
+                    lines.append(f"  Achieve DC({sat_name}.{central_body}.Altitude = {target_val}, {{Tolerance = {dc_tolerance(step, 0.5):.8g}}});")
+                elif target_goal in ("GEO_CAM", "SMA"):
+                    lines.append(f"  Achieve DC({sat_name}.SMA = {target_val}, {{Tolerance = {dc_tolerance(step, 1.0):.8g}}});")
+                elif target_goal == "ECC":
+                    lines.append(f"  Achieve DC({sat_name}.ECC = {target_val}, {{Tolerance = {dc_tolerance(step, 0.001):.8g}}});")
+                elif target_goal == "INC":
+                    lines.append(f"  Achieve DC({sat_name}.INC = {target_val}, {{Tolerance = {dc_tolerance(step, 0.05):.8g}}});")
+                elif target_goal == "RAAN":
+                    lines.append(f"  Achieve DC({sat_name}.RAAN = {target_val}, {{Tolerance = {dc_tolerance(step, 0.05):.8g}}});")
+                elif target_goal == "AOP":
+                    lines.append(f"  Achieve DC({sat_name}.AOP = {target_val}, {{Tolerance = {dc_tolerance(step, 0.05):.8g}}});")
+                elif target_goal in ("C3", "C3Energy"):
+                    lines.append(f"  Achieve DC({sat_name}.C3Energy = {target_val}, {{Tolerance = {dc_tolerance(step, 0.1):.8g}}});")
+                elif target_goal == "Altitude":
+                    lines.append(f"  Achieve DC({sat_name}.{central_body}.Altitude = {target_val}, {{Tolerance = {dc_tolerance(step, 0.5):.8g}}});")
+                elif target_goal == "RMAG":
+                    lines.append(f"  Achieve DC({sat_name}.{central_body}.RMAG = {target_val}, {{Tolerance = {dc_tolerance(step, 0.5):.8g}}});")
+                elif target_goal == "VMAG":
+                    lines.append(f"  Achieve DC({sat_name}.VMAG = {target_val}, {{Tolerance = {dc_tolerance(step, 0.01):.8g}}});")
+                elif target_goal == "TA":
+                    lines.append(f"  Achieve DC({sat_name}.TA = {target_val}, {{Tolerance = {dc_tolerance(step, 0.1):.8g}}});")
+                elif target_goal == "LunarPerilune":
+                    lines.append(f"  Achieve DC({sat_name}.Luna.RMAG = {target_val}, {{Tolerance = {dc_tolerance(step, 1.0):.8g}}});")
+                elif target_goal in ("BdotR", "BdotT"):
+                    lines.append(f"  Achieve DC({sat_name}.{target_goal} = {target_val}, {{Tolerance = {dc_tolerance(step, 1.0):.8g}}});")
+                else:
+                    lines.append(f"  Achieve DC({sat_name}.{target_goal} = {target_val}, {{Tolerance = {dc_tolerance(step, 0.5):.8g}}});")
+                lines.append("EndTarget;")
+                continue
+
+            if "dv_v" not in targeted_step: raise ValueError("targeted burn requires dv_v initial guess")
+            init_guess = float(targeted_step["dv_v"]) / 1000.0
+
             if target_goal == "Periapsis":
-                lines.append(f"  Vary DC({bname}.Element1 = {init_guess:.4f}, {{Perturbation = 0.0001, Lower = -5.0, Upper = 5.0, MaxStep = 0.2}});")
+                lines.append(dc_vary_line(step, bname, "Element1", init_guess, -5.0, 5.0, 0.2))
+                lines.append(f"  Report TrajReport {sat_name}.ElapsedSecs {sat_name}.X {sat_name}.Y {sat_name}.Z {sat_name}.VX {sat_name}.VY {sat_name}.VZ;")
                 lines.append(f"  Maneuver {bname}({sat_name});")
-                lines.append(f"  Propagate DefaultProp({sat_name}) {{{sat_name}.Periapsis}};")
-                lines.append(f"  Achieve DC({sat_name}.{central_body}.Altitude = {target_val}, {{Tolerance = 0.5}});")
+                lines.append(f"  Propagate {target_prop}({sat_name}) {{{sat_name}.{central_body}.Periapsis, {sat_name}.ElapsedDays = 3.0}};")
+                lines.append(f"  Achieve DC({sat_name}.{central_body}.Altitude = {target_val}, {{Tolerance = {dc_tolerance(step, 0.5):.8g}}});")
             elif target_goal == "GEO_CAM":
-                # Combined Apogee Maneuver (CAM): Simultaneously raise Periapsis to 35786 km and eliminate Inclination to 0 deg
-                lines.append(f"  Vary DC({bname}.Element1 = 1.45, {{Perturbation = 0.0001, Lower = 0.0, Upper = 3.5, MaxStep = 0.2}});")
-                lines.append(f"  Vary DC({bname}.Element2 = -1.2, {{Perturbation = 0.0001, Lower = -3.5, Upper = 3.5, MaxStep = 0.2}});")
+                lines.append(dc_vary_line(step, bname, "Element1", float(targeted_step.get("dv_v", 0.0)) / 1000.0, 0.0, 3.5, 0.2))
+                lines.append(dc_vary_line(step, bname, "Element2", float(targeted_step.get("dv_n", 0.0)) / 1000.0, -3.5, 3.5, 0.2))
+                lines.append(f"  Report TrajReport {sat_name}.ElapsedSecs {sat_name}.X {sat_name}.Y {sat_name}.Z {sat_name}.VX {sat_name}.VY {sat_name}.VZ;")
                 lines.append(f"  Maneuver {bname}({sat_name});")
-                lines.append(f"  Propagate DefaultProp({sat_name}) {{{sat_name}.Periapsis}};")
-                lines.append(f"  Achieve DC({sat_name}.{central_body}.Altitude = {target_val}, {{Tolerance = 5.0}});")
-                lines.append(f"  Achieve DC({sat_name}.INC = 0.05, {{Tolerance = 0.05}});")
+                lines.append(f"  Propagate {target_prop}({sat_name}) {{{sat_name}.{central_body}.Periapsis, {sat_name}.ElapsedDays = 3.0}};")
+                lines.append(f"  Achieve DC({sat_name}.{central_body}.Altitude = {target_val}, {{Tolerance = {dc_tolerance(step, 5.0):.8g}}});")
+                lines.append(f"  Achieve DC({sat_name}.INC = 0.05, {{Tolerance = {dc_tolerance(step, 0.05):.8g}}});")
             elif target_goal == "SMA":
-                lines.append(f"  Vary DC({bname}.Element1 = {init_guess:.4f}, {{Perturbation = 0.0001, Lower = -5.0, Upper = 5.0, MaxStep = 0.2}});")
+                lines.append(dc_vary_line(step, bname, "Element1", init_guess, -5.0, 5.0, 0.2))
+                lines.append(f"  Report TrajReport {sat_name}.ElapsedSecs {sat_name}.X {sat_name}.Y {sat_name}.Z {sat_name}.VX {sat_name}.VY {sat_name}.VZ;")
                 lines.append(f"  Maneuver {bname}({sat_name});")
-                lines.append(f"  Propagate DefaultProp({sat_name}) {{{sat_name}.ElapsedSecs = 60}};")
-                lines.append(f"  Achieve DC({sat_name}.SMA = {target_val}, {{Tolerance = 1.0}});")
+                lines.append(f"  Propagate {target_prop}({sat_name}) {{{sat_name}.ElapsedSecs = 60}};")
+                lines.append(f"  Achieve DC({sat_name}.SMA = {target_val}, {{Tolerance = {dc_tolerance(step, 1.0):.8g}}});")
             elif target_goal == "ECC":
-                lines.append(f"  Vary DC({bname}.Element1 = {init_guess:.4f}, {{Perturbation = 0.0001, Lower = -5.0, Upper = 5.0, MaxStep = 0.2}});")
+                lines.append(dc_vary_line(step, bname, "Element1", init_guess, -5.0, 5.0, 0.2))
+                lines.append(f"  Report TrajReport {sat_name}.ElapsedSecs {sat_name}.X {sat_name}.Y {sat_name}.Z {sat_name}.VX {sat_name}.VY {sat_name}.VZ;")
                 lines.append(f"  Maneuver {bname}({sat_name});")
-                lines.append(f"  Propagate DefaultProp({sat_name}) {{{sat_name}.ElapsedSecs = 60}};")
-                lines.append(f"  Achieve DC({sat_name}.ECC = {target_val}, {{Tolerance = 0.001}});")
+                lines.append(f"  Propagate {target_prop}({sat_name}) {{{sat_name}.ElapsedSecs = 60}};")
+                lines.append(f"  Achieve DC({sat_name}.ECC = {target_val}, {{Tolerance = {dc_tolerance(step, 0.001):.8g}}});")
             elif target_goal == "INC":
-                lines.append(f"  Vary DC({bname}.Element2 = 0.0, {{Perturbation = 0.0001, Lower = -5.0, Upper = 5.0, MaxStep = 0.2}});")
+                lines.append(dc_vary_line(step, bname, "Element2", float(targeted_step.get("dv_n", 0.0)) / 1000.0, -5.0, 5.0, 0.2))
+                lines.append(f"  Report TrajReport {sat_name}.ElapsedSecs {sat_name}.X {sat_name}.Y {sat_name}.Z {sat_name}.VX {sat_name}.VY {sat_name}.VZ;")
                 lines.append(f"  Maneuver {bname}({sat_name});")
-                lines.append(f"  Propagate DefaultProp({sat_name}) {{{sat_name}.ElapsedSecs = 60}};")
-                lines.append(f"  Achieve DC({sat_name}.INC = {target_val}, {{Tolerance = 0.05}});")
+                lines.append(f"  Propagate {target_prop}({sat_name}) {{{sat_name}.ElapsedSecs = 60}};")
+                lines.append(f"  Achieve DC({sat_name}.INC = {target_val}, {{Tolerance = {dc_tolerance(step, 0.05):.8g}}});")
+            elif target_goal == "RAAN":
+                lines.append(dc_vary_line(step, bname, "Element2", float(targeted_step.get("dv_n", 0.0)) / 1000.0, -5.0, 5.0, 0.2))
+                lines.append(f"  Report TrajReport {sat_name}.ElapsedSecs {sat_name}.X {sat_name}.Y {sat_name}.Z {sat_name}.VX {sat_name}.VY {sat_name}.VZ;")
+                lines.append(f"  Maneuver {bname}({sat_name});")
+                lines.append(f"  Propagate {target_prop}({sat_name}) {{{sat_name}.ElapsedSecs = 60}};")
+                lines.append(f"  Achieve DC({sat_name}.RAAN = {target_val}, {{Tolerance = {dc_tolerance(step, 0.05):.8g}}});")
+            elif target_goal == "AOP":
+                lines.append(dc_vary_line(step, bname, "Element1", init_guess, -5.0, 5.0, 0.2))
+                lines.append(f"  Report TrajReport {sat_name}.ElapsedSecs {sat_name}.X {sat_name}.Y {sat_name}.Z {sat_name}.VX {sat_name}.VY {sat_name}.VZ;")
+                lines.append(f"  Maneuver {bname}({sat_name});")
+                lines.append(f"  Propagate {target_prop}({sat_name}) {{{sat_name}.ElapsedSecs = 60}};")
+                lines.append(f"  Achieve DC({sat_name}.AOP = {target_val}, {{Tolerance = {dc_tolerance(step, 0.05):.8g}}});")
+            elif target_goal in ("C3", "C3Energy"):
+                lines.append(dc_vary_line(step, bname, "Element1", init_guess, -5.0, 5.0, 0.2))
+                lines.append(f"  Report TrajReport {sat_name}.ElapsedSecs {sat_name}.X {sat_name}.Y {sat_name}.Z {sat_name}.VX {sat_name}.VY {sat_name}.VZ;")
+                lines.append(f"  Maneuver {bname}({sat_name});")
+                lines.append(f"  Propagate {target_prop}({sat_name}) {{{sat_name}.ElapsedDays = 1.0}};")
+                lines.append(f"  Achieve DC({sat_name}.C3Energy = {target_val}, {{Tolerance = {dc_tolerance(step, 0.1):.8g}}});")
             elif target_goal == "RMAG":
-                lines.append(f"  Vary DC({bname}.Element1 = {init_guess:.4f}, {{Perturbation = 0.0001, Lower = -5.0, Upper = 5.0, MaxStep = 0.2}});")
+                lines.append(dc_vary_line(step, bname, "Element1", init_guess, -5.0, 5.0, 0.2))
+                lines.append(f"  Report TrajReport {sat_name}.ElapsedSecs {sat_name}.X {sat_name}.Y {sat_name}.Z {sat_name}.VX {sat_name}.VY {sat_name}.VZ;")
                 lines.append(f"  Maneuver {bname}({sat_name});")
-                lines.append(f"  Propagate DefaultProp({sat_name}) {{{sat_name}.Apoapsis}};")
-                lines.append(f"  Achieve DC({sat_name}.{central_body}.RMAG = {target_val}, {{Tolerance = 1.0}});")
+                lines.append(f"  Propagate {target_prop}({sat_name}) {{{sat_name}.{central_body}.Apoapsis, {sat_name}.ElapsedDays = 3.0}};")
+                lines.append(f"  Achieve DC({sat_name}.{central_body}.RMAG = {target_val}, {{Tolerance = {dc_tolerance(step, 1.0):.8g}}});")
             elif target_goal in ("TargetBodyPeriapsis", "LunarPerilune"):
                 target_body = map_body_name(step.get("target_body") or ("Luna" if central_body == "Earth" else "Mars"))
                 coast_days = float(step.get("duration", 6.0)) if float(step.get("duration", 0.0)) > 0.0 else 6.0
-                lines.append(f"  Vary DC({bname}.Element1 = {init_guess:.4f}, {{Perturbation = 0.0001, Lower = {max(0.1, init_guess - 1.0):.2f}, Upper = {init_guess + 1.5:.2f}, MaxStep = 0.05}});")
+                lines.append(dc_vary_line(step, bname, "Element1", init_guess, max(0.1, init_guess - 1.0), init_guess + 1.5, 0.05))
+                lines.append(f"  Report TrajReport {sat_name}.ElapsedSecs {sat_name}.X {sat_name}.Y {sat_name}.Z {sat_name}.VX {sat_name}.VY {sat_name}.VZ;")
                 lines.append(f"  Maneuver {bname}({sat_name});")
                 lines.append(f"  Propagate CislunarProp({sat_name}) {{{sat_name}.{target_body}.Periapsis, {sat_name}.ElapsedDays = {coast_days}}};")
-                lines.append(f"  Achieve DC({sat_name}.{target_body}.RMAG = {target_val}, {{Tolerance = 100.0}});")
-            else: # Apoapsis (default)
-                lines.append(f"  Vary DC({bname}.Element1 = {init_guess:.4f}, {{Perturbation = 0.0001, Lower = 0.0, Upper = 5.0, MaxStep = 0.2}});")
+                lines.append(f"  Achieve DC({sat_name}.{target_body}.RMAG = {target_val}, {{Tolerance = {dc_tolerance(step, 100.0):.8g}}});")
+            elif target_goal == "ApoapsisVZ0":
+                lines.append(dc_vary_line(step, bname, "Element1", init_guess))
+                normal_guess = float(targeted_step.get("dv_n", 0.0)) / 1000.0
+                lines.append(dc_vary_line(step, bname, "Element2", normal_guess, prefix="normal_"))
+                lines.append(f"  Report TrajReport {sat_name}.ElapsedSecs {sat_name}.X {sat_name}.Y {sat_name}.Z {sat_name}.VX {sat_name}.VY {sat_name}.VZ;")
                 lines.append(f"  Maneuver {bname}({sat_name});")
-                lines.append(f"  Propagate DefaultProp({sat_name}) {{{sat_name}.Apoapsis}};")
-                lines.append(f"  Achieve DC({sat_name}.{central_body}.Altitude = {target_alt}, {{Tolerance = 0.5}});")
+                lines.append(f"  Propagate {target_prop}({sat_name}) {{{sat_name}.{central_body}.Apoapsis, {sat_name}.ElapsedDays = 3.0}};")
+                lines.append(f"  Achieve DC({sat_name}.{central_body}.Altitude = {target_alt}, {{Tolerance = {dc_tolerance(step, 0.5):.8g}}});")
+                lines.append(f"  Achieve DC({sat_name}.VZ = 0.0{dc_vz_tolerance_option(step)});")
+            else: # Apoapsis (default)
+                lines.append(dc_vary_line(step, bname, "Element1", init_guess, 0.0, 5.0, 0.2))
+                lines.append(f"  Report TrajReport {sat_name}.ElapsedSecs {sat_name}.X {sat_name}.Y {sat_name}.Z {sat_name}.VX {sat_name}.VY {sat_name}.VZ;")
+                lines.append(f"  Maneuver {bname}({sat_name});")
+                lines.append(f"  Propagate {target_prop}({sat_name}) {{{sat_name}.{central_body}.Apoapsis, {sat_name}.ElapsedDays = 3.0}};")
+                lines.append(f"  Achieve DC({sat_name}.{central_body}.Altitude = {target_alt}, {{Tolerance = {dc_tolerance(step, 0.5):.8g}}});")
 
             lines.append("EndTarget;")
 
+    # NASA canonical summary report via Write command
+    lines.append("")
+    lines.append(f"Write {sat_name}.ElapsedSecs {sat_name}.TotalMass {sat_name}.SMA {sat_name}.ECC {sat_name}.INC {sat_name}.RAAN {sat_name}.AOP {sat_name}.TA {{ Style = Concise, LogFile = true, MessageWindow = true }};\n")
+
     return "\n".join(lines)
 
-def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None):
+def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None, custom_coordinate_systems=None):
     """
     Assembles, saves, and executes a GMAT mission sequence script, then parses and returns results.
     """
     init_gmat()
+
+    has_hardware = all(
+        float(craft_data.get(key, 0.0) or 0.0) > 0.0
+        for key in ("fuel_mass", "fuel_density", "tank_volume", "thrust", "isp")
+    ) and bool(craft_data.get("engine_name"))
 
     gmat_root = os.path.dirname(BIN_DIR)
     output_dir = os.path.join(gmat_root, "output")
@@ -439,23 +1018,89 @@ def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None):
     report_file = os.path.join(output_dir, "mission_traj.txt")
     script_file = os.path.join(output_dir, "mission_run.script")
 
-    # Clear previous report file if exists
-    if os.path.exists(report_file):
-        try:
-            os.remove(report_file)
-        except Exception:
-            pass
+    # Propellant feasibility check: record advisory warning instead of hard blocking
+    feasibility_warning = check_propellant_feasibility(craft_data, mission_sequence)
+    if feasibility_warning:
+        print(f"[GmatEngine] Propellant notice: {feasibility_warning}")
+
+    # Clear previous GMAT report files.  Stale rows would make a node invalid.
+    for stale_report in (report_file, report_file + ".finite.txt"):
+        if os.path.exists(stale_report):
+            try:
+                os.remove(stale_report)
+            except Exception:
+                pass
 
     # Build script
-    script_content = build_gmat_script(craft_data, mission_sequence, report_file, propagator_configs=propagator_configs)
+    custom_coords = custom_coordinate_systems or []
+    script_content = build_gmat_script(craft_data, mission_sequence, report_file, propagator_configs=propagator_configs, custom_coordinate_systems=custom_coords)
     with open(script_file, "w", encoding="utf-8") as f:
         f.write(script_content)
 
     print(f"[GmatEngine] Script written to {script_file}")
 
+    # gmatpy keeps the Sandbox alive across HTTP requests. Clear both the
+    # object map and command sequence so report wrappers, burns, and solvers
+    # from an earlier request cannot contaminate this native run.
+    try:
+        gmat.ClearCommandSeq()
+    except Exception:
+        pass
+    try:
+        gmat.Clear()
+    except Exception:
+        pass
+
+    # Direct GMAT logging to dedicated session log file for precise diagnostic capture
+    run_log_file = os.path.join(output_dir, "GmatRunLog.txt")
+    if os.path.exists(run_log_file):
+        try:
+            os.remove(run_log_file)
+        except OSError:
+            pass
+    try:
+        gmat.UseLogFile(run_log_file)
+        gmat.EchoLogFile(True)
+    except Exception:
+        pass
+
     # Load and execute script
     gmat.LoadScript(script_file)
-    gmat.RunScript()
+    run_ok = gmat.RunScript()
+    if run_ok is False:
+        diagnostic = "GMAT 求解未收敛或执行中止"
+        # Prioritize searching dedicated run log file for exact parser/solver errors
+        for log_candidate in [
+            run_log_file,
+            os.path.join(output_dir, "DifferentialCorrectorDC.data"),
+            os.path.join(output_dir, "GmatLog.txt"),
+            os.path.join(BIN_DIR, "GmatLog.txt")
+        ]:
+            if os.path.exists(log_candidate):
+                try:
+                    with open(log_candidate, "r", encoding="utf-8", errors="replace") as log:
+                        log_lines = [line.strip() for line in log.readlines() if line.strip()]
+                    errs = [l for l in log_lines if any(kw in l for kw in ("Exception", "ERROR", "WARNING", "did not converge", "exceeded", "failed"))]
+                    # Filter out benign GUI plugin warnings
+                    errs = [l for l in errs if not any(b in l for b in ("GroundTrack", "libOVtoOFI", "libPythonInterface", "libMatlabInterface", "libFminconOptimizer"))]
+                    if errs:
+                        diagnostic = " | ".join(errs[-2:])
+                        break
+                    elif log_lines and diagnostic == "GMAT 求解未收敛或执行中止":
+                        meaningful = [l for l in log_lines if not any(b in l for b in ("GroundTrack", "libOVtoOFI", "Successfully interpreted"))]
+                        if meaningful:
+                            diagnostic = " | ".join(meaningful[-2:])
+                            break
+                except OSError:
+                    pass
+        return {
+            "success": False,
+            "error": diagnostic,
+            "script_path": script_file,
+            "solved_burns": [],
+            "updated_sequence": mission_sequence,
+            "calculation_authority": "GMAT_NATIVE_ONLY"
+        }
 
     sat_name = sanitize_gmat_identifier(craft_data.get("name", "Vessel"), prefix="Sat")
     central_body = map_body_name(craft_data.get("central_body", "Earth"))
@@ -473,10 +1118,33 @@ def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None):
         except Exception:
             final_state["epoch"] = ""
 
+    if has_hardware and "totalmass" in final_state:
+        dry_mass = float(craft_data.get("dry_mass", 0.0) or 0.0)
+        final_fuel_mass = final_state["totalmass"] - dry_mass
+        final_state["fuel_mass"] = final_fuel_mass
+        if final_fuel_mass < -1.0e-8:
+            fuel_deficit = -final_fuel_mass
+            fuel_needed = float(craft_data.get("fuel_mass", 0.0) or 0.0) + fuel_deficit
+            final_state["has_fuel_deficit"] = True
+            final_state["fuel_deficit"] = round(fuel_deficit, 2)
+            final_state["warning"] = (
+                f"推进剂短缺提醒：当前飞船仅有 {float(craft_data.get('fuel_mass', 0.0)):.1f} kg 推进剂，"
+                f"该机动理论需消耗 {fuel_needed:.1f} kg（短缺 {fuel_deficit:.1f} kg）。"
+                "GMAT 已按理论需求计算完成点火参数。"
+            )
+
     # 1. Update burns from GMAT runtime objects (differential corrector solved values)
-    for step in mission_sequence:
+    finite_number = 0
+    for step_index, step in enumerate(mission_sequence):
         bname = step.get("_obj_name")
-        if bname:
+        if step.get("type") == "FiniteBurn" and bname:
+            try:
+                duration_obj = gmat.GetRuntimeObject(f"{bname}_Duration")
+                if duration_obj:
+                    step["duration"] = float(duration_obj.GetRealParameter("Value"))
+            except Exception as ex:
+                print(f"[gmat_engine] Error reading solved finite-burn duration {bname}: {ex}")
+        if step.get("type") == "ImpulsiveBurn" and bname:
             try:
                 b_obj = gmat.GetRuntimeObject(bname)
                 if b_obj:
@@ -520,8 +1188,35 @@ def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None):
                     except ValueError:
                         continue
 
-    # Extract solved burns with accurate cumulative mission timeline
+    # Extract solved burns using GMAT event variables and report rows only.
     solved_burns = []
+    def finite_burn_vnb_delta(start, inertial_delta):
+        """Project GMAT FiniteBurn.GetDeltaVInertial() into the start-state VNB frame."""
+        rx, ry, rz = start[2], start[3], start[4]
+        vx0, vy0, vz0 = start[5], start[6], start[7]
+        dvx, dvy, dvz = inertial_delta
+
+        def norm(x, y, z):
+            length = math.sqrt(x * x + y * y + z * z)
+            if length <= 0.0:
+                raise RuntimeError("GMAT finite-burn report contains a zero-length reference vector")
+            return x / length, y / length, z / length
+
+        vhat = norm(vx0, vy0, vz0)
+        nhat = norm(ry * vz0 - rz * vy0, rz * vx0 - rx * vz0, rx * vy0 - ry * vx0)
+        bhat = norm(vhat[1] * nhat[2] - vhat[2] * nhat[1],
+                    vhat[2] * nhat[0] - vhat[0] * nhat[2],
+                    vhat[0] * nhat[1] - vhat[1] * nhat[0])
+        dv_v = (dvx * vhat[0] + dvy * vhat[1] + dvz * vhat[2]) * 1000.0
+        dv_n = (dvx * nhat[0] + dvy * nhat[1] + dvz * nhat[2]) * 1000.0
+        dv_b = (dvx * bhat[0] + dvy * bhat[1] + dvz * bhat[2]) * 1000.0
+        return dv_v, dv_n, dv_b
+
+    def state_at_or_before(offset):
+        candidates = [point for point in traj_points if point["t"] <= offset + 1e-6]
+        if not candidates: return None
+        point = candidates[-1]
+        return {"burn_x": point["x"], "burn_y": point["y"], "burn_z": point["z"], "burn_vx": point["vx"], "burn_vy": point["vy"], "burn_vz": point["vz"]}
     cum_time = 0.0
     for step in mission_sequence:
         stype = step.get("type")
@@ -531,12 +1226,11 @@ def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None):
                 cum_time += float(step.get("duration", 3600.0))
             elif stop_type in ("Days", "ElapsedDays"):
                 cum_time += float(step.get("duration", 1.0)) * 86400.0
-            elif stop_type == "Apoapsis":
-                cum_time += 2700.0
-            elif stop_type == "Periapsis":
-                cum_time += 5400.0
             else:
-                cum_time += float(step.get("duration", 3600.0))
+                # Event time is resolved by GMAT.  Do not invent a duration
+                # for an event stop; the next burn will use its GMAT variable.
+                if traj_points:
+                    cum_time = traj_points[-1]["t"]
         elif stype in ("ImpulsiveBurn", "TargetApoapsis", "Targeter"):
             if stype in ("TargetApoapsis", "Targeter") and "_targets_burn_idx" in step:
                 continue
@@ -555,7 +1249,7 @@ def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None):
             dv_b = float(step.get("dv_b", 0.0))
             mag = (dv_v**2 + dv_n**2 + dv_b**2) ** 0.5
             origin = map_body_name(step.get("origin") or central_body)
-            solved_burns.append({
+            solved = {
                 "type": "Impulsive",
                 "name": step.get("label") or step.get("name") or "Burn",
                 "origin": origin,
@@ -563,8 +1257,14 @@ def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None):
                 "dv_n": dv_n,
                 "dv_b": dv_b,
                 "magnitude": round(mag, 1),
-                "epoch_offset": burn_epoch_offset
-            })
+                "epoch_offset": burn_epoch_offset,
+                "has_native_delta_v": True,
+                "principia_writeable": True,
+                "native_result_note": "ImpulsiveBurn Element1/2/3 read from the GMAT runtime object."
+            }
+            state = state_at_or_before(burn_epoch_offset)
+            if state: solved.update(state)
+            solved_burns.append(solved)
             cum_time = burn_epoch_offset
 
         elif stype == "FiniteBurn":
@@ -578,29 +1278,69 @@ def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None):
                 except Exception as ex:
                     print(f"[gmat_engine] Could not get {fbname}_Time: {ex}")
 
-            dur = float(step.get("duration", 60.0))
-            thrust = float(craft_data.get("thrust", 50000.0))
-            isp = float(craft_data.get("isp", 310.0))
-            m_init = float(craft_data.get("dry_mass", 1000.0)) + float(craft_data.get("fuel_mass", 2000.0))
-            mdot = thrust / (isp * 9.80665)
-            m_final = max(float(craft_data.get("dry_mass", 1000.0)), m_init - mdot * dur)
-            dv = isp * 9.80665 * (m_init / m_final if m_final > 0 else 1.0)
+            finite_rows = []
+            if os.path.exists(report_file + ".finite.txt"):
+                with open(report_file + ".finite.txt", "r", encoding="utf-8") as f:
+                    for line in f:
+                        parts = line.strip().split()
+                        if len(parts) >= 11:
+                            try:
+                                finite_rows.append([float(value) for value in parts])
+                            except ValueError:
+                                continue
+            if not finite_rows:
+                raise RuntimeError("GMAT did not report finite-burn states")
+            last_burn_row = finite_rows[-1]
+            gm_start_time = last_burn_row[0]
+            dur = last_burn_row[1]
+            dv_thrust = last_burn_row[2]
+            dv_v = last_burn_row[3]
+            dv_n = last_burn_row[4]
+            dv_b = last_burn_row[5]
+            fuel_burned = last_burn_row[6]
+            orb_dv_mag = last_burn_row[7]
+            gravity_loss = last_burn_row[8]
+            gm_start_mass = last_burn_row[9]
+            gm_finish_mass = last_burn_row[10]
+            burn_x = last_burn_row[11] if len(last_burn_row) > 11 else 0.0
+            burn_y = last_burn_row[12] if len(last_burn_row) > 12 else 0.0
+            burn_z = last_burn_row[13] if len(last_burn_row) > 13 else 0.0
+            burn_vx = last_burn_row[14] if len(last_burn_row) > 14 else 0.0
+            burn_vy = last_burn_row[15] if len(last_burn_row) > 15 else 0.0
+            burn_vz = last_burn_row[16] if len(last_burn_row) > 16 else 0.0
+
+            thrust_kn = required_number(craft_data, "thrust") / 1000.0
+            isp = required_number(craft_data, "isp")
             origin = map_body_name(step.get("origin") or central_body)
-            solved_burns.append({
+            solved = {
                 "type": "Finite",
                 "name": step.get("label") or "FiniteBurn",
                 "origin": origin,
-                "duration": dur,
-                "thrust_kn": thrust / 1000.0,
+                "duration": round(dur, 2),
+                "thrust_kn": thrust_kn,
                 "isp": isp,
-                "fuel_burned": mdot * dur,
-                "dv_v": dv,
-                "dv_n": 0.0,
-                "dv_b": 0.0,
-                "magnitude": dv,
-                "epoch_offset": burn_epoch_offset
+                "fuel_burned": round(fuel_burned, 2),
+                "dv_v": round(dv_v, 2),
+                "dv_n": round(dv_n, 2),
+                "dv_b": round(dv_b, 2),
+                "magnitude": round(dv_thrust, 2),
+                "epoch_offset": round(gm_start_time, 2),
+                "end_epoch_offset": round(gm_start_time + dur, 2),
+                "has_native_delta_v": True,
+                "principia_writeable": True,
+                "orbital_delta_v": {
+                    "magnitude": round(orb_dv_mag, 2)
+                },
+                "gravity_loss_mps": round(gravity_loss, 2),
+                "native_result_note": "100% GMAT native C++ evaluated physics variables."
+            }
+            solved.update({
+                "burn_x": burn_x, "burn_y": burn_y, "burn_z": burn_z,
+                "burn_vx": burn_vx, "burn_vy": burn_vy, "burn_vz": burn_vz
             })
-            cum_time = burn_epoch_offset + dur
+            solved_burns.append(solved)
+            cum_time = gm_start_time + dur
+            finite_number += 1
 
     # Auto-render trajectory plot image for KSP sub-window
     render_image_path = os.path.join(output_dir, "gmat_orbit_render.png")
@@ -610,8 +1350,120 @@ def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None):
     except Exception as ex:
         print(f"[gmat_engine] Render trajectory error: {ex}")
 
+    # Parse DifferentialCorrector data if present
+    dc_info = {}
+    dc_file = os.path.join(output_dir, "DifferentialCorrectorDC.data")
+    if os.path.exists(dc_file):
+        try:
+            with open(dc_file, "r", encoding="utf-8", errors="ignore") as f:
+                dc_text = f.read()
+            m_goal = re.findall(r"Desired:\s*([\d\.\-]+)\s*Achieved:\s*([\d\.\-]+)", dc_text)
+            m_tol = re.findall(r"Tolerance:\s*([\d\.\-eE]+)", dc_text)
+            desired, achieved = m_goal[-1] if m_goal else (None, None)
+            dc_tol = float(m_tol[-1]) if m_tol else 0.1
+            is_within_tol = False
+            if desired is not None and achieved is not None:
+                is_within_tol = abs(float(achieved) - float(desired)) <= (dc_tol * 1.05)
+            dc_converged = ("Targeting Completed" in dc_text) and is_within_tol
+            m_iter = re.search(r"Targeting Completed in (\d+) iterations", dc_text)
+            iterations = int(m_iter.group(1)) if m_iter else None
+            dc_info = {
+                "converged": dc_converged,
+                "iterations": iterations,
+                "desired": float(desired) if desired else None,
+                "achieved": float(achieved) if achieved else None,
+                "variance": round(float(achieved) - float(desired), 4) if achieved and desired else None
+            }
+            if not dc_converged and desired is not None and achieved is not None:
+                target_warn = f"打靶未达到指定容差 (目标: {desired}, 实际: {achieved}, 容差: {dc_tol})"
+                feasibility_warning = f"{feasibility_warning} | {target_warn}" if feasibility_warning else target_warn
+        except Exception as ex:
+            print(f"[gmat_engine] DC parse error: {ex}")
+
+    # Parse individual step reports
+    step_reports = []
+    for s_idx, st in enumerate(mission_sequence):
+        if st.get("type") == "Report":
+            rf_file = os.path.join(output_dir, f"step_report_{s_idx}.txt")
+            label = st.get("label") or f"步骤 #{s_idx + 1} 状态报告"
+            rep_data = {
+                "step_index": s_idx,
+                "step_label": label,
+                "elapsed_secs": 0.0,
+                "epoch_utc": final_state.get("epoch", ""),
+                "altitude_km": 0.0,
+                "sma_km": 0.0,
+                "ecc": 0.0,
+                "inc_deg": 0.0,
+                "raan_deg": 0.0,
+                "aop_deg": 0.0,
+                "ta_deg": 0.0,
+                "rmag_km": 0.0,
+                "total_mass_kg": 0.0,
+                "fuel_mass_kg": 0.0,
+                "x": 0.0, "y": 0.0, "z": 0.0,
+                "vx": 0.0, "vy": 0.0, "vz": 0.0,
+                "raw_report_text": ""
+            }
+            if os.path.exists(rf_file):
+                try:
+                    with open(rf_file, "r", encoding="utf-8", errors="ignore") as rf:
+                        raw = rf.read()
+                    rep_data["raw_report_text"] = raw
+                    rows = [line.strip().split() for line in raw.splitlines() if line.strip() and not line.strip().startswith("%") and not "ElapsedSecs" in line]
+                    if rows:
+                        last_row = rows[-1]
+                        import re
+                        vals = [float(v) for v in last_row if re.match(r"^[\d\.\-+eE]+$", v)]
+                        if len(vals) >= 10:
+                            rep_data["elapsed_secs"] = round(vals[0], 2)
+                            rep_data["altitude_km"] = round(vals[1], 2)
+                            rep_data["sma_km"] = round(vals[2], 2)
+                            rep_data["ecc"] = round(vals[3], 4)
+                            rep_data["inc_deg"] = round(vals[4], 2)
+                            rep_data["raan_deg"] = round(vals[5], 2)
+                            rep_data["aop_deg"] = round(vals[6], 2)
+                            rep_data["ta_deg"] = round(vals[7], 2)
+                            rep_data["rmag_km"] = round(vals[8], 2)
+                            rep_data["total_mass_kg"] = round(vals[9], 1)
+                        if len(vals) >= 16:
+                            rep_data["x"] = round(vals[10], 2)
+                            rep_data["y"] = round(vals[11], 2)
+                            rep_data["z"] = round(vals[12], 2)
+                            rep_data["vx"] = round(vals[13], 4)
+                            rep_data["vy"] = round(vals[14], 4)
+                            rep_data["vz"] = round(vals[15], 4)
+                except Exception as ex:
+                    print(f"[gmat_engine] Error reading {rf_file}: {ex}")
+
+            # Fallback to final state / trajectory if report file parsing had zeros
+            if rep_data["sma_km"] == 0.0 and final_state:
+                rep_data["sma_km"] = round(final_state.get("sma", 0.0), 2)
+                rep_data["ecc"] = round(final_state.get("ecc", 0.0), 4)
+                rep_data["inc_deg"] = round(final_state.get("inc", 0.0), 2)
+                rep_data["raan_deg"] = round(final_state.get("raan", 0.0), 2)
+                rep_data["aop_deg"] = round(final_state.get("aop", 0.0), 2)
+                rep_data["ta_deg"] = round(final_state.get("ta", 0.0), 2)
+                rep_data["total_mass_kg"] = round(final_state.get("totalmass", 0.0), 1)
+                rep_data["fuel_mass_kg"] = round(final_state.get("fuel_mass", 0.0), 1)
+                rep_data["x"] = round(final_state.get("x", 0.0), 2)
+                rep_data["y"] = round(final_state.get("y", 0.0), 2)
+                rep_data["z"] = round(final_state.get("z", 0.0), 2)
+                rep_data["vx"] = round(final_state.get("vx", 0.0), 4)
+                rep_data["vy"] = round(final_state.get("vy", 0.0), 4)
+                rep_data["vz"] = round(final_state.get("vz", 0.0), 4)
+                if traj_points:
+                    rep_data["elapsed_secs"] = round(traj_points[-1].get("t", 0.0), 2)
+
+            step_reports.append(rep_data)
+
     return {
         "success": True,
+        "step_reports": step_reports,
+        "error": None,
+        "warning": final_state.get("warning") or feasibility_warning,
+        "has_fuel_deficit": final_state.get("has_fuel_deficit", False),
+        "fuel_deficit": final_state.get("fuel_deficit", 0.0),
         "script_path": script_file,
         "final_state": final_state,
         "final_sma": final_state.get("sma", 0.0),
@@ -626,5 +1478,8 @@ def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None):
         "trajectory_sample": traj_points[::max(1, len(traj_points)//50)], # sample up to 50 pts for GUI
         "solved_burns": solved_burns,
         "updated_sequence": mission_sequence,
-        "render_image_path": render_image_path
+        "render_image_path": render_image_path,
+        "dc_summary": dc_info,
+        "calculation_authority": "GMAT_NATIVE_ONLY",
+        "finite_burn_report_path": report_file + ".finite.txt"
     }

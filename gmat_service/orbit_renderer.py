@@ -189,7 +189,9 @@ def render_gmat_trajectory(traj_file_path, output_png_path, view_mode="dual", ce
     return True, output_png_path
 
 if __name__ == "__main__":
-    t_file = r"d:\nocomp\gmat-win-R2026a\output\mission_traj.txt"
-    o_file = r"d:\nocomp\gmat-win-R2026a\output\gmat_orbit_render.png"
+    curr_dir = os.path.dirname(os.path.abspath(__file__))
+    def_out_dir = os.path.abspath(os.path.join(curr_dir, "..", "..", "output"))
+    t_file = os.path.join(def_out_dir, "mission_traj.txt")
+    o_file = os.path.join(def_out_dir, "gmat_orbit_render.png")
     ok, msg = render_gmat_trajectory(t_file, o_file, central_body="Earth")
     print("Rendered:", ok, msg)

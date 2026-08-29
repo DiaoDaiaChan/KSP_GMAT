@@ -13,9 +13,15 @@
 
 本插件专为 **Principia（N 体引力物理模型）** 与 **Realism Overhaul (RO) / Real Solar System (RSS)** 真实太阳系玩家与高精度任务设计者打造。通过全流程标准化的 GMAT 原生脚本编译与运行时对象双向交互，实现：
 - 游戏内航天器开普勒状态向量、真实质量流、发动机比冲与推力一键同步；
-- **100% GMAT 原生核心求解**（RungeKutta89 积分、高阶地磁球谐引力场、日月点质量摄动、太阳光压 SRP）；
+- **100% GMAT 原生核心求解**（RungeKutta89 积分、高阶重力场、日月点质量摄动）；游戏侧不启用光压和相对论修正。
 - 标准化多目标微分校正打靶（Differential Corrector）；
 - 求解机动 **一键写入 Principia 飞行规划器**（Flight Planner）。
+
+**计算边界**：轨道传播只由 GMAT `Propagator` 执行；脉冲机动只由 GMAT `ImpulsiveBurn` 执行；有限推力只由 GMAT `FiniteBurn`、`ChemicalThruster` 和 `Propagator` 执行；打靶只由 GMAT `DifferentialCorrector` 的 `Target/Vary/Achieve` 执行。Python 桥接层仅生成 GMAT 脚本、调用 `gmatpy` 并读取 GMAT RuntimeObject/ReportFile，C# 只负责采集游戏状态、显示和写入 Principia。
+
+有限推力结果不会被火箭方程转换成伪造的瞬时脉冲。当前只有 GMAT 明确提供原生脉冲量的节点允许写入 Principia；有限燃烧会保留 GMAT 报告的边界状态和质量，并明确标记为不可等价写入的结果。
+
+传播子配置与 GMAT `PropSetup` 对齐：`Type`、`FM`、`InitialStepSize`、`Accuracy`、`ErrorThreshold`、`SmallestInterval`、`MinStep`、`MaxStep`、`MaxStepAttempts`、`LowerError`、`TargetError`、`StopIfAccuracyIsViolated`、`StepSize`、`MinimumReduction`、`MaximumReduction` 和 `MinimumTolerance` 均可配置。ForceModel 支持中心天体、PrimaryBodies、点质量、误差控制、重力场阶次/次数、势文件、潮汐文件和大气阻力常用参数；游戏侧不发送 SRP 或 RelativisticCorrection。
 
 > **注意 / Note**：本项目已剥离 GMAT 原生二进制库文件（不包含任何官方数百兆的 `.exe`、`.dll`、`osgPlugins` 等闭源或体积冗余文件）。用户可自行配合官方独立版 GMAT（R2022a / R2026a 等）使用。
 
@@ -47,7 +53,7 @@
 游戏内可直接对三大内置传播子（`LEOProp`、`CislunarProp`、`LunarNRHOProp`）进行细粒度微调：
 - 地球引力模型：球谐阶数（如 JGM-2 8x8）、重力场源；
 - 点质量摄动体：自由勾选 Earth, Luna, Sun, Jupiter；
-- 表面受力：太阳光电辐射压力 (SRP, Spherical Model)、地球高空大气阻力 (Atmospheric Drag)；
+- 表面受力：按需启用地球高空大气阻力 (Atmospheric Drag)；
 - 数值积分器：PrinceDormand78、RungeKutta89 等。
 
 ### 5. 双重可视化支持 (2D & 3D Visualization)
@@ -98,6 +104,12 @@ KSP_GMAT/
 └── LICENSE                     # 开源协议 (MIT)
 ```
 
+### 路径配置
+
+KSP 插件不再依赖固定盘符。编辑 `GameData/KSPGMAT/Config/backend.cfg`，设置 GMAT `bin` 目录。
+
+GMAT 机动写入 Principia 后，结果页提供“校验 GMAT / Principia 机动节点”。它读取 Flight Plan 中的 manoeuvre，按写入时的 Principia 时间基准匹配 GMAT 节点，并报告时间与 ΔV 幅值误差；如果当前 Principia 版本不支持读取接口，会明确显示失败原因。
+
 ---
 
 ## 🚀 快速上手 / Quickstart Guide
@@ -128,6 +140,14 @@ KSP_GMAT/
    - GMAT 原生内核将在几百毫秒内完成收敛；
    - 求解得到的准确速度增量 $\Delta V$ 将实时写回各机动卡片；
 4. 点击 **`[ 🔥 一键写入所有机动至 Principia ]`**，打开游戏内 Principia 地图，查看精准变轨结果！
+
+### 5. 运行原生计算边界检查
+
+该检查不执行离线轨道求解，只防止桥接层重新加入二体公式、RK4 或火箭方程替代实现：
+
+```text
+python gmat_service/test_native_authority.py
+```
 
 ---
 

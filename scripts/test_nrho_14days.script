@@ -21,7 +21,6 @@ Sc.VZ = 0;
 Create ForceModel fm;
 fm.CentralBody = Luna;
 fm.PointMasses = {Sun, Earth, Luna};
-fm.SRP = Off;
 fm.ErrorControl = RSSStep;
 
 Create Propagator prop;

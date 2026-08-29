@@ -20,6 +20,18 @@ namespace KSPGMAT {
         public double tankPressureKPa = 1500.0; // Standard RO regulated tank pressure
     }
 
+    [Serializable]
+    public class VesselTankInfo {
+        public string id;
+        public string partTitle;
+        public int stageNumber;
+        public double fuelMassKg;
+        public double dryMassKg;
+        public double maxVolumeM3;
+        public string resourceSummary;
+        public bool isSelected = true;
+    }
+
     /// <summary>
     /// Interoperability module for RealismOverhaul & RealFuels engine parameters and propellant density.
     /// </summary>
@@ -147,6 +159,57 @@ namespace KSPGMAT {
                 }
 
                 list.Add(info);
+            }
+
+            return list;
+        }
+
+        /// <summary>
+        /// Scans active vessel for all fuel tanks and propellant resources.
+        /// </summary>
+        public static List<VesselTankInfo> ScanVesselTanks(Vessel vessel) {
+            List<VesselTankInfo> list = new List<VesselTankInfo>();
+            if (vessel == null || vessel.parts == null) return list;
+
+            for (int i = 0; i < vessel.parts.Count; i++) {
+                Part p = vessel.parts[i];
+                if (p == null || p.Resources == null || p.Resources.Count == 0) continue;
+
+                double fuelMass = 0.0;
+                double maxVol = 0.0;
+                StringBuilder sb = new StringBuilder();
+
+                for (int rIdx = 0; rIdx < p.Resources.Count; rIdx++) {
+                    PartResource r = p.Resources[rIdx];
+                    if (r == null) continue;
+
+                    string rName = r.resourceName;
+                    if (string.IsNullOrEmpty(rName) || rName.Equals("ElectricCharge", StringComparison.OrdinalIgnoreCase)) continue;
+
+                    double density = (r.info != null) ? r.info.density : 0.001;
+                    double massKg = r.amount * density * 1000.0;
+                    double volM3 = r.maxAmount * 0.001;
+
+                    if (massKg > 0.01 || r.maxAmount > 0.1) {
+                        fuelMass += massKg;
+                        maxVol += volM3;
+                        if (sb.Length > 0) sb.Append(", ");
+                        sb.Append($"{rName}: {r.amount:F0}/{r.maxAmount:F0}");
+                    }
+                }
+
+                if (fuelMass > 0.01 || maxVol > 0.001) {
+                    VesselTankInfo info = new VesselTankInfo();
+                    info.id = p.flightID.ToString();
+                    info.partTitle = (p.partInfo != null && !string.IsNullOrEmpty(p.partInfo.title)) ? p.partInfo.title : p.name;
+                    info.stageNumber = p.inverseStage;
+                    info.fuelMassKg = fuelMass;
+                    info.dryMassKg = p.mass * 1000.0;
+                    info.maxVolumeM3 = maxVol;
+                    info.resourceSummary = sb.ToString();
+                    info.isSelected = true;
+                    list.Add(info);
+                }
             }
 
             return list;

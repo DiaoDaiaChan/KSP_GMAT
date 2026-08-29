@@ -4,25 +4,60 @@ using System.Net;
 using System.Text;
 using System.Threading;
 using System.Collections.Generic;
+using System.Globalization;
 using UnityEngine;
 
 namespace KSPGMAT {
     [Serializable]
     public class MissionStep {
-        public string type = "Propagate"; // Propagate, ImpulsiveBurn, FiniteBurn, TargetApoapsis, Targeter, Equation
-        public string propagator = "LEOProp"; // LEOProp, CislunarProp, LunarNRHOProp, DefaultProp
+        public string type = "Propagate"; // Propagate, Report, FiniteBurn, Targeter, Equation
+        public string propagator = "LEOProp"; // GMAT Propagator object name
         public string stop_type = "Time"; // Time, Days, Apoapsis, Periapsis, Altitude, RMAG, TA, Node
         public double duration = 3600.0;
         public double target_val = 200.0; // Altitude (km), RMAG (km), TrueAnomaly (deg)
         public double target_alt = 35786.0; // km for TargetApoapsis
         public string target_goal = "Apoapsis"; // Apoapsis, Periapsis, SMA, ECC, INC, RMAG, LunarPerilune
+        public string target_body = ""; // Body used by body-relative goals such as LunarPerilune
         public double dv_v = 0.0; // m/s
         public double dv_n = 0.0; // m/s
         public double dv_b = 0.0; // m/s
+        public string burn_coordinate_system = "Local";
+        public string burn_axes = "VNB";
+        public string burn_origin = "";
+        public double burn_isp = 0.0;
+        public bool burn_decrement_mass = false;
+        public double target_tolerance = 0.0;
+        public double vz_tolerance = 0.0; // km/s; zero uses GMAT numerical default
+        public double stop_tolerance = 1e-5; // GMAT Propagate StopTolerance (e.g. 1e-5)
+        public double vary_perturbation = 0.0;
+        public double vary_lower = 0.0;
+        public double vary_upper = 0.0;
+        public double vary_max_step = 0.0;
         public double epoch_offset = 0.0;
-        public string variable = ""; // for Equation, e.g. "EarthMoonRot.X"
+        public string variable = ""; // for Equation, e.g. "Sat.SMA" or "burntime"
         public string expression = ""; // for Equation, e.g. "-173.0"
+        public string burn_direction = "Prograde"; // Prograde, Retrograde, Normal, AntiNormal, RadialIn, RadialOut
+        public string utc_epoch = ""; // for UTCGregorian stop, e.g. "08 Mar 1960 12:00:00.000"
+        public string dc_algorithm = "NewtonRaphson"; // NewtonRaphson, Broyden
+        public string dc_derivative_method = "ForwardDifference"; // ForwardDifference, CentralDifference
+        public int dc_max_iter = 25;
+        public bool show_advanced_dc = false;
         public string label = "";
+        public bool is_collapsed = false; // Target group collapsed in GUI
+        public bool is_expanded = false; // Individual step details expanded in GUI
+        public string dc_name = "DefaultDC";
+        public string solve_mode = "Solve"; // Solve, RunInitialGuess
+        public string exit_mode = "SaveAndContinue"; // SaveAndContinue, DiscardAndContinue
+        public string vary_variable = "burntime";
+        public double vary_initial = 150.0;
+        public string achieve_param = "Earth.RMAG";
+        public double achieve_val = 40000.0;
+        public double achieve_tolerance = 0.1;
+        public string var_name = "burntime";
+        public string var_expr = "150.0";
+        public bool burn_use_vary_var = false;
+        public string burn_vary_var_name = "burntime";
+        public string burn_name = ""; // GMAT Burn object name
     }
 
     [Serializable]
@@ -39,6 +74,15 @@ namespace KSPGMAT {
         public double isp;
         public double fuel_burned;
         public double epoch_offset;
+        public double burn_x;
+        public double burn_y;
+        public double burn_z;
+        public double burn_vx;
+        public double burn_vy;
+        public double burn_vz;
+        public bool has_native_delta_v;
+        public bool principia_writeable;
+        public string native_result_note;
     }
 
     [Serializable]
@@ -54,6 +98,40 @@ namespace KSPGMAT {
     }
 
     [Serializable]
+    public class DCSummary {
+        public bool converged;
+        public int iterations;
+        public double desired;
+        public double achieved;
+        public double variance;
+    }
+
+    [Serializable]
+    public class StepReportData {
+        public int step_index;
+        public string step_label;
+        public double elapsed_secs;
+        public string epoch_utc;
+        public double altitude_km;
+        public double sma_km;
+        public double ecc;
+        public double inc_deg;
+        public double raan_deg;
+        public double aop_deg;
+        public double ta_deg;
+        public double rmag_km;
+        public double total_mass_kg;
+        public double fuel_mass_kg;
+        public double x;
+        public double y;
+        public double z;
+        public double vx;
+        public double vy;
+        public double vz;
+        public string raw_report_text;
+    }
+
+    [Serializable]
     public class MissionResult {
         public bool success;
         public string error;
@@ -66,28 +144,136 @@ namespace KSPGMAT {
         public double final_ta;
         public double final_mass;
         public string final_epoch;
+        public string warning;
+        public bool has_fuel_deficit;
+        public double fuel_deficit;
         public List<SolvedBurn> solved_burns = new List<SolvedBurn>();
         public List<TrajectoryPoint> trajectory = new List<TrajectoryPoint>();
         public List<MissionStep> updated_sequence = new List<MissionStep>();
         public string render_image_path;
+        public DCSummary dc_summary;
+        public List<StepReportData> step_reports = new List<StepReportData>();
     }
 
     public static class GMATClient {
         public static string ServerUrl = "http://127.0.0.1:8055";
         public static bool IsConnected = false;
-        public static string ServerStatusText = "Connecting...";
+        public static string ServerStatusText = "Initializing...";
+        public static bool UseDirectCLI = true;
+        private static string _customGmatBinPath = "";
+        public static string GmatBinPath {
+            get {
+                if (!string.IsNullOrEmpty(_customGmatBinPath) && Directory.Exists(_customGmatBinPath)) return _customGmatBinPath;
+                string env = Environment.GetEnvironmentVariable("GMAT_BIN");
+                if (!string.IsNullOrEmpty(env) && Directory.Exists(env)) return env;
+
+                string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                string[] candidates = new string[] {
+                    Path.Combine(userProfile, "gmat-win-R2026a", "bin"),
+                    @"C:\Users\43701\gmat-win-R2026a\bin",
+                    @"d:\nocomp\gmat-win-R2026a\bin",
+                    @"C:\GMAT\bin",
+                    @"D:\GMAT\bin"
+                };
+                foreach (var c in candidates) {
+                    if (Directory.Exists(c)) return c;
+                }
+                return Path.Combine(userProfile, "gmat-win-R2026a", "bin");
+            }
+            set { _customGmatBinPath = value; }
+        }
+        public static string CustomPythonPath = "";
+        private static readonly UTF8Encoding Utf8NoBom = new UTF8Encoding(false);
+
+        public static string FindPythonExe() {
+            if (!string.IsNullOrEmpty(CustomPythonPath) && File.Exists(CustomPythonPath)) return CustomPythonPath;
+            string[] candidates = new string[] {
+                "python.exe",
+                @"C:\Users\43701\AppData\Local\Programs\Python\Python310\python.exe",
+                @"C:\Users\43701\AppData\Local\Programs\Python\Python311\python.exe",
+                @"C:\Users\43701\AppData\Local\Programs\Python\Python312\python.exe",
+                @"C:\Program Files\Python310\python.exe",
+                @"C:\Program Files\Python311\python.exe",
+                @"C:\Program Files\Python312\python.exe"
+            };
+            foreach (var c in candidates) {
+                if (c == "python.exe") return c; // try PATH
+                if (File.Exists(c)) return c;
+            }
+            return "python.exe";
+        }
+
+        public static string FindCliScript() {
+            string[] candidates = new string[] {
+                Path.Combine(GmatBinPath, "KSP_GMAT", "gmat_service", "gmat_cli.py"),
+                Path.Combine(GmatBinPath, "gmat_service", "gmat_cli.py"),
+                Path.Combine(KSPUtil.ApplicationRootPath, "GameData", "KSPGMAT", "GMATService", "gmat_cli.py")
+            };
+            foreach (var c in candidates) {
+                if (File.Exists(c)) return c;
+            }
+            return Path.Combine(GmatBinPath, "KSP_GMAT", "gmat_service", "gmat_cli.py");
+        }
+
+        public static string GetOutputDir() {
+            string dir = Path.Combine(Path.GetDirectoryName(GmatBinPath), "output");
+            if (!Directory.Exists(dir)) {
+                try { Directory.CreateDirectory(dir); } catch {}
+            }
+            return dir;
+        }
+
+        public static string JdToUtcGregorian(double jd) {
+            double jdAdj = jd + 0.5;
+            long Z = (long)Math.Floor(jdAdj);
+            double F = jdAdj - Z;
+            long A = Z;
+            if (Z >= 2299161) {
+                long alpha = (long)Math.Floor((Z - 1867216.25) / 36524.25);
+                A = Z + 1 + alpha - (long)Math.Floor(alpha / 4.0);
+            }
+            long B = A + 1524;
+            long C = (long)Math.Floor((B - 122.1) / 365.25);
+            long D = (long)Math.Floor(365.25 * C);
+            long E = (long)Math.Floor((B - D) / 30.6001);
+
+            double dayWithFrac = B - D - (long)Math.Floor(30.6001 * E) + F;
+            int day = (int)Math.Floor(dayWithFrac);
+            int month = (int)(E < 14 ? E - 1 : E - 13);
+            int year = (int)(month > 2 ? C - 4716 : C - 4715);
+
+            double dayFrac = dayWithFrac - day;
+            double totalSeconds = dayFrac * 86400.0;
+            int hours = (int)(totalSeconds / 3600.0);
+            double rem = totalSeconds - hours * 3600.0;
+            int minutes = (int)(rem / 60.0);
+            double seconds = rem - minutes * 60.0;
+
+            string[] months = new string[] { "", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+            string monStr = (month >= 1 && month <= 12) ? months[month] : "Jan";
+            return string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0:D2} {1} {2:D4} {3:D2}:{4:D2}:{5:00.000}", day, monStr, year, hours, minutes, seconds);
+        }
 
         public static void CheckConnection(Action<bool, string> callback) {
             ThreadPool.QueueUserWorkItem(_ => {
+                string cli = FindCliScript();
+                if (UseDirectCLI && File.Exists(cli)) {
+                    IsConnected = true;
+                    ServerStatusText = "⚡ GMAT 原生引擎就绪 (无需后台服务)";
+                    KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(true, "CLI Ready"));
+                    return;
+                }
+
                 try {
                     HttpWebRequest request = (HttpWebRequest)WebRequest.Create(ServerUrl + "/api/status");
-                    request.Timeout = 2000;
+                    request.Timeout = 1500;
                     request.Method = "GET";
                     using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
                     using (StreamReader reader = new StreamReader(response.GetResponseStream())) {
                         string json = reader.ReadToEnd();
                         IsConnected = true;
-                        ServerStatusText = "Online (GMAT R2026a)";
+                        ServerStatusText = "Online (GMAT R2026a Bridge)";
+                        FetchParameters();
                         KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(true, json));
                     }
                 } catch (Exception ex) {
@@ -95,6 +281,22 @@ namespace KSPGMAT {
                     ServerStatusText = "Offline (" + ex.Message + ")";
                     KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(false, ex.Message));
                 }
+            });
+        }
+
+        public static void FetchParameters(Action<bool> callback = null) {
+            ThreadPool.QueueUserWorkItem(_ => {
+                try {
+                    string json = GetJson(ServerUrl + "/api/parameters");
+                    if (!string.IsNullOrEmpty(json) && json.Contains("\"parameters\":")) {
+                        UI.GMATMainWindow.RunOnMainThread(() => {
+                            GMATParameterRegistry.LoadFromJson(json);
+                            callback?.Invoke(true);
+                        });
+                        return;
+                    }
+                } catch {}
+                UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(false));
             });
         }
 
@@ -131,8 +333,6 @@ namespace KSPGMAT {
                     // Multi-stage mass calculation
                     double dryMassKg = 0;
                     double fuelMassKg = 0;
-                    double defaultThrust = 50000.0;
-                    double defaultIsp = 310.0;
 
                     if (selectedStages != null && selectedStages.Count > 0) {
                         double minDryTonnes = double.MaxValue;
@@ -140,25 +340,29 @@ namespace KSPGMAT {
                         foreach (var st in selectedStages) {
                             sumFuelTonnes += st.fuelMassTonnes;
                             if (st.dryMassTonnes < minDryTonnes) minDryTonnes = st.dryMassTonnes;
-                            if (st.thrustKN > 0) defaultThrust = st.thrustKN * 1000.0;
-                            if (st.isp > 0) defaultIsp = st.isp;
                         }
                         dryMassKg = minDryTonnes * 1000.0;
                         fuelMassKg = sumFuelTonnes * 1000.0;
                     } else {
-                        dryMassKg = Math.Max(1000.0, vessel.totalMass * 400.0);
-                        fuelMassKg = Math.Max(1000.0, vessel.totalMass * 600.0);
+                        fuelMassKg = engine != null ? Math.Max(0.0, engine.fuelMassKg) : 0.0;
+                        dryMassKg = Math.Max(0.0, vessel.totalMass * 1000.0 - fuelMassKg);
                     }
 
                     if (engine != null && engine.fuelMassKg > 0) {
                         fuelMassKg = Math.Max(fuelMassKg, engine.fuelMassKg);
                     }
-                    double fuelDensity = engine != null && engine.fuelDensityKgM3 > 0 ? engine.fuelDensityKgM3 : 1260.0;
-                    double tankVolume = engine != null && engine.tankVolumeM3 > 0 ? engine.tankVolumeM3 : (fuelMassKg / fuelDensity * 1.1);
-                    double tankPressure = engine != null ? engine.tankPressureKPa : 1500.0;
-                    double thrustN = engine != null && engine.thrustKN > 0 ? engine.thrustKN * 1000.0 : defaultThrust;
-                    double ispS = engine != null && engine.ispVac > 0 ? engine.ispVac : defaultIsp;
-                    string engName = engine != null ? engine.title : "MainEngine";
+                    double fuelDensity = engine != null ? engine.fuelDensityKgM3 : 0.0;
+                    double tankVolume = engine != null ? engine.tankVolumeM3 : 0.0;
+                    double tankPressure = engine != null ? engine.tankPressureKPa : 0.0;
+                    double thrustN = engine != null ? engine.thrustKN * 1000.0 : 0.0;
+                    double ispS = engine != null ? engine.ispVac : 0.0;
+                    string engName = engine != null ? engine.title : "";
+
+                    bool needsFiniteBurn = false;
+                    for (int i = 0; i < steps.Count; i++) if (steps[i].type == "FiniteBurn") needsFiniteBurn = true;
+                    if (needsFiniteBurn && (engine == null || fuelDensity <= 0.0 || tankVolume <= 0.0 || thrustN <= 0.0 || ispS <= 0.0)) {
+                        throw new InvalidOperationException("有限推力任务需要从游戏中读取到完整发动机、燃料密度、储罐容积、推力和 Isp 参数");
+                    }
 
                     // ======================= DETAILED DEBUG LOGGING =======================
                     KSPGMATLog.Section("GMAT MISSION PROPAGATION STARTED");
@@ -193,7 +397,7 @@ namespace KSPGMAT {
                         KSPGMATLog.Info($"Custom Propagators ({propagatorConfigs.Count}):");
                         foreach (var kv in propagatorConfigs) {
                             var p = kv.Value;
-                            KSPGMATLog.Info($"  - {kv.Key}: Type={p.integratorType}, Step={p.initialStepSize}s, MaxStep={p.maxStep}s, Center={p.centralBody}, SRP={p.enableSRP}");
+                            KSPGMATLog.Info($"  - {kv.Key}: Type={p.integratorType}, Step={p.initialStepSize}s, MaxStep={p.maxStep}s, Center={p.centralBody}");
                         }
                     }
 
@@ -203,6 +407,10 @@ namespace KSPGMAT {
                     sb.Append($"\"name\": \"{Sanitize(vessel.vesselName)}\",");
                     sb.Append($"\"central_body\": \"{vessel.mainBody.name}\",");
                     sb.Append($"\"ut\": {ut.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)},");
+                    double jdVal = 2433647.5 + (ut / 86400.0);
+                    if (jdVal < 2436116.5) jdVal = 2437000.0 + (ut / 86400.0);
+                    string epochUtcVal = JdToUtcGregorian(jdVal);
+                    sb.Append($"\"epoch_utc\": \"{epochUtcVal}\",");
                     sb.Append($"\"x\": {pos_km.x.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)},");
                     sb.Append($"\"y\": {pos_km.y.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)},");
                     sb.Append($"\"z\": {pos_km.z.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)},");
@@ -232,12 +440,43 @@ namespace KSPGMAT {
                         sb.Append($"\"target_val\": {st.target_val.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)},");
                         sb.Append($"\"target_alt\": {st.target_alt.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)},");
                         sb.Append($"\"target_goal\": \"{st.target_goal ?? "Apoapsis"}\",");
+                        sb.Append($"\"target_body\": \"{st.target_body ?? ""}\",");
                         sb.Append($"\"dv_v\": {st.dv_v.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)},");
                         sb.Append($"\"dv_n\": {st.dv_n.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)},");
                         sb.Append($"\"dv_b\": {st.dv_b.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)},");
+                        sb.Append($"\"burn_coordinate_system\": \"{st.burn_coordinate_system}\",");
+                        sb.Append($"\"burn_axes\": \"{st.burn_axes}\",");
+                        sb.Append($"\"burn_origin\": \"{st.burn_origin}\",");
+                        sb.Append($"\"burn_isp\": {st.burn_isp.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)},");
+                        sb.Append($"\"burn_decrement_mass\": {(st.burn_decrement_mass ? "true" : "false")},");
+                        sb.Append($"\"burn_name\": \"{st.burn_name ?? ""}\",");
+                        sb.Append($"\"target_tolerance\": {st.target_tolerance.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)},");
+                        sb.Append($"\"vz_tolerance\": {st.vz_tolerance.ToString("G17", System.Globalization.CultureInfo.InvariantCulture)},");
+                        sb.Append($"\"vary_perturbation\": {st.vary_perturbation.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)},");
+                        sb.Append($"\"vary_lower\": {st.vary_lower.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)},");
+                        sb.Append($"\"vary_upper\": {st.vary_upper.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)},");
+                        sb.Append($"\"vary_max_step\": {st.vary_max_step.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)},");
                         sb.Append($"\"variable\": \"{st.variable}\",");
                         sb.Append($"\"expression\": \"{st.expression}\",");
+                        sb.Append($"\"burn_direction\": \"{st.burn_direction ?? "Prograde"}\",");
+                        sb.Append($"\"utc_epoch\": \"{st.utc_epoch ?? ""}\",");
+                        sb.Append($"\"dc_algorithm\": \"{st.dc_algorithm ?? "NewtonRaphson"}\",");
+                        sb.Append($"\"dc_derivative_method\": \"{st.dc_derivative_method ?? "ForwardDifference"}\",");
+                        sb.Append($"\"dc_max_iter\": {st.dc_max_iter},");
                         sb.Append($"\"label\": \"{st.label}\",");
+                        sb.Append($"\"dc_name\": \"{st.dc_name ?? "DefaultDC"}\",");
+                        sb.Append($"\"solve_mode\": \"{st.solve_mode ?? "Solve"}\",");
+                        sb.Append($"\"exit_mode\": \"{st.exit_mode ?? "SaveAndContinue"}\",");
+                        sb.Append($"\"vary_variable\": \"{st.vary_variable ?? "burntime"}\",");
+                        sb.Append($"\"vary_initial\": {st.vary_initial.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)},");
+                        sb.Append($"\"achieve_param\": \"{st.achieve_param ?? "Earth.RMAG"}\",");
+                        sb.Append($"\"achieve_val\": {st.achieve_val.ToString("G17", System.Globalization.CultureInfo.InvariantCulture)},");
+                        sb.Append($"\"achieve_tolerance\": {st.achieve_tolerance.ToString("G17", System.Globalization.CultureInfo.InvariantCulture)},");
+                        sb.Append($"\"var_name\": \"{st.var_name ?? "burntime"}\",");
+                        sb.Append($"\"var_expr\": \"{st.var_expr ?? "150.0"}\",");
+                        sb.Append($"\"burn_use_vary_var\": {(st.burn_use_vary_var ? "true" : "false")},");
+                        sb.Append($"\"burn_vary_var_name\": \"{st.burn_vary_var_name ?? "burntime"}\",");
+                        sb.Append($"\"stop_tolerance\": {st.stop_tolerance.ToString("G17", System.Globalization.CultureInfo.InvariantCulture)},");
                         sb.Append($"\"epoch_offset\": {st.epoch_offset.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)}");
                         sb.Append("}");
                     }
@@ -254,9 +493,64 @@ namespace KSPGMAT {
                         sb.Append("}");
                     }
 
+                    // Custom User Coordinate Systems
+                    if (GMATParameterRegistry.UserCoordinateSystems != null && GMATParameterRegistry.UserCoordinateSystems.Count > 0) {
+                        sb.Append(",\"custom_coordinate_systems\": [");
+                        for (int csIdx = 0; csIdx < GMATParameterRegistry.UserCoordinateSystems.Count; csIdx++) {
+                            var cs = GMATParameterRegistry.UserCoordinateSystems[csIdx];
+                            if (csIdx > 0) sb.Append(",");
+                            sb.Append("{");
+                            sb.Append($"\"name\": \"{cs.name}\",");
+                            sb.Append($"\"origin\": \"{cs.origin}\",");
+                            sb.Append($"\"axes\": \"{cs.axes}\",");
+                            sb.Append($"\"primary\": \"{cs.primary}\",");
+                            sb.Append($"\"secondary\": \"{cs.secondary}\",");
+                            sb.Append($"\"xAxis\": \"{cs.xAxis}\",");
+                            sb.Append($"\"yAxis\": \"{cs.yAxis}\",");
+                            sb.Append($"\"zAxis\": \"{cs.zAxis}\",");
+                            sb.Append($"\"epoch\": \"{cs.epoch}\"");
+                            sb.Append("}");
+                        }
+                        sb.Append("]");
+                    }
+
                     sb.Append("}");
 
-                    string responseJson = PostJson(ServerUrl + "/api/propagate", sb.ToString());
+                    string responseJson = "";
+                    string cliScript = FindCliScript();
+
+                    if (UseDirectCLI && File.Exists(cliScript)) {
+                        string outputDir = GetOutputDir();
+                        string inputFile = Path.Combine(outputDir, "mission_input.json");
+                        string outputFile = Path.Combine(outputDir, "mission_result.json");
+                        if (File.Exists(outputFile)) {
+                            try { File.Delete(outputFile); } catch {}
+                        }
+
+                        File.WriteAllText(inputFile, sb.ToString(), Utf8NoBom);
+
+                        System.Diagnostics.ProcessStartInfo psi = new System.Diagnostics.ProcessStartInfo {
+                            FileName = FindPythonExe(),
+                            Arguments = $"\"{cliScript}\" --action solve --input \"{inputFile}\" --output \"{outputFile}\"",
+                            WorkingDirectory = GmatBinPath,
+                            UseShellExecute = false,
+                            CreateNoWindow = true,
+                            RedirectStandardOutput = true,
+                            RedirectStandardError = true
+                        };
+
+                        using (var process = System.Diagnostics.Process.Start(psi)) {
+                            process.WaitForExit(45000);
+                        }
+
+                        if (File.Exists(outputFile)) {
+                            responseJson = File.ReadAllText(outputFile, Encoding.UTF8);
+                        } else {
+                            throw new Exception("GMAT CLI 执行超时或未生成结果文件。");
+                        }
+                    } else {
+                        responseJson = PostJson(ServerUrl + "/api/propagate", sb.ToString());
+                    }
                     sw.Stop();
 
                     MissionResult result = ParseMissionResult(responseJson);
@@ -331,7 +625,12 @@ namespace KSPGMAT {
                                 if (item.Contains("\"type\":")) {
                                     MissionStep st = new MissionStep();
                                     st.type = ExtractString("{" + item, "type");
+                                    string importedType = st.type;
+                                    if (string.Equals(importedType, "Maneuver", StringComparison.OrdinalIgnoreCase)) st.type = "ImpulsiveBurn";
+                                    if (string.Equals(importedType, "EndTarget", StringComparison.OrdinalIgnoreCase)) st.type = "EndTarget";
                                     st.propagator = ExtractString("{" + item, "propagator");
+                                    if (st.propagator == "NearEarth") st.propagator = "LEOProp";
+                                    else if (st.propagator == "NearMoon") st.propagator = "LunarNRHOProp";
                                     st.stop_type = ExtractString("{" + item, "stop_type");
                                     st.duration = ExtractDouble("{" + item, "duration");
                                     st.target_val = ExtractDouble("{" + item, "target_val");
@@ -339,9 +638,26 @@ namespace KSPGMAT {
                                     st.dv_v = ExtractDouble("{" + item, "dv_v");
                                     st.dv_n = ExtractDouble("{" + item, "dv_n");
                                     st.dv_b = ExtractDouble("{" + item, "dv_b");
+                                    st.burn_name = ExtractString("{" + item, "name");
+                                    st.burn_origin = ExtractString("{" + item, "origin");
+                                    st.burn_axes = ExtractString("{" + item, "axes");
+                                    st.burn_coordinate_system = ExtractString("{" + item, "coordinate_system");
+                                    st.burn_isp = ExtractDouble("{" + item, "isp");
+                                    st.burn_decrement_mass = ExtractBool("{" + item, "decrement_mass");
                                     st.variable = ExtractString("{" + item, "variable");
                                     st.expression = ExtractString("{" + item, "expression");
                                     st.label = ExtractString("{" + item, "label");
+                                    st.vary_variable = ExtractString("{" + item, "vary_variable");
+                                    st.vary_initial = ExtractDouble("{" + item, "vary_initial");
+                                    st.vary_perturbation = ExtractDouble("{" + item, "vary_perturbation");
+                                    st.vary_lower = ExtractDouble("{" + item, "vary_lower");
+                                    st.vary_upper = ExtractDouble("{" + item, "vary_upper");
+                                    st.vary_max_step = ExtractDouble("{" + item, "vary_max_step");
+                                    st.achieve_param = ExtractString("{" + item, "achieve_param");
+                                    st.achieve_val = ExtractDouble("{" + item, "achieve_val");
+                                    st.achieve_tolerance = ExtractDouble("{" + item, "achieve_tolerance");
+                                    st.solve_mode = ExtractString("{" + item, "solve_mode");
+                                    st.exit_mode = ExtractString("{" + item, "exit_mode");
                                     st.target_goal = ExtractString("{" + item, "target_goal");
                                     if (string.IsNullOrEmpty(st.target_goal)) st.target_goal = "Apoapsis";
 
@@ -351,10 +667,10 @@ namespace KSPGMAT {
                                 }
                             }
                         }
-                        KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(true, steps, "导入成功"));
+                        KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(true, steps, "成功"));
                     } else {
                         string err = ExtractString(json, "error");
-                        KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(false, null, err ?? "导入失败"));
+                        KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(false, null, err ?? "失败"));
                     }
                 } catch (Exception ex) {
                     KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(false, null, ex.Message));
@@ -375,9 +691,99 @@ namespace KSPGMAT {
             }
 
             using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
-            using (StreamReader reader = new StreamReader(response.GetResponseStream())) {
+            using (StreamReader reader = new StreamReader(response.GetResponseStream(), Encoding.UTF8)) {
                 return reader.ReadToEnd();
             }
+        }
+
+        public static string GetJson(string url) {
+            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
+            request.Method = "GET";
+            request.Timeout = 10000;
+            using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+            using (StreamReader reader = new StreamReader(response.GetResponseStream(), Encoding.UTF8)) {
+                return reader.ReadToEnd();
+            }
+        }
+
+        public static void FetchComparison(Action<bool, string> callback) {
+            ThreadPool.QueueUserWorkItem(_ => {
+                try {
+                    string json = GetJson(ServerUrl + "/api/principia/compare");
+                    UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(true, json));
+                } catch (Exception ex) {
+                    UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(false, ex.Message));
+                }
+            });
+        }
+
+        public static void SyncPrincipiaNodes(Vessel vessel, List<PrincipiaInterop.FlightPlanNode> nodes, double predictedApoapsisKm, Action<bool, string> callback) {
+            ThreadPool.QueueUserWorkItem(_ => {
+                try {
+                    double ut = Planetarium.GetUniversalTime();
+                    double pTime = PrincipiaInterop.GetCurrentPrincipiaTime();
+                    StringBuilder sb = new StringBuilder();
+                    sb.Append("{");
+                    sb.Append("\"vessel_state\": {");
+                    sb.Append($"\"vessel_name\": \"{Sanitize(vessel != null ? vessel.vesselName : "Vessel")}\",");
+                    sb.Append($"\"ut\": {ut.ToString("F3", CultureInfo.InvariantCulture)},");
+                    sb.Append($"\"principia_time\": {pTime.ToString("F3", CultureInfo.InvariantCulture)},");
+                    sb.Append($"\"principia_final_apoapsis\": {predictedApoapsisKm.ToString("F1", CultureInfo.InvariantCulture)},");
+                    sb.Append($"\"mass_tonnes\": {(vessel != null ? vessel.totalMass : 0.0).ToString("F3", CultureInfo.InvariantCulture)}");
+                    sb.Append("},");
+                    sb.Append("\"nodes\": [");
+                    for (int i = 0; i < (nodes != null ? nodes.Count : 0); i++) {
+                        var n = nodes[i];
+                        if (i > 0) sb.Append(",");
+                        sb.Append("{");
+                        sb.Append($"\"index\": {i+1},");
+                        sb.Append($"\"initial_time\": {n.initialTime.ToString("F3", CultureInfo.InvariantCulture)},");
+                        sb.Append($"\"duration\": {n.duration.ToString("F3", CultureInfo.InvariantCulture)},");
+                        sb.Append($"\"magnitude\": {n.deltaV.magnitude.ToString("F3", CultureInfo.InvariantCulture)},");
+                        sb.Append($"\"dv_tangent\": {n.deltaV.x.ToString("F3", CultureInfo.InvariantCulture)},");
+                        sb.Append($"\"dv_normal\": {n.deltaV.y.ToString("F3", CultureInfo.InvariantCulture)},");
+                        sb.Append($"\"dv_binormal\": {n.deltaV.z.ToString("F3", CultureInfo.InvariantCulture)},");
+                        sb.Append($"\"thrust_kn\": {n.thrust_kn.ToString("F3", CultureInfo.InvariantCulture)},");
+                        sb.Append($"\"isp\": {n.isp.ToString("F3", CultureInfo.InvariantCulture)},");
+                        sb.Append($"\"initial_mass_tonnes\": {n.initial_mass_tonnes.ToString("F3", CultureInfo.InvariantCulture)}");
+                        sb.Append("}");
+                    }
+                    sb.Append("]");
+                    sb.Append("}");
+
+                    string cliScript = FindCliScript();
+                    string responseJson = "";
+                    if (UseDirectCLI && File.Exists(cliScript)) {
+                        string outputDir = GetOutputDir();
+                        string inputFile = Path.Combine(outputDir, "principia_sync.json");
+                        string outputFile = Path.Combine(outputDir, "principia_comp.json");
+                        if (File.Exists(outputFile)) {
+                            try { File.Delete(outputFile); } catch {}
+                        }
+                        File.WriteAllText(inputFile, sb.ToString(), Utf8NoBom);
+                        System.Diagnostics.ProcessStartInfo psi = new System.Diagnostics.ProcessStartInfo {
+                            FileName = FindPythonExe(),
+                            Arguments = $"\"{cliScript}\" --action sync --input \"{inputFile}\" --output \"{outputFile}\"",
+                            WorkingDirectory = GmatBinPath,
+                            UseShellExecute = false,
+                            CreateNoWindow = true,
+                            RedirectStandardOutput = true,
+                            RedirectStandardError = true
+                        };
+                        using (var process = System.Diagnostics.Process.Start(psi)) {
+                            process.WaitForExit(15000);
+                        }
+                        if (File.Exists(outputFile)) {
+                            responseJson = File.ReadAllText(outputFile, Encoding.UTF8);
+                        }
+                    } else {
+                        responseJson = PostJson(ServerUrl + "/api/principia/sync", sb.ToString());
+                    }
+                    UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(true, responseJson));
+                } catch (Exception ex) {
+                    UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(false, ex.Message));
+                }
+            });
         }
 
         public static string Sanitize(string rawName, string fallback = "Sat") {
@@ -403,6 +809,9 @@ namespace KSPGMAT {
             try {
                 res.success = json.Contains("\"success\": true");
                 res.error = ExtractString(json, "error");
+                res.warning = ExtractString(json, "warning");
+                res.has_fuel_deficit = json.Contains("\"has_fuel_deficit\": true");
+                res.fuel_deficit = ExtractDouble(json, "fuel_deficit");
                 res.script_path = ExtractString(json, "script_path");
                 res.final_epoch = ExtractString(json, "final_epoch");
 
@@ -413,6 +822,44 @@ namespace KSPGMAT {
                 res.final_aop = ExtractDouble(json, "final_aop");
                 res.final_ta = ExtractDouble(json, "final_ta");
                 res.final_mass = ExtractDouble(json, "final_mass");
+
+                // Parse step reports
+                int repIdx = json.IndexOf("\"step_reports\":");
+                if (repIdx >= 0) {
+                    int endIdx = json.IndexOf("]", repIdx);
+                    if (endIdx > repIdx) {
+                        string repSection = json.Substring(repIdx, endIdx - repIdx + 1);
+                        string[] items = repSection.Split(new string[] { "{" }, StringSplitOptions.RemoveEmptyEntries);
+                        foreach (string item in items) {
+                            if (item.Contains("\"step_index\":") || item.Contains("\"step_label\":")) {
+                                string block = "{" + item;
+                                StepReportData rep = new StepReportData();
+                                rep.step_index = (int)ExtractDouble(block, "step_index");
+                                rep.step_label = ExtractString(block, "step_label");
+                                rep.elapsed_secs = ExtractDouble(block, "elapsed_secs");
+                                rep.epoch_utc = ExtractString(block, "epoch_utc");
+                                rep.altitude_km = ExtractDouble(block, "altitude_km");
+                                rep.sma_km = ExtractDouble(block, "sma_km");
+                                rep.ecc = ExtractDouble(block, "ecc");
+                                rep.inc_deg = ExtractDouble(block, "inc_deg");
+                                rep.raan_deg = ExtractDouble(block, "raan_deg");
+                                rep.aop_deg = ExtractDouble(block, "aop_deg");
+                                rep.ta_deg = ExtractDouble(block, "ta_deg");
+                                rep.rmag_km = ExtractDouble(block, "rmag_km");
+                                rep.total_mass_kg = ExtractDouble(block, "total_mass_kg");
+                                rep.fuel_mass_kg = ExtractDouble(block, "fuel_mass_kg");
+                                rep.x = ExtractDouble(block, "x");
+                                rep.y = ExtractDouble(block, "y");
+                                rep.z = ExtractDouble(block, "z");
+                                rep.vx = ExtractDouble(block, "vx");
+                                rep.vy = ExtractDouble(block, "vy");
+                                rep.vz = ExtractDouble(block, "vz");
+                                rep.raw_report_text = ExtractString(block, "raw_report_text");
+                                res.step_reports.Add(rep);
+                            }
+                        }
+                    }
+                }
 
                 // Parse burns
                 int burnsIdx = json.IndexOf("\"solved_burns\":");
@@ -435,6 +882,15 @@ namespace KSPGMAT {
                             b.isp = ExtractDouble("{" + item, "isp");
                             b.fuel_burned = ExtractDouble("{" + item, "fuel_burned");
                             b.epoch_offset = ExtractDouble("{" + item, "epoch_offset");
+                            b.burn_x = ExtractDouble("{" + item, "burn_x");
+                            b.burn_y = ExtractDouble("{" + item, "burn_y");
+                            b.burn_z = ExtractDouble("{" + item, "burn_z");
+                            b.burn_vx = ExtractDouble("{" + item, "burn_vx");
+                            b.burn_vy = ExtractDouble("{" + item, "burn_vy");
+                            b.burn_vz = ExtractDouble("{" + item, "burn_vz");
+                            b.has_native_delta_v = item.Contains("\"has_native_delta_v\": true");
+                            b.principia_writeable = item.Contains("\"principia_writeable\": true");
+                            b.native_result_note = ExtractString("{" + item, "native_result_note");
                             res.solved_burns.Add(b);
                         }
                     }
@@ -462,6 +918,20 @@ namespace KSPGMAT {
                     }
                 }
 
+                int dcIdx = json.IndexOf("\"dc_summary\":");
+                if (dcIdx >= 0) {
+                    int endDc = json.IndexOf("}", dcIdx);
+                    if (endDc > dcIdx) {
+                        string dcBlock = json.Substring(dcIdx, endDc - dcIdx + 1);
+                        res.dc_summary = new DCSummary();
+                        res.dc_summary.converged = dcBlock.Contains("\"converged\": true");
+                        res.dc_summary.iterations = (int)ExtractDouble(dcBlock, "iterations");
+                        res.dc_summary.desired = ExtractDouble(dcBlock, "desired");
+                        res.dc_summary.achieved = ExtractDouble(dcBlock, "achieved");
+                        res.dc_summary.variance = ExtractDouble(dcBlock, "variance");
+                    }
+                }
+
                 res.render_image_path = ExtractString(json, "render_image_path");
             } catch (Exception ex) {
                 res.success = false;
@@ -476,10 +946,40 @@ namespace KSPGMAT {
                     string cBody = string.IsNullOrEmpty(centralBody) ? "Earth" : centralBody;
                     string rKm = bodyRadiusKm > 0 ? bodyRadiusKm.ToString("F1", System.Globalization.CultureInfo.InvariantCulture) : "6378.1";
                     string payload = $"{{\"view_mode\": \"{viewMode}\", \"central_body\": \"{cBody}\", \"body_radius\": {rKm}}}";
+
+                    string cliScript = FindCliScript();
+                    if (UseDirectCLI && File.Exists(cliScript)) {
+                        try {
+                            string outputDir = GetOutputDir();
+                            string inputFile = Path.Combine(outputDir, "render_input.json");
+                            string outputFile = Path.Combine(outputDir, "render_result.json");
+                            File.WriteAllText(inputFile, payload, Utf8NoBom);
+                            System.Diagnostics.ProcessStartInfo psi = new System.Diagnostics.ProcessStartInfo {
+                                FileName = FindPythonExe(),
+                                Arguments = $"\"{cliScript}\" --action render --input \"{inputFile}\" --output \"{outputFile}\"",
+                                WorkingDirectory = GmatBinPath,
+                                UseShellExecute = false,
+                                CreateNoWindow = true,
+                                RedirectStandardOutput = true,
+                                RedirectStandardError = true
+                            };
+                            using (var process = System.Diagnostics.Process.Start(psi)) {
+                                process.WaitForExit(15000);
+                            }
+                            if (File.Exists(outputFile)) {
+                                string resJson = File.ReadAllText(outputFile, Encoding.UTF8);
+                                string path = ExtractString(resJson, "image_path");
+                                bool ok = resJson.Contains("\"success\": true");
+                                KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(ok, path));
+                                return;
+                            }
+                        } catch {}
+                    }
+
                     string json = PostJson(ServerUrl + "/api/render_trajectory", payload);
-                    string path = ExtractString(json, "image_path");
-                    bool ok = json.Contains("\"success\": true");
-                    KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(ok, path));
+                    string imgPath = ExtractString(json, "image_path");
+                    bool httpOk = json.Contains("\"success\": true");
+                    KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(httpOk, imgPath));
                 } catch (Exception ex) {
                     KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(false, ex.Message));
                 }
@@ -497,7 +997,12 @@ namespace KSPGMAT {
             int start = idx + pattern.Length;
             int end = json.IndexOf("\"", start);
             if (end < 0) return null;
-            return json.Substring(start, end - start);
+            string str = json.Substring(start, end - start);
+            try {
+                return System.Text.RegularExpressions.Regex.Unescape(str);
+            } catch {
+                return str;
+            }
         }
 
         private static double ExtractDouble(string json, string key) {
@@ -511,6 +1016,15 @@ namespace KSPGMAT {
             double res;
             double.TryParse(valStr, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out res);
             return res;
+        }
+
+        private static bool ExtractBool(string json, string key) {
+            string pattern = $"\"{key}\":";
+            int idx = json.IndexOf(pattern, StringComparison.OrdinalIgnoreCase);
+            if (idx < 0) return false;
+            idx += pattern.Length;
+            while (idx < json.Length && char.IsWhiteSpace(json[idx])) idx++;
+            return json.IndexOf("true", idx, StringComparison.OrdinalIgnoreCase) == idx;
         }
     }
 }

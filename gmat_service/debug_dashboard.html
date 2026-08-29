@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GMAT-Principia 动力学与飞行计划实时对比调试工作台</title>
+  <style>
+    :root {
+      --bg-primary: #0b0f19;
+      --bg-secondary: #131b2e;
+      --bg-card: rgba(23, 32, 54, 0.75);
+      --border-card: rgba(66, 153, 225, 0.2);
+      --accent-cyan: #00e5ff;
+      --accent-blue: #3182ce;
+      --accent-green: #10b981;
+      --accent-yellow: #f59e0b;
+      --accent-red: #ef4444;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background-color: var(--bg-primary);
+      background-image: 
+        radial-gradient(at 0% 0%, rgba(30, 58, 138, 0.2) 0px, transparent 50%),
+        radial-gradient(at 100% 100%, rgba(6, 78, 59, 0.15) 0px, transparent 50%);
+      color: var(--text-main);
+      min-height: 100vh;
+      padding: 24px;
+    }
+
+    .container {
+      max-width: 1280px;
+      margin: 0 auto;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-bottom: 20px;
+      border-bottom: 1px solid var(--border-card);
+      margin-bottom: 24px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-logo {
+      width: 36px;
+      height: 36px;
+      background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue));
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      color: #000;
+    }
+
+    .title h1 {
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .title p {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 9999px;
+      font-size: 12px;
+      font-weight: 600;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .badge-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent-green);
+      box-shadow: 0 0 8px var(--accent-green);
+    }
+
+    .btn {
+      background: var(--accent-blue);
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn:hover { background: #2b6cb0; transform: translateY(-1px); }
+
+    /* Summary Grid */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .summary-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-card);
+      border-radius: 12px;
+      padding: 16px;
+      backdrop-filter: blur(12px);
+    }
+
+    .summary-card .label {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .summary-card .value {
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--accent-cyan);
+      font-family: 'SF Mono', Consolas, monospace;
+    }
+
+    .summary-card .subtext {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    /* Comparison Table Container */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-card);
+      border-radius: 12px;
+      padding: 20px;
+      backdrop-filter: blur(12px);
+      margin-bottom: 24px;
+    }
+
+    .card-title {
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    th {
+      text-align: left;
+      padding: 12px 14px;
+      background: rgba(0, 0, 0, 0.2);
+      color: var(--text-muted);
+      font-weight: 600;
+      border-bottom: 1px solid var(--border-card);
+    }
+
+    td {
+      padding: 14px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      vertical-align: middle;
+    }
+
+    tr:hover td {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .mono {
+      font-family: 'SF Mono', Consolas, monospace;
+    }
+
+    .tag-diff {
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .tag-match { background: rgba(16, 185, 129, 0.2); color: var(--accent-green); border: 1px solid rgba(16, 185, 129, 0.4); }
+    .tag-warn { background: rgba(245, 158, 11, 0.2); color: var(--accent-yellow); border: 1px solid rgba(245, 158, 11, 0.4); }
+    .tag-error { background: rgba(239, 68, 68, 0.2); color: var(--accent-red); border: 1px solid rgba(239, 68, 68, 0.4); }
+
+    .diagnostics-box {
+      background: rgba(0, 0, 0, 0.3);
+      border-left: 4px solid var(--accent-cyan);
+      border-radius: 0 8px 8px 0;
+      padding: 14px 18px;
+      margin-top: 14px;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .diagnostics-title {
+      font-weight: 700;
+      color: var(--accent-cyan);
+      margin-bottom: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="brand">
+        <div class="brand-logo">ΔV</div>
+        <div class="title">
+          <h1>GMAT ⟷ Principia 实时动力学参数对比调试台</h1>
+          <p>NASA GMAT R2026a 高保真任务设计 vs Principia 辛数值 N 体飞行计划在线对比</p>
+        </div>
+      </div>
+      <div class="status-bar">
+        <div class="badge" id="liveBadge">
+          <div class="badge-dot" id="liveDot"></div>
+          <span id="liveStatusText">实时连接中 (1s)</span>
+        </div>
+        <button class="btn" onclick="fetchData()">🔄 手动刷新</button>
+      </div>
+    </header>
+
+    <!-- Top Key Metrics Cards -->
+    <div class="summary-grid">
+      <div class="summary-card">
+        <div class="label">目标远拱点高度 (Ap)</div>
+        <div class="value" id="valApoapsis">35,786 km</div>
+        <div class="subtext" id="subApoapsis">GMAT GTO 标准目标</div>
+      </div>
+      <div class="summary-card">
+        <div class="label">GMAT 解算点火时长</div>
+        <div class="value" id="valGmatDur">-- s</div>
+        <div class="subtext" id="subGmatDur">纯发动机有效点火</div>
+      </div>
+      <div class="summary-card">
+        <div class="label">Principia 执行点火时长</div>
+        <div class="value" id="valPrinDur">-- s</div>
+        <div class="subtext" id="subPrinDur">火箭方程反推执行时长</div>
+      </div>
+      <div class="summary-card">
+        <div class="label">时长与轨道误差度量</div>
+        <div class="value" id="valError">--</div>
+        <div class="subtext" id="subError">物理一致性监测</div>
+      </div>
+    </div>
+
+    <!-- Node Comparison Table Card -->
+    <div class="card">
+      <div class="card-title">
+        <span>🚀 机动变轨节点逐项参数对比 (Maneuver Nodes Comparison)</span>
+        <span class="badge" id="overallStatusBadge">状态检测中</span>
+      </div>
+
+      <div style="overflow-x: auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>节点</th>
+              <th>参数项</th>
+              <th>GMAT 求解值</th>
+              <th>Principia 接收值</th>
+              <th>绝对偏差 (Error)</th>
+              <th>相对偏差 (%)</th>
+              <th>状态判定</th>
+            </tr>
+          </thead>
+          <tbody id="comparisonTableBody">
+            <tr>
+              <td colspan="7" style="text-align: center; color: var(--text-muted); padding: 30px;">
+                正在获取 GMAT 与 Principia 实时数据...
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="diagnostics-box" id="diagnosticsBox">
+        <div class="diagnostics-title">🔍 航天动力学诊断与机理分析</div>
+        <div id="diagnosticsContent">
+          等待对比数据就绪...
+        </div>
+      </div>
+    </div>
+
+    <!-- Orbit Elements Card -->
+    <div class="card">
+      <div class="card-title">
+        <span>🌍 目标轨道开普勒根数对比 (Keplerian Elements)</span>
+      </div>
+      <div style="overflow-x: auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>轨道根数 (Element)</th>
+              <th>GMAT 目标 / 求解值</th>
+              <th>Principia 预测入轨值</th>
+              <th>偏差说明</th>
+            </tr>
+          </thead>
+          <tbody id="orbitTableBody">
+            <tr>
+              <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 20px;">
+                暂无轨道数据
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    async function fetchData() {
+      try {
+        const res = await fetch('/api/principia/compare');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        renderDashboard(data);
+        document.getElementById('liveDot').style.background = '#10b981';
+        document.getElementById('liveStatusText').innerText = '在线同步正常 (' + new Date().toLocaleTimeString() + ')';
+      } catch (err) {
+        document.getElementById('liveDot').style.background = '#ef4444';
+        document.getElementById('liveStatusText').innerText = '连接异常: ' + err.message;
+      }
+    }
+
+    function renderDashboard(data) {
+      if (!data || !data.nodes || data.nodes.length === 0) {
+        document.getElementById('diagnosticsContent').innerText = data.message || '等待 GMAT 任务序列求解与 Principia 写入...';
+        return;
+      }
+
+      // Update Top Summary
+      const firstNode = data.nodes[0];
+      const g = firstNode.gmat;
+      const p = firstNode.principia;
+
+      document.getElementById('valGmatDur').innerText = g.duration_s ? (g.duration_s + ' s') : '--';
+      document.getElementById('valPrinDur').innerText = p && p.duration_s ? (p.duration_s + ' s') : (p ? '0 s' : '未写入');
+
+      if (p && p.duration_s) {
+        const diff = Math.abs(p.duration_s - g.duration_s);
+        document.getElementById('valError').innerText = 'Δt = ' + diff.toFixed(2) + ' s';
+        document.getElementById('valError').style.color = diff < 1.0 ? '#10b981' : (diff < 5.0 ? '#f59e0b' : '#ef4444');
+      } else {
+        document.getElementById('valError').innerText = '等待写入';
+        document.getElementById('valError').style.color = '#94a3b8';
+      }
+
+      // Orbit elements
+      const oc = data.orbit_comparison;
+      if (oc) {
+        document.getElementById('valApoapsis').innerText = (oc.target_apoapsis_km || oc.gmat_solved_apoapsis_km || 35786).toLocaleString() + ' km';
+        if (oc.principia_predicted_apoapsis_km) {
+          document.getElementById('subApoapsis').innerText = 'Principia 预测: ' + oc.principia_predicted_apoapsis_km.toLocaleString() + ' km';
+        }
+      }
+
+      // Render Nodes Table
+      let html = '';
+      data.nodes.forEach((n, idx) => {
+        const gmat = n.gmat;
+        const prin = n.principia;
+        const err = n.errors || {};
+
+        const rows = [
+          { name: '点火时长 (Duration)', g: gmat.duration_s + ' s', p: prin ? prin.duration_s + ' s' : '-', d: err.duration_err_s !== undefined ? err.duration_err_s + ' s' : '-', pct: err.duration_err_pct !== undefined ? err.duration_err_pct + '%' : '-' },
+          { name: '总速度增量 ‖ΔV‖', g: gmat.magnitude_mps + ' m/s', p: prin ? prin.magnitude_mps + ' m/s' : '-', d: err.magnitude_err_mps !== undefined ? err.magnitude_err_mps + ' m/s' : '-', pct: err.magnitude_err_pct !== undefined ? err.magnitude_err_pct + '%' : '-' },
+          { name: '顺行分量 (ΔV Tangent / V)', g: gmat.dv_v_mps + ' m/s', p: prin ? prin.dv_tangent_mps + ' m/s' : '-', d: err.tangent_err_mps !== undefined ? err.tangent_err_mps + ' m/s' : '-', pct: '-' },
+          { name: '法向分量 (ΔV Normal / N)', g: gmat.dv_n_mps + ' m/s', p: prin ? prin.dv_normal_mps + ' m/s' : '-', d: '-', pct: '-' },
+          { name: '径向分量 (ΔV Binormal / B)', g: gmat.dv_b_mps + ' m/s', p: prin ? prin.dv_binormal_mps + ' m/s' : '-', d: err.binormal_err_mps !== undefined ? err.binormal_err_mps + ' m/s' : '-', pct: '-' },
+          { name: '推进剂消耗 (Fuel Burned)', g: gmat.fuel_burned_kg + ' kg', p: prin ? (prin.duration_s > 0 ? (prin.thrust_kn / (prin.isp_s * 9.81) * 1000 * prin.duration_s).toFixed(1) + ' kg' : '-') : '-', d: '-', pct: '-' }
+        ];
+
+        rows.forEach((r, rIdx) => {
+          let statusBadge = '<span class="tag-diff tag-match">匹配</span>';
+          if (!prin) {
+            statusBadge = '<span class="tag-diff tag-error">未写入 P</span>';
+          } else if (rIdx === 0 && err.duration_err_s > 1.0) {
+            statusBadge = err.duration_err_s > 5.0 ? '<span class="tag-diff tag-error">时长异常</span>' : '<span class="tag-diff tag-warn">轻微偏差</span>';
+          } else if (rIdx === 4 && prin.dv_binormal_mps && Math.abs(prin.dv_binormal_mps) > 10.0) {
+            statusBadge = '<span class="tag-diff tag-error">重力污染</span>';
+          }
+
+          html += `<tr>
+            ${rIdx === 0 ? `<td rowspan="${rows.length}" style="font-weight: 700; border-right: 1px solid var(--border-card);">${n.name}</td>` : ''}
+            <td>${r.name}</td>
+            <td class="mono">${r.g}</td>
+            <td class="mono">${r.p}</td>
+            <td class="mono">${r.d}</td>
+            <td class="mono">${r.pct}</td>
+            <td>${statusBadge}</td>
+          </tr>`;
+        });
+      });
+      document.getElementById('comparisonTableBody').innerHTML = html;
+
+      // Render Diagnostics
+      let diagHtml = '';
+      if (data.nodes[0] && data.nodes[0].diagnostics && data.nodes[0].diagnostics.length > 0) {
+        diagHtml = '<ul>' + data.nodes[0].diagnostics.map(d => `<li style="margin-bottom: 6px;">${d}</li>`).join('') + '</ul>';
+      } else {
+        diagHtml = '暂未发现异常，所有参数符合预期。';
+      }
+      document.getElementById('diagnosticsContent').innerHTML = diagHtml;
+
+      // Render Orbit Table
+      if (oc) {
+        document.getElementById('orbitTableBody').innerHTML = `
+          <tr>
+            <td>远拱点高度 (Apoapsis Altitude)</td>
+            <td class="mono">${(oc.target_apoapsis_km || oc.gmat_solved_apoapsis_km).toLocaleString()} km</td>
+            <td class="mono">${oc.principia_predicted_apoapsis_km ? oc.principia_predicted_apoapsis_km.toLocaleString() + ' km' : '等待 Principia 预测'}</td>
+            <td>${oc.apoapsis_error_km !== null ? (oc.apoapsis_error_km < 50 ? '<span class="tag-diff tag-match">吻合 (误差 ' + oc.apoapsis_error_km + 'km)</span>' : '<span class="tag-diff tag-error">偏差 ' + oc.apoapsis_error_km + ' km</span>') : '-'}</td>
+          </tr>
+          <tr>
+            <td>半长轴 (Semi-Major Axis)</td>
+            <td class="mono">${oc.gmat_solved_sma_km} km</td>
+            <td class="mono">-</td>
+            <td>-</td>
+          </tr>
+          <tr>
+            <td>轨道离心率 (Eccentricity)</td>
+            <td class="mono">${oc.gmat_solved_ecc}</td>
+            <td class="mono">-</td>
+            <td>-</td>
+          </tr>
+          <tr>
+            <td>轨道倾角 (Inclination)</td>
+            <td class="mono">${oc.gmat_solved_inc_deg}°</td>
+            <td class="mono">-</td>
+            <td>-</td>
+          </tr>
+        `;
+      }
+    }
+
+    // Auto poll every 1.5 seconds
+    setInterval(fetchData, 1500);
+    fetchData();
+  </script>
+</body>
+</html>

@@ -17,15 +17,16 @@ SERVICE_DIR = os.path.dirname(os.path.abspath(__file__))
 if SERVICE_DIR not in sys.path:
     sys.path.insert(0, SERVICE_DIR)
 
+from gmat_paths import resolve_gmat_root
 from ephemeris_calibrator import ksp_ut_to_jd, jd_to_gmat_mjd, jd_to_utc_gregorian, map_body_name
-from gmat_engine import run_mission_sequence, init_gmat, BIN_DIR
-from script_parser import parse_gmat_script
+BIN_DIR = resolve_gmat_root(SERVICE_DIR)
+from gmat_engine import run_mission_sequence, init_gmat
 
 PORT = 8055
 
 class GMATBridgeHandler(BaseHTTPRequestHandler):
     def _send_json(self, data, status=200):
-        body = json.dumps(data, indent=2).encode("utf-8")
+        body = json.dumps(data, indent=2, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -70,7 +71,26 @@ class GMATBridgeHandler(BaseHTTPRequestHandler):
                     "desc": "LEO -> 自动微分校正求解远心点 35786 km GTO 转移"
                 }
             ]
-            self._send_json({"templates": templates})
+        elif self.path in ("/debug", "/dashboard"):
+            dashboard_file = os.path.join(SERVICE_DIR, "debug_dashboard.html")
+            if os.path.exists(dashboard_file):
+                with open(dashboard_file, "r", encoding="utf-8") as f:
+                    content = f.read().encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(content)))
+                self.end_headers()
+                self.wfile.write(content)
+            else:
+                self._send_json({"error": "Dashboard not found"}, 404)
+
+        elif self.path == "/api/principia/compare":
+            try:
+                from principia_comparator import get_latest_comparison
+                self._send_json(get_latest_comparison())
+            except Exception as e:
+                self._send_json({"status": "error", "error": str(e)}, 500)
+
         else:
             self._send_json({"error": "Not Found"}, 404)
 
@@ -112,11 +132,29 @@ class GMATBridgeHandler(BaseHTTPRequestHandler):
                 craft["epoch_utc"] = jd_to_utc_gregorian(jd)
 
             try:
-                result = run_mission_sequence(craft, sequence, propagator_configs=propagator_configs)
+                custom_coords = req_data.get("custom_coordinate_systems") or []
+                result = run_mission_sequence(craft, sequence, propagator_configs=propagator_configs, custom_coordinate_systems=custom_coords)
+                if result.get("success"):
+                    try:
+                        from principia_comparator import update_gmat_result
+                        update_gmat_result(result)
+                    except Exception:
+                        pass
                 self._send_json(result)
             except Exception as e:
                 import traceback
                 traceback.print_exc()
+                # Mission failures are application results, not transport failures.
+                self._send_json({"success": False, "error": str(e), "traceback": traceback.format_exc()}, 200)
+
+        elif self.path == "/api/principia/sync":
+            vessel_state = req_data.get("vessel_state", {})
+            nodes = req_data.get("nodes", [])
+            try:
+                from principia_comparator import update_principia_state, get_latest_comparison
+                update_principia_state(vessel_state, nodes)
+                self._send_json({"success": True, "comparison": get_latest_comparison()})
+            except Exception as e:
                 self._send_json({"success": False, "error": str(e)}, 500)
 
         elif self.path == "/api/render_trajectory":
@@ -132,25 +170,6 @@ class GMATBridgeHandler(BaseHTTPRequestHandler):
                 ok, msg = render_gmat_trajectory(traj_file, img_file, view_mode=view_mode, central_body=central_body, body_radius=body_radius)
                 self._send_json({"success": ok, "image_path": img_file, "message": msg})
             except Exception as e:
-                self._send_json({"success": False, "error": str(e)}, 500)
-
-        elif self.path == "/api/import_script":
-            script_path = req_data.get("script_path", "")
-            epoch_utc = req_data.get("epoch_utc", None)
-            vessel_name = req_data.get("vessel_name", None)
-            if not script_path or not os.path.exists(script_path):
-                candidate = os.path.join(BIN_DIR, script_path)
-                if os.path.exists(candidate):
-                    script_path = candidate
-                else:
-                    self._send_json({"success": False, "error": f"Script not found: {script_path}"}, 404)
-                    return
-            try:
-                data = parse_gmat_script(script_path, override_epoch_utc=epoch_utc, override_craft_name=vessel_name)
-                self._send_json(data)
-            except Exception as e:
-                import traceback
-                traceback.print_exc()
                 self._send_json({"success": False, "error": str(e)}, 500)
 
         elif self.path == "/api/open_gmat_gui":

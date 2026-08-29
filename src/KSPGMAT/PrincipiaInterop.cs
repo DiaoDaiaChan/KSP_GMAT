@@ -10,6 +10,10 @@ namespace KSPGMAT {
     /// Handles Principia's internal classes safely without visibility or versioning conflicts.
     /// </summary>
     public static class PrincipiaInterop {
+        // Principia's KSP adapter uses this extension value for the Frenet
+        // navigation frame. Zero is not a valid enum value in current builds.
+        private const int FrenetNavigationFrameExtension = 6000;
+
         private static PrincipiaPluginAdapter cachedAdapter = null;
         private static bool initialized = false;
 
@@ -30,6 +34,7 @@ namespace KSPGMAT {
         private static MethodInfo mFlightPlanNumberOfManoeuvres;
         private static MethodInfo mFlightPlanInsert;
         private static MethodInfo mFlightPlanReplace;
+        private static MethodInfo mFlightPlanGetManoeuvre;
 
         private static FieldInfo fQP_Q;
         private static FieldInfo fQP_P;
@@ -77,6 +82,9 @@ namespace KSPGMAT {
                     mFlightPlanNumberOfManoeuvres = tInterface.GetMethod("FlightPlanNumberOfManoeuvres", flags);
                     mFlightPlanInsert = tInterface.GetMethod("FlightPlanInsert", flags);
                     mFlightPlanReplace = tInterface.GetMethod("FlightPlanReplace", flags);
+                    foreach (var method in tInterface.GetMethods(flags)) {
+                        if (method.Name == "FlightPlanGetManoeuvre") { mFlightPlanGetManoeuvre = method; break; }
+                    }
 
                     foreach (var m in tInterface.GetMethods(flags)) {
                         if (m.Name.Contains("FlightPlan")) {
@@ -246,6 +254,21 @@ namespace KSPGMAT {
             return true;
         }
 
+        public static bool SetFlightPlanFinalTime(Vessel vessel, double finalTime) {
+            if (vessel == null || !HasVessel(vessel)) return false;
+            EnsureInitialized();
+            IntPtr plugin = GetPlugin();
+            if (plugin == IntPtr.Zero || mFlightPlanSetDesiredFinalTime == null) return false;
+            try {
+                object status = mFlightPlanSetDesiredFinalTime.Invoke(null, new object[] { plugin, vessel.id.ToString(), finalTime });
+                if (status != null && fStatus_Error != null) return (int)fStatus_Error.GetValue(status) == 0;
+                return true;
+            } catch (Exception ex) {
+                KSPGMATLog.Error("[PrincipiaInterop] Failed to set flight plan final time: " + ex.Message);
+                return false;
+            }
+        }
+
         /// <summary>
         /// Inserts or replaces a burn in Principia's Flight Plan.
         /// </summary>
@@ -256,17 +279,42 @@ namespace KSPGMAT {
             }
             EnsureInitialized();
             IntPtr plugin = GetPlugin();
-            if (plugin == IntPtr.Zero || vessel == null || tBurn == null || tNavFrame == null) return false;
+            if (plugin == IntPtr.Zero || tBurn == null || tNavFrame == null ||
+                fNav_Centre == null || fNav_Primary == null || fNav_Secondary == null || fNav_Extension == null ||
+                fBurn_Thrust == null || fBurn_Isp == null || fBurn_Frame == null || fBurn_InitialTime == null ||
+                fBurn_DeltaV == null || fBurn_IsInertiallyFixed == null) {
+                KSPGMATLog.Error("[PrincipiaInterop] Burn write rejected: Principia adapter fields are unavailable.");
+                return false;
+            }
+
+            if (double.IsNaN(burnInitialTime) || double.IsInfinity(burnInitialTime) ||
+                double.IsNaN(thrust_kN) || double.IsInfinity(thrust_kN) ||
+                double.IsNaN(isp_s) || double.IsInfinity(isp_s) ||
+                double.IsNaN(deltaV_mps.x) || double.IsInfinity(deltaV_mps.x) ||
+                double.IsNaN(deltaV_mps.y) || double.IsInfinity(deltaV_mps.y) ||
+                double.IsNaN(deltaV_mps.z) || double.IsInfinity(deltaV_mps.z)) {
+                KSPGMATLog.Error("[PrincipiaInterop] Burn write rejected: non-finite burn data.");
+                return false;
+            }
+
+            // The adapter currently rejects extension 0 in NavigationFrameParameters
+            // with a native CHECK failure. Keep inertially-fixed burns out of this
+            // write path until a valid adapter frame for them is available.
+            if (!isFrenet) {
+                KSPGMATLog.Error("[PrincipiaInterop] Burn write rejected: only the valid Frenet navigation frame is supported.");
+                return false;
+            }
 
             string guid = vessel.id.ToString();
             EnsureFlightPlanExists(vessel);
 
-            // Only extend final time by a reasonable buffer (1.5 days past this burn) to prevent hitting Principia's 1000 step limit
+            // Keep the requested horizon close to the last burn. A multi-day horizon can
+            // exceed Principia's 1000-step limit before the manoeuvre is inserted.
             if (mFlightPlanGetDesiredFinalTime != null && mFlightPlanSetDesiredFinalTime != null) {
                 try {
                     double desiredFinalTime = (double)mFlightPlanGetDesiredFinalTime.Invoke(null, new object[] { plugin, guid });
-                    if (burnInitialTime + 43200.0 > desiredFinalTime) {
-                        double newFinal = burnInitialTime + 86400.0 * 1.5;
+                    if (burnInitialTime + 21600.0 > desiredFinalTime) {
+                        double newFinal = burnInitialTime + 21600.0;
                         mFlightPlanSetDesiredFinalTime.Invoke(null, new object[] { plugin, guid, newFinal });
                         KSPGMATLog.Info($"[PrincipiaInterop] Extended flight plan desired final time to {newFinal:F2}s");
                     }
@@ -289,7 +337,7 @@ namespace KSPGMAT {
             fNav_Centre.SetValue(navFrame, targetBody.flightGlobalsIndex);
             fNav_Primary.SetValue(navFrame, targetBody.flightGlobalsIndex);
             fNav_Secondary.SetValue(navFrame, targetBody.flightGlobalsIndex);
-            fNav_Extension.SetValue(navFrame, isFrenet ? 6000 : 0);
+            fNav_Extension.SetValue(navFrame, FrenetNavigationFrameExtension);
 
             // Create Burn object
             object burn = Activator.CreateInstance(tBurn);
@@ -297,7 +345,7 @@ namespace KSPGMAT {
             fBurn_Thrust.SetValue(burn, Math.Max(0.001, thrust_kN));
             fBurn_Isp.SetValue(burn, Math.Max(1.0, isp_s));
             fBurn_Frame.SetValue(burn, navFrame);
-            fBurn_IsInertiallyFixed.SetValue(burn, !isFrenet);
+            fBurn_IsInertiallyFixed.SetValue(burn, false);
 
             XYZ dv = new XYZ();
             dv.x = deltaV_mps.x;
@@ -331,6 +379,96 @@ namespace KSPGMAT {
             }
 
             return err == 0;
+        }
+
+        public class FlightPlanNode {
+            public double initialTime;
+            public Vector3d deltaV;
+            public double duration;
+            public double thrust_kn;
+            public double isp;
+            public double initial_mass_tonnes;
+            public bool hasTime;
+            public bool hasDeltaV;
+            public bool hasDuration;
+        }
+
+        public static bool TryReadFlightPlanNodes(Vessel vessel, out List<FlightPlanNode> nodes, out string message) {
+            nodes = new List<FlightPlanNode>(); message = "";
+            if (vessel == null || !HasVessel(vessel)) { message = "Principia 未跟踪当前飞船"; return false; }
+            if (!HasFlightPlan(vessel)) { message = "当前飞船尚未在游戏中创建 Principia 飞行计划"; return false; }
+            EnsureInitialized(); IntPtr plugin = GetPlugin(); string guid = vessel.id.ToString();
+            if (plugin == IntPtr.Zero || mFlightPlanNumberOfManoeuvres == null || mFlightPlanGetManoeuvre == null) { message = "当前 Principia 版本未暴露 FlightPlanGetManoeuvre"; return false; }
+            try {
+                int count = (int)mFlightPlanNumberOfManoeuvres.Invoke(null, new object[] { plugin, guid });
+                for (int i = 0; i < count; i++) {
+                    object manoeuvre = InvokeManoeuvreGetter(plugin, guid, i);
+                    if (manoeuvre == null) continue;
+                    FlightPlanNode node = new FlightPlanNode();
+                    object nestedBurn = ReadMember(manoeuvre, new string[] { "burn", "manoeuvre", "navigation_manoeuvre" });
+                    node.hasTime = TryReadDouble(manoeuvre, new string[] { "initial_time", "time", "burn_initial_time" }, out node.initialTime);
+                    if (!node.hasTime && nestedBurn != null) node.hasTime = TryReadDouble(nestedBurn, new string[] { "initial_time", "time", "burn_initial_time" }, out node.initialTime);
+                    object dv = ReadMember(manoeuvre, new string[] { "delta_v", "deltaV" }) ?? (nestedBurn != null ? ReadMember(nestedBurn, new string[] { "delta_v", "deltaV" }) : null);
+                    node.hasDeltaV = TryReadVector(dv, out node.deltaV);
+
+                    TryReadDouble(manoeuvre, new string[] { "duration", "burn_duration" }, out node.duration);
+                    if (nestedBurn != null) {
+                        TryReadDouble(nestedBurn, new string[] { "thrust_in_kilonewtons", "thrust" }, out node.thrust_kn);
+                        TryReadDouble(nestedBurn, new string[] { "specific_impulse_in_seconds_g0", "specific_impulse", "isp" }, out node.isp);
+                    }
+                    TryReadDouble(manoeuvre, new string[] { "initial_mass_in_tonnes", "initial_mass" }, out node.initial_mass_tonnes);
+
+                    if (node.duration <= 0.0 && node.thrust_kn > 0.0 && node.isp > 0.0 && node.initial_mass_tonnes > 0.0 && node.hasDeltaV) {
+                        node.duration = node.initial_mass_tonnes * 1000.0 * (node.isp * 9.80665) * (1.0 - Math.Exp(-node.deltaV.magnitude / (node.isp * 9.80665))) / (node.thrust_kn * 1000.0);
+                    }
+                    node.hasDuration = node.duration > 0.0;
+                    nodes.Add(node);
+                }
+                message = "已读取 " + nodes.Count + " 个 Principia manoeuvre 节点";
+                return true;
+            } catch (Exception ex) { message = "读取 Principia Flight Plan 失败: " + ex.Message; return false; }
+        }
+
+        private static object InvokeManoeuvreGetter(IntPtr plugin, string guid, int index) {
+            ParameterInfo[] parameters = mFlightPlanGetManoeuvre.GetParameters(); object[] args = new object[parameters.Length];
+            for (int i = 0; i < parameters.Length; i++) {
+                Type type = parameters[i].ParameterType;
+                Type valueType = type.IsByRef ? type.GetElementType() : type;
+                if (valueType == typeof(IntPtr)) args[i] = plugin;
+                else if (valueType == typeof(string)) args[i] = guid;
+                else if (valueType == typeof(int)) args[i] = index;
+                else if (valueType == typeof(long)) args[i] = (long)index;
+                else args[i] = valueType.IsValueType ? Activator.CreateInstance(valueType) : null;
+            }
+            object result = mFlightPlanGetManoeuvre.Invoke(null, args);
+            if (HasNodeData(result)) return result;
+            for (int i = 0; i < parameters.Length; i++) if (parameters[i].ParameterType.IsByRef && HasNodeData(args[i])) return args[i];
+            return null;
+        }
+
+        private static bool HasNodeData(object value) {
+            return value != null && (ReadMember(value, new string[] { "initial_time", "time", "burn_initial_time", "delta_v", "deltaV" }) != null || ReadMember(value, new string[] { "burn", "manoeuvre" }) != null);
+        }
+
+        private static object ReadMember(object instance, string[] names) {
+            if (instance == null) return null;
+            Type type = instance.GetType(); BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+            foreach (string name in names) {
+                FieldInfo field = type.GetField(name, flags); if (field != null) return field.GetValue(instance);
+                PropertyInfo property = type.GetProperty(name, flags); if (property != null && property.CanRead) return property.GetValue(instance, null);
+            }
+            return null;
+        }
+
+        private static bool TryReadDouble(object instance, string[] names, out double value) {
+            value = 0.0; object member = ReadMember(instance, names); if (member == null) return false;
+            try { value = Convert.ToDouble(member); return true; } catch { return false; }
+        }
+
+        private static bool TryReadVector(object instance, out Vector3d value) {
+            value = Vector3d.zero; if (instance == null) return false;
+            double x, y, z; if (!TryReadDouble(instance, new string[] { "x", "X" }, out x) || !TryReadDouble(instance, new string[] { "y", "Y" }, out y) || !TryReadDouble(instance, new string[] { "z", "Z" }, out z)) return false;
+            value = new Vector3d(x, y, z); return true;
         }
     }
 }

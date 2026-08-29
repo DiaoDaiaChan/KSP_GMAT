@@ -42,10 +42,10 @@ namespace KSPGMAT {
 
         private void LaunchPythonService() {
             try {
-                string serviceScript = @"D:\nocomp\gmat-win-R2026a\bin\gmat_service\gmat_bridge_server.py";
-                string binDir = @"D:\nocomp\gmat-win-R2026a\bin";
+                string serviceScript = KSPGMATSettings.ServiceScriptPath;
+                string binDir = KSPGMATSettings.RootPath;
 
-                if (File.Exists(serviceScript)) {
+                if (!string.IsNullOrEmpty(binDir) && File.Exists(serviceScript)) {
                     ProcessStartInfo psi = new ProcessStartInfo {
                         FileName = "python",
                         Arguments = $"\"{serviceScript}\"",
