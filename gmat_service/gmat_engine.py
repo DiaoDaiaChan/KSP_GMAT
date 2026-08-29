@@ -552,6 +552,33 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
 
 
 
+    # -------------------------------------------------------------------------
+    # Auto-Fix Sequence: If Vary / Achieve exist without Target / EndTarget,
+    # automatically auto-wrap them into a Target DC ... EndTarget block.
+    # -------------------------------------------------------------------------
+    has_explicit_target = any(s.get("type") in ("Target", "Targeter", "TargetApoapsis") for s in mission_sequence)
+    has_vary_or_achieve = any(s.get("type") in ("Vary", "Achieve") for s in mission_sequence)
+
+    if has_vary_or_achieve and not has_explicit_target:
+        first_vary_idx = -1
+        last_achieve_idx = -1
+        for idx, s in enumerate(mission_sequence):
+            stype = s.get("type")
+            if stype in ("Vary", "Achieve", "FiniteBurn"):
+                if first_vary_idx == -1:
+                    first_vary_idx = idx
+                last_achieve_idx = idx
+        
+        if first_vary_idx != -1 and last_achieve_idx != -1:
+            wrapped_seq = []
+            for idx, s in enumerate(mission_sequence):
+                if idx == first_vary_idx:
+                    wrapped_seq.append({"type": "Target", "label": "AutoTarget", "dc_name": "DC"})
+                wrapped_seq.append(s)
+                if idx == last_achieve_idx:
+                    wrapped_seq.append({"type": "EndTarget", "label": "EndAutoTarget"})
+            mission_sequence = wrapped_seq
+
     # Pre-create any burns specified in sequence
     burn_defs = []
     burn_idx = 1
@@ -1505,7 +1532,6 @@ def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None, 
                     rows = [line.strip().split() for line in raw.splitlines() if line.strip() and not line.strip().startswith("%") and not "ElapsedSecs" in line]
                     if rows:
                         last_row = rows[-1]
-                        import re
                         vals = [float(v) for v in last_row if re.match(r"^[\d\.\-+eE]+$", v)]
                         if len(vals) >= 10:
                             rep_data["elapsed_secs"] = round(vals[0], 2)
