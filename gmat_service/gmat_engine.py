@@ -543,7 +543,6 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
     lines.append(f"Create ReportFile TrajReport;")
     gmat_report_path = os.path.abspath(report_path).replace("\\", "/")
     lines.append(f"TrajReport.Filename = '{gmat_report_path}';")
-    lines.append(f"TrajReport.Add = {{{sat_name}.ElapsedSecs, {sat_name}.X, {sat_name}.Y, {sat_name}.Z, {sat_name}.VX, {sat_name}.VY, {sat_name}.VZ}};")
     lines.append(f"TrajReport.WriteHeaders = false;\n")
 
     finite_report_path = os.path.abspath(report_path + ".finite.txt").replace("\\", "/")
@@ -699,7 +698,6 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
             lines.append(f"Create ReportFile {rf_name};")
             lines.append(f"{rf_name}.Filename = '{rf_file}';")
             lines.append(f"{rf_name}.WriteHeaders = true;")
-            lines.append(f"{rf_name}.Add = {{ {sat_name}.ElapsedSecs, {sat_name}.Altitude, {sat_name}.SMA, {sat_name}.ECC, {sat_name}.INC, {sat_name}.RAAN, {sat_name}.AOP, {sat_name}.TA, {sat_name}.RMAG, {sat_name}.TotalMass, {sat_name}.X, {sat_name}.Y, {sat_name}.Z, {sat_name}.VX, {sat_name}.VY, {sat_name}.VZ }};\n")
 
     # Mission Sequence Commands
     lines.append("BeginMissionSequence;\n")
@@ -1196,7 +1194,7 @@ def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None, 
             "calculation_authority": "GMAT_NATIVE_ONLY"
         }
 
-    sat_name = sanitize_gmat_identifier(craft_data.get("name", "Vessel"), prefix="Sat")
+    sat_name = "Sat"
     central_body = map_body_name(craft_data.get("central_body", "Earth"))
     sat = gmat.GetRuntimeObject(sat_name)
 
