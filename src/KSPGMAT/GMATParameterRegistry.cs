@@ -813,13 +813,10 @@ namespace KSPGMAT {
             List<string> list = new List<string>();
             HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            // 1. Vessel active SOI body
+            // 1. Vessel active SOI body (Top Priority)
             if (vessel != null && vessel.mainBody != null) {
                 string main = MapBodyName(vessel.mainBody.name);
                 if (!seen.Contains(main)) { list.Add(main); seen.Add(main); }
-            } else {
-                string def = "Earth";
-                if (!seen.Contains(def)) { list.Add(def); seen.Add(def); }
             }
 
             // 2. Vessel target body (if any)
@@ -835,33 +832,23 @@ namespace KSPGMAT {
                 } catch {}
             }
 
-            // 3. Cached bodies from GMAT capabilities (AvailableBodies)
-            for (int i = 0; i < AvailableBodies.Count; i++) {
-                string b = AvailableBodies[i];
-                if (!seen.Contains(b)) { list.Add(b); seen.Add(b); }
-            }
+            // 3. Dynamic FlightGlobals all active celestial bodies in game session!
+            try {
+                if (FlightGlobals.Bodies != null) {
+                    for (int i = 0; i < FlightGlobals.Bodies.Count; i++) {
+                        var cb = FlightGlobals.Bodies[i];
+                        if (cb != null) {
+                            string mapped = MapBodyName(cb.name);
+                            if (!seen.Contains(mapped)) { list.Add(mapped); seen.Add(mapped); }
+                        }
+                    }
+                }
+            } catch {}
 
-            // 4. Real-time bodies discovered in KSP
-            foreach (var b in RealtimeUserBodies) {
-                if (!seen.Contains(b)) { list.Add(b); seen.Add(b); }
-            }
-
-            return list;
-        }
-
-        public static List<string> GetAllCoordinateSystems() {
-            List<string> list = new List<string>();
-            HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            // 1. Cached Coordinate Systems from GMAT capabilities
-            for (int i = 0; i < AvailableCoordinateSystems.Count; i++) {
-                string cs = AvailableCoordinateSystems[i];
-                if (!seen.Contains(cs)) { list.Add(cs); seen.Add(cs); }
-            }
-
-            // 2. Real-time User Coordinate Systems
-            foreach (var cs in RealtimeUserCoordinateSystems) {
-                if (!seen.Contains(cs)) { list.Add(cs); seen.Add(cs); }
+            // 4. Standard Cislunar and Solar System GMAT celestial bodies
+            string[] stdBodies = new string[] { "Earth", "Luna", "Sun", "Mars", "Jupiter", "Venus", "Mercury", "Saturn", "Uranus", "Neptune", "Pluto" };
+            for (int i = 0; i < stdBodies.Length; i++) {
+                if (!seen.Contains(stdBodies[i])) { list.Add(stdBodies[i]); seen.Add(stdBodies[i]); }
             }
 
             return list;
@@ -901,6 +888,45 @@ namespace KSPGMAT {
             for (int i = 0; i < AvailableDefaultSpacecraft.Count; i++) {
                 string sc = AvailableDefaultSpacecraft[i];
                 if (!seen.Contains(sc)) { list.Add(sc); seen.Add(sc); }
+            }
+
+            return list;
+        }
+
+        public static List<string> GetAllCoordinateSystems() {
+            List<string> list = new List<string>();
+            HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            // 1. Standard Cislunar and Solar Coordinate Systems
+            string[] stdCoords = new string[] {
+                "EarthMJ2000Eq", "EarthMJ2000Ec", "EarthFixed", "EarthICRF",
+                "MoonInertial", "MoonFixed", "EarthMoonRot",
+                "SunEcliptic", "MarsInertial", "MarsFixed"
+            };
+            for (int i = 0; i < stdCoords.Length; i++) {
+                if (!seen.Contains(stdCoords[i])) { list.Add(stdCoords[i]); seen.Add(stdCoords[i]); }
+            }
+
+            // 2. User-Defined Coordinate Systems
+            if (UserCoordinateSystems != null) {
+                for (int i = 0; i < UserCoordinateSystems.Count; i++) {
+                    var cs = UserCoordinateSystems[i];
+                    if (cs != null && !string.IsNullOrEmpty(cs.name) && !seen.Contains(cs.name)) {
+                        list.Add(cs.name);
+                        seen.Add(cs.name);
+                    }
+                }
+            }
+
+            // 3. Realtime Coordinate Systems
+            foreach (var cs in RealtimeUserCoordinateSystems) {
+                if (!seen.Contains(cs)) { list.Add(cs); seen.Add(cs); }
+            }
+
+            // 4. Cached Available Coordinate Systems
+            for (int i = 0; i < AvailableCoordinateSystems.Count; i++) {
+                string cs = AvailableCoordinateSystems[i];
+                if (!seen.Contains(cs)) { list.Add(cs); seen.Add(cs); }
             }
 
             return list;

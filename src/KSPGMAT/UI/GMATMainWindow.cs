@@ -3595,12 +3595,45 @@ namespace KSPGMAT.UI {
                 return;
             }
 
-            int dotIdx = cur.IndexOf('.');
-            if (dotIdx >= 0) {
-                string baseParam = cur.Substring(dotIdx + 1);
-                step.stop_type = objectPrefix + "." + baseParam;
+            // If applying Spacecraft prefix (e.g. "Sat")
+            if (objectPrefix.Equals("Sat", StringComparison.OrdinalIgnoreCase) || objectPrefix.StartsWith("Sat", StringComparison.OrdinalIgnoreCase)) {
+                if (cur.StartsWith("Sat.", StringComparison.OrdinalIgnoreCase)) {
+                    // Already has Sat. prefix
+                    return;
+                }
+                step.stop_type = "Sat." + cur;
+                return;
+            }
+
+            // If applying Body prefix (e.g. "Luna", "Earth", "Sun")
+            bool isBody = objectPrefix.Equals("Luna", StringComparison.OrdinalIgnoreCase) || objectPrefix.Equals("Earth", StringComparison.OrdinalIgnoreCase) || objectPrefix.Equals("Sun", StringComparison.OrdinalIgnoreCase) || objectPrefix.Equals("Mars", StringComparison.OrdinalIgnoreCase) || objectPrefix.Equals("Jupiter", StringComparison.OrdinalIgnoreCase);
+            if (isBody) {
+                if (cur.StartsWith("Sat.", StringComparison.OrdinalIgnoreCase)) {
+                    // e.g. "Sat.Periapsis" -> "Sat.Luna.Periapsis" or "Sat.Earth.Periapsis" -> "Sat.Luna.Periapsis"
+                    string rest = cur.Substring(4);
+                    if (rest.Contains(".")) {
+                        string paramOnly = rest.Substring(rest.LastIndexOf('.') + 1);
+                        step.stop_type = $"Sat.{objectPrefix}.{paramOnly}";
+                    } else {
+                        step.stop_type = $"Sat.{objectPrefix}.{rest}";
+                    }
+                } else if (cur.Contains(".")) {
+                    string paramOnly = cur.Substring(cur.LastIndexOf('.') + 1);
+                    step.stop_type = $"{objectPrefix}.{paramOnly}";
+                } else {
+                    step.stop_type = $"{objectPrefix}.{cur}";
+                }
+                return;
+            }
+
+            // If applying Coordinate System prefix (e.g. "EarthMoonRot", "MoonInertial")
+            if (cur.StartsWith("Sat.", StringComparison.OrdinalIgnoreCase)) {
+                string paramOnly = cur.Contains(".") ? cur.Substring(cur.LastIndexOf('.') + 1) : "Z";
+                if (paramOnly == "Periapsis" || paramOnly == "Apoapsis" || paramOnly == "Time") paramOnly = "Z";
+                step.stop_type = $"Sat.{objectPrefix}.{paramOnly}";
             } else {
-                step.stop_type = objectPrefix + "." + cur;
+                string paramOnly = cur.Contains(".") ? cur.Substring(cur.LastIndexOf('.') + 1) : "Z";
+                step.stop_type = $"{objectPrefix}.{paramOnly}";
             }
         }
 

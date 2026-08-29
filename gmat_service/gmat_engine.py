@@ -211,7 +211,7 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
     report_path: output path for trajectory data.
     propagator_configs: optional dict of custom integrator and force model configs.
     """
-    sat_name = sanitize_gmat_identifier(craft_data.get("name", "Vessel"), prefix="Sat")
+    sat_name = "Sat"
     central_body = map_body_name(craft_data.get("central_body", "Earth"))
     coord_sys = get_coord_system_for_body(central_body)
     epoch_str = craft_data.get("epoch_utc")
