@@ -594,25 +594,19 @@ namespace KSPGMAT.UI {
                 if (e.type == EventType.KeyDown) {
                     if (e.keyCode == KeyCode.DownArrow) {
                         intelliSenseSelectedIndex = (intelliSenseSelectedIndex + 1) % intelliSenseItems.Count;
-                        float listH = Mathf.Min(180f, intelliSenseItems.Count * 24f);
-                        float itemTop = intelliSenseSelectedIndex * 24f;
-                        float itemBottom = itemTop + 24f;
-                        if (itemBottom > intelliSenseScroll.y + listH) {
-                            intelliSenseScroll.y = itemBottom - listH;
-                        } else if (itemTop < intelliSenseScroll.y) {
-                            intelliSenseScroll.y = itemTop;
-                        }
+                        intelliSenseScroll.y = Mathf.Max(0, (intelliSenseSelectedIndex - 2) * 26f);
                         e.Use();
                     } else if (e.keyCode == KeyCode.UpArrow) {
                         intelliSenseSelectedIndex = (intelliSenseSelectedIndex - 1 + intelliSenseItems.Count) % intelliSenseItems.Count;
-                        float listH = Mathf.Min(180f, intelliSenseItems.Count * 24f);
-                        float itemTop = intelliSenseSelectedIndex * 24f;
-                        float itemBottom = itemTop + 24f;
-                        if (itemTop < intelliSenseScroll.y) {
-                            intelliSenseScroll.y = itemTop;
-                        } else if (itemBottom > intelliSenseScroll.y + listH) {
-                            intelliSenseScroll.y = itemBottom - listH;
-                        }
+                        intelliSenseScroll.y = Mathf.Max(0, (intelliSenseSelectedIndex - 2) * 26f);
+                        e.Use();
+                    } else if (e.keyCode == KeyCode.PageDown) {
+                        intelliSenseSelectedIndex = Mathf.Min(intelliSenseItems.Count - 1, intelliSenseSelectedIndex + 5);
+                        intelliSenseScroll.y = Mathf.Max(0, (intelliSenseSelectedIndex - 2) * 26f);
+                        e.Use();
+                    } else if (e.keyCode == KeyCode.PageUp) {
+                        intelliSenseSelectedIndex = Mathf.Max(0, intelliSenseSelectedIndex - 5);
+                        intelliSenseScroll.y = Mathf.Max(0, (intelliSenseSelectedIndex - 2) * 26f);
                         e.Use();
                     } else if (e.keyCode == KeyCode.Return || e.keyCode == KeyCode.KeypadEnter || e.keyCode == KeyCode.Tab) {
                         if (intelliSenseSelectedIndex >= 0 && intelliSenseSelectedIndex < intelliSenseItems.Count) {
@@ -1756,7 +1750,36 @@ namespace KSPGMAT.UI {
                 missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LEOProp", stop_type = "Time", duration = 3600.0, label = "轨道积分" });
             }
             if (GUILayout.Button("🎯 新建 Target 打靶组...", actionButtonStyle, GUILayout.Height(26))) {
-                OpenTargeterSetupModal(-1);
+                string cb = FlightGlobals.ActiveVessel != null ? FlightGlobals.ActiveVessel.mainBody.bodyName : "Earth";
+                if (cb == "Kerbin") cb = "Earth"; else if (cb == "Mun") cb = "Luna";
+
+                missionSequence.Add(new MissionStep {
+                    type = "Target",
+                    label = "自定义打靶组",
+                    dc_name = "DefaultDC",
+                    dc_algorithm = "NewtonRaphson",
+                    dc_max_iter = 50
+                });
+                missionSequence.Add(new MissionStep {
+                    type = "Vary",
+                    vary_variable = "burntime",
+                    vary_initial = 150.0,
+                    vary_lower = 0.0,
+                    vary_upper = 1000.0,
+                    vary_max_step = 20.0,
+                    label = "Vary 寻优变量"
+                });
+                missionSequence.Add(new MissionStep {
+                    type = "Achieve",
+                    achieve_param = $"Sat.{cb}.Altitude",
+                    achieve_val = 35786.0,
+                    achieve_tolerance = 0.1,
+                    label = "Achieve 目标约束"
+                });
+                missionSequence.Add(new MissionStep {
+                    type = "EndTarget",
+                    label = "闭合自定义打靶"
+                });
             }
             if (GUILayout.Button("✏️ 寻优变量", secondaryButtonStyle, GUILayout.Height(26))) {
                 missionSequence.Add(new MissionStep { type = "Vary", vary_variable = "burntime", vary_initial = 150.0, vary_lower = 0.0, vary_upper = 1000.0, vary_max_step = 20.0, label = "寻优点火时长" });
@@ -2388,9 +2411,13 @@ namespace KSPGMAT.UI {
         }
 
         private void DrawParamPickerWindow(int windowID) {
+            bool isPropStop = (paramPickerMode == "prop_stop" || paramPickerMode == "stop");
+            string cb = FlightGlobals.ActiveVessel != null ? FlightGlobals.ActiveVessel.mainBody.bodyName : "Earth";
+            if (cb == "Kerbin") cb = "Earth"; else if (cb == "Mun") cb = "Luna";
+
             GUILayout.BeginHorizontal();
-            string pickerTitle = (paramPickerMode == "achieve") ? "🎯 GMAT 官方约束目标字典 (Achieve Parameters)" :
-                                 (paramPickerMode == "stop") ? "⏱️ GMAT 官方终止条件参数字典 (Propagate Stop Conditions)" :
+            string pickerTitle = isPropStop ? "⏱️ GMAT 动力学终止条件字典 (Propagate Stop Conditions)" :
+                                 (paramPickerMode == "achieve") ? "🎯 GMAT 官方约束目标字典 (Achieve Parameters)" :
                                  "📋 GMAT 动力学与开普勒参数字典 (GMAT Parameter Library)";
             GUILayout.Label($"<b>{pickerTitle}</b>", headerStyle);
             GUILayout.FlexibleSpace();
@@ -2412,7 +2439,7 @@ namespace KSPGMAT.UI {
 
             GUILayout.Space(4);
 
-            string[] categoryOptions = (paramPickerMode == "stop") ? GMATParameterRegistry.PropStopCategories : GMATParameterRegistry.Categories;
+            string[] categoryOptions = isPropStop ? GMATParameterRegistry.PropStopCategories : GMATParameterRegistry.Categories;
             if (paramPickerCategoryIndex >= categoryOptions.Length) paramPickerCategoryIndex = 0;
 
             // Category Filter Toolbar
@@ -2434,7 +2461,7 @@ namespace KSPGMAT.UI {
 
             string curCategory = categoryOptions[paramPickerCategoryIndex];
 
-            if (paramPickerMode == "stop") {
+            if (isPropStop) {
                 List<PropStopDef> stopItems = GMATParameterRegistry.GetStopDefsByCategory(curCategory);
                 if (!string.IsNullOrEmpty(paramPickerSearchQuery)) {
                     string q = paramPickerSearchQuery.Trim().ToLowerInvariant();
@@ -2456,9 +2483,23 @@ namespace KSPGMAT.UI {
                         if (GUILayout.Button($"➕ {item.Key}", secondaryButtonStyle, GUILayout.Width(180), GUILayout.Height(22))) {
                             if (paramPickerTargetStepIndex >= 0 && paramPickerTargetStepIndex < missionSequence.Count) {
                                 var s = missionSequence[paramPickerTargetStepIndex];
-                                s.stop_type = item.Key;
-                                if (!item.IsExtremum && item.DefaultValue != 0) s.target_val = item.DefaultValue;
-                                if (item.DefaultTolerance > 0) s.stop_tolerance = item.DefaultTolerance;
+                                
+                                // Auto-fill with fully-qualified GMAT parameter name
+                                string k = item.Key;
+                                if (k == "ElapsedSecs" || k == "ElapsedDays" || k == "A1ModJulian" || k == "Epoch") {
+                                    s.stop_type = $"Sat.{k}";
+                                } else if (k == "X" || k == "Y" || k == "Z" || k == "VX" || k == "VY" || k == "VZ") {
+                                    s.stop_type = $"Sat.EarthMJ2000Eq.{k}";
+                                } else {
+                                    s.stop_type = $"Sat.{cb}.{k}";
+                                }
+
+                                if (!item.IsExtremum && item.DefaultValue != 0) {
+                                    s.target_val = item.DefaultValue;
+                                }
+                                if (item.DefaultTolerance > 0) {
+                                    s.stop_tolerance = item.DefaultTolerance;
+                                }
                             }
                             showParamPickerModal = false;
                         }
@@ -2492,9 +2533,19 @@ namespace KSPGMAT.UI {
                             if (paramPickerTargetStepIndex >= 0 && paramPickerTargetStepIndex < missionSequence.Count) {
                                 var s = missionSequence[paramPickerTargetStepIndex];
                                 if (paramPickerMode == "achieve") {
-                                    s.achieve_param = item.Name;
+                                    string nm = item.Name;
+                                    if (nm == "TotalMass" || nm == "DryMass" || nm == "FuelMass") {
+                                        s.achieve_param = $"Sat.{nm}";
+                                    } else if (nm == "X" || nm == "Y" || nm == "Z" || nm == "VX" || nm == "VY" || nm == "VZ") {
+                                        s.achieve_param = $"Sat.EarthMJ2000Eq.{nm}";
+                                    } else {
+                                        s.achieve_param = $"Sat.{cb}.{nm}";
+                                    }
+
                                     double val;
-                                    if (double.TryParse(item.Example, out val)) s.achieve_val = val;
+                                    if (double.TryParse(item.Example, out val)) {
+                                        s.achieve_val = val;
+                                    }
                                 } else {
                                     s.vary_variable = item.Name;
                                     s.variable = item.Name;
@@ -2513,19 +2564,15 @@ namespace KSPGMAT.UI {
                     }
                 }
             }
-
             GUILayout.EndScrollView();
 
-            GUILayout.Space(4);
+            GUILayout.Space(8);
             GUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button("✕ 完成并关闭", secondaryButtonStyle, GUILayout.Width(100), GUILayout.Height(22))) {
+            if (GUILayout.Button("✕ 完成并关闭", secondaryButtonStyle, GUILayout.Width(120), GUILayout.Height(24))) {
                 showParamPickerModal = false;
             }
             GUILayout.EndHorizontal();
-
-            DrawResizeHandle(ref paramPickerWindowRect, 600f, 450f);
-            GUI.DragWindow(new Rect(0, 0, paramPickerWindowRect.width - 40, 26));
         }
 
         private void OpenTargeterSetupModal(int stepIndex = -1) {
@@ -3745,10 +3792,10 @@ namespace KSPGMAT.UI {
             if (!intelliSenseOpen || intelliSenseItems == null || intelliSenseItems.Count == 0) return;
             if (intelliSenseAnchorRect.width <= 0) return;
 
-            float popW = 380f;
-            float itemH = 24f;
-            float listH = Mathf.Min(180f, intelliSenseItems.Count * itemH + 10f);
-            float totalH = listH + 52f; // header + list + footer doc
+            float popW = 410f;
+            float itemH = 26f;
+            float listH = Mathf.Min(182f, intelliSenseItems.Count * itemH + 6f);
+            float totalH = listH + 60f; // header + list + footer doc
 
             // intelliSenseAnchorRect is in true Screen Coordinates!
             float px = intelliSenseAnchorRect.x;
@@ -3770,11 +3817,20 @@ namespace KSPGMAT.UI {
 
             GUILayout.BeginArea(popRect, GUI.skin.box);
 
-            // Header
+            // Header with Pagination Status & Quick Page Buttons
             GUILayout.BeginHorizontal();
             GUILayout.Label("<color=#38bdf8><b>⚡ GMAT IntelliSense</b></color>", labelValueStyle, GUILayout.Width(130));
-            GUILayout.Label("<color=#64748b>↑↓ 移动 | Tab/Enter 确认 | Esc 退出</color>", labelValueStyle);
+            GUILayout.Label($"<color=#38bdf8>[ {intelliSenseSelectedIndex + 1} / {intelliSenseItems.Count} ]</color> <color=#64748b>↑↓/PgUp/PgDn</color>", labelValueStyle);
             GUILayout.FlexibleSpace();
+
+            if (GUILayout.Button("▲", secondaryButtonStyle, GUILayout.Width(22), GUILayout.Height(18))) {
+                intelliSenseSelectedIndex = Mathf.Max(0, intelliSenseSelectedIndex - 5);
+                intelliSenseScroll.y = Mathf.Max(0, (intelliSenseSelectedIndex - 2) * itemH);
+            }
+            if (GUILayout.Button("▼", secondaryButtonStyle, GUILayout.Width(22), GUILayout.Height(18))) {
+                intelliSenseSelectedIndex = Mathf.Min(intelliSenseItems.Count - 1, intelliSenseSelectedIndex + 5);
+                intelliSenseScroll.y = Mathf.Max(0, (intelliSenseSelectedIndex - 2) * itemH);
+            }
             if (GUILayout.Button("✕", secondaryButtonStyle, GUILayout.Width(20), GUILayout.Height(18))) {
                 intelliSenseOpen = false;
                 intelliSenseDismissed = true;
@@ -3796,7 +3852,7 @@ namespace KSPGMAT.UI {
 
                 GUILayout.BeginHorizontal(GUI.skin.button, GUILayout.Height(itemH));
                 GUILayout.Label(item.GetIcon(), GUILayout.Width(20));
-                GUILayout.Label($"<b>{item.Label}</b>", isSelected ? headerStyle : labelValueStyle, GUILayout.Width(130));
+                GUILayout.Label($"<b>{item.Label}</b>", isSelected ? headerStyle : labelValueStyle, GUILayout.Width(150));
                 GUILayout.FlexibleSpace();
                 GUILayout.Label($"<color=#38bdf8>{item.TypeTag}</color>", labelValueStyle);
                 GUILayout.EndHorizontal();
