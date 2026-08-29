@@ -895,6 +895,8 @@ namespace KSPGMAT {
             try {
                 res.success = json.Contains("\"success\": true");
                 res.error = ExtractString(json, "error");
+                res.error_details = ExtractString(json, "error_details");
+                res.gmat_log = ExtractString(json, "gmat_log");
                 res.warning = ExtractString(json, "warning");
                 res.has_fuel_deficit = json.Contains("\"has_fuel_deficit\": true");
                 res.fuel_deficit = ExtractDouble(json, "fuel_deficit");

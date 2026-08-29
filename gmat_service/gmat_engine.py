@@ -1174,6 +1174,58 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
 
     return "\n".join(lines)
 
+def validate_mission_sequence_structure(mission_sequence):
+    """
+    Validates mission sequence semantic structure before script generation.
+    Returns (is_valid: bool, error_msg: str)
+    """
+    inside_target = False
+    target_idx = -1
+    target_has_burn = False
+    target_has_vary = False
+    target_has_achieve = False
+    target_vary_var = ""
+
+    for idx, step in enumerate(mission_sequence):
+        stype = step.get("type")
+        if stype == "Target":
+            inside_target = True
+            target_idx = idx
+            target_has_burn = False
+            target_has_vary = False
+            target_has_achieve = False
+            target_vary_var = ""
+        elif stype in ("FiniteBurn", "ImpulsiveBurn", "Maneuver") and inside_target:
+            target_has_burn = True
+        elif stype == "Vary" and inside_target:
+            target_has_vary = True
+            target_vary_var = step.get("vary_variable", "burntime")
+        elif stype == "Achieve" and inside_target:
+            target_has_achieve = True
+        elif stype == "EndTarget":
+            if inside_target:
+                if target_has_vary and not target_has_burn:
+                    # Check if there is a burn outside the target group
+                    outside_burn_idx = -1
+                    for b_idx, b_step in enumerate(mission_sequence):
+                        if b_step.get("type") in ("FiniteBurn", "ImpulsiveBurn", "Maneuver") and (b_idx < target_idx or b_idx > idx):
+                            outside_burn_idx = b_idx
+                            break
+                    if outside_burn_idx >= 0:
+                        return False, (
+                            f"❌ 任务序列结构错误: 打靶求解组 #{target_idx + 1} ('{mission_sequence[target_idx].get('label', 'Target')}') 内部缺少点火动作！\n"
+                            f"变量 '{target_vary_var}' 在打靶组内未被任何机动消耗，而点火步骤 (#{outside_burn_idx + 1}) 被错误地放在了打靶组外部 (EndTarget 之后)。\n"
+                            f"👉 请点击步骤 #{outside_burn_idx + 1} 上的 [ ≡ 排序 ]，将其移动到打靶组内部 (Target 与 EndTarget 之间)！"
+                        )
+                    else:
+                        return False, (
+                            f"❌ 任务序列结构错误: 打靶求解组 #{target_idx + 1} 内部包含了寻优变量 Vary，但没有包含任何点火步骤 (FiniteBurn/ImpulsiveBurn)！\n"
+                            f"👉 请在打靶组内添加点火步骤，或点击打靶组卡片头部的 [ Burn 点火 ] 按钮。"
+                        )
+            inside_target = False
+
+    return True, None
+
 def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None, custom_coordinate_systems=None, solver_configs=None):
     """
     Assembles, saves, and executes a GMAT mission sequence script, then parses and returns results.
@@ -1190,6 +1242,20 @@ def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None, 
     os.makedirs(output_dir, exist_ok=True)
     report_file = os.path.join(output_dir, "mission_traj.txt")
     script_file = os.path.join(output_dir, "mission_run.script")
+
+    # 1. Pre-flight Mission Sequence Semantic Validation
+    is_valid_seq, seq_err = validate_mission_sequence_structure(mission_sequence)
+    if not is_valid_seq:
+        print(f"[GmatEngine] Pre-flight Validation Failed: {seq_err.encode('ascii', 'replace').decode('ascii')}")
+        return {
+            "success": False,
+            "error": seq_err,
+            "error_details": seq_err,
+            "gmat_log": seq_err,
+            "trajectory": [],
+            "solved_burns": [],
+            "reports": []
+        }
 
     # Propellant feasibility check: record advisory warning instead of hard blocking
     feasibility_warning = check_propellant_feasibility(craft_data, mission_sequence)
