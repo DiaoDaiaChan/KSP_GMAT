@@ -594,21 +594,24 @@ namespace KSPGMAT.UI {
                 if (e.type == EventType.KeyDown) {
                     if (e.keyCode == KeyCode.DownArrow) {
                         intelliSenseSelectedIndex = (intelliSenseSelectedIndex + 1) % intelliSenseItems.Count;
-                        // Auto-scroll list viewport to keep selected item in view
-                        float targetY = intelliSenseSelectedIndex * 24f;
-                        if (targetY + 24f > intelliSenseScroll.y + 180f) {
-                            intelliSenseScroll.y = targetY + 24f - 180f;
-                        } else if (targetY < intelliSenseScroll.y) {
-                            intelliSenseScroll.y = targetY;
+                        float listH = Mathf.Min(180f, intelliSenseItems.Count * 24f);
+                        float itemTop = intelliSenseSelectedIndex * 24f;
+                        float itemBottom = itemTop + 24f;
+                        if (itemBottom > intelliSenseScroll.y + listH) {
+                            intelliSenseScroll.y = itemBottom - listH;
+                        } else if (itemTop < intelliSenseScroll.y) {
+                            intelliSenseScroll.y = itemTop;
                         }
                         e.Use();
                     } else if (e.keyCode == KeyCode.UpArrow) {
                         intelliSenseSelectedIndex = (intelliSenseSelectedIndex - 1 + intelliSenseItems.Count) % intelliSenseItems.Count;
-                        float targetY = intelliSenseSelectedIndex * 24f;
-                        if (targetY < intelliSenseScroll.y) {
-                            intelliSenseScroll.y = targetY;
-                        } else if (targetY + 24f > intelliSenseScroll.y + 180f) {
-                            intelliSenseScroll.y = targetY + 24f - 180f;
+                        float listH = Mathf.Min(180f, intelliSenseItems.Count * 24f);
+                        float itemTop = intelliSenseSelectedIndex * 24f;
+                        float itemBottom = itemTop + 24f;
+                        if (itemTop < intelliSenseScroll.y) {
+                            intelliSenseScroll.y = itemTop;
+                        } else if (itemBottom > intelliSenseScroll.y + listH) {
+                            intelliSenseScroll.y = itemBottom - listH;
                         }
                         e.Use();
                     } else if (e.keyCode == KeyCode.Return || e.keyCode == KeyCode.KeypadEnter || e.keyCode == KeyCode.Tab) {
@@ -1937,6 +1940,14 @@ namespace KSPGMAT.UI {
             GUILayout.EndHorizontal();
         }
 
+        private static bool IsPureOrbitalEvent(string stopType) {
+            if (string.IsNullOrEmpty(stopType)) return false;
+            string s = stopType.ToLower().Trim();
+            return s == "apoapsis" || s == "periapsis" || s.EndsWith(".apoapsis") || s.EndsWith(".periapsis")
+                || s == "node" || s == "ascendingnode" || s == "descendingnode" || s.EndsWith(".node")
+                || s.EndsWith(".ascendingnode") || s.EndsWith(".descendingnode");
+        }
+
         private void DrawStepCardDetails(int i, MissionStep step) {
             // =========================================================================
             // 1. PROPAGATE STEP CARD (CLEAN IDE INTELLISENSE)
@@ -1969,7 +1980,9 @@ namespace KSPGMAT.UI {
 
                 if (Event.current.type == EventType.Repaint) {
                     if (GUI.GetNameOfFocusedControl() == $"Field_PropStop_{i}") {
-                        intelliSenseAnchorRect = GUILayoutUtility.GetLastRect();
+                        Rect r = GUILayoutUtility.GetLastRect();
+                        Vector2 sp = GUIUtility.GUIToScreenPoint(new Vector2(r.x, r.y));
+                        intelliSenseAnchorRect = new Rect(sp.x, sp.y, r.width, r.height);
                     }
                 }
                 if (newStop != prevStop || (GUI.GetNameOfFocusedControl() == $"Field_PropStop_{i}" && !intelliSenseOpen && !intelliSenseDismissed)) {
@@ -1981,9 +1994,13 @@ namespace KSPGMAT.UI {
                     OpenParamPicker(i, "prop_stop");
                 }
 
-                GUILayout.Label("目标阈值:", labelValueStyle, GUILayout.Width(60));
-                string sTVal = GUILayout.TextField(step.target_val.ToString("F3"), GUILayout.Width(75));
-                double.TryParse(sTVal, out step.target_val);
+                if (IsPureOrbitalEvent(step.stop_type)) {
+                    GUILayout.Label("<color=#34d399><b>● 极值事件 (自动精确积分至最高/低点，无需设值)</b></color>", labelValueStyle);
+                } else {
+                    GUILayout.Label("目标阈值:", labelValueStyle, GUILayout.Width(60));
+                    string sTVal = GUILayout.TextField(step.target_val.ToString("F3"), GUILayout.Width(75));
+                    double.TryParse(sTVal, out step.target_val);
+                }
 
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
@@ -2002,7 +2019,9 @@ namespace KSPGMAT.UI {
 
                 if (Event.current.type == EventType.Repaint) {
                     if (GUI.GetNameOfFocusedControl() == $"Field_Vary_{i}") {
-                        intelliSenseAnchorRect = GUILayoutUtility.GetLastRect();
+                        Rect r = GUILayoutUtility.GetLastRect();
+                        Vector2 sp = GUIUtility.GUIToScreenPoint(new Vector2(r.x, r.y));
+                        intelliSenseAnchorRect = new Rect(sp.x, sp.y, r.width, r.height);
                     }
                 }
                 if (newVary != prevVary || (GUI.GetNameOfFocusedControl() == $"Field_Vary_{i}" && !intelliSenseOpen && !intelliSenseDismissed)) {
@@ -2044,7 +2063,9 @@ namespace KSPGMAT.UI {
                 
                 if (Event.current.type == EventType.Repaint) {
                     if (GUI.GetNameOfFocusedControl() == $"Field_Achieve_{i}") {
-                        intelliSenseAnchorRect = GUILayoutUtility.GetLastRect();
+                        Rect r = GUILayoutUtility.GetLastRect();
+                        Vector2 sp = GUIUtility.GUIToScreenPoint(new Vector2(r.x, r.y));
+                        intelliSenseAnchorRect = new Rect(sp.x, sp.y, r.width, r.height);
                     }
                 }
                 if (newAchieve != prevAchieve || (GUI.GetNameOfFocusedControl() == $"Field_Achieve_{i}" && !intelliSenseOpen && !intelliSenseDismissed)) {
@@ -3621,12 +3642,13 @@ namespace KSPGMAT.UI {
             float listH = Mathf.Min(180f, intelliSenseItems.Count * itemH + 10f);
             float totalH = listH + 52f; // header + list + footer doc
 
-            float px = windowRect.x + intelliSenseAnchorRect.x;
-            float py = windowRect.y + intelliSenseAnchorRect.y + intelliSenseAnchorRect.height + 4f;
+            // intelliSenseAnchorRect is in true Screen Coordinates!
+            float px = intelliSenseAnchorRect.x;
+            float py = intelliSenseAnchorRect.y + intelliSenseAnchorRect.height + 4f;
 
             // Flip above if reaching bottom of screen
             if (py + totalH > Screen.height - 30f) {
-                py = windowRect.y + intelliSenseAnchorRect.y - totalH - 4f;
+                py = intelliSenseAnchorRect.y - totalH - 4f;
             }
 
             Rect popRect = new Rect(px, py, popW, totalH);
