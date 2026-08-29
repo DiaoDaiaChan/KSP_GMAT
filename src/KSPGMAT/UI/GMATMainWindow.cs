@@ -137,7 +137,6 @@ namespace KSPGMAT.UI {
         private string customScriptPath = "";
         private bool showCustomScriptInput = false;
         private int draggedStepIndex = -1;
-        private Dictionary<int, Rect> stepCardRects = new Dictionary<int, Rect>();
 
         // Propagator names and labels
         private static readonly string[] PropagatorNames = new string[] {
@@ -1444,13 +1443,7 @@ namespace KSPGMAT.UI {
                         GUILayout.Space(6);
                     }
 
-                    if (Event.current.type == EventType.Repaint) {
-                        stepCardRects[i] = GUILayoutUtility.GetLastRect();
-                    }
-                    if (isHoldingDrag && dropTargetIndex == i && draggedStepIndex != i && stepCardRects.ContainsKey(i)) {
-                        Rect r = stepCardRects[i];
-                        GUI.Box(new Rect(r.x, r.y - 4, r.width, 8), "<color=#38bdf8><b>⬇ 插入到步骤 #{i + 1} ⬇</b></color>", tabButtonActiveStyle);
-                    }
+
 
                     // DO NOT call GUILayout.EndVertical() here: keep the prominent group container OPEN for child steps!
                     continue;
@@ -1591,13 +1584,7 @@ namespace KSPGMAT.UI {
 
                     GUILayout.EndVertical();
                     GUILayout.EndHorizontal();
-                    if (Event.current.type == EventType.Repaint) {
-                        stepCardRects[i] = GUILayoutUtility.GetLastRect();
-                    }
-                    if (isHoldingDrag && dropTargetIndex == i && draggedStepIndex != i && stepCardRects.ContainsKey(i)) {
-                        Rect r = stepCardRects[i];
-                        GUI.Box(new Rect(r.x, r.y - 4, r.width, 8), "<color=#38bdf8><b>⬇ 插入到步骤 #{i + 1} ⬇</b></color>", tabButtonActiveStyle);
-                    }
+
                     GUILayout.Space(4);
                     continue;
                 }
@@ -1667,42 +1654,37 @@ namespace KSPGMAT.UI {
                 }
 
                 GUILayout.EndVertical();
-                if (Event.current.type == EventType.Repaint) {
-                    stepCardRects[i] = GUILayoutUtility.GetLastRect();
-                }
-                if (isHoldingDrag && dropTargetIndex == i && draggedStepIndex != i && stepCardRects.ContainsKey(i)) {
-                    Rect r = stepCardRects[i];
-                    GUI.Box(new Rect(r.x, r.y, r.width, 4), "", tabButtonActiveStyle);
-                }
+
                 GUILayout.Space(4);
             }
 
-            // Safety check: close unclosed Target group if sequence ends inside group
+                        // Safety check: close unclosed Target group if sequence ends inside group
             if (insideTargetGroup) {
                 GUILayout.EndVertical();
                 insideTargetGroup = false;
             }
 
-            // Universal Drag & Drop Execution on MouseUp
-            if (isHoldingDrag && Event.current.type == EventType.MouseUp) {
-                if (draggedStepIndex >= 0 && dropTargetIndex >= 0 && dropTargetIndex != draggedStepIndex &&
-                    draggedStepIndex < missionSequence.Count && dropTargetIndex < missionSequence.Count) {
-                    var item = missionSequence[draggedStepIndex];
+            // Drag mode bottom drop bar
+            if (draggedStepIndex >= 0 && draggedStepIndex < missionSequence.Count) {
+                var draggedItem = missionSequence[draggedStepIndex];
+                GUILayout.Space(6);
+                GUILayout.BeginVertical(cardBoxStyle);
+                GUILayout.Label($"<color=#facc15><b>✊ 正在重排步骤 #{draggedStepIndex + 1} ({draggedItem.type} - {draggedItem.label})</b></color>", labelValueStyle);
+                GUILayout.BeginHorizontal();
+                if (GUILayout.Button($"⬇ 移动至任务序列末尾 (步骤 #{missionSequence.Count})", tabButtonActiveStyle, GUILayout.Height(24))) {
                     missionSequence.RemoveAt(draggedStepIndex);
-                    missionSequence.Insert(dropTargetIndex, item);
-                    ScreenMessages.PostScreenMessage($"↕️ 步骤已成功从 #{draggedStepIndex + 1} 移动至 #{dropTargetIndex + 1}", 2.5f, ScreenMessageStyle.UPPER_CENTER);
+                    missionSequence.Add(draggedItem);
+                    ScreenMessages.PostScreenMessage($"↕️ 步骤已成功移动至序列末尾", 2.0f, ScreenMessageStyle.UPPER_CENTER);
+                    draggedStepIndex = -1;
                 }
-                draggedStepIndex = -1;
-                isHoldingDrag = false;
-                dropTargetIndex = -1;
-                Event.current.Use();
-            } else if (Event.current.type == EventType.MouseUp && isHoldingDrag) {
-                draggedStepIndex = -1;
-                isHoldingDrag = false;
-                dropTargetIndex = -1;
+                if (GUILayout.Button("✕ 取消拖拽重排", secondaryButtonStyle, GUILayout.Width(110), GUILayout.Height(24))) {
+                    draggedStepIndex = -1;
+                }
+                GUILayout.EndHorizontal();
+                GUILayout.EndVertical();
             }
 
-                        // Execute insertions from Target quick buttons
+            // Execute insertions from Target quick buttons
             if (stepToInsertVary >= 0) {
                 missionSequence.Insert(stepToInsertVary, new MissionStep { type = "Vary", vary_variable = "burntime", vary_initial = 150.0, vary_lower = 0.0, vary_upper = 1000.0, vary_max_step = 2.0, label = "Vary variable" });
             }
@@ -1714,27 +1696,6 @@ namespace KSPGMAT.UI {
             }
             if (stepToInsertProp >= 0) {
                 missionSequence.Insert(stepToInsertProp, new MissionStep { type = "Propagate", propagator = "LEOProp", stop_type = "Apoapsis", label = "轨道积分" });
-            }
-
-            // Press-and-Hold Drop Execution upon MouseUp
-            if (isHoldingDrag && Event.current.type == EventType.MouseUp) {
-                if (dropTargetIndex >= 0 && draggedStepIndex >= 0 && dropTargetIndex != draggedStepIndex && dropTargetIndex < missionSequence.Count && draggedStepIndex < missionSequence.Count) {
-                    var item = missionSequence[draggedStepIndex];
-                    missionSequence.RemoveAt(draggedStepIndex);
-                    missionSequence.Insert(dropTargetIndex, item);
-                }
-                draggedStepIndex = -1;
-                isHoldingDrag = false;
-                dropTargetIndex = -1;
-                Event.current.Use();
-            } else if (dropTargetIndex >= 0 && draggedStepIndex >= 0 && dropTargetIndex != draggedStepIndex) {
-                var item = missionSequence[draggedStepIndex];
-                missionSequence.RemoveAt(draggedStepIndex);
-                missionSequence.Insert(dropTargetIndex, item);
-                draggedStepIndex = -1;
-                isHoldingDrag = false;
-                dropTargetIndex = -1;
-                Event.current.Use();
             }
 
             if (stepToMoveUp > 0) {
@@ -1849,8 +1810,38 @@ namespace KSPGMAT.UI {
                 solveStageText = "1/4 🛰️ 抓取飞船与引力场真实初始状态...";
                 solveCurrentStepIndex = 0;
 
+                // Ensure telemetry is live
+                if (cachedEngines == null || cachedEngines.Count == 0) cachedEngines = ROEngineInterop.ScanVesselEngines(vessel);
+                if (cachedTanks == null || cachedTanks.Count == 0) cachedTanks = ROEngineInterop.ScanVesselTanks(vessel);
+                if (cachedStages == null || cachedStages.Count == 0) cachedStages = MechJebInterop.GetStages(vessel);
+
+                // Auto-resolve active engine from sequence steps or highest thrust engine
+                ROEngineInfo selectedEngine = null;
+                string boundEngineId = "";
+                foreach (var st in missionSequence) {
+                    if (st.type == "FiniteBurn" && !string.IsNullOrEmpty(st.bound_thruster)) {
+                        boundEngineId = st.bound_thruster;
+                        break;
+                    }
+                }
+                if (cachedEngines != null && cachedEngines.Count > 0) {
+                    if (!string.IsNullOrEmpty(boundEngineId)) {
+                        selectedEngine = cachedEngines.Find(e => GMATParameterRegistry.SanitizeGmatIdentifier(e.title) == boundEngineId || e.title.Contains(boundEngineId));
+                    }
+                    if (selectedEngine == null && selectedEngineIndex < cachedEngines.Count) {
+                        selectedEngine = cachedEngines[selectedEngineIndex];
+                    }
+                    if (selectedEngine == null) {
+                        selectedEngine = cachedEngines[0];
+                    }
+                }
+
+                // Auto-resolve all stages with propellant or default to full vessel staging
                 List<StageData> selectedStages = GetSelectedStagesList();
-                ROEngineInfo selectedEngine = (cachedEngines != null && selectedEngineIndex < cachedEngines.Count) ? cachedEngines[selectedEngineIndex] : null;
+                if (selectedStages == null || selectedStages.Count == 0 || (selectedEngine != null && !selectedStages.Exists(s => s.stageNumber == selectedEngine.stageNumber))) {
+                    selectedStages = (cachedStages != null && cachedStages.Count > 0) ? cachedStages : new List<StageData>();
+                }
+
                 GMATClient.PropagateMission(vessel, selectedStages, selectedEngine, missionSequence, propagatorConfigs, (success, result) => {
                     isPropagating = false;
                     solveProgress = success ? 1.0f : 0.0f;

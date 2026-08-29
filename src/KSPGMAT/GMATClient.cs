@@ -450,6 +450,43 @@ namespace KSPGMAT {
                     sb.Append($"\"engine_name\": \"{Sanitize(engName)}\",");
                     sb.Append($"\"thrust\": {thrustN.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)},");
                     sb.Append($"\"isp\": {ispS.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)}");
+
+                    // Multi-Thruster Architecture
+                    var allEngines = ROEngineInterop.ScanVesselEngines(vessel);
+                    if (allEngines != null && allEngines.Count > 0) {
+                        sb.Append(",\"thrusters\": [");
+                        for (int te = 0; te < allEngines.Count; te++) {
+                            var teng = allEngines[te];
+                            if (te > 0) sb.Append(",");
+                            sb.Append("{");
+                            sb.Append($"\"name\": \"{Sanitize(teng.title)}\",");
+                            sb.Append($"\"thrust\": {(teng.thrustKN * 1000.0).ToString("F2", System.Globalization.CultureInfo.InvariantCulture)},");
+                            sb.Append($"\"isp\": {teng.ispVac.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)},");
+                            sb.Append($"\"fuel_density\": {teng.fuelDensityKgM3.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)},");
+                            sb.Append($"\"tank_volume\": {teng.tankVolumeM3.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)},");
+                            sb.Append($"\"bound_tank\": \"Stage_{teng.stageNumber}\"");
+                            sb.Append("}");
+                        }
+                        sb.Append("]");
+                    }
+
+                    // Multi-Tank Architecture
+                    var allTanks = ROEngineInterop.ScanVesselTanks(vessel);
+                    if (allTanks != null && allTanks.Count > 0) {
+                        sb.Append(",\"tanks\": [");
+                        for (int tk = 0; tk < allTanks.Count; tk++) {
+                            var tank = allTanks[tk];
+                            if (tk > 0) sb.Append(",");
+                            sb.Append("{");
+                            sb.Append($"\"name\": \"{Sanitize(tank.id)}\",");
+                            sb.Append($"\"fuel_mass\": {tank.fuelMassKg.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)},");
+                            sb.Append($"\"dry_mass\": {tank.dryMassKg.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)},");
+                            sb.Append($"\"volume\": {tank.maxVolumeM3.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)}");
+                            sb.Append("}");
+                        }
+                        sb.Append("]");
+                    }
+
                     sb.Append("},");
 
                     // Steps array
@@ -500,6 +537,8 @@ namespace KSPGMAT {
                         sb.Append($"\"var_name\": \"{st.var_name ?? "burntime"}\",");
                         sb.Append($"\"var_expr\": \"{st.var_expr ?? "150.0"}\",");
                         sb.Append($"\"burn_use_vary_var\": {(st.burn_use_vary_var ? "true" : "false")},");
+                        sb.Append($"\"bound_thruster\": \"{Sanitize(st.bound_thruster ?? "")}\",");
+                        sb.Append($"\"bound_tank\": \"{Sanitize(st.bound_tank ?? "")}\",");
                         sb.Append($"\"burn_vary_var_name\": \"{st.burn_vary_var_name ?? "burntime"}\",");
                         sb.Append($"\"stop_tolerance\": {st.stop_tolerance.ToString("G17", System.Globalization.CultureInfo.InvariantCulture)},");
                         sb.Append($"\"epoch_offset\": {st.epoch_offset.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)}");
