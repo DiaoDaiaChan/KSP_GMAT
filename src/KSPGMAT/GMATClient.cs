@@ -83,8 +83,6 @@ namespace KSPGMAT {
         public bool has_native_delta_v;
         public bool principia_writeable;
         public string native_result_note;
-        public string align_mode = "Auto"; // Auto, GMAT, SnapAN, SnapDN, SnapAp, SnapPe
-        public string target_event = "";   // Detected or chosen target event: AN, DN, Apoapsis, Periapsis, Time
         public double computed_initial_time;
         public double centroid_lead_time;
     }
