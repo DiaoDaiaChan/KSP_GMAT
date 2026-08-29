@@ -1415,11 +1415,8 @@ namespace KSPGMAT.UI {
                     }
                     GUI.enabled = true;
 
-                    if (GUILayout.RepeatButton(isBeingDragged ? "✊ 拖动中" : "☰ 拖动", isBeingDragged ? successButtonStyle : secondaryButtonStyle, GUILayout.Width(54), GUILayout.Height(20))) {
-                        if (!isHoldingDrag) {
-                            draggedStepIndex = i;
-                            isHoldingDrag = true;
-                        }
+                    if (GUILayout.Button(isBeingDragged ? "✊ 拖动中 (点此取消)" : "☰ 拖动", isBeingDragged ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Width(isBeingDragged ? 120 : 54), GUILayout.Height(20))) {
+                        draggedStepIndex = isBeingDragged ? -1 : i;
                     }
 
                     GUILayout.Label($"<b>#{i + 1} 🎯 Target 求解组: '{(string.IsNullOrEmpty(step.label) ? "求解循环" : step.label)}'</b>", headerStyle);
@@ -1558,12 +1555,8 @@ namespace KSPGMAT.UI {
                         }
                         GUI.enabled = true;
 
-                        Rect dragRectEnd = GUILayoutUtility.GetRect(new GUIContent("☰ 拖动"), secondaryButtonStyle, GUILayout.Width(50), GUILayout.Height(20));
-                        GUI.Box(dragRectEnd, isBeingDragged ? "✊ 拖动中" : "☰ 拖动", isBeingDragged ? successButtonStyle : secondaryButtonStyle);
-                        if (Event.current.type == EventType.MouseDown && Event.current.button == 0 && dragRectEnd.Contains(Event.current.mousePosition)) {
-                            draggedStepIndex = i;
-                            isHoldingDrag = true;
-                            Event.current.Use();
+                        if (GUILayout.Button(isBeingDragged ? "✊ 拖动中 (点此取消)" : "☰ 拖动", isBeingDragged ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Width(isBeingDragged ? 120 : 54), GUILayout.Height(20))) {
+                            draggedStepIndex = isBeingDragged ? -1 : i;
                         }
 
                         GUILayout.Label($"<b>#{i + 1} ↵ EndTarget (闭合求解循环: '{(string.IsNullOrEmpty(step.label) ? "结束打靶" : step.label)}')</b>", labelValueStyle);
@@ -1617,11 +1610,8 @@ namespace KSPGMAT.UI {
                     }
                     GUI.enabled = true;
 
-                    if (GUILayout.RepeatButton(isBeingDragged ? "✊ 拖动中" : "☰ 拖动", isBeingDragged ? successButtonStyle : secondaryButtonStyle, GUILayout.Width(54), GUILayout.Height(20))) {
-                        if (!isHoldingDrag) {
-                            draggedStepIndex = i;
-                            isHoldingDrag = true;
-                        }
+                    if (GUILayout.Button(isBeingDragged ? "✊ 拖动中 (点此取消)" : "☰ 拖动", isBeingDragged ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Width(isBeingDragged ? 120 : 54), GUILayout.Height(20))) {
+                        draggedStepIndex = isBeingDragged ? -1 : i;
                     }
 
                     if (step.is_collapsed) {
@@ -2070,6 +2060,22 @@ namespace KSPGMAT.UI {
 
             // RealismOverhaul Propulsion Architecture
             GUILayout.Label("<b>🔥 RealismOverhaul 推进系统动力学</b>", headerStyle);
+            // Auto-detect engine from mission sequence if present
+            if (cachedEngines != null && cachedEngines.Count > 0) {
+                for (int s = 0; s < missionSequence.Count; s++) {
+                    if (missionSequence[s].type == "FiniteBurn" && !string.IsNullOrEmpty(missionSequence[s].bound_thruster)) {
+                        string targetTh = missionSequence[s].bound_thruster.ToLower().Replace("_", "");
+                        for (int e = 0; e < cachedEngines.Count; e++) {
+                            string eTitle = GMATParameterRegistry.SanitizeGmatIdentifier(cachedEngines[e].title, "").ToLower().Replace("_", "");
+                            if (eTitle.Contains(targetTh) || targetTh.Contains(eTitle)) {
+                                selectedEngineIndex = e;
+                                break;
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
             var curEng = (cachedEngines != null && selectedEngineIndex < cachedEngines.Count) ? cachedEngines[selectedEngineIndex] : (cachedEngines != null && cachedEngines.Count > 0 ? cachedEngines[0] : null);
             if (curEng != null) {
                 GUILayout.Label($"主发动机: <b>{curEng.title}</b> | 真空推力: <color=#38bdf8><b>{curEng.thrustKN:F1} kN</b></color> | 真空比冲: <color=#38bdf8><b>{curEng.ispVac:F0} s</b></color>", labelValueStyle);
@@ -2215,6 +2221,27 @@ namespace KSPGMAT.UI {
 
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
+
+                // Display Solved Value if Available (Image 4)
+                if (latestResult != null && latestResult.success) {
+                    double solvedVal = -1.0;
+                    if (latestResult.dc_summary != null && latestResult.dc_summary.final_variables != null) {
+                        string vKey = step.vary_variable ?? "burntime";
+                        if (latestResult.dc_summary.final_variables.ContainsKey(vKey)) {
+                            solvedVal = latestResult.dc_summary.final_variables[vKey];
+                        }
+                    }
+                    if (solvedVal <= 0 && latestResult.solved_burns != null && latestResult.solved_burns.Count > 0) {
+                        solvedVal = latestResult.solved_burns[0].duration;
+                    }
+                    if (solvedVal > 0) {
+                        GUILayout.Space(2);
+                        GUILayout.BeginHorizontal();
+                        GUILayout.Label($"<color=#34d399><b>🎯 求解收敛值: {solvedVal:F3} s</b></color> <color=#94a3b8>(初始初猜: {step.vary_initial:F2} s | 下界: {step.vary_lower:F1}s | 上界: {step.vary_upper:F1}s)</color>", labelValueStyle);
+                        GUILayout.FlexibleSpace();
+                        GUILayout.EndHorizontal();
+                    }
+                }
 
                 // Vary Solver Selector Row
                 GUILayout.Space(2);

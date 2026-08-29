@@ -1620,10 +1620,14 @@ def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None, 
     except Exception as ex:
         print(f"[gmat_engine] Render trajectory error: {ex}")
 
-    # Parse DifferentialCorrector data if present
+    # Parse DifferentialCorrector data across all potential solver data files
     dc_info = {}
-    dc_file = os.path.join(output_dir, "DifferentialCorrectorDC.data")
-    if os.path.exists(dc_file):
+    import glob
+    dc_files = glob.glob(os.path.join(output_dir, "DifferentialCorrector*.data"))
+    if dc_files:
+        # Sort by modification time, newest first
+        dc_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+        dc_file = dc_files[0]
         try:
             with open(dc_file, "r", encoding="utf-8", errors="ignore") as f:
                 dc_text = f.read()

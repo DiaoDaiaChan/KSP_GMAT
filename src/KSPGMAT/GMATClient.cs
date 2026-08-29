@@ -114,6 +114,7 @@ namespace KSPGMAT {
         public double desired;
         public double achieved;
         public double variance;
+        public Dictionary<string, double> final_variables = new Dictionary<string, double>();
     }
 
     [Serializable]

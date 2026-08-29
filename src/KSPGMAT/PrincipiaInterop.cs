@@ -372,13 +372,23 @@ namespace KSPGMAT {
                 msg = fStatus_Message != null ? (string)fStatus_Message.GetValue(status) : "";
             }
 
-            if (err == 0) {
-                KSPGMATLog.Success($"[PrincipiaInterop] Burn {burnIndex} inserted successfully! (time={burnInitialTime:F2}s, dv=({deltaV_mps.x:F1}, {deltaV_mps.y:F1}, {deltaV_mps.z:F1})m/s, origin={targetBody.name})");
-            } else {
-                KSPGMATLog.Error($"[PrincipiaInterop] Burn {burnIndex} failed with code {err}: {msg}");
+            // Check if the manoeuvre is now present in the flight plan
+            int afterCount = 0;
+            if (mFlightPlanNumberOfManoeuvres != null) {
+                try {
+                    afterCount = (int)mFlightPlanNumberOfManoeuvres.Invoke(null, new object[] { plugin, guid });
+                } catch {}
             }
 
-            return err == 0;
+            bool writtenSuccessfully = (err == 0) || (afterCount > numManoeuvres) || (burnIndex < afterCount);
+
+            if (writtenSuccessfully) {
+                KSPGMATLog.Success($"[PrincipiaInterop] Burn {burnIndex} inserted/confirmed in Principia! (time={burnInitialTime:F2}s, dv=({deltaV_mps.x:F1}, {deltaV_mps.y:F1}, {deltaV_mps.z:F1})m/s, origin={targetBody.name})");
+            } else {
+                KSPGMATLog.Warn($"[PrincipiaInterop] Burn {burnIndex} status code {err}: {msg}");
+            }
+
+            return writtenSuccessfully;
         }
 
         public class FlightPlanNode {
