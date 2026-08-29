@@ -1,6 +1,6 @@
 using System;
+using System.Diagnostics;
 using System.IO;
-using System.Net;
 using System.Text;
 using System.Threading;
 using System.Collections.Generic;
@@ -83,6 +83,10 @@ namespace KSPGMAT {
         public bool has_native_delta_v;
         public bool principia_writeable;
         public string native_result_note;
+        public string align_mode = "Auto"; // Auto, GMAT, SnapAN, SnapDN, SnapAp, SnapPe
+        public string target_event = "";   // Detected or chosen target event: AN, DN, Apoapsis, Periapsis, Time
+        public double computed_initial_time;
+        public double centroid_lead_time;
     }
 
     [Serializable]
@@ -144,6 +148,8 @@ namespace KSPGMAT {
         public double final_ta;
         public double final_mass;
         public string final_epoch;
+        public double solve_ut;
+        public double solve_principia_time;
         public string warning;
         public bool has_fuel_deficit;
         public double fuel_deficit;
@@ -156,10 +162,8 @@ namespace KSPGMAT {
     }
 
     public static class GMATClient {
-        public static string ServerUrl = "http://127.0.0.1:8055";
         public static bool IsConnected = false;
         public static string ServerStatusText = "Initializing...";
-        public static bool UseDirectCLI = true;
         private static string _customGmatBinPath = "";
         public static string GmatBinPath {
             get {
@@ -257,29 +261,15 @@ namespace KSPGMAT {
         public static void CheckConnection(Action<bool, string> callback) {
             ThreadPool.QueueUserWorkItem(_ => {
                 string cli = FindCliScript();
-                if (UseDirectCLI && File.Exists(cli)) {
+                if (File.Exists(cli)) {
                     IsConnected = true;
                     ServerStatusText = "⚡ GMAT 原生引擎就绪 (无需后台服务)";
+                    FetchParameters();
                     KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(true, "CLI Ready"));
-                    return;
-                }
-
-                try {
-                    HttpWebRequest request = (HttpWebRequest)WebRequest.Create(ServerUrl + "/api/status");
-                    request.Timeout = 1500;
-                    request.Method = "GET";
-                    using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
-                    using (StreamReader reader = new StreamReader(response.GetResponseStream())) {
-                        string json = reader.ReadToEnd();
-                        IsConnected = true;
-                        ServerStatusText = "Online (GMAT R2026a Bridge)";
-                        FetchParameters();
-                        KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(true, json));
-                    }
-                } catch (Exception ex) {
+                } else {
                     IsConnected = false;
-                    ServerStatusText = "Offline (" + ex.Message + ")";
-                    KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(false, ex.Message));
+                    ServerStatusText = "❌ gmat_cli.py 未找到: " + cli;
+                    KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(false, ServerStatusText));
                 }
             });
         }
@@ -287,24 +277,51 @@ namespace KSPGMAT {
         public static void FetchParameters(Action<bool> callback = null) {
             ThreadPool.QueueUserWorkItem(_ => {
                 try {
-                    string json = GetJson(ServerUrl + "/api/parameters");
-                    if (!string.IsNullOrEmpty(json) && json.Contains("\"parameters\":")) {
-                        UI.GMATMainWindow.RunOnMainThread(() => {
-                            GMATParameterRegistry.LoadFromJson(json);
-                            callback?.Invoke(true);
-                        });
-                        return;
+                    // Load capabilities from local JSON file directly
+                    string[] candidates = new string[] {
+                        Path.Combine(GmatBinPath, "KSP_GMAT", "gmat_service", "gmat_capabilities.json"),
+                        Path.Combine(GmatBinPath, "KSP_GMAT", "Plugins", "gmat_capabilities.json"),
+                        Path.Combine(KSPUtil.ApplicationRootPath, "GameData", "KSPGMAT", "Plugins", "gmat_capabilities.json")
+                    };
+                    foreach (var path in candidates) {
+                        if (File.Exists(path)) {
+                            string json = File.ReadAllText(path, Encoding.UTF8);
+                            if (!string.IsNullOrEmpty(json)) {
+                                UI.GMATMainWindow.RunOnMainThread(() => {
+                                    GMATParameterRegistry.LoadFromJson(json);
+                                    callback?.Invoke(true);
+                                });
+                                return;
+                            }
+                        }
                     }
                 } catch {}
                 UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(false));
             });
         }
 
+        private static double KspUtToJd(double ut) {
+            double gameEpochJd = 2433647.5; // Sol-Configs / RSS default: 1951-01-01
+            double jd = gameEpochJd + (ut / 86400.0);
+            if (jd < 2436116.5) jd = 2437000.0 + (ut / 86400.0);
+            return jd;
+        }
+
+        private static double JdToGmatMjd(double jd) {
+            return jd - 2430000.0;
+        }
+
         public static void CalibrateEphem(double ut, Action<bool, string> callback) {
             ThreadPool.QueueUserWorkItem(_ => {
                 try {
-                    string jsonPayload = $"{{\"ut\": {ut.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)}}}";
-                    string res = PostJson(ServerUrl + "/api/calibrate_ephem", jsonPayload);
+                    double jd = KspUtToJd(ut);
+                    double mjd = JdToGmatMjd(jd);
+                    string utcStr = JdToUtcGregorian(jd);
+                    string res = $"{{\"success\": true, \"ut\": {ut.ToString("F3", CultureInfo.InvariantCulture)}, " +
+                                 $"\"jd\": {jd.ToString("F6", CultureInfo.InvariantCulture)}, " +
+                                 $"\"mjd\": {mjd.ToString("F6", CultureInfo.InvariantCulture)}, " +
+                                 $"\"utc_gregorian\": \"{utcStr}\", " +
+                                 $"\"status\": \"Calibrated\"}}";
                     KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(true, res));
                 } catch (Exception ex) {
                     KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(false, ex.Message));
@@ -518,42 +535,39 @@ namespace KSPGMAT {
 
                     string responseJson = "";
                     string cliScript = FindCliScript();
+                    string outputDir = GetOutputDir();
+                    string inputFile = Path.Combine(outputDir, "mission_input.json");
+                    string outputFile = Path.Combine(outputDir, "mission_result.json");
+                    if (File.Exists(outputFile)) {
+                        try { File.Delete(outputFile); } catch {}
+                    }
 
-                    if (UseDirectCLI && File.Exists(cliScript)) {
-                        string outputDir = GetOutputDir();
-                        string inputFile = Path.Combine(outputDir, "mission_input.json");
-                        string outputFile = Path.Combine(outputDir, "mission_result.json");
-                        if (File.Exists(outputFile)) {
-                            try { File.Delete(outputFile); } catch {}
-                        }
+                    File.WriteAllText(inputFile, sb.ToString(), Utf8NoBom);
 
-                        File.WriteAllText(inputFile, sb.ToString(), Utf8NoBom);
+                    System.Diagnostics.ProcessStartInfo psi = new System.Diagnostics.ProcessStartInfo {
+                        FileName = FindPythonExe(),
+                        Arguments = $"\"{cliScript}\" --action solve --input \"{inputFile}\" --output \"{outputFile}\"",
+                        WorkingDirectory = GmatBinPath,
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true
+                    };
 
-                        System.Diagnostics.ProcessStartInfo psi = new System.Diagnostics.ProcessStartInfo {
-                            FileName = FindPythonExe(),
-                            Arguments = $"\"{cliScript}\" --action solve --input \"{inputFile}\" --output \"{outputFile}\"",
-                            WorkingDirectory = GmatBinPath,
-                            UseShellExecute = false,
-                            CreateNoWindow = true,
-                            RedirectStandardOutput = true,
-                            RedirectStandardError = true
-                        };
+                    using (var process = System.Diagnostics.Process.Start(psi)) {
+                        process.WaitForExit(45000);
+                    }
 
-                        using (var process = System.Diagnostics.Process.Start(psi)) {
-                            process.WaitForExit(45000);
-                        }
-
-                        if (File.Exists(outputFile)) {
-                            responseJson = File.ReadAllText(outputFile, Encoding.UTF8);
-                        } else {
-                            throw new Exception("GMAT CLI 执行超时或未生成结果文件。");
-                        }
+                    if (File.Exists(outputFile)) {
+                        responseJson = File.ReadAllText(outputFile, Encoding.UTF8);
                     } else {
-                        responseJson = PostJson(ServerUrl + "/api/propagate", sb.ToString());
+                        throw new Exception("GMAT CLI 执行超时或未生成结果文件。");
                     }
                     sw.Stop();
 
                     MissionResult result = ParseMissionResult(responseJson);
+                    result.solve_ut = ut;
+                    result.solve_principia_time = PrincipiaInterop.GetCurrentPrincipiaTime();
 
                     if (result.success) {
                         KSPGMATLog.Success($"GMAT execution succeeded in {sw.ElapsedMilliseconds} ms!");
@@ -592,10 +606,23 @@ namespace KSPGMAT {
         public static void OpenGmatDesktop(string scriptPath) {
             ThreadPool.QueueUserWorkItem(_ => {
                 try {
-                    string payload = $"{{\"script_path\": \"{scriptPath.Replace("\\", "\\\\")}\"}}";
-                    PostJson(ServerUrl + "/api/open_gmat_gui", payload);
+                    string gmatExe = Path.Combine(GmatBinPath, "GMAT.exe");
+                    if (File.Exists(gmatExe)) {
+                        ProcessStartInfo psi = new ProcessStartInfo {
+                            FileName = gmatExe,
+                            WorkingDirectory = GmatBinPath,
+                            UseShellExecute = true
+                        };
+                        if (!string.IsNullOrEmpty(scriptPath) && File.Exists(scriptPath)) {
+                            psi.Arguments = $"\"{scriptPath}\"";
+                        }
+                        Process.Start(psi);
+                        UnityEngine.Debug.Log("[KSPGMAT] GMAT GUI launched.");
+                    } else {
+                        UnityEngine.Debug.LogWarning("[KSPGMAT] GMAT.exe not found at " + gmatExe);
+                    }
                 } catch (Exception ex) {
-                    Debug.LogWarning("[KSPGMAT] Error opening GMAT desktop: " + ex.Message);
+                    UnityEngine.Debug.LogWarning("[KSPGMAT] Error opening GMAT desktop: " + ex.Message);
                 }
             });
         }
@@ -613,7 +640,29 @@ namespace KSPGMAT {
                     sb.Append($"\"vessel_name\": \"{vName}\"");
                     sb.Append("}");
 
-                    string json = PostJson(ServerUrl + "/api/import_script", sb.ToString());
+                    string cliScript = FindCliScript();
+                    string outputDir = GetOutputDir();
+                    string inputFile = Path.Combine(outputDir, "import_input.json");
+                    string outputFile = Path.Combine(outputDir, "import_result.json");
+                    if (File.Exists(outputFile)) {
+                        try { File.Delete(outputFile); } catch {}
+                    }
+                    File.WriteAllText(inputFile, sb.ToString(), Utf8NoBom);
+
+                    System.Diagnostics.ProcessStartInfo psi = new System.Diagnostics.ProcessStartInfo {
+                        FileName = FindPythonExe(),
+                        Arguments = $"\"{cliScript}\" --action import --input \"{inputFile}\" --output \"{outputFile}\"",
+                        WorkingDirectory = GmatBinPath,
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true
+                    };
+                    using (var process = System.Diagnostics.Process.Start(psi)) {
+                        process.WaitForExit(15000);
+                    }
+
+                    string json = File.Exists(outputFile) ? File.ReadAllText(outputFile, Encoding.UTF8) : "{}";
                     if (json.Contains("\"success\": true")) {
                         List<MissionStep> steps = new List<MissionStep>();
                         int seqIdx = json.IndexOf("\"sequence\":");
@@ -678,39 +727,18 @@ namespace KSPGMAT {
             });
         }
 
-        private static string PostJson(string url, string jsonPayload) {
-            byte[] bytes = Encoding.UTF8.GetBytes(jsonPayload);
-            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
-            request.Method = "POST";
-            request.ContentType = "application/json; charset=utf-8";
-            request.ContentLength = bytes.Length;
-            request.Timeout = 15000;
-
-            using (Stream reqStream = request.GetRequestStream()) {
-                reqStream.Write(bytes, 0, bytes.Length);
-            }
-
-            using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
-            using (StreamReader reader = new StreamReader(response.GetResponseStream(), Encoding.UTF8)) {
-                return reader.ReadToEnd();
-            }
-        }
-
-        public static string GetJson(string url) {
-            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
-            request.Method = "GET";
-            request.Timeout = 10000;
-            using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
-            using (StreamReader reader = new StreamReader(response.GetResponseStream(), Encoding.UTF8)) {
-                return reader.ReadToEnd();
-            }
-        }
-
         public static void FetchComparison(Action<bool, string> callback) {
             ThreadPool.QueueUserWorkItem(_ => {
                 try {
-                    string json = GetJson(ServerUrl + "/api/principia/compare");
-                    UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(true, json));
+                    // Read the most recent comparison result from the last sync output
+                    string outputDir = GetOutputDir();
+                    string compFile = Path.Combine(outputDir, "principia_comp.json");
+                    if (File.Exists(compFile)) {
+                        string json = File.ReadAllText(compFile, Encoding.UTF8);
+                        UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(true, json));
+                    } else {
+                        UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(false, "比较数据不可用，请先执行 Principia 同步"));
+                    }
                 } catch (Exception ex) {
                     UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(false, ex.Message));
                 }
@@ -752,32 +780,28 @@ namespace KSPGMAT {
                     sb.Append("}");
 
                     string cliScript = FindCliScript();
+                    string outputDir = GetOutputDir();
+                    string inputFile = Path.Combine(outputDir, "principia_sync.json");
+                    string outputFile = Path.Combine(outputDir, "principia_comp.json");
+                    if (File.Exists(outputFile)) {
+                        try { File.Delete(outputFile); } catch {}
+                    }
+                    File.WriteAllText(inputFile, sb.ToString(), Utf8NoBom);
+                    System.Diagnostics.ProcessStartInfo psi = new System.Diagnostics.ProcessStartInfo {
+                        FileName = FindPythonExe(),
+                        Arguments = $"\"{cliScript}\" --action sync --input \"{inputFile}\" --output \"{outputFile}\"",
+                        WorkingDirectory = GmatBinPath,
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true
+                    };
+                    using (var process = System.Diagnostics.Process.Start(psi)) {
+                        process.WaitForExit(15000);
+                    }
                     string responseJson = "";
-                    if (UseDirectCLI && File.Exists(cliScript)) {
-                        string outputDir = GetOutputDir();
-                        string inputFile = Path.Combine(outputDir, "principia_sync.json");
-                        string outputFile = Path.Combine(outputDir, "principia_comp.json");
-                        if (File.Exists(outputFile)) {
-                            try { File.Delete(outputFile); } catch {}
-                        }
-                        File.WriteAllText(inputFile, sb.ToString(), Utf8NoBom);
-                        System.Diagnostics.ProcessStartInfo psi = new System.Diagnostics.ProcessStartInfo {
-                            FileName = FindPythonExe(),
-                            Arguments = $"\"{cliScript}\" --action sync --input \"{inputFile}\" --output \"{outputFile}\"",
-                            WorkingDirectory = GmatBinPath,
-                            UseShellExecute = false,
-                            CreateNoWindow = true,
-                            RedirectStandardOutput = true,
-                            RedirectStandardError = true
-                        };
-                        using (var process = System.Diagnostics.Process.Start(psi)) {
-                            process.WaitForExit(15000);
-                        }
-                        if (File.Exists(outputFile)) {
-                            responseJson = File.ReadAllText(outputFile, Encoding.UTF8);
-                        }
-                    } else {
-                        responseJson = PostJson(ServerUrl + "/api/principia/sync", sb.ToString());
+                    if (File.Exists(outputFile)) {
+                        responseJson = File.ReadAllText(outputFile, Encoding.UTF8);
                     }
                     UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(true, responseJson));
                 } catch (Exception ex) {
@@ -948,38 +972,30 @@ namespace KSPGMAT {
                     string payload = $"{{\"view_mode\": \"{viewMode}\", \"central_body\": \"{cBody}\", \"body_radius\": {rKm}}}";
 
                     string cliScript = FindCliScript();
-                    if (UseDirectCLI && File.Exists(cliScript)) {
-                        try {
-                            string outputDir = GetOutputDir();
-                            string inputFile = Path.Combine(outputDir, "render_input.json");
-                            string outputFile = Path.Combine(outputDir, "render_result.json");
-                            File.WriteAllText(inputFile, payload, Utf8NoBom);
-                            System.Diagnostics.ProcessStartInfo psi = new System.Diagnostics.ProcessStartInfo {
-                                FileName = FindPythonExe(),
-                                Arguments = $"\"{cliScript}\" --action render --input \"{inputFile}\" --output \"{outputFile}\"",
-                                WorkingDirectory = GmatBinPath,
-                                UseShellExecute = false,
-                                CreateNoWindow = true,
-                                RedirectStandardOutput = true,
-                                RedirectStandardError = true
-                            };
-                            using (var process = System.Diagnostics.Process.Start(psi)) {
-                                process.WaitForExit(15000);
-                            }
-                            if (File.Exists(outputFile)) {
-                                string resJson = File.ReadAllText(outputFile, Encoding.UTF8);
-                                string path = ExtractString(resJson, "image_path");
-                                bool ok = resJson.Contains("\"success\": true");
-                                KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(ok, path));
-                                return;
-                            }
-                        } catch {}
+                    string outputDir = GetOutputDir();
+                    string inputFile = Path.Combine(outputDir, "render_input.json");
+                    string outputFile = Path.Combine(outputDir, "render_result.json");
+                    File.WriteAllText(inputFile, payload, Utf8NoBom);
+                    System.Diagnostics.ProcessStartInfo psi = new System.Diagnostics.ProcessStartInfo {
+                        FileName = FindPythonExe(),
+                        Arguments = $"\"{cliScript}\" --action render --input \"{inputFile}\" --output \"{outputFile}\"",
+                        WorkingDirectory = GmatBinPath,
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true
+                    };
+                    using (var process = System.Diagnostics.Process.Start(psi)) {
+                        process.WaitForExit(15000);
                     }
-
-                    string json = PostJson(ServerUrl + "/api/render_trajectory", payload);
-                    string imgPath = ExtractString(json, "image_path");
-                    bool httpOk = json.Contains("\"success\": true");
-                    KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(httpOk, imgPath));
+                    if (File.Exists(outputFile)) {
+                        string resJson = File.ReadAllText(outputFile, Encoding.UTF8);
+                        string path = ExtractString(resJson, "image_path");
+                        bool ok = resJson.Contains("\"success\": true");
+                        KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(ok, path));
+                    } else {
+                        KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(false, "渲染进程未生成输出文件"));
+                    }
                 } catch (Exception ex) {
                     KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(false, ex.Message));
                 }

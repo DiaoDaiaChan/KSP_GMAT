@@ -24,7 +24,7 @@ def main():
     parser = argparse.ArgumentParser(description="GMAT CLI One-Shot Runner")
     curr_dir = os.path.dirname(os.path.abspath(__file__))
     def_out_dir = os.path.abspath(os.path.join(curr_dir, "..", "..", "output"))
-    parser.add_argument("--action", default="solve", choices=["solve", "sync", "render"], help="Action to execute")
+    parser.add_argument("--action", default="solve", choices=["solve", "sync", "compare", "render", "import"], help="Action to execute")
     parser.add_argument("--input", default=os.path.join(def_out_dir, "mission_input.json"), help="Path to input JSON")
     parser.add_argument("--output", default=os.path.join(def_out_dir, "mission_result.json"), help="Path to output JSON")
     args = parser.parse_args()
@@ -47,6 +47,26 @@ def main():
             principia_comparator.update_principia_state(vessel_state, nodes)
             comp = principia_comparator.get_latest_comparison()
             res = {"success": True, "comparison": comp}
+
+        elif args.action == "compare":
+            comp = principia_comparator.get_latest_comparison()
+            res = {"success": True, "comparison": comp}
+
+        elif args.action == "import":
+            from script_parser import parse_gmat_script
+            script_path = req_data.get("script_path", "")
+            vessel_name = req_data.get("vessel_name", None)
+            ut = req_data.get("ut", None)
+            epoch_utc = None
+            if ut is not None:
+                try:
+                    from ephemeris_calibrator import ksp_ut_to_jd, jd_to_utc_gregorian
+                    jd = ksp_ut_to_jd(float(ut))
+                    epoch_utc = jd_to_utc_gregorian(jd)
+                except Exception:
+                    pass
+            res = parse_gmat_script(script_path, override_epoch_utc=epoch_utc, override_craft_name=vessel_name)
+
         elif args.action == "render":
             view_mode = req_data.get("view_mode", "dual")
             central_body = req_data.get("central_body", "Earth")
@@ -57,6 +77,7 @@ def main():
             from orbit_renderer import render_gmat_trajectory
             ok, msg = render_gmat_trajectory(traj_file, img_file, view_mode=view_mode, central_body=central_body, body_radius=body_radius)
             res = {"success": ok, "image_path": img_file, "message": msg}
+
         else: # solve
             craft = req_data.get("craft", {})
             sequence = req_data.get("sequence", [])
@@ -69,7 +90,7 @@ def main():
                     craft["epoch_utc"] = jd_to_utc_gregorian(jd)
                 except Exception as ex:
                     print(f"[GmatCLI] Ephemeris calibration warning: {ex}")
-            custom_coords = payload.get("custom_coordinate_systems") or []
+            custom_coords = req_data.get("custom_coordinate_systems") or []
             res = gmat_engine.run_mission_sequence(craft, sequence, propagator_configs=propagator_configs, custom_coordinate_systems=custom_coords)
             if res.get("success"):
                 principia_comparator.update_gmat_result(res)

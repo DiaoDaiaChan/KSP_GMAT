@@ -18,7 +18,6 @@ namespace KSPGMAT {
             }
         }
 
-        public static string ServiceScriptPath { get { return Path.Combine(RootPath, "gmat_service", "gmat_bridge_server.py"); } }
         public static string OutputPath { get { return Path.Combine(RootPath, "output"); } }
 
         private static string Read(string key, string fallback) {
