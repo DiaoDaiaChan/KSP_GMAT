@@ -58,7 +58,12 @@ namespace KSPGMAT.UI {
         private List<ROEngineInfo> cachedEngines = new List<ROEngineInfo>();
         private int selectedEngineIndex = 0;
         private string syncStatusMessage = "";
-        private bool isPropagating = false;
+                private bool isPropagating = false;
+        private float solveProgress = 0.0f;
+        private float solveStartTime = 0.0f;
+        private float solveTotalTime = 0.0f;
+        private string solveStageText = "就绪";
+        private int solveCurrentStepIndex = 0;
 
         // Sub-Window: Spacecraft details
         private bool showCraftDetailsWindow = false;
@@ -177,6 +182,30 @@ namespace KSPGMAT.UI {
         }
 
         void Update() {
+            if (isPropagating) {
+                float elapsed = Time.realtimeSinceStartup - solveStartTime;
+                solveTotalTime = elapsed;
+                if (elapsed < 0.6f) {
+                    solveProgress = Mathf.Lerp(0.05f, 0.22f, elapsed / 0.6f);
+                    solveStageText = "1/4 🛰️ 抓取飞船与引力场真实初始状态...";
+                    solveCurrentStepIndex = 0;
+                } else if (elapsed < 1.5f) {
+                    solveProgress = Mathf.Lerp(0.22f, 0.48f, (elapsed - 0.6f) / 0.9f);
+                    solveStageText = "2/4 📜 编译 NASA GMAT 任务动力学脚本与力模型...";
+                    solveCurrentStepIndex = Mathf.Min(1, missionSequence.Count - 1);
+                } else if (elapsed < 3.8f) {
+                    solveProgress = Mathf.Lerp(0.48f, 0.88f, (elapsed - 1.5f) / 2.3f);
+                    solveStageText = "3/4 🧮 GMAT RungeKutta89 积分与微分修正打靶中...";
+                    if (missionSequence.Count > 2) {
+                        solveCurrentStepIndex = (int)Mathf.Lerp(1, missionSequence.Count - 1, (elapsed - 1.5f) / 2.3f);
+                    }
+                } else {
+                    solveProgress = Mathf.Min(0.96f, 0.88f + (elapsed - 3.8f) * 0.015f);
+                    solveStageText = "4/4 📊 解析高保真轨迹、机动节点与状态报告...";
+                    solveCurrentStepIndex = missionSequence.Count - 1;
+                }
+            }
+
             lock (mainThreadQueue) {
                 while (mainThreadQueue.Count > 0) {
                     try {
@@ -1060,6 +1089,31 @@ namespace KSPGMAT.UI {
             GUILayout.EndHorizontal();
         }
 
+        private void DrawProgressBar(float progress, string labelText, float height = 22f) {
+            Rect barRect = GUILayoutUtility.GetRect(GUIContent.none, GUIStyle.none, GUILayout.ExpandWidth(true), GUILayout.Height(height));
+            // Dark graphite background
+            GUI.Box(barRect, GUIContent.none, nestedCardBoxStyle);
+
+            // Progress fill
+            float pClamped = Mathf.Clamp01(progress);
+            if (pClamped > 0f) {
+                Rect fillRect = new Rect(barRect.x + 2, barRect.y + 2, (barRect.width - 4) * pClamped, barRect.height - 4);
+                Color oldColor = GUI.color;
+                GUI.color = isPropagating ? new Color(0.2f, 0.8f, 0.9f) : (latestResult != null && latestResult.success ? new Color(0.2f, 0.85f, 0.45f) : new Color(0.9f, 0.35f, 0.35f));
+                GUI.DrawTexture(fillRect, Texture2D.whiteTexture);
+                GUI.color = oldColor;
+            }
+
+            // Centered crisp text
+            GUIStyle centerStyle = new GUIStyle(labelValueStyle) {
+                alignment = TextAnchor.MiddleCenter,
+                fontStyle = FontStyle.Bold
+            };
+            string displayPercent = $"{(pClamped * 100f):F0}%";
+            string fullBarLabel = string.IsNullOrEmpty(labelText) ? displayPercent : $"{labelText}  ({displayPercent})";
+            GUI.Label(barRect, $"<b>{fullBarLabel}</b>", centerStyle);
+        }
+
         private void DrawTabMissionSequence(Vessel vessel) {
             float totalW = windowRect.width - 36f;
             float rightColW = Mathf.Clamp(totalW * 0.32f, 310f, 420f);
@@ -1733,26 +1787,45 @@ namespace KSPGMAT.UI {
             // =======================================================
             GUILayout.BeginVertical(GUILayout.Width(rightColW));
 
-            // Pinned Execution Box
+            // Pinned Execution Box (with Live Progress Bar & Step Flow HUD)
             GUILayout.BeginVertical(cardBoxStyle);
-            GUILayout.Label("⚡ 任务执行中枢 (Pinned Execution)", headerStyle);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("⚡ 任务执行与求解中枢 (Solver Center)", headerStyle);
+            GUILayout.FlexibleSpace();
+            if (isPropagating) {
+                GUILayout.Label($"<color=#facc15>⏱️ 耗时: {solveTotalTime:F1}s</color>", labelValueStyle);
+            } else if (solveTotalTime > 0) {
+                GUILayout.Label($"<color=#94a3b8>上回耗时: {solveTotalTime:F2}s</color>", labelValueStyle);
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(4);
 
             GUI.enabled = !isPropagating && vessel != null;
-            string runBtnText = isPropagating ? "⏳ GMAT 任务序列求解中..." : "▶ 启动 GMAT 任务序列求解";
-            if (GUILayout.Button(runBtnText, actionButtonStyle, GUILayout.Height(42))) {
+            string runBtnText = isPropagating ? "⏳ GMAT 多体引力打靶求解中..." : "🚀 启动 GMAT 全序列高保真求解";
+            if (GUILayout.Button(runBtnText, actionButtonStyle, GUILayout.Height(38))) {
                 isPropagating = true;
+                solveStartTime = Time.realtimeSinceStartup;
+                solveProgress = 0.05f;
+                solveStageText = "1/4 🛰️ 抓取飞船与引力场真实初始状态...";
+                solveCurrentStepIndex = 0;
+
                 List<StageData> selectedStages = GetSelectedStagesList();
                 ROEngineInfo selectedEngine = (cachedEngines != null && selectedEngineIndex < cachedEngines.Count) ? cachedEngines[selectedEngineIndex] : null;
                 GMATClient.PropagateMission(vessel, selectedStages, selectedEngine, missionSequence, propagatorConfigs, (success, result) => {
                     isPropagating = false;
+                    solveProgress = success ? 1.0f : 0.0f;
+                    solveTotalTime = Time.realtimeSinceStartup - solveStartTime;
+                    solveStageText = success ? $"✅ GMAT 求解收敛完成 (耗时 {solveTotalTime:F2}s)！" : "❌ GMAT 求解失败";
                     latestResult = result;
+
                     if (success) {
                         if (result.updated_sequence != null && result.updated_sequence.Count > 0) {
                             for (int k = 0; k < Math.Min(missionSequence.Count, result.updated_sequence.Count); k++) {
                                 var newStep = result.updated_sequence[k];
                                 var curStep = missionSequence[k];
                                 if (newStep.duration > 0) curStep.duration = newStep.duration;
-                                if (curStep.type == "ImpulsiveBurn" || curStep.type == "TargetApoapsis") {
+                                if (curStep.type == "ImpulsiveBurn" || curStep.type == "TargetApoapsis" || curStep.type == "Maneuver") {
                                     curStep.dv_v = newStep.dv_v;
                                     curStep.dv_n = newStep.dv_n;
                                     curStep.dv_b = newStep.dv_b;
@@ -1762,7 +1835,7 @@ namespace KSPGMAT.UI {
                         if (!string.IsNullOrEmpty(result.render_image_path)) {
                             LoadSimulationTexture(result.render_image_path);
                         }
-                        ScreenMessages.PostScreenMessage("✅ GMAT 高精度打靶求解成功！机动数值与发射窗口已更新。", 4.0f, ScreenMessageStyle.UPPER_CENTER);
+                        ScreenMessages.PostScreenMessage($"✅ GMAT 求解成功 (耗时 {solveTotalTime:F2}s)！机动数值与发射窗口已更新。", 4.0f, ScreenMessageStyle.UPPER_CENTER);
                     } else {
                         ScreenMessages.PostScreenMessage("❌ GMAT 求解失败: " + result.error, 5.0f, ScreenMessageStyle.UPPER_CENTER);
                     }
@@ -1770,7 +1843,32 @@ namespace KSPGMAT.UI {
             }
             GUI.enabled = true;
 
-            GUILayout.Label(isPropagating ? "<color=#facc15>● GMAT C++ 原生引擎计算中...</color>" : (latestResult != null && latestResult.success ? "<color=#34d399>● 最新求解完成 (收敛)</color>" : "● 就绪就绪"), labelValueStyle);
+            // =========================================================================
+            // LIVE SOLVER PROGRESS BAR & STEP FLOW HUD
+            // =========================================================================
+            GUILayout.Space(6);
+            DrawProgressBar(solveProgress, isPropagating ? solveStageText : (latestResult != null && latestResult.success ? $"✅ 求解收敛完成 ({latestResult.solved_burns.Count} 个机动)" : solveStageText), 24f);
+
+            // Step Pipeline Flow Tracker Ribbon
+            if (missionSequence != null && missionSequence.Count > 0) {
+                GUILayout.Space(4);
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("<color=#94a3b8>序列进度:</color>", labelValueStyle, GUILayout.Width(60));
+
+                int maxShow = Math.Min(5, missionSequence.Count);
+                for (int s = 0; s < maxShow; s++) {
+                    var st = missionSequence[s];
+                    string sIcon = isPropagating ? (s < solveCurrentStepIndex ? "<color=#34d399>✔</color>" : (s == solveCurrentStepIndex ? "<color=#facc15>⏳</color>" : "<color=#64748b>⚪</color>")) : (latestResult != null && latestResult.success ? "<color=#34d399>✔</color>" : "<color=#64748b>⚪</color>");
+                    string shortLabel = (st.type == "Propagate") ? "积分" : (st.type == "Target") ? "打靶" : (st.type == "Vary") ? "Vary" : (st.type == "Achieve") ? "目标" : (st.type == "FiniteBurn" || st.type == "ImpulsiveBurn" || st.type == "Maneuver") ? "点火" : st.type;
+                    GUILayout.Label($"{sIcon} #{s + 1} {shortLabel}", labelValueStyle);
+                }
+                if (missionSequence.Count > maxShow) {
+                    GUILayout.Label($"<color=#94a3b8>+{missionSequence.Count - maxShow}步</color>", labelValueStyle);
+                }
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+            }
+
             GUILayout.EndVertical();
 
             GUILayout.Space(6);
