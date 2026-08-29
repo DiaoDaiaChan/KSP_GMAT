@@ -2185,19 +2185,20 @@ namespace KSPGMAT.UI {
             }
 
             // =========================================================================
-            // 2. VARY STEP CARD (CLEAN IDE INTELLISENSE)
+            // 2. VARY STEP CARD (STREAMLINED COMPACT 2-ROW LAYOUT)
             // =========================================================================
             else if (step.type == "Vary") {
+                // Row 1: Variable Input + i18n Badge + Solver Selection
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("<color=#38bdf8><b>寻优控制变量 (Variable):</b></color>", labelValueStyle, GUILayout.Width(155));
+                GUILayout.Label("<color=#38bdf8><b>寻优变量:</b></color>", labelValueStyle, GUILayout.Width(65));
 
                 GUI.SetNextControlName($"Field_Vary_{i}");
                 string prevVary = step.vary_variable ?? "burntime";
-                string newVary = GUILayout.TextField(prevVary, GUILayout.Width(150), GUILayout.Height(20));
+                string newVary = GUILayout.TextField(prevVary, GUILayout.Width(110), GUILayout.Height(20));
 
                 string varyBadge = GMATParameterRegistry.GetParamBadgeI18n(step.vary_variable);
                 if (!string.IsNullOrEmpty(varyBadge)) {
-                    GUILayout.Label($"<color=#38bdf8><b>| {varyBadge}</b></color>", labelValueStyle);
+                    GUILayout.Label($"<color=#facc15><b>[{varyBadge}]</b></color>", labelValueStyle);
                 }
 
                 if (Event.current.type == EventType.Repaint) {
@@ -2212,52 +2213,8 @@ namespace KSPGMAT.UI {
                     TriggerIntelliSense(newVary, "vary", i);
                 }
 
-                GUILayout.Label("初猜值 (Initial):", labelValueStyle, GUILayout.Width(95));
-                string sInit = GUILayout.TextField(step.vary_initial.ToString("F2"), GUILayout.Width(65));
-                double.TryParse(sInit, out step.vary_initial);
-
-                GUILayout.Label("下界 (Lower):", labelValueStyle, GUILayout.Width(75));
-                string sLow = GUILayout.TextField(step.vary_lower.ToString("F2"), GUILayout.Width(60));
-                double.TryParse(sLow, out step.vary_lower);
-
-                GUILayout.Label("上界 (Upper):", labelValueStyle, GUILayout.Width(75));
-                string sUp = GUILayout.TextField(step.vary_upper.ToString("F2"), GUILayout.Width(60));
-                double.TryParse(sUp, out step.vary_upper);
-
-                GUILayout.Label("最大步长 (MaxStep):", labelValueStyle, GUILayout.Width(115));
-                double mStep = (step.vary_max_step <= 0) ? 20.0 : step.vary_max_step;
-                string sStep = GUILayout.TextField(mStep.ToString("F1"), GUILayout.Width(50));
-                if (double.TryParse(sStep, out mStep)) step.vary_max_step = mStep;
-
-                GUILayout.FlexibleSpace();
-                GUILayout.EndHorizontal();
-
-                // Display Solved Value if Available (Image 4)
-                if (latestResult != null && latestResult.success) {
-                    double solvedVal = -1.0;
-                    if (latestResult.dc_summary != null && latestResult.dc_summary.final_variables != null) {
-                        string vKey = step.vary_variable ?? "burntime";
-                        if (latestResult.dc_summary.final_variables.ContainsKey(vKey)) {
-                            solvedVal = latestResult.dc_summary.final_variables[vKey];
-                        }
-                    }
-                    if (solvedVal <= 0 && latestResult.solved_burns != null && latestResult.solved_burns.Count > 0) {
-                        solvedVal = latestResult.solved_burns[0].duration;
-                    }
-                    if (solvedVal > 0) {
-                        GUILayout.Space(2);
-                        GUILayout.BeginHorizontal();
-                        GUILayout.Label($"<color=#34d399><b>🎯 求解收敛值: {solvedVal:F3} s</b></color> <color=#94a3b8>(初始初猜: {step.vary_initial:F2} s | 下界: {step.vary_lower:F1}s | 上界: {step.vary_upper:F1}s)</color>", labelValueStyle);
-                        GUILayout.FlexibleSpace();
-                        GUILayout.EndHorizontal();
-                    }
-                }
-
-                // Vary Solver Selector Row
-                GUILayout.Space(2);
-                GUILayout.BeginHorizontal();
-                GUILayout.Label("绑定求解器 (Solver):", labelValueStyle, GUILayout.Width(130));
-
+                GUILayout.Space(12);
+                GUILayout.Label("<color=#94a3b8>求解器:</color>", labelValueStyle, GUILayout.Width(45));
                 string parentDc = GetParentTargetDcName(i);
                 string currentVaryDc = string.IsNullOrEmpty(step.dc_name) ? parentDc : step.dc_name;
 
@@ -2270,32 +2227,81 @@ namespace KSPGMAT.UI {
                     }
                 }
 
-                GUILayout.Label("自定义:", labelValueStyle, GUILayout.Width(45));
-                string newVaryDc = GUILayout.TextField(currentVaryDc, GUILayout.Width(90), GUILayout.Height(18));
-                if (newVaryDc != currentVaryDc) {
-                    step.dc_name = newVaryDc;
-                }
+                string newVaryDc = GUILayout.TextField(currentVaryDc, GUILayout.Width(80), GUILayout.Height(18));
+                if (newVaryDc != currentVaryDc) step.dc_name = newVaryDc;
 
                 if (!string.IsNullOrEmpty(parentDc) && step.dc_name != parentDc) {
-                    if (GUILayout.Button($"↺ 重置为所在 Target 块 ({parentDc})", secondaryButtonStyle, GUILayout.Height(18))) {
+                    if (GUILayout.Button($"↺ {parentDc}", secondaryButtonStyle, GUILayout.Height(18))) {
                         step.dc_name = parentDc;
                     }
                 }
+
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+
+                // Row 2: Search Bounds & Inline Solved Value Result
+                GUILayout.Space(3);
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("初猜:", labelValueStyle, GUILayout.Width(35));
+                string sInit = GUILayout.TextField(step.vary_initial.ToString("F1"), GUILayout.Width(55));
+                double.TryParse(sInit, out step.vary_initial);
+
+                GUILayout.Label("下界:", labelValueStyle, GUILayout.Width(35));
+                string sLow = GUILayout.TextField(step.vary_lower.ToString("F1"), GUILayout.Width(50));
+                double.TryParse(sLow, out step.vary_lower);
+
+                GUILayout.Label("上界:", labelValueStyle, GUILayout.Width(35));
+                string sUp = GUILayout.TextField(step.vary_upper.ToString("F1"), GUILayout.Width(55));
+                double.TryParse(sUp, out step.vary_upper);
+
+                GUILayout.Label("步长:", labelValueStyle, GUILayout.Width(35));
+                double mStep = (step.vary_max_step <= 0) ? 20.0 : step.vary_max_step;
+                string sStep = GUILayout.TextField(mStep.ToString("F1"), GUILayout.Width(45));
+                if (double.TryParse(sStep, out mStep)) step.vary_max_step = mStep;
+
+                // Inline Solved Value
+                if (latestResult != null && latestResult.success) {
+                    double solvedVal = -1.0;
+                    if (latestResult.dc_summary != null && latestResult.dc_summary.final_variables != null) {
+                        string vKey = step.vary_variable ?? "burntime";
+                        if (latestResult.dc_summary.final_variables.ContainsKey(vKey)) {
+                            solvedVal = latestResult.dc_summary.final_variables[vKey];
+                        }
+                    }
+                    if (solvedVal <= 0 && latestResult.solved_burns != null && latestResult.solved_burns.Count > 0) {
+                        solvedVal = latestResult.solved_burns[0].duration;
+                    }
+                    if (solvedVal > 0) {
+                        GUILayout.Space(10);
+                        GUILayout.Label($"<color=#34d399><b>➔ 🎯 求解收敛值: {solvedVal:F3} s</b></color>", labelValueStyle);
+                    }
+                }
+
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
             }
 
             // =========================================================================
-            // 3. ACHIEVE STEP CARD (CLEAN IDE INTELLISENSE)
+            // 3. ACHIEVE STEP CARD (STREAMLINED COMPACT 2-ROW LAYOUT)
             // =========================================================================
             else if (step.type == "Achieve") {
+                // Row 1: Target Goal Input + i18n Badge + Param Picker + Solver Selector
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("<color=#38bdf8><b>约束目标 (Goal Parameter):</b></color>", labelValueStyle, GUILayout.Width(165));
+                GUILayout.Label("<color=#38bdf8><b>约束目标:</b></color>", labelValueStyle, GUILayout.Width(65));
 
                 GUI.SetNextControlName($"Field_Achieve_{i}");
-                string prevAchieve = step.achieve_param ?? "Sat.Luna.RMAG";
-                string newAchieve = GUILayout.TextField(prevAchieve, GUILayout.Width(220), GUILayout.Height(20));
-                
+                string prevAchieve = step.achieve_param ?? "Sat.Earth.Altitude";
+                string newAchieve = GUILayout.TextField(prevAchieve, GUILayout.Width(160), GUILayout.Height(20));
+
+                if (GUILayout.Button("📋 参数库", secondaryButtonStyle, GUILayout.Width(65), GUILayout.Height(20))) {
+                    OpenParamPicker(i, "achieve");
+                }
+
+                string achBadge = GMATParameterRegistry.GetParamBadgeI18n(step.achieve_param);
+                if (!string.IsNullOrEmpty(achBadge)) {
+                    GUILayout.Label($"<color=#facc15><b>[{achBadge}]</b></color>", labelValueStyle);
+                }
+
                 if (Event.current.type == EventType.Repaint) {
                     if (GUI.GetNameOfFocusedControl() == $"Field_Achieve_{i}") {
                         Rect r = GUILayoutUtility.GetLastRect();
@@ -2308,38 +2314,8 @@ namespace KSPGMAT.UI {
                     TriggerIntelliSense(newAchieve, "achieve", i);
                 }
 
-                if (GUILayout.Button("📋 参数库...", secondaryButtonStyle, GUILayout.Width(75), GUILayout.Height(20))) {
-                    OpenParamPicker(i, "achieve");
-                }
-
-                string achBadge = GMATParameterRegistry.GetParamBadgeI18n(step.achieve_param);
-                if (!string.IsNullOrEmpty(achBadge)) {
-                    GUILayout.Label($"<color=#38bdf8><b>| {achBadge}</b></color>", labelValueStyle);
-                }
-
-                GUILayout.FlexibleSpace();
-                GUILayout.EndHorizontal();
-
-                // Value & Tolerance Row
-                GUILayout.Space(3);
-                GUILayout.BeginHorizontal();
-                GUILayout.Label("目标期望值 (Goal Value):", labelValueStyle, GUILayout.Width(140));
-                string sGVal = GUILayout.TextField(step.achieve_val.ToString("F3"), GUILayout.Width(90));
-                double.TryParse(sGVal, out step.achieve_val);
-
-                GUILayout.Label("容差范围 (±Tolerance):", labelValueStyle, GUILayout.Width(130));
-                string sGTol = GUILayout.TextField(step.achieve_tolerance.ToString("G4"), GUILayout.Width(75));
-                double.TryParse(sGTol, out step.achieve_tolerance);
-
-                GUILayout.Label("<color=#94a3b8>(NASA GMAT 工业打靶收敛门限)</color>", labelValueStyle);
-                GUILayout.FlexibleSpace();
-                GUILayout.EndHorizontal();
-
-                // Achieve Solver Selector Row (NASA GMAT Standard)
-                GUILayout.Space(2);
-                GUILayout.BeginHorizontal();
-                GUILayout.Label("绑定求解器 (Solver):", labelValueStyle, GUILayout.Width(130));
-
+                GUILayout.Space(12);
+                GUILayout.Label("<color=#94a3b8>求解器:</color>", labelValueStyle, GUILayout.Width(45));
                 string parentDcAch = GetParentTargetDcName(i);
                 string currentAchDc = string.IsNullOrEmpty(step.dc_name) ? parentDcAch : step.dc_name;
 
@@ -2352,29 +2328,38 @@ namespace KSPGMAT.UI {
                     }
                 }
 
-                GUILayout.Label("自定义:", labelValueStyle, GUILayout.Width(45));
-                string newAchDc = GUILayout.TextField(currentAchDc, GUILayout.Width(90), GUILayout.Height(18));
-                if (newAchDc != currentAchDc) {
-                    step.dc_name = newAchDc;
-                }
+                string newAchDc = GUILayout.TextField(currentAchDc, GUILayout.Width(80), GUILayout.Height(18));
+                if (newAchDc != currentAchDc) step.dc_name = newAchDc;
 
                 if (!string.IsNullOrEmpty(parentDcAch) && step.dc_name != parentDcAch) {
-                    if (GUILayout.Button($"↺ 重置为所在 Target 块 ({parentDcAch})", secondaryButtonStyle, GUILayout.Height(18))) {
+                    if (GUILayout.Button($"↺ {parentDcAch}", secondaryButtonStyle, GUILayout.Height(18))) {
                         step.dc_name = parentDcAch;
                     }
                 }
+
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
 
-                // Display Solved Achieve Goal if Available
+                // Row 2: Desired Value + Tolerance + Inline Solved Result
+                GUILayout.Space(3);
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("期望值:", labelValueStyle, GUILayout.Width(45));
+                string sGVal = GUILayout.TextField(step.achieve_val.ToString("F3"), GUILayout.Width(85));
+                double.TryParse(sGVal, out step.achieve_val);
+
+                GUILayout.Label("容差: ±", labelValueStyle, GUILayout.Width(45));
+                string sGTol = GUILayout.TextField(step.achieve_tolerance.ToString("G4"), GUILayout.Width(55));
+                double.TryParse(sGTol, out step.achieve_tolerance);
+
+                // Inline Solved Result
                 if (latestResult != null && latestResult.success && latestResult.dc_summary != null && latestResult.dc_summary.achieved > 0) {
                     var dcs = latestResult.dc_summary;
-                    GUILayout.Space(2);
-                    GUILayout.BeginHorizontal();
-                    GUILayout.Label($"<color=#34d399><b>🎯 打靶达成值: {dcs.achieved:F2}</b></color> <color=#94a3b8>(目标值: {dcs.desired:F2} | 残差: {dcs.variance:F4} | 迭代: {dcs.iterations} 次收敛)</color>", labelValueStyle);
-                    GUILayout.FlexibleSpace();
-                    GUILayout.EndHorizontal();
+                    GUILayout.Space(10);
+                    GUILayout.Label($"<color=#34d399><b>➔ 🎯 打靶达成值: {dcs.achieved:F2}</b></color> <color=#94a3b8>(残差: {dcs.variance:F4} | {dcs.iterations} 次收敛)</color>", labelValueStyle);
                 }
+
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
             }
 
             // =========================================================================
@@ -2790,8 +2775,12 @@ namespace KSPGMAT.UI {
                             }
                             showParamPickerModal = false;
                         }
-                        string unitBadge = string.IsNullOrEmpty(item.Unit) ? "" : $" <color=#38bdf8>[{item.Unit}]</color>";
-                        GUILayout.Label($"<b>{item.DisplayName}</b>{unitBadge} - <color=#94a3b8>{item.GetLocalizedDescription()}</color>", labelValueStyle);
+                        string cleanName = item.DisplayName;
+                        if (cleanName.Contains("[")) cleanName = cleanName.Substring(0, cleanName.IndexOf('[')).Trim();
+                        string i18nDesc = GMATParameterRegistry.GetParamBadgeI18n(item.Key);
+                        string unitBadge = (!string.IsNullOrEmpty(item.Unit) && item.Unit != "?") ? $" <color=#38bdf8>[{item.Unit}]</color>" : "";
+                        string descText = !string.IsNullOrEmpty(i18nDesc) ? $"<color=#facc15><b>{i18nDesc}</b></color> <color=#94a3b8>({item.GetLocalizedDescription()})</color>" : $"<color=#94a3b8>{item.GetLocalizedDescription()}</color>";
+                        GUILayout.Label($"<b>{cleanName}</b>{unitBadge} - {descText}", labelValueStyle);
                         GUILayout.EndHorizontal();
                     }
                 }
@@ -2845,8 +2834,10 @@ namespace KSPGMAT.UI {
                             }
                             showParamPickerModal = false;
                         }
-                        string unitBadge = string.IsNullOrEmpty(item.Unit) ? "" : $" <color=#38bdf8>[{item.Unit}]</color>";
-                        GUILayout.Label($"<b>{item.Name}</b>{unitBadge} - <color=#94a3b8>{item.Description}</color> <color=#64748b>(例: {item.Example})</color>", labelValueStyle);
+                        string i18nDesc = GMATParameterRegistry.GetParamBadgeI18n(item.Name);
+                        string unitBadge = (!string.IsNullOrEmpty(item.Unit) && item.Unit != "?") ? $" <color=#38bdf8>[{item.Unit}]</color>" : "";
+                        string descText = !string.IsNullOrEmpty(i18nDesc) ? $"<color=#facc15><b>{i18nDesc}</b></color> <color=#94a3b8>({item.GetLocalizedDescription()})</color>" : $"<color=#94a3b8>{item.GetLocalizedDescription()}</color>";
+                        GUILayout.Label($"<b>{item.Name}</b>{unitBadge} - {descText} <color=#64748b>(例: {item.Example})</color>", labelValueStyle);
                         GUILayout.EndHorizontal();
                     }
                 }
