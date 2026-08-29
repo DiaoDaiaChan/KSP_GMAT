@@ -2562,8 +2562,8 @@ namespace KSPGMAT.UI {
                         GUILayout.BeginHorizontal();
                         GUILayout.Label("<color=#38bdf8><b>🎯 游戏内机动节点对齐基准:</b></color>", labelValueStyle, GUILayout.Width(170));
 
-                        string[] alignOptions = new string[] { "Auto (自动识别)", "SnapAN (吸附升交点)", "SnapDN (吸附降交点)", "SnapAp (吸附远地点)", "SnapPe (吸附近地点)", "GMAT (数值时间)" };
-                        string[] alignKeys = new string[] { "Auto", "SnapAN", "SnapDN", "SnapAp", "SnapPe", "GMAT" };
+                        string[] alignOptions = new string[] { "🌐 GMAT 全局多体数值积分 (推荐)", "🎯 强制吸附升交点 (AN)", "🎯 强制吸附降交点 (DN)", "🎯 强制吸附远拱点 (Ap)", "🎯 强制吸附近拱点 (Pe)" };
+                        string[] alignKeys = new string[] { "GMAT", "SnapAN", "SnapDN", "SnapAp", "SnapPe" };
 
                         for (int a = 0; a < alignOptions.Length; a++) {
                             string k = alignKeys[a];
@@ -3146,54 +3146,49 @@ namespace KSPGMAT.UI {
         public static double ComputeBurnInitialTime(Vessel vessel, SolvedBurn burn, int burnIndex, List<MissionStep> seq, double solveUT, out string resolvedMode, out double targetEpoch, out double centroidLead) {
             double currentUT = Planetarium.GetUniversalTime();
             double anchorUT = (solveUT > 0) ? solveUT : currentUT;
-            resolvedMode = burn.align_mode ?? "Auto";
+            resolvedMode = string.IsNullOrEmpty(burn.align_mode) ? "GMAT" : burn.align_mode;
             centroidLead = 0.0;
-            targetEpoch = anchorUT + burn.epoch_offset;
 
+            // 1. Exact Tsiolkovsky Rocket Equation for finite burn duration
             double duration = burn.duration;
-            if (duration <= 0.0 && burn.thrust_kn > 0 && vessel != null) {
+            if (duration <= 0.0 && burn.thrust_kn > 0 && vessel != null && burn.magnitude > 0) {
                 double massKg = vessel.totalMass * 1000.0;
                 double thrustN = burn.thrust_kn * 1000.0;
-                if (thrustN > 0) duration = (burn.magnitude * massKg) / thrustN;
+                double isp = burn.isp > 0 ? burn.isp : 310.0;
+                double g0 = 9.80665;
+                if (thrustN > 0 && isp > 0) {
+                    duration = (massKg * g0 * isp / thrustN) * (1.0 - Math.Exp(-burn.magnitude / (g0 * isp)));
+                }
             }
+
+            // Universal Centroid Law: finite burn begins half-duration before the impulsive centroid
             centroidLead = (duration > 0.0) ? (duration * 0.5) : 0.0;
 
-            string detectedEvent = DetectTargetEventForBurn(burnIndex, seq);
-            burn.target_event = detectedEvent;
+            // 2. Primary Astrodynamics Authority: GMAT N-body Numerical Integration
+            targetEpoch = anchorUT + burn.epoch_offset;
 
             Orbit orb = (vessel != null) ? vessel.orbit : null;
 
-            if (resolvedMode == "SnapAN" || (resolvedMode == "Auto" && detectedEvent == "AN")) {
-                resolvedMode = "SnapAN";
-                if (orb != null && orb.period > 0) {
-                    targetEpoch = GetNextANTime(orb, currentUT);
-                }
-            } else if (resolvedMode == "SnapDN" || (resolvedMode == "Auto" && detectedEvent == "DN")) {
-                resolvedMode = "SnapDN";
-                if (orb != null && orb.period > 0) {
-                    targetEpoch = GetNextDNTime(orb, currentUT);
-                }
-            } else if (resolvedMode == "SnapAp" || (resolvedMode == "Auto" && detectedEvent == "Apoapsis")) {
-                resolvedMode = "SnapAp";
-                if (orb != null && orb.period > 0) {
-                    targetEpoch = GetNextApTime(orb, currentUT);
-                }
-            } else if (resolvedMode == "SnapPe" || (resolvedMode == "Auto" && detectedEvent == "Periapsis")) {
-                resolvedMode = "SnapPe";
-                if (orb != null && orb.period > 0) {
-                    targetEpoch = GetNextPeTime(orb, currentUT);
-                }
+            // 3. User-selectable 2-body geometry snapping (only applied when explicitly selected by user)
+            if (resolvedMode == "SnapAN" && orb != null && orb.period > 0) {
+                targetEpoch = GetNextANTime(orb, currentUT);
+            } else if (resolvedMode == "SnapDN" && orb != null && orb.period > 0) {
+                targetEpoch = GetNextDNTime(orb, currentUT);
+            } else if (resolvedMode == "SnapAp" && orb != null && orb.period > 0) {
+                targetEpoch = GetNextApTime(orb, currentUT);
+            } else if (resolvedMode == "SnapPe" && orb != null && orb.period > 0) {
+                targetEpoch = GetNextPeTime(orb, currentUT);
             } else {
                 resolvedMode = "GMAT";
                 targetEpoch = anchorUT + burn.epoch_offset;
             }
 
-            // Apply Centroid Lead-time: ignition start is targetEpoch - centroidLead
+            // 4. Universal Centroid Law: Ignition Start Time = Target Epoch - Centroid Lead Time
             double initialTime = targetEpoch - centroidLead;
 
-            // If the calculated initial time has already passed (due to UI delay), advance by one orbit period
-            if (orb != null && orb.period > 0 && initialTime < currentUT + 5.0) {
-                while (initialTime < currentUT + 5.0) {
+            // Handle UI pause/delay wrapping in closed periodic orbits
+            if (orb != null && orb.period > 0 && orb.eccentricity < 1.0 && initialTime < currentUT + 3.0 && burn.epoch_offset < orb.period * 2.0) {
+                while (initialTime < currentUT + 3.0) {
                     initialTime += orb.period;
                     targetEpoch += orb.period;
                 }
