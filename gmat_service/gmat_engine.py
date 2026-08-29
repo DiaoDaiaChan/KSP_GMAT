@@ -305,7 +305,10 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
             tname = sanitize_gmat_identifier(t.get("name"), "MainTank")
             fmass = float(t.get("fuel_mass", 0.0))
             fdens = float(t.get("fuel_density") or fuel_density or 1000.0)
-            fvol = float(t.get("volume") or (fmass / fdens if fmass > 0 and fdens > 0 else 1.0))
+            calc_v = (fmass / fdens) if (fmass > 0 and fdens > 0) else 1.0
+            raw_v = float(t.get("volume") or calc_v)
+            # Ensure tank volume always has a safe 10% ullage headroom so GMAT never throws capacity overflow
+            fvol = max(raw_v, calc_v * 1.10 + 0.1)
             if tname not in created_tank_names:
                 created_tank_names.append(tname)
                 lines.append(f"Create ChemicalTank {tname};")
@@ -329,7 +332,9 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
             lines.append("MainTank.Temperature = 20;")
             lines.append("MainTank.RefTemperature = 20;")
             lines.append(f"MainTank.Pressure = {tank_pressure:.1f};")
-            lines.append(f"MainTank.Volume = {tank_volume:.6g};")
+            calc_fb_v = (fuel_mass / fuel_density) if (fuel_mass > 0 and fuel_density > 0) else 1.0
+            safe_fb_v = max(float(tank_volume or calc_fb_v), calc_fb_v * 1.10 + 0.1)
+            lines.append(f"MainTank.Volume = {safe_fb_v:.4f};")
             lines.append("MainTank.PressureModel = 'PressureRegulated';")
 
     # 2. Chemical Thrusters
