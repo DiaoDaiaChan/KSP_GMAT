@@ -273,35 +273,96 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
     lines.append(f"{sat_name}.VZ = {vz};")
     lines.append(f"{sat_name}.DryMass = {dry_mass};")
 
-    # Hardware: Fuel Tank (RealismOverhaul Propellant Specs)
-    has_hardware = bool(engine_name) and fuel_density > 0.0 and tank_volume > 0.0 and thrust > 0.0 and isp > 0.0
-    if has_hardware:
-        lines.append(f"Create ChemicalTank MainTank;")
-        lines.append(f"MainTank.AllowNegativeFuelMass = true;")
-        lines.append(f"MainTank.FuelMass = {fuel_mass:.2f};")
-        lines.append(f"MainTank.FuelDensity = {fuel_density:.2f};")
-        lines.append(f"MainTank.Temperature = 20;")
-        lines.append(f"MainTank.RefTemperature = 20;")
-        lines.append(f"MainTank.Pressure = {tank_pressure:.1f};")
-        lines.append(f"MainTank.Volume = {tank_volume:.17g};")
-        lines.append(f"MainTank.PressureModel = 'PressureRegulated';")
+    # Hardware: Multi-Tank and Multi-Thruster Propulsion Architecture (RealismOverhaul Staging)
+    tanks_data = craft_data.get("tanks", [])
+    thrusters_data = craft_data.get("thrusters", [])
 
-        lines.append(f"Create ChemicalThruster {engine_name};")
-        lines.append(f"{engine_name}.CoordinateSystem = Local;")
-        lines.append(f"{engine_name}.Origin = {central_body};")
-        lines.append(f"{engine_name}.Axes = VNB;")
-        lines.append(f"{engine_name}.ThrustDirection1 = 1;")
-        lines.append(f"{engine_name}.ThrustDirection2 = 0;")
-        lines.append(f"{engine_name}.ThrustDirection3 = 0;")
-        lines.append(f"{engine_name}.DutyCycle = 1.0;")
-        lines.append(f"{engine_name}.ThrustScaleFactor = 1.0;")
-        lines.append(f"{engine_name}.DecrementMass = true;")
-        lines.append(f"{engine_name}.Tank = {{MainTank}};")
-        lines.append(f"{engine_name}.GravitationalAccel = 9.81;")
-        lines.append(f"{engine_name}.C1 = {thrust:.2f};")
-        lines.append(f"{engine_name}.K1 = {isp:.2f};")
-        lines.append(f"{sat_name}.Tanks = {{MainTank}};")
-        lines.append(f"{sat_name}.Thrusters = {{{engine_name}}};\n")
+    created_tank_names = []
+    created_thruster_names = []
+
+    # 1. Chemical Tanks
+    if tanks_data:
+        for t in tanks_data:
+            tname = sanitize_gmat_identifier(t.get("name"), "MainTank")
+            fmass = float(t.get("fuel_mass", 0.0))
+            fdens = float(t.get("fuel_density") or fuel_density or 1000.0)
+            fvol = float(t.get("volume") or (fmass / fdens if fmass > 0 and fdens > 0 else 1.0))
+            if tname not in created_tank_names:
+                created_tank_names.append(tname)
+                lines.append(f"Create ChemicalTank {tname};")
+                lines.append(f"{tname}.AllowNegativeFuelMass = true;")
+                lines.append(f"{tname}.FuelMass = {fmass:.2f};")
+                lines.append(f"{tname}.FuelDensity = {fdens:.2f};")
+                lines.append(f"{tname}.Temperature = 20;")
+                lines.append(f"{tname}.RefTemperature = 20;")
+                lines.append(f"{tname}.Pressure = {tank_pressure:.1f};")
+                lines.append(f"{tname}.Volume = {fvol:.6g};")
+                lines.append(f"{tname}.PressureModel = 'PressureRegulated';")
+    else:
+        # Fallback single tank
+        has_hardware = bool(engine_name) and fuel_density > 0.0 and tank_volume > 0.0 and thrust > 0.0 and isp > 0.0
+        if has_hardware:
+            created_tank_names.append("MainTank")
+            lines.append("Create ChemicalTank MainTank;")
+            lines.append("MainTank.AllowNegativeFuelMass = true;")
+            lines.append(f"MainTank.FuelMass = {fuel_mass:.2f};")
+            lines.append(f"MainTank.FuelDensity = {fuel_density:.2f};")
+            lines.append("MainTank.Temperature = 20;")
+            lines.append("MainTank.RefTemperature = 20;")
+            lines.append(f"MainTank.Pressure = {tank_pressure:.1f};")
+            lines.append(f"MainTank.Volume = {tank_volume:.6g};")
+            lines.append("MainTank.PressureModel = 'PressureRegulated';")
+
+    # 2. Chemical Thrusters
+    if thrusters_data:
+        for th in thrusters_data:
+            thname = sanitize_gmat_identifier(th.get("name"), "MainEngine")
+            th_thrust = float(th.get("thrust") or thrust or 3000.0)
+            th_isp = float(th.get("isp") or isp or 316.0)
+            th_bound_tank = th.get("bound_tank")
+            if not th_bound_tank or th_bound_tank not in created_tank_names:
+                th_bound_tank = created_tank_names[0] if created_tank_names else "MainTank"
+            
+            if thname not in created_thruster_names:
+                created_thruster_names.append(thname)
+                lines.append(f"Create ChemicalThruster {thname};")
+                lines.append(f"{thname}.CoordinateSystem = Local;")
+                lines.append(f"{thname}.Origin = {central_body};")
+                lines.append(f"{thname}.Axes = VNB;")
+                lines.append(f"{thname}.ThrustDirection1 = 1;")
+                lines.append(f"{thname}.ThrustDirection2 = 0;")
+                lines.append(f"{thname}.ThrustDirection3 = 0;")
+                lines.append(f"{thname}.DutyCycle = 1.0;")
+                lines.append(f"{thname}.ThrustScaleFactor = 1.0;")
+                lines.append(f"{thname}.DecrementMass = true;")
+                lines.append(f"{thname}.Tank = {{{th_bound_tank}}};")
+                lines.append(f"{thname}.GravitationalAccel = 9.81;")
+                lines.append(f"{thname}.C1 = {th_thrust:.2f};")
+                lines.append(f"{thname}.K1 = {th_isp:.2f};")
+    elif created_tank_names and bool(engine_name):
+        eng_id = sanitize_gmat_identifier(engine_name, "MainEngine")
+        created_thruster_names.append(eng_id)
+        lines.append(f"Create ChemicalThruster {eng_id};")
+        lines.append(f"{eng_id}.CoordinateSystem = Local;")
+        lines.append(f"{eng_id}.Origin = {central_body};")
+        lines.append(f"{eng_id}.Axes = VNB;")
+        lines.append(f"{eng_id}.ThrustDirection1 = 1;")
+        lines.append(f"{eng_id}.ThrustDirection2 = 0;")
+        lines.append(f"{eng_id}.ThrustDirection3 = 0;")
+        lines.append(f"{eng_id}.DutyCycle = 1.0;")
+        lines.append(f"{eng_id}.ThrustScaleFactor = 1.0;")
+        lines.append(f"{eng_id}.DecrementMass = true;")
+        lines.append(f"{eng_id}.Tank = {{{created_tank_names[0]}}};")
+        lines.append(f"{eng_id}.GravitationalAccel = 9.81;")
+        lines.append(f"{eng_id}.C1 = {thrust:.2f};")
+        lines.append(f"{eng_id}.K1 = {isp:.2f};")
+
+    # Attach all hardware to Spacecraft
+    if created_tank_names:
+        lines.append(f"{sat_name}.Tanks = {{{', '.join(created_tank_names)}}};")
+    if created_thruster_names:
+        lines.append(f"{sat_name}.Thrusters = {{{', '.join(created_thruster_names)}}};")
+    lines.append("")
 
     # Coordinate Systems (Custom User-Defined + Built-in Systems)
     custom_coords = custom_coordinate_systems or []
@@ -501,6 +562,8 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
                 raise ValueError("Targeter must immediately follow a FiniteBurn or ImpulsiveBurn")
 
     created_burn_names = set()
+    created_finite_names = set()
+
     for step_index, step in enumerate(mission_sequence):
         step_type = step.get("type")
         if step_type in ("ImpulsiveBurn", "Maneuver"):
@@ -518,16 +581,20 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
                 burn_defs.append(f"{bname}.Element3 = {float(step.get('dv_b', 0.0)) / 1000.0:.8g};")
                 dec_mass = "true" if step.get("burn_decrement_mass", False) else "false"
                 burn_defs.append(f"{bname}.DecrementMass = {dec_mass};")
-                if dec_mass == "true" and has_hardware:
-                    burn_defs.append(f"{bname}.Tank = {{MainTank}};")
-                    burn_defs.append(f"{bname}.Isp = {isp:.2f};")
+                if dec_mass == "true":
+                    bound_tank = step.get("bound_tank") or (created_tank_names[0] if created_tank_names else "MainTank")
+                    burn_isp_val = float(step.get("burn_isp") or isp or 316.0)
+                    burn_defs.append(f"{bname}.Tank = {{{bound_tank}}};")
+                    burn_defs.append(f"{bname}.Isp = {burn_isp_val:.2f};")
             burn_idx += 1
         elif step_type == "FiniteBurn":
-            if not has_hardware: raise ValueError("finite burn requires complete engine and tank parameters")
-            fbname = f"Finite_{finite_idx}"
+            bound_thruster = step.get("bound_thruster") or (created_thruster_names[0] if created_thruster_names else "MainEngine")
+            fbname = sanitize_gmat_identifier(step.get("burn_name") or f"Finite_{finite_idx}", "FiniteBurn")
             step["_obj_name"] = fbname
-            burn_defs.append(f"Create FiniteBurn {fbname};")
-            burn_defs.append(f"{fbname}.Thrusters = {{{engine_name}}};")
+            if fbname not in created_finite_names:
+                created_finite_names.add(fbname)
+                burn_defs.append(f"Create FiniteBurn {fbname};")
+                burn_defs.append(f"{fbname}.Thrusters = {{{bound_thruster}}};")
             finite_idx += 1
         elif step_type in ("TargetApoapsis", "Targeter", "Target", "Vary", "Achieve", "DifferentialCorrector"):
             dc_needed = True
@@ -762,14 +829,30 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
             dc_name = "DC"
             lines.append(f"EndTarget;  % For targeter {dc_name}")
 
-        elif step_type == "Var":
+        elif step_type in ("StageSeparation", "Staging", "Decouple"):
+            label = sanitize_gmat_label(step.get("label"), "StageSep")
+            label_str = f"'{label}' " if label else ""
+            rem_dry = float(step.get("remaining_dry_mass", 0.0))
+            drop_mass = float(step.get("separated_mass", 0.0))
+            if rem_dry > 0:
+                lines.append(f"% Stage Separation: {label_str}")
+                lines.append(f"{sat_name}.DryMass = {rem_dry:.2f};")
+            elif drop_mass > 0:
+                lines.append(f"% Stage Separation: {label_str}")
+                lines.append(f"{sat_name}.DryMass = {sat_name}.DryMass - {drop_mass:.2f};")
+
+        elif step_type in ("Var", "Equation"):
             vname = step.get("var_name") or step.get("variable", "burntime")
             vexpr = step.get("var_expr") or step.get("expression", "0.0")
+            if "." in vname and not vname.startswith(sat_name):
+                vname = f"{sat_name}.{vname}"
             lines.append(f"{vname} = {vexpr};")
 
         elif step_type == "FiniteBurn":
             if step.get("_targeted_by_idx") is not None:
                 continue
+            fbname = step.get("_obj_name") or "Finite_1"
+            duration = float(step.get("duration", 0.0))
             b_dir = (step.get("burn_direction") or "Prograde").strip().lower()
             if b_dir in ("retrograde", "-v"):
                 dir_v, dir_n, dir_b = -1.0, 0.0, 0.0

@@ -1548,6 +1548,7 @@ namespace KSPGMAT.UI {
                         else if (step.type == "FiniteBurn") summaryBadge = $"🔥 <b>#{i + 1} 有限点火</b>: 时长 <b>{step.vary_variable}</b> s (变质量流与比冲)";
                         else if (step.type == "ImpulsiveBurn") summaryBadge = $"💥 <b>#{i + 1} 脉冲机动</b>: ΔV = ({step.dv_v:F1}, {step.dv_n:F1}, {step.dv_b:F1}) m/s";
                         else if (step.type == "Equation") summaryBadge = $"📐 <b>#{i + 1} 方程</b>: {step.variable} = {step.expression}";
+                        else if (step.type == "StageSeparation") summaryBadge = $"🚀 <b>#{i + 1} 级段分离</b>: 抛离死重 {step.separated_mass:F0} kg (剩余干重 {step.remaining_dry_mass:F0} kg)";
                         else if (step.type == "Report") summaryBadge = $"🧾 <b>#{i + 1} 状态报告</b>";
                         else summaryBadge = $"#{i + 1} <b>{step.type}</b>";
                         GUILayout.Label(summaryBadge, labelValueStyle);
@@ -2253,26 +2254,31 @@ namespace KSPGMAT.UI {
             }
 
             // =========================================================================
-            // 4. IMPULSIVE BURN / MANEUVER (SUPPORTS MULTI-INJECTION REUSE LIKE CHANG'E-6)
+            // =========================================================================
+            // 4. IMPULSIVE BURN / MANEUVER (WITH TANK & THRUSTER BINDING)
             // =========================================================================
             else if (step.type == "ImpulsiveBurn" || step.type == "Maneuver") {
+                Vessel v = FlightGlobals.ActiveVessel;
+                var allTanks = ROEngineInterop.ScanVesselTanks(v);
+                var allEngines = ROEngineInterop.ScanVesselEngines(v);
+
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("<color=#38bdf8><b>机动对象 (Maneuver Object):</b></color>", labelValueStyle, GUILayout.Width(165));
-                step.burn_name = GUILayout.TextField(string.IsNullOrEmpty(step.burn_name) ? "LOI" : step.burn_name, GUILayout.Width(100), GUILayout.Height(20));
+                GUILayout.Label("<color=#38bdf8><b>机动对象 (Burn Object):</b></color>", labelValueStyle, GUILayout.Width(155));
+                step.burn_name = GUILayout.TextField(string.IsNullOrEmpty(step.burn_name) ? "LOI" : step.burn_name, GUILayout.Width(90), GUILayout.Height(20));
 
-                GUILayout.Label("<color=#94a3b8>参考系:</color>", labelValueStyle, GUILayout.Width(50));
-                step.burn_axes = GUILayout.TextField(string.IsNullOrEmpty(step.burn_axes) ? "VNB" : step.burn_axes, GUILayout.Width(60), GUILayout.Height(20));
+                GUILayout.Label("<color=#94a3b8>参考系:</color>", labelValueStyle, GUILayout.Width(45));
+                step.burn_axes = GUILayout.TextField(string.IsNullOrEmpty(step.burn_axes) ? "VNB" : step.burn_axes, GUILayout.Width(50), GUILayout.Height(20));
 
-                GUILayout.Label("<color=#94a3b8>中心天体:</color>", labelValueStyle, GUILayout.Width(60));
-                step.burn_origin = GUILayout.TextField(string.IsNullOrEmpty(step.burn_origin) ? "Luna" : step.burn_origin, GUILayout.Width(70), GUILayout.Height(20));
+                GUILayout.Label("<color=#94a3b8>中心天体:</color>", labelValueStyle, GUILayout.Width(55));
+                step.burn_origin = GUILayout.TextField(string.IsNullOrEmpty(step.burn_origin) ? "Luna" : step.burn_origin, GUILayout.Width(60), GUILayout.Height(20));
 
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
 
                 // Delta-V Components Row
-                GUILayout.Space(3);
+                GUILayout.Space(2);
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("切向顺逆行 ΔV_V (m/s):", labelValueStyle, GUILayout.Width(135));
+                GUILayout.Label("切向 ΔV_V (m/s):", labelValueStyle, GUILayout.Width(100));
                 string sV = GUILayout.TextField(step.dv_v.ToString("F2"), GUILayout.Width(65));
                 double.TryParse(sV, out step.dv_v);
 
@@ -2289,36 +2295,100 @@ namespace KSPGMAT.UI {
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
 
-                // Mass Decrement & Isp Settings
-                GUILayout.Space(2);
+                // Tank & Thruster Hardware Binding Row
+                GUILayout.Space(3);
+                GUILayout.BeginVertical(nestedCardBoxStyle);
                 GUILayout.BeginHorizontal();
-                step.burn_decrement_mass = GUILayout.Toggle(step.burn_decrement_mass, " 扣减推进剂质量 (Decrement Mass)", GUILayout.Width(220));
-                if (step.burn_decrement_mass) {
-                    GUILayout.Label("比冲 Isp (s):", labelValueStyle, GUILayout.Width(75));
-                    double ispVal = (step.burn_isp <= 0) ? 316.0 : step.burn_isp;
-                    string sIsp = GUILayout.TextField(ispVal.ToString("F1"), GUILayout.Width(55));
-                    if (double.TryParse(sIsp, out ispVal)) step.burn_isp = ispVal;
-                    GUILayout.Label("<color=#94a3b8>(真实物理推进剂流与质量变化)</color>", labelValueStyle);
+                GUILayout.Label("<b>⛽ 绑定燃料罐:</b>", labelValueStyle, GUILayout.Width(85));
+                if (allTanks.Count > 0) {
+                    for (int tk = 0; tk < Math.Min(4, allTanks.Count); tk++) {
+                        var tnk = allTanks[tk];
+                        string tkId = $"Tank_Stage{tnk.stageNumber}";
+                        bool isCurTank = (step.bound_tank == tkId) || (string.IsNullOrEmpty(step.bound_tank) && tk == 0);
+                        GUI.backgroundColor = isCurTank ? new Color(0.2f, 0.7f, 0.9f) : Color.white;
+                        if (GUILayout.Button($"Stage {tnk.stageNumber} ({tnk.fuelMassKg:F0}kg)", secondaryButtonStyle, GUILayout.Height(18))) {
+                            step.bound_tank = tkId;
+                        }
+                        GUI.backgroundColor = Color.white;
+                    }
+                } else {
+                    step.bound_tank = GUILayout.TextField(string.IsNullOrEmpty(step.bound_tank) ? "MainTank" : step.bound_tank, GUILayout.Width(100));
                 }
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
+
+                GUILayout.Space(2);
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("<b>🚀 绑定推进器:</b>", labelValueStyle, GUILayout.Width(85));
+                if (allEngines.Count > 0) {
+                    for (int eg = 0; eg < Math.Min(3, allEngines.Count); eg++) {
+                        var eng = allEngines[eg];
+                        string engId = GMATParameterRegistry.SanitizeGmatIdentifier(eng.title, "Engine");
+                        bool isCurEng = (step.bound_thruster == engId) || (string.IsNullOrEmpty(step.bound_thruster) && eg == 0);
+                        GUI.backgroundColor = isCurEng ? new Color(0.2f, 0.8f, 0.5f) : Color.white;
+                        if (GUILayout.Button($"{eng.title} (Isp: {eng.ispVac:F0}s)", secondaryButtonStyle, GUILayout.Height(18))) {
+                            step.bound_thruster = engId;
+                            step.burn_isp = eng.ispVac;
+                            step.burn_decrement_mass = true;
+                        }
+                        GUI.backgroundColor = Color.white;
+                    }
+                } else {
+                    step.bound_thruster = GUILayout.TextField(string.IsNullOrEmpty(step.bound_thruster) ? "MainEngine" : step.bound_thruster, GUILayout.Width(100));
+                }
+
+                step.burn_decrement_mass = GUILayout.Toggle(step.burn_decrement_mass, " 扣减质量", GUILayout.Width(80));
+                GUILayout.Label("比冲 Isp:", labelValueStyle, GUILayout.Width(55));
+                double curIsp = (step.burn_isp <= 0) ? 316.0 : step.burn_isp;
+                string sIsp = GUILayout.TextField(curIsp.ToString("F1"), GUILayout.Width(50));
+                if (double.TryParse(sIsp, out curIsp)) step.burn_isp = curIsp;
+
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+                GUILayout.EndVertical();
             }
 
             // =========================================================================
-            // 5. FINITE BURN STEP CARD
+            // 5. FINITE BURN STEP CARD (WITH MULTI-THRUSTER & TANK BINDING)
             // =========================================================================
             else if (step.type == "FiniteBurn") {
-                GUILayout.BeginHorizontal();
-                GUILayout.Label("<color=#38bdf8><b>有限推力点火配置:</b></color>", labelValueStyle, GUILayout.Width(130));
+                Vessel v = FlightGlobals.ActiveVessel;
+                var allEngines = ROEngineInterop.ScanVesselEngines(v);
+                var allTanks = ROEngineInterop.ScanVesselTanks(v);
 
-                step.burn_use_vary_var = GUILayout.Toggle(step.burn_use_vary_var, " 使用 Vary 寻优变量控制点火时长", GUILayout.Width(230));
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("<color=#38bdf8><b>有限推力点火配置:</b></color>", labelValueStyle, GUILayout.Width(125));
+
+                step.burn_use_vary_var = GUILayout.Toggle(step.burn_use_vary_var, " 使用 Vary 变量控制时长", GUILayout.Width(170));
                 if (step.burn_use_vary_var) {
-                    GUILayout.Label("变量名:", labelValueStyle, GUILayout.Width(50));
-                    step.burn_vary_var_name = GUILayout.TextField(string.IsNullOrEmpty(step.burn_vary_var_name) ? "burntime" : step.burn_vary_var_name, GUILayout.Width(90));
+                    GUILayout.Label("变量名:", labelValueStyle, GUILayout.Width(45));
+                    step.burn_vary_var_name = GUILayout.TextField(string.IsNullOrEmpty(step.burn_vary_var_name) ? "burntime" : step.burn_vary_var_name, GUILayout.Width(80));
                 } else {
                     GUILayout.Label("固定时长 (s):", labelValueStyle, GUILayout.Width(80));
-                    string sDur = GUILayout.TextField(step.duration.ToString("F1"), GUILayout.Width(65));
+                    string sDur = GUILayout.TextField(step.duration.ToString("F1"), GUILayout.Width(60));
                     double.TryParse(sDur, out step.duration);
+                }
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+
+                // Thruster & Tank Selection Row
+                GUILayout.Space(2);
+                GUILayout.BeginVertical(nestedCardBoxStyle);
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("<b>🚀 点火发动机:</b>", labelValueStyle, GUILayout.Width(85));
+                if (allEngines.Count > 0) {
+                    for (int eg = 0; eg < Math.Min(3, allEngines.Count); eg++) {
+                        var eng = allEngines[eg];
+                        string engId = GMATParameterRegistry.SanitizeGmatIdentifier(eng.title, "Engine");
+                        bool isCurEng = (step.bound_thruster == engId) || (string.IsNullOrEmpty(step.bound_thruster) && eg == 0);
+                        GUI.backgroundColor = isCurEng ? new Color(0.2f, 0.8f, 0.5f) : Color.white;
+                        if (GUILayout.Button($"{eng.title} ({eng.thrustKN:F0}kN / {eng.ispVac:F0}s)", secondaryButtonStyle, GUILayout.Height(18))) {
+                            step.bound_thruster = engId;
+                        }
+                        GUI.backgroundColor = Color.white;
+                    }
+                } else {
+                    step.bound_thruster = GUILayout.TextField(string.IsNullOrEmpty(step.bound_thruster) ? "MainEngine" : step.bound_thruster, GUILayout.Width(100));
                 }
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
@@ -2337,9 +2407,53 @@ namespace KSPGMAT.UI {
                 }
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
+                GUILayout.EndVertical();
             }
 
             // =========================================================================
+            // 5B. STAGE SEPARATION (DISCARD DEAD MASS & STAGE TANKS)
+            // =========================================================================
+            else if (step.type == "StageSeparation") {
+                Vessel v = FlightGlobals.ActiveVessel;
+                var allStages = GetSelectedStagesList();
+
+                GUILayout.BeginVertical(nestedCardBoxStyle);
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("<color=#f59e0b><b>🚀 级段分离 / 抛离死重配置:</b></color>", labelValueStyle, GUILayout.Width(170));
+
+                if (allStages.Count > 0) {
+                    for (int s = 0; s < allStages.Count; s++) {
+                        var st = allStages[s];
+                        bool isCurStage = (step.separated_stage_index == st.stageNumber);
+                        GUI.backgroundColor = isCurStage ? new Color(0.9f, 0.6f, 0.2f) : Color.white;
+                        if (GUILayout.Button($"Stage {st.stageNumber} (干重: {st.dryMassTonnes * 1000.0:F0}kg)", secondaryButtonStyle, GUILayout.Height(18))) {
+                            step.separated_stage_index = st.stageNumber;
+                            step.separated_mass = st.dryMassTonnes * 1000.0;
+                            double curVesselDry = (v != null) ? v.totalMass * 1000.0 * 0.5 : 2000.0;
+                            step.remaining_dry_mass = Math.Max(500.0, curVesselDry - step.separated_mass);
+                        }
+                        GUI.backgroundColor = Color.white;
+                    }
+                }
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+
+                GUILayout.Space(2);
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("抛离级段干重 (kg):", labelValueStyle, GUILayout.Width(120));
+                string sDrop = GUILayout.TextField(step.separated_mass.ToString("F0"), GUILayout.Width(75));
+                double.TryParse(sDrop, out step.separated_mass);
+
+                GUILayout.Label("分离后剩余飞船干重 (kg):", labelValueStyle, GUILayout.Width(160));
+                string sRem = GUILayout.TextField(step.remaining_dry_mass.ToString("F0"), GUILayout.Width(75));
+                double.TryParse(sRem, out step.remaining_dry_mass);
+
+                GUILayout.Label("<color=#94a3b8>(将在 GMAT 序列中输出 Sat.DryMass 动态扣减)</color>", labelValueStyle);
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+                GUILayout.EndVertical();
+            }
+
             // 6. EQUATION STEP CARD
             // =========================================================================
             else if (step.type == "Equation") {

@@ -60,7 +60,12 @@ namespace KSPGMAT {
         public string var_expr = "150.0";
         public bool burn_use_vary_var = false;
         public string burn_vary_var_name = "burntime";
-        public string burn_name = ""; // GMAT Burn object name
+        public string burn_name = "";
+        public string bound_tank = "";
+        public string bound_thruster = "";
+        public double separated_mass = 0.0;
+        public double remaining_dry_mass = 0.0;
+        public int separated_stage_index = 0; // GMAT Burn object name
     }
 
     [Serializable]
