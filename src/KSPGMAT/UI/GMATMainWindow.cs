@@ -2521,117 +2521,162 @@ namespace KSPGMAT.UI {
 
         private void DrawTargeterSetupWindow(int windowID) {
             GUILayout.BeginHorizontal();
-            string title = editingTargetStepIndex >= 0 ? "🎯 配置微分校正求解器 (Targeter Properties)" : "🎯 新建微分校正打靶向导 (Targeter Setup Wizard)";
-            GUILayout.Label($"<b>{title}</b>", headerStyle);
+            GUILayout.Label("<b>🎯 GMAT 官方微分修正求解器管理与配置 (Solvers & Targeters)</b>", headerStyle);
             GUILayout.FlexibleSpace();
             if (GUILayout.Button("✕", deleteButtonStyle, GUILayout.Width(24), GUILayout.Height(20))) {
                 showTargeterSetupModal = false;
             }
             GUILayout.EndHorizontal();
 
+            GUILayout.Space(4);
+
+            // Solver Instance Switcher Toolbar
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("当前求解器:", labelValueStyle, GUILayout.Width(75));
+
+            var solverConfigs = GMATParameterRegistry.GetAllSolverConfigs();
+            List<string> solverKeys = new List<string>(solverConfigs.Keys);
+            if (!solverConfigs.ContainsKey(wizardDcName) && solverKeys.Count > 0) {
+                wizardDcName = solverKeys[0];
+            }
+
+            for (int s = 0; s < solverKeys.Count; s++) {
+                bool isSelected = (wizardDcName == solverKeys[s]);
+                if (GUILayout.Button(solverKeys[s], isSelected ? tabButtonActiveStyle : tabButtonStyle, GUILayout.Height(24))) {
+                    wizardDcName = solverKeys[s];
+                }
+            }
+
+            GUILayout.Space(8);
+            if (GUILayout.Button("➕ 新建求解器...", actionButtonStyle, GUILayout.Height(24))) {
+                string newName = "CustomDC_" + (solverConfigs.Count + 1);
+                var newSolver = new SolverConfig {
+                    name = newName,
+                    algorithm = "NewtonRaphson",
+                    derivativeMethod = "ForwardDifference",
+                    maxIterations = 50,
+                    solveMode = "Solve",
+                    exitMode = "SaveAndContinue",
+                    reportStyle = "Normal",
+                    showProgress = true,
+                    isDefault = false
+                };
+                GMATParameterRegistry.AddOrUpdateSolver(newSolver);
+                wizardDcName = newName;
+                ScreenMessages.PostScreenMessage($"✅ 已新建求解器: {newName}", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+            }
+
+            SolverConfig activeSolver = solverConfigs.ContainsKey(wizardDcName) ? solverConfigs[wizardDcName] : new SolverConfig();
+
+            if (!activeSolver.isDefault) {
+                GUILayout.Space(6);
+                if (GUILayout.Button("🗑️ 删除", deleteButtonStyle, GUILayout.Height(24))) {
+                    GMATParameterRegistry.DeleteSolver(wizardDcName);
+                    wizardDcName = "DefaultDC";
+                    ScreenMessages.PostScreenMessage("🗑️ 已删除自定义求解器", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                }
+            }
+
+            GUILayout.EndHorizontal();
             GUILayout.Space(6);
 
             GUILayout.BeginVertical(cardBoxStyle);
+
+            // Section 1: 求解器命名与标识
             GUILayout.Label("1. 求解器标识与命名", subHeaderStyle);
             GUILayout.BeginHorizontal();
             GUILayout.Label("求解器名称 (DC Name):", labelValueStyle, GUILayout.Width(140));
-            wizardDcName = GUILayout.TextField(wizardDcName, GUILayout.Width(160));
+            activeSolver.name = GUILayout.TextField(activeSolver.name ?? wizardDcName, GUILayout.Width(160));
             GUILayout.Label("<color=#64748b>(GMAT 原生 DifferentialCorrector 实例名)</color>", labelValueStyle);
             GUILayout.EndHorizontal();
 
             GUILayout.Space(6);
+
+            // Section 2: 数学优化算法 (Algorithm)
             GUILayout.Label("2. 数学优化算法 (Algorithm)", subHeaderStyle);
             GUILayout.BeginHorizontal();
             for (int a = 0; a < WizardAlgorithmNames.Length; a++) {
-                bool isSel = (wizardAlgorithmIndex == a);
+                bool isSel = (activeSolver.algorithm == WizardAlgorithmNames[a]);
                 if (GUILayout.Button(WizardAlgorithmLabels[a], isSel ? tabButtonActiveStyle : tabButtonStyle, GUILayout.Height(24))) {
-                    wizardAlgorithmIndex = a;
+                    activeSolver.algorithm = WizardAlgorithmNames[a];
                 }
             }
             GUILayout.EndHorizontal();
 
             GUILayout.Space(6);
+
+            // Section 3: 导数计算差分方式 (DerivativeMethod)
             GUILayout.Label("3. 导数计算差分方式 (DerivativeMethod)", subHeaderStyle);
             GUILayout.BeginHorizontal();
             for (int d = 0; d < WizardDerivativeNames.Length; d++) {
-                bool isSel = (wizardDerivativeIndex == d);
+                bool isSel = (activeSolver.derivativeMethod == WizardDerivativeNames[d]);
                 if (GUILayout.Button(WizardDerivativeLabels[d], isSel ? tabButtonActiveStyle : tabButtonStyle, GUILayout.Height(24))) {
-                    wizardDerivativeIndex = d;
+                    activeSolver.derivativeMethod = WizardDerivativeNames[d];
                 }
             }
             GUILayout.EndHorizontal();
 
             GUILayout.Space(6);
-            GUILayout.Label("4. 求解与退出模式 (SolveMode & ExitMode)", subHeaderStyle);
+
+            // Section 4: 控制参数与模式 (Modes & Parameters)
+            GUILayout.Label("4. 求解模式、退出策略与最大迭代", subHeaderStyle);
             GUILayout.BeginHorizontal();
             GUILayout.Label("求解模式:", labelValueStyle, GUILayout.Width(75));
-            for (int s = 0; s < WizardSolveModeNames.Length; s++) {
-                bool isSel = (wizardSolveModeIndex == s);
-                if (GUILayout.Button(WizardSolveModeLabels[s], isSel ? tabButtonActiveStyle : tabButtonStyle, GUILayout.Height(22))) {
-                    wizardSolveModeIndex = s;
+            for (int sm = 0; sm < WizardSolveModeNames.Length; sm++) {
+                bool isSel = (activeSolver.solveMode == WizardSolveModeNames[sm]);
+                if (GUILayout.Button(WizardSolveModeLabels[sm], isSel ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(22))) {
+                    activeSolver.solveMode = WizardSolveModeNames[sm];
                 }
             }
             GUILayout.EndHorizontal();
 
+            GUILayout.Space(4);
             GUILayout.BeginHorizontal();
-            GUILayout.Label("退出行为:", labelValueStyle, GUILayout.Width(75));
-            for (int e = 0; e < WizardExitModeNames.Length; e++) {
-                bool isSel = (wizardExitModeIndex == e);
-                if (GUILayout.Button(WizardExitModeLabels[e], isSel ? tabButtonActiveStyle : tabButtonStyle, GUILayout.Height(22))) {
-                    wizardExitModeIndex = e;
+            GUILayout.Label("退出模式:", labelValueStyle, GUILayout.Width(75));
+            for (int em = 0; em < WizardExitModeNames.Length; em++) {
+                bool isSel = (activeSolver.exitMode == WizardExitModeNames[em]);
+                if (GUILayout.Button(WizardExitModeLabels[em], isSel ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(22))) {
+                    activeSolver.exitMode = WizardExitModeNames[em];
                 }
             }
             GUILayout.EndHorizontal();
 
-            GUILayout.Space(6);
-            GUILayout.Label("5. 最大迭代次数 (MaximumIterations)", subHeaderStyle);
+            GUILayout.Space(4);
             GUILayout.BeginHorizontal();
-            GUILayout.Label("最大迭代上限:", labelValueStyle, GUILayout.Width(140));
-            string sMax = GUILayout.TextField(wizardMaxIterations.ToString(), GUILayout.Width(60));
-            int.TryParse(sMax, out wizardMaxIterations);
-            if (GUILayout.Button("-10", secondaryButtonStyle, GUILayout.Width(35), GUILayout.Height(20))) {
-                wizardMaxIterations = Mathf.Max(5, wizardMaxIterations - 10);
-            }
-            if (GUILayout.Button("+10", secondaryButtonStyle, GUILayout.Width(35), GUILayout.Height(20))) {
-                wizardMaxIterations += 10;
-            }
-            if (GUILayout.Button("重设 50", secondaryButtonStyle, GUILayout.Width(60), GUILayout.Height(20))) {
-                wizardMaxIterations = 50;
-            }
-            GUILayout.Label("<color=#64748b>(默认 50 次，复杂地月可设 100~200 次)</color>", labelValueStyle);
-            GUILayout.EndHorizontal();
+            GUILayout.Label("最大迭代次数 (MaxIterations):", labelValueStyle, GUILayout.Width(190));
+            string sMaxIter = GUILayout.TextField(activeSolver.maxIterations.ToString(), GUILayout.Width(70));
+            int.TryParse(sMaxIter, out activeSolver.maxIterations);
 
-            // Preset Template selection (only for creating new group)
-            if (editingTargetStepIndex < 0) {
-                GUILayout.Space(8);
-                GUILayout.Label("6. 预设打靶任务模板 (Preset Template)", subHeaderStyle);
-                for (int t = 0; t < WizardTemplateLabels.Length; t++) {
-                    bool isSel = (wizardTemplateIndex == t);
-                    if (GUILayout.Button(WizardTemplateLabels[t], isSel ? tabButtonActiveStyle : tabButtonStyle, GUILayout.Height(24))) {
-                        wizardTemplateIndex = t;
-                    }
-                }
-            }
+            GUILayout.Space(15);
+            activeSolver.showProgress = GUILayout.Toggle(activeSolver.showProgress, "控制台显示收敛进度", GUILayout.Width(160));
+            GUILayout.EndHorizontal();
 
             GUILayout.EndVertical();
 
-            GUILayout.Space(10);
-
-            // Action Buttons
+            // Bottom Buttons
+            GUILayout.Space(6);
             GUILayout.BeginHorizontal();
-            string confirmBtnText = editingTargetStepIndex >= 0 ? "💾 保存求解器设置" : "🚀 确认创建打靶求解组";
-            if (GUILayout.Button(confirmBtnText, successButtonStyle, GUILayout.Height(34))) {
-                ApplyTargeterSetup();
+            GUILayout.FlexibleSpace();
+
+            if (GUILayout.Button("💾 保存并应用此求解器", actionButtonStyle, GUILayout.Width(180), GUILayout.Height(28))) {
+                GMATParameterRegistry.AddOrUpdateSolver(activeSolver);
+                if (editingTargetStepIndex >= 0 && editingTargetStepIndex < missionSequence.Count) {
+                    var step = missionSequence[editingTargetStepIndex];
+                    step.dc_name = activeSolver.name;
+                    step.dc_algorithm = activeSolver.algorithm;
+                    step.dc_max_iter = activeSolver.maxIterations;
+                }
                 showTargeterSetupModal = false;
+                ScreenMessages.PostScreenMessage($"✅ 求解器配置已成功同步: {activeSolver.name}", 3.0f, ScreenMessageStyle.UPPER_CENTER);
             }
+
             GUILayout.Space(10);
-            if (GUILayout.Button("✕ 取消", secondaryButtonStyle, GUILayout.Width(90), GUILayout.Height(34))) {
+            if (GUILayout.Button("关闭", secondaryButtonStyle, GUILayout.Width(80), GUILayout.Height(28))) {
                 showTargeterSetupModal = false;
             }
             GUILayout.EndHorizontal();
 
-            DrawResizeHandle(ref targeterSetupWindowRect, 600f, 480f);
-            GUI.DragWindow(new Rect(0, 0, targeterSetupWindowRect.width - 40, 26));
+            GUI.DragWindow(new Rect(0, 0, targeterSetupWindowRect.width, 30));
         }
 
         private void ApplyTargeterSetup() {
@@ -3114,7 +3159,7 @@ namespace KSPGMAT.UI {
 
         private void DrawPropagatorConfigWindow(int windowID) {
             GUILayout.BeginHorizontal();
-            GUILayout.Label("<b>⚙️ GMAT 传播子与高精度受力模型深度配置 (Propagator & Force Models)</b>", headerStyle);
+            GUILayout.Label("<b>⚙️ GMAT 官方传播子与高精度受力模型深度配置 (Propagator & Force Models)</b>", headerStyle);
             GUILayout.FlexibleSpace();
             if (GUILayout.Button("✕", deleteButtonStyle, GUILayout.Width(24), GUILayout.Height(20))) {
                 showPropagatorConfigWindow = false;
@@ -3123,10 +3168,16 @@ namespace KSPGMAT.UI {
 
             GUILayout.Space(4);
 
-            // Propagator Selector Toolbar
+            // Propagator Selector & Management Toolbar
             GUILayout.BeginHorizontal();
-            GUILayout.Label("选择传播子:", labelValueStyle, GUILayout.Width(75));
-            List<string> propKeys = new List<string>(propagatorConfigs.Keys);
+            GUILayout.Label("当前传播子:", labelValueStyle, GUILayout.Width(75));
+
+            var propConfigs = GMATParameterRegistry.GetAllPropagatorConfigs();
+            List<string> propKeys = new List<string>(propConfigs.Keys);
+            if (!propConfigs.ContainsKey(selectedPropagatorKey)) {
+                selectedPropagatorKey = propKeys.Count > 0 ? propKeys[0] : "LEOProp";
+            }
+
             for (int i = 0; i < propKeys.Count; i++) {
                 bool isSelected = (selectedPropagatorKey == propKeys[i]);
                 if (GUILayout.Button(propKeys[i], isSelected ? tabButtonActiveStyle : tabButtonStyle, GUILayout.Height(24))) {
@@ -3136,122 +3187,144 @@ namespace KSPGMAT.UI {
 
             GUILayout.Space(8);
             if (GUILayout.Button("➕ 新建传播子...", actionButtonStyle, GUILayout.Height(24))) {
-                string copyName = "CustomProp_" + (propagatorConfigs.Count + 1);
-                propagatorConfigs[copyName] = new PropagatorConfig {
-                    name = copyName,
+                string newName = "CustomProp_" + (propConfigs.Count + 1);
+                var newCfg = new PropagatorConfig {
+                    name = newName,
                     integratorType = "RungeKutta89",
                     accuracy = 1e-11,
+                    initialStepSize = 60.0,
+                    minStep = 0.001,
+                    maxStep = 2700.0,
+                    centralBody = "Earth",
                     gravityEarth = true,
                     gravityLuna = true,
                     gravitySun = true,
-                    gravityJupiter = true
+                    gravityJupiter = true,
+                    isDefault = false
                 };
-                selectedPropagatorKey = copyName;
+                GMATParameterRegistry.AddOrUpdatePropagator(newCfg);
+                selectedPropagatorKey = newName;
+                ScreenMessages.PostScreenMessage($"✅ 已新建传播子: {newName}", 3.0f, ScreenMessageStyle.UPPER_CENTER);
             }
-            GUILayout.EndHorizontal();
 
+            PropagatorConfig cfg = propConfigs.ContainsKey(selectedPropagatorKey) ? propConfigs[selectedPropagatorKey] : new PropagatorConfig();
+
+            if (!cfg.isDefault) {
+                GUILayout.Space(6);
+                if (GUILayout.Button("🗑️ 删除", deleteButtonStyle, GUILayout.Height(24))) {
+                    GMATParameterRegistry.DeletePropagator(selectedPropagatorKey);
+                    selectedPropagatorKey = "LEOProp";
+                    ScreenMessages.PostScreenMessage("🗑️ 已删除自定义传播子", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                }
+            }
+
+            GUILayout.EndHorizontal();
             GUILayout.Space(6);
 
-            if (!propagatorConfigs.ContainsKey(selectedPropagatorKey)) {
-                selectedPropagatorKey = "LEOProp";
-            }
-            PropagatorConfig cfg = propagatorConfigs[selectedPropagatorKey];
-
-            // Two-column layout
-            float propColW = (propagatorConfigWindowRect.width - 45f) * 0.5f;
-            float propScrollH = Mathf.Max(260f, propagatorConfigWindowRect.height - 180f);
-
+            float propScrollH = Mathf.Max(280f, propagatorConfigWindowRect.height - 150f);
             scrollPosPropConfig = GUILayout.BeginScrollView(scrollPosPropConfig, cardBoxStyle, GUILayout.Height(propScrollH));
-            GUILayout.BeginHorizontal();
 
-            // Column 1: Numerical Integrator
-            GUILayout.BeginVertical(cardBoxStyle, GUILayout.Width(propColW));
-            GUILayout.Label("🔢 数值积分器参数 (Numerical Integrator)", subHeaderStyle);
-
+            // Section 1: 积分器动力学内核 (Integrator Core - Official GMAT Integrators)
+            GUILayout.Label("1. 数值积分器算法 (Numerical Integrator Engine)", subHeaderStyle);
             GUILayout.BeginHorizontal();
-            GUILayout.Label("积分器类型 (Type):", labelValueStyle, GUILayout.Width(130));
-            string[] integrators = new string[] { "RungeKutta89", "PrinceDormand78", "RungeKutta68", "RungeKutta56" };
-            int intIdx = Array.IndexOf(integrators, cfg.integratorType);
-            if (intIdx < 0) intIdx = 0;
-            if (GUILayout.Button(integrators[intIdx], secondaryButtonStyle, GUILayout.Height(20))) {
-                intIdx = (intIdx + 1) % integrators.Length;
-                cfg.integratorType = integrators[intIdx];
+            GUILayout.Label("积分器内核:", labelValueStyle, GUILayout.Width(80));
+
+            string[] integrators = new string[] { "RungeKutta89", "PrinceDormand78", "RungeKutta56", "RungeKutta68", "AdamsBashforthMoulton" };
+            string[] integLabels = new string[] { "RK89 (8阶高精)", "PD78 (7/8阶自适应)", "RK56 (5/6阶经典)", "RK68 (6/8阶平衡)", "ABM (4阶预报校正)" };
+
+            for (int it = 0; it < integrators.Length; it++) {
+                bool isCur = (cfg.integratorType == integrators[it]);
+                if (GUILayout.Button(integLabels[it], isCur ? tabButtonActiveStyle : tabButtonStyle, GUILayout.Height(22))) {
+                    cfg.integratorType = integrators[it];
+                }
             }
-            GUILayout.EndHorizontal();
-
-            GUILayout.BeginHorizontal();
-            GUILayout.Label("积分容差 (Accuracy):", labelValueStyle, GUILayout.Width(130));
-            string sAcc = GUILayout.TextField(cfg.accuracy.ToString("G2"), GUILayout.Width(90));
-            double.TryParse(sAcc, out cfg.accuracy);
-            GUILayout.EndHorizontal();
-
-            GUILayout.BeginHorizontal();
-            GUILayout.Label("初始步长 (InitialStep):", labelValueStyle, GUILayout.Width(130));
-            string sInit = GUILayout.TextField(cfg.initialStepSize.ToString("F1"), GUILayout.Width(90));
-            double.TryParse(sInit, out cfg.initialStepSize);
-            GUILayout.Label("秒", labelValueStyle);
-            GUILayout.EndHorizontal();
-
-            GUILayout.BeginHorizontal();
-            GUILayout.Label("最小步长 (MinStep):", labelValueStyle, GUILayout.Width(130));
-            string sMin = GUILayout.TextField(cfg.minStep.ToString("G2"), GUILayout.Width(90));
-            double.TryParse(sMin, out cfg.minStep);
-            GUILayout.Label("秒", labelValueStyle);
-            GUILayout.EndHorizontal();
-
-            GUILayout.BeginHorizontal();
-            GUILayout.Label("最大步长 (MaxStep):", labelValueStyle, GUILayout.Width(130));
-            string sMax = GUILayout.TextField(cfg.maxStep.ToString("F0"), GUILayout.Width(90));
-            double.TryParse(sMax, out cfg.maxStep);
-            GUILayout.Label("秒", labelValueStyle);
-            GUILayout.EndHorizontal();
-            GUILayout.EndVertical();
-
-            GUILayout.Space(8);
-
-            // Column 2: Force Model & Perturbations
-            GUILayout.BeginVertical(cardBoxStyle, GUILayout.Width(propColW));
-            GUILayout.Label("🌌 空间受力与引力摄动模型 (Force Model)", subHeaderStyle);
-
-            GUILayout.Label("<b>点质量引力摄动体 (Point Masses):</b>", labelValueStyle);
-            GUILayout.BeginHorizontal();
-            cfg.gravityEarth = GUILayout.Toggle(cfg.gravityEarth, " Earth", labelValueStyle);
-            cfg.gravityLuna = GUILayout.Toggle(cfg.gravityLuna, " Luna", labelValueStyle);
-            cfg.gravitySun = GUILayout.Toggle(cfg.gravitySun, " Sun", labelValueStyle);
-            GUILayout.EndHorizontal();
-
-            GUILayout.BeginHorizontal();
-            cfg.gravityJupiter = GUILayout.Toggle(cfg.gravityJupiter, " Jupiter", labelValueStyle);
-            cfg.gravityMars = GUILayout.Toggle(cfg.gravityMars, " Mars", labelValueStyle);
-            cfg.gravityVenus = GUILayout.Toggle(cfg.gravityVenus, " Venus", labelValueStyle);
             GUILayout.EndHorizontal();
 
             GUILayout.Space(4);
-            bool isDrag = (cfg.dragModel != "None");
-            bool newDrag = GUILayout.Toggle(isDrag, " 启用地球高空大气阻力 (Atmospheric Drag)", labelValueStyle);
-            if (newDrag != isDrag) cfg.dragModel = newDrag ? "MSISE90" : "None";
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("初始步长 (InitialStepSize):", labelValueStyle, GUILayout.Width(170));
+            string sInitStep = GUILayout.TextField(cfg.initialStepSize.ToString("F1"), GUILayout.Width(70));
+            double.TryParse(sInitStep, out cfg.initialStepSize);
 
-            cfg.enableSRP = GUILayout.Toggle(cfg.enableSRP, " 启用太阳光辐射压 (SRP)", labelValueStyle);
-            cfg.enableRelativity = GUILayout.Toggle(cfg.enableRelativity, " 开启广义相对论修正 (Relativity)", labelValueStyle);
-            GUILayout.EndVertical();
+            GUILayout.Label("数值精度 (Accuracy):", labelValueStyle, GUILayout.Width(140));
+            string sAcc = GUILayout.TextField(cfg.accuracy.ToString("G3"), GUILayout.Width(80));
+            double.TryParse(sAcc, out cfg.accuracy);
 
+            GUILayout.Label("最小步长 (MinStep):", labelValueStyle, GUILayout.Width(130));
+            string sMinStep = GUILayout.TextField(cfg.minStep.ToString("F3"), GUILayout.Width(60));
+            double.TryParse(sMinStep, out cfg.minStep);
+
+            GUILayout.Label("最大步长 (MaxStep):", labelValueStyle, GUILayout.Width(130));
+            string sMaxStep = GUILayout.TextField(cfg.maxStep.ToString("F1"), GUILayout.Width(70));
+            double.TryParse(sMaxStep, out cfg.maxStep);
             GUILayout.EndHorizontal();
+
+            GUILayout.Space(8);
+
+            // Section 2: 引力场与多体引力摄动 (Gravity Field & Point Masses)
+            GUILayout.Label("2. 引力场与多体摄动模型 (Gravity Field & Point Masses)", subHeaderStyle);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("中心天体 (CentralBody):", labelValueStyle, GUILayout.Width(160));
+            Vessel v = FlightGlobals.ActiveVessel;
+            List<string> bodies = GMATParameterRegistry.GetAllBodies(v);
+            for (int b = 0; b < bodies.Count && b < 6; b++) {
+                string bName = bodies[b];
+                bool isCenter = (cfg.centralBody == bName);
+                if (GUILayout.Button(bName, isCenter ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
+                    cfg.centralBody = bName;
+                }
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(4);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("点质量引力摄动源:", labelValueStyle, GUILayout.Width(130));
+            cfg.gravityEarth = GUILayout.Toggle(cfg.gravityEarth, "地球 (Earth)", GUILayout.Width(100));
+            cfg.gravityLuna = GUILayout.Toggle(cfg.gravityLuna, "月球 (Luna)", GUILayout.Width(95));
+            cfg.gravitySun = GUILayout.Toggle(cfg.gravitySun, "太阳 (Sun)", GUILayout.Width(95));
+            cfg.gravityJupiter = GUILayout.Toggle(cfg.gravityJupiter, "木星 (Jupiter)", GUILayout.Width(105));
+            cfg.gravityMars = GUILayout.Toggle(cfg.gravityMars, "火星 (Mars)", GUILayout.Width(95));
+            cfg.gravityVenus = GUILayout.Toggle(cfg.gravityVenus, "金星 (Venus)", GUILayout.Width(95));
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(8);
+
+            // Section 3: 大气与环境扰动 (Atmosphere & SRP)
+            GUILayout.Label("3. 大气阻力与太阳光压扰动 (Atmosphere & SRP)", subHeaderStyle);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("大气模型 (Drag):", labelValueStyle, GUILayout.Width(110));
+            string[] atmos = new string[] { "None", "MSISE90", "JacchiaRoberts", "Exponential" };
+            for (int a = 0; a < atmos.Length; a++) {
+                bool isAtmo = (cfg.dragModel == atmos[a]);
+                if (GUILayout.Button(atmos[a], isAtmo ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
+                    cfg.dragModel = atmos[a];
+                }
+            }
+
+            GUILayout.Space(15);
+            cfg.enableSRP = GUILayout.Toggle(cfg.enableSRP, "太阳辐射光压 (SRP)", GUILayout.Width(140));
+            cfg.enableRelativity = GUILayout.Toggle(cfg.enableRelativity, "相对论修正", GUILayout.Width(100));
+            GUILayout.EndHorizontal();
+
             GUILayout.EndScrollView();
 
+            // Bottom Action Toolbar
             GUILayout.Space(6);
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("🔄 恢复当前传播子默认值", secondaryButtonStyle, GUILayout.Height(26))) {
-                propagatorConfigs = PropagatorConfig.CreateDefaultPresets();
-            }
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button("💾 保存并关闭", successButtonStyle, GUILayout.Width(120), GUILayout.Height(26))) {
+
+            if (GUILayout.Button("💾 保存并应用此传播子", actionButtonStyle, GUILayout.Width(180), GUILayout.Height(28))) {
+                GMATParameterRegistry.AddOrUpdatePropagator(cfg);
+                ScreenMessages.PostScreenMessage($"✅ 传播子已保存并同步至全局: {cfg.name}", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+            }
+
+            GUILayout.Space(10);
+            if (GUILayout.Button("关闭", secondaryButtonStyle, GUILayout.Width(80), GUILayout.Height(28))) {
                 showPropagatorConfigWindow = false;
-                ScreenMessages.PostScreenMessage("✅ 传播子与力模型配置已更新！", 3.0f, ScreenMessageStyle.UPPER_CENTER);
             }
             GUILayout.EndHorizontal();
 
-            DrawResizeHandle(ref propagatorConfigWindowRect, 720f, 500f);
-            GUI.DragWindow(new Rect(0, 0, propagatorConfigWindowRect.width - 40, 26));
+            GUI.DragWindow(new Rect(0, 0, propagatorConfigWindowRect.width, 30));
         }
 
         private void DrawCraftDetailsWindow(int windowID) {

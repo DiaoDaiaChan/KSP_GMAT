@@ -212,7 +212,7 @@ def default_propagator(step=None, central_body="Earth"):
         return "LunarNRHOProp"
     return "LEOProp"
 
-def build_gmat_script(craft_data, mission_sequence, report_path, propagator_configs=None, custom_coordinate_systems=None):
+def build_gmat_script(craft_data, mission_sequence, report_path, propagator_configs=None, custom_coordinate_systems=None, solver_configs=None):
     """
     Builds a complete, valid GMAT script (.script).
     craft_data: dict with spacecraft parameters, state vector, staging, etc.
@@ -493,50 +493,35 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
             add_optional_assignment(model_name, "GravityField.%s.TidePotentialFile" % body, "'%s'" % path)
         lines.append("")
 
-    leo_cfg = pcfgs.get("LEOProp", {})
-    cisl_cfg = pcfgs.get("CislunarProp", {})
-    nrho_cfg = pcfgs.get("LunarNRHOProp", {})
-    build_force_model("LEOForceModel", leo_cfg, "Earth", ["Earth", "Luna", "Sun", "Jupiter"])
-    build_force_model("CislunarForceModel", cisl_cfg, "Earth", ["Earth", "Luna", "Sun", "Jupiter"])
-    build_force_model("LunarNRHOForceModel", nrho_cfg, "Luna", ["Luna", "Earth", "Sun", "Jupiter"])
+    # Base default propagators
+    all_pcfgs = {
+        "LEOProp": {"integrator_type": "RungeKutta89", "initial_step": 60, "accuracy": 1e-11, "min_step": 0.001, "max_step": 2700, "central_body": "Earth"},
+        "CislunarProp": {"integrator_type": "RungeKutta89", "initial_step": 60, "accuracy": 1e-11, "min_step": 0.001, "max_step": 21600, "central_body": "Earth"},
+        "LunarNRHOProp": {"integrator_type": "RungeKutta89", "initial_step": 60, "accuracy": 1e-11, "min_step": 0.001, "max_step": 10800, "central_body": "Luna"},
+        "DefaultProp": {"integrator_type": "RungeKutta89", "initial_step": 60, "accuracy": 1e-11, "min_step": 0.001, "max_step": 2700, "central_body": "Earth"}
+    }
+    # Merge custom user propagators
+    for pk, pv in pcfgs.items():
+        all_pcfgs[pk] = pv
 
-    # Propagators
-    lines.append("Create Propagator LEOProp;")
-    lines.append("LEOProp.FM              = LEOForceModel;")
-    lines.append(f"LEOProp.Type            = {leo_cfg.get('integrator_type', 'RungeKutta89')};")
-    lines.append(f"LEOProp.InitialStepSize = {leo_cfg.get('initial_step', 60)};")
-    lines.append(f"LEOProp.Accuracy        = {leo_cfg.get('accuracy', 1e-11)};")
-    lines.append(f"LEOProp.MinStep         = {leo_cfg.get('min_step', 0.001)};")
-    lines.append(f"LEOProp.MaxStep         = {leo_cfg.get('max_step', 2700)};\n")
-    lines.append(f"LEOProp.MaxStepAttempts = {leo_cfg.get('max_step_attempts', 50)};")
-    lines.append(f"LEOProp.StopIfAccuracyIsViolated = {'true' if leo_cfg.get('stop_if_accuracy_is_violated', False) else 'false'};\n")
-    for prop_name, config_name in (("ErrorThreshold", "error_threshold"), ("SmallestInterval", "smallest_interval"), ("LowerError", "lower_error"), ("TargetError", "target_error"), ("StepSize", "step_size"), ("MinimumReduction", "minimum_reduction"), ("MaximumReduction", "maximum_reduction"), ("MinimumTolerance", "minimum_tolerance")):
-        add_optional_numeric_assignment("LEOProp", prop_name, leo_cfg.get(config_name))
+    # Dynamically declare all ForceModels and Propagators
+    for p_name, p_cfg in all_pcfgs.items():
+        fm_name = f"{p_name}ForceModel"
+        def_body = p_cfg.get("central_body", "Earth")
+        build_force_model(fm_name, p_cfg, def_body, ["Earth", "Luna", "Sun", "Jupiter"])
 
-    cisl_cfg = pcfgs.get("CislunarProp", {})
-    lines.append("Create Propagator CislunarProp;")
-    lines.append("CislunarProp.FM              = CislunarForceModel;")
-    lines.append(f"CislunarProp.Type            = {cisl_cfg.get('integrator_type', 'RungeKutta89')};")
-    lines.append(f"CislunarProp.InitialStepSize = {cisl_cfg.get('initial_step', 60)};")
-    lines.append(f"CislunarProp.Accuracy        = {cisl_cfg.get('accuracy', 1e-11)};")
-    lines.append(f"CislunarProp.MinStep         = {cisl_cfg.get('min_step', 0.001)};")
-    lines.append(f"CislunarProp.MaxStep         = {cisl_cfg.get('max_step', 21600)};\n")
-    lines.append(f"CislunarProp.MaxStepAttempts = {cisl_cfg.get('max_step_attempts', 50)};")
-    lines.append(f"CislunarProp.StopIfAccuracyIsViolated = {'true' if cisl_cfg.get('stop_if_accuracy_is_violated', False) else 'false'};\n")
-    for prop_name, config_name in (("ErrorThreshold", "error_threshold"), ("SmallestInterval", "smallest_interval"), ("LowerError", "lower_error"), ("TargetError", "target_error"), ("StepSize", "step_size"), ("MinimumReduction", "minimum_reduction"), ("MaximumReduction", "maximum_reduction"), ("MinimumTolerance", "minimum_tolerance")):
-        add_optional_numeric_assignment("CislunarProp", prop_name, cisl_cfg.get(config_name))
-
-    lines.append("Create Propagator LunarNRHOProp;")
-    lines.append("LunarNRHOProp.FM              = LunarNRHOForceModel;")
-    lines.append(f"LunarNRHOProp.Type            = {nrho_cfg.get('integrator_type', 'RungeKutta89')};")
-    lines.append(f"LunarNRHOProp.InitialStepSize = {nrho_cfg.get('initial_step', 60)};")
-    lines.append(f"LunarNRHOProp.Accuracy        = {nrho_cfg.get('accuracy', 1e-11)};")
-    lines.append(f"LunarNRHOProp.MinStep         = {nrho_cfg.get('min_step', 0.001)};")
-    lines.append(f"LunarNRHOProp.MaxStep         = {nrho_cfg.get('max_step', 10800)};\n")
-    lines.append(f"LunarNRHOProp.MaxStepAttempts = {nrho_cfg.get('max_step_attempts', 50)};")
-    lines.append(f"LunarNRHOProp.StopIfAccuracyIsViolated = {'true' if nrho_cfg.get('stop_if_accuracy_is_violated', False) else 'false'};\n")
-    for prop_name, config_name in (("ErrorThreshold", "error_threshold"), ("SmallestInterval", "smallest_interval"), ("LowerError", "lower_error"), ("TargetError", "target_error"), ("StepSize", "step_size"), ("MinimumReduction", "minimum_reduction"), ("MaximumReduction", "maximum_reduction"), ("MinimumTolerance", "minimum_tolerance")):
-        add_optional_numeric_assignment("LunarNRHOProp", prop_name, nrho_cfg.get(config_name))
+        lines.append(f"Create Propagator {p_name};")
+        lines.append(f"{p_name}.FM              = {fm_name};")
+        lines.append(f"{p_name}.Type            = {p_cfg.get('integrator_type', 'RungeKutta89')};")
+        lines.append(f"{p_name}.InitialStepSize = {p_cfg.get('initial_step', 60)};")
+        lines.append(f"{p_name}.Accuracy        = {p_cfg.get('accuracy', 1e-11)};")
+        lines.append(f"{p_name}.MinStep         = {p_cfg.get('min_step', 0.001)};")
+        lines.append(f"{p_name}.MaxStep         = {p_cfg.get('max_step', 2700)};\n")
+        lines.append(f"{p_name}.MaxStepAttempts = {p_cfg.get('max_step_attempts', 50)};")
+        lines.append(f"{p_name}.StopIfAccuracyIsViolated = {'true' if p_cfg.get('stop_if_accuracy_is_violated', False) else 'false'};\n")
+        for prop_name, config_name in (("ErrorThreshold", "error_threshold"), ("SmallestInterval", "smallest_interval"), ("LowerError", "lower_error"), ("TargetError", "target_error"), ("StepSize", "step_size"), ("MinimumReduction", "minimum_reduction"), ("MaximumReduction", "maximum_reduction"), ("MinimumTolerance", "minimum_tolerance")):
+            add_optional_numeric_assignment(p_name, prop_name, p_cfg.get(config_name))
+        lines.append("")
 
     # Report files are the sole source of post-run numerical results.  Python
     # never propagates the state or estimates a burn from engine equations.
@@ -690,20 +675,44 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
         lines.append(f"Create Variable {' '.join(all_declared_vars)};\n")
 
     if dc_needed:
-        lines.append("Create DifferentialCorrector DC;")
-        target_step = next((s for s in mission_sequence if s.get("type") in ("Target", "TargetApoapsis", "Targeter")), {})
-        dc_alg = target_step.get("dc_algorithm") or "NewtonRaphson"
-        dc_dm = target_step.get("dc_derivative_method") or "ForwardDifference"
-        dc_max = int(target_step.get("dc_max_iter") or 25)
-        lines.append(f"DC.Algorithm = '{dc_alg}';")
-        lines.append(f"DC.DerivativeMethod = '{dc_dm}';")
-        lines.append("DC.ShowProgress = true;")
-        lines.append("DC.ReportStyle = 'Normal';")
-        dc_data_file = os.path.abspath(os.path.join(os.path.dirname(report_path), "DifferentialCorrectorDC.data")).replace("\\", "/")
-        lines.append(f"DC.ReportFile = '{dc_data_file}';")
-        if dc_max > 0:
-            lines.append(f"DC.MaximumIterations = {dc_max};")
-        lines.append("")
+        active_solvers = {}
+        for s in mission_sequence:
+            if s.get("type") in ("Target", "TargetApoapsis", "Targeter"):
+                s_name = s.get("dc_name") or "DefaultDC"
+                active_solvers[s_name] = {
+                    "algorithm": s.get("dc_algorithm") or "NewtonRaphson",
+                    "derivative_method": s.get("dc_derivative_method") or "ForwardDifference",
+                    "max_iter": int(s.get("dc_max_iter") or 50)
+                }
+
+        if solver_configs:
+            for s_name, s_cfg in solver_configs.items():
+                if s_name not in active_solvers:
+                    active_solvers[s_name] = {
+                        "algorithm": s_cfg.get("algorithm", "NewtonRaphson"),
+                        "derivative_method": s_cfg.get("derivative_method", "ForwardDifference"),
+                        "max_iter": int(s_cfg.get("max_iterations", 50))
+                    }
+
+        if not active_solvers:
+            active_solvers["DefaultDC"] = {"algorithm": "NewtonRaphson", "derivative_method": "ForwardDifference", "max_iter": 50}
+
+        # Also declare generic 'DC' alias if referenced
+        if "DC" not in active_solvers:
+            active_solvers["DC"] = {"algorithm": "NewtonRaphson", "derivative_method": "ForwardDifference", "max_iter": 50}
+
+        for s_name, s_info in active_solvers.items():
+            lines.append(f"Create DifferentialCorrector {s_name};")
+            lines.append(f"{s_name}.Algorithm = '{s_info.get('algorithm', 'NewtonRaphson')}';")
+            lines.append(f"{s_name}.DerivativeMethod = '{s_info.get('derivative_method', 'ForwardDifference')}';")
+            lines.append(f"{s_name}.ShowProgress = true;")
+            lines.append(f"{s_name}.ReportStyle = 'Normal';")
+            dc_data_file = os.path.abspath(os.path.join(os.path.dirname(report_path), f"DifferentialCorrector{s_name}.data")).replace("\\", "/")
+            lines.append(f"{s_name}.ReportFile = '{dc_data_file}';")
+            max_i = s_info.get("max_iter", 50)
+            if max_i > 0:
+                lines.append(f"{s_name}.MaximumIterations = {max_i};")
+            lines.append("")
 
     if burn_defs:
         lines.extend(burn_defs)
@@ -737,7 +746,7 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
             prop_func = step.get("propagator")
             if not prop_func:
                 prop_func = default_propagator(step, central_body) or "LEOProp"
-            if prop_func not in ("LEOProp", "CislunarProp", "LunarNRHOProp") and not (propagator_configs and prop_func in propagator_configs):
+            if prop_func not in all_pcfgs:
                 prop_func = "LEOProp"
             label = sanitize_gmat_label(step.get("label"), "Propagate")
             label_str = f"'{label}' " if label else ""
@@ -1120,7 +1129,7 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
 
     return "\n".join(lines)
 
-def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None, custom_coordinate_systems=None):
+def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None, custom_coordinate_systems=None, solver_configs=None):
     """
     Assembles, saves, and executes a GMAT mission sequence script, then parses and returns results.
     """
@@ -1152,7 +1161,7 @@ def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None, 
 
     # Build script
     custom_coords = custom_coordinate_systems or []
-    script_content = build_gmat_script(craft_data, mission_sequence, report_file, propagator_configs=propagator_configs, custom_coordinate_systems=custom_coords)
+    script_content = build_gmat_script(craft_data, mission_sequence, report_file, propagator_configs=propagator_configs, custom_coordinate_systems=custom_coords, solver_configs=solver_configs)
     with open(script_file, "w", encoding="utf-8") as f:
         f.write(script_content)
 
@@ -1600,4 +1609,117 @@ def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None, 
         "dc_summary": dc_info,
         "calculation_authority": "GMAT_NATIVE_ONLY",
         "finite_burn_report_path": report_file + ".finite.txt"
+    }
+
+
+def get_propagator_api_metadata():
+    """
+    Dynamically introspects official GMAT C++ API to return all supported
+    integrators, force model components, and tunable parameter specs.
+    """
+    init_gmat()
+    global gmat
+    
+    supported_integrators = []
+    for it in ["RungeKutta89", "PrinceDormand78", "RungeKutta56", "RungeKutta68", "AdamsBashforthMoulton"]:
+        try:
+            integ = gmat.Construct(it, f"Probe_{it}")
+            if integ:
+                supported_integrators.append({
+                    "name": it,
+                    "label": it,
+                    "order": 8 if "89" in it else 7 if "78" in it else 5 if "56" in it else 6 if "68" in it else 4,
+                    "adaptive": True if "SPK" not in it else False
+                })
+        except:
+            pass
+
+    # Inspect Propagator properties via GMAT API
+    prop_params = []
+    try:
+        sample_prop = gmat.Construct("Propagator", "SampleProp")
+        if sample_prop and hasattr(sample_prop, "GetParameterCount"):
+            for i in range(sample_prop.GetParameterCount()):
+                pname = sample_prop.GetParameterText(i)
+                ptype = sample_prop.GetParameterTypeString(i)
+                if pname not in ("FM", "Covariance", "Type"):
+                    prop_params.append({
+                        "name": pname,
+                        "type": ptype,
+                        "id": i
+                    })
+    except Exception as ex:
+        print(f"[gmat_engine] Prop metadata probe: {ex}")
+
+    # Inspect ForceModel properties via GMAT API
+    fm_params = []
+    try:
+        sample_fm = gmat.Construct("ForceModel", "SampleFM")
+        if sample_fm and hasattr(sample_fm, "GetParameterCount"):
+            for i in range(sample_fm.GetParameterCount()):
+                pname = sample_fm.GetParameterText(i)
+                ptype = sample_fm.GetParameterTypeString(i)
+                fm_params.append({
+                    "name": pname,
+                    "type": ptype,
+                    "id": i
+                })
+    except Exception as ex:
+        print(f"[gmat_engine] ForceModel metadata probe: {ex}")
+
+    return {
+        "success": True,
+        "integrators": supported_integrators,
+        "propagator_parameters": prop_params,
+        "force_model_parameters": fm_params,
+        "default_primary_bodies": ["Earth", "Luna", "Sun", "Mars", "Jupiter"],
+        "default_atmosphere_models": ["None", "Exponential", "MSISE90", "JacchiaRoberts"]
+    }
+
+
+def get_solver_api_metadata():
+    """
+    Dynamically introspects official GMAT C++ API to return all supported
+    differential correctors, optimization algorithms, and tunable solver specs.
+    """
+    init_gmat()
+    global gmat
+
+    algorithms = ["NewtonRaphson", "Broyden", "ModifiedBroyden"]
+    derivative_methods = ["ForwardDifference", "CentralDifference", "BackwardDifference"]
+    report_styles = ["Normal", "Concise", "Verbose"]
+    solve_modes = ["Solve", "Calculate", "RunInitialGuess"]
+    exit_modes = ["SaveAndContinue", "DiscardAndContinue", "Stop"]
+
+    solver_params = []
+    try:
+        sample_dc = gmat.Construct("DifferentialCorrector", "SampleDC")
+        if sample_dc and hasattr(sample_dc, "GetParameterCount"):
+            for i in range(sample_dc.GetParameterCount()):
+                pname = sample_dc.GetParameterText(i)
+                ptype = sample_dc.GetParameterTypeString(i)
+                enums = []
+                if hasattr(sample_dc, "GetPropertyEnumStrings"):
+                    try:
+                        enums = list(sample_dc.GetPropertyEnumStrings(i))
+                    except:
+                        pass
+                solver_params.append({
+                    "name": pname,
+                    "type": ptype,
+                    "enums": enums,
+                    "id": i
+                })
+    except Exception as ex:
+        print(f"[gmat_engine] Solver metadata probe: {ex}")
+
+    return {
+        "success": True,
+        "solver_type": "DifferentialCorrector",
+        "algorithms": algorithms,
+        "derivative_methods": derivative_methods,
+        "report_styles": report_styles,
+        "solve_modes": solve_modes,
+        "exit_modes": exit_modes,
+        "parameters": solver_params
     }

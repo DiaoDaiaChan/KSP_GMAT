@@ -120,7 +120,8 @@ namespace KSPGMAT {
     /// Loaded dynamically from gmatpy introspection via gmat_capabilities.json or /api/parameters REST API.
     /// No parameters are hardcoded directly in C# code.
     /// </summary>
-    public enum IntelliSenseKind {
+
+        public enum IntelliSenseKind {
         CelestialBody,
         CoordinateSystem,
         Spacecraft,
@@ -1250,6 +1251,89 @@ namespace KSPGMAT {
             }
 
             return items;
+        }
+
+
+
+        // Dynamic User Configs & Registry
+        private static readonly Dictionary<string, PropagatorConfig> registeredPropagators = new Dictionary<string, PropagatorConfig>();
+        private static readonly Dictionary<string, SolverConfig> registeredSolvers = new Dictionary<string, SolverConfig>();
+
+        public static void InitDefaultPropagatorsAndSolvers() {
+            if (registeredPropagators.Count == 0) {
+                registeredPropagators["LEOProp"] = new PropagatorConfig {
+                    name = "LEOProp", integratorType = "RungeKutta89", initialStepSize = 60, accuracy = 1e-11,
+                    minStep = 0.001, maxStep = 2700, maxStepAttempts = 50, centralBody = "Earth",
+                    gravityEarth = true, gravityLuna = true, gravitySun = true, gravityJupiter = true, isDefault = true
+                };
+                registeredPropagators["CislunarProp"] = new PropagatorConfig {
+                    name = "CislunarProp", integratorType = "RungeKutta89", initialStepSize = 60, accuracy = 1e-11,
+                    minStep = 0.001, maxStep = 21600, maxStepAttempts = 50, centralBody = "Earth",
+                    gravityEarth = true, gravityLuna = true, gravitySun = true, gravityJupiter = true, isDefault = true
+                };
+                registeredPropagators["LunarNRHOProp"] = new PropagatorConfig {
+                    name = "LunarNRHOProp", integratorType = "RungeKutta89", initialStepSize = 60, accuracy = 1e-11,
+                    minStep = 0.001, maxStep = 10800, maxStepAttempts = 50, centralBody = "Luna",
+                    gravityEarth = true, gravityLuna = true, gravitySun = true, gravityJupiter = true, isDefault = true
+                };
+            }
+
+            if (registeredSolvers.Count == 0) {
+                registeredSolvers["DefaultDC"] = new SolverConfig {
+                    name = "DefaultDC", algorithm = "NewtonRaphson", derivativeMethod = "ForwardDifference",
+                    maxIterations = 50, solveMode = "Solve", exitMode = "SaveAndContinue", reportStyle = "Normal", isDefault = true
+                };
+                registeredSolvers["PrecisionDC"] = new SolverConfig {
+                    name = "PrecisionDC", algorithm = "NewtonRaphson", derivativeMethod = "CentralDifference",
+                    maxIterations = 100, solveMode = "Solve", exitMode = "SaveAndContinue", reportStyle = "Normal", isDefault = true
+                };
+                registeredSolvers["BroydenDC"] = new SolverConfig {
+                    name = "BroydenDC", algorithm = "Broyden", derivativeMethod = "ForwardDifference",
+                    maxIterations = 75, solveMode = "Solve", exitMode = "SaveAndContinue", reportStyle = "Normal", isDefault = true
+                };
+            }
+        }
+
+        public static Dictionary<string, PropagatorConfig> GetAllPropagatorConfigs() {
+            InitDefaultPropagatorsAndSolvers();
+            return new Dictionary<string, PropagatorConfig>(registeredPropagators);
+        }
+
+        public static Dictionary<string, SolverConfig> GetAllSolverConfigs() {
+            InitDefaultPropagatorsAndSolvers();
+            return new Dictionary<string, SolverConfig>(registeredSolvers);
+        }
+
+        public static void AddOrUpdatePropagator(PropagatorConfig cfg) {
+            if (cfg == null || string.IsNullOrEmpty(cfg.name)) return;
+            InitDefaultPropagatorsAndSolvers();
+            registeredPropagators[cfg.name] = cfg;
+        }
+
+        public static bool DeletePropagator(string name) {
+            if (string.IsNullOrEmpty(name)) return false;
+            InitDefaultPropagatorsAndSolvers();
+            if (registeredPropagators.ContainsKey(name) && !registeredPropagators[name].isDefault) {
+                registeredPropagators.Remove(name);
+                return true;
+            }
+            return false;
+        }
+
+        public static void AddOrUpdateSolver(SolverConfig cfg) {
+            if (cfg == null || string.IsNullOrEmpty(cfg.name)) return;
+            InitDefaultPropagatorsAndSolvers();
+            registeredSolvers[cfg.name] = cfg;
+        }
+
+        public static bool DeleteSolver(string name) {
+            if (string.IsNullOrEmpty(name)) return false;
+            InitDefaultPropagatorsAndSolvers();
+            if (registeredSolvers.ContainsKey(name) && !registeredSolvers[name].isDefault) {
+                registeredSolvers.Remove(name);
+                return true;
+            }
+            return false;
         }
 
     }

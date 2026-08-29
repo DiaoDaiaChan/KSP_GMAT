@@ -24,12 +24,13 @@ def main():
     parser = argparse.ArgumentParser(description="GMAT CLI One-Shot Runner")
     curr_dir = os.path.dirname(os.path.abspath(__file__))
     def_out_dir = os.path.abspath(os.path.join(curr_dir, "..", "..", "output"))
-    parser.add_argument("--action", default="solve", choices=["solve", "sync", "compare", "render", "import"], help="Action to execute")
+    parser.add_argument("--action", default="solve", choices=["solve", "sync", "compare", "render", "import", "metadata", "prop_metadata", "solver_metadata"], help="Action to execute")
     parser.add_argument("--input", default=os.path.join(def_out_dir, "mission_input.json"), help="Path to input JSON")
     parser.add_argument("--output", default=os.path.join(def_out_dir, "mission_result.json"), help="Path to output JSON")
     args = parser.parse_args()
 
-    if not os.path.exists(args.input):
+    is_meta_action = args.action in ("metadata", "prop_metadata", "solver_metadata")
+    if not is_meta_action and not os.path.exists(args.input):
         err = {"success": False, "error": f"Input file not found: {args.input}"}
         os.makedirs(os.path.dirname(args.output), exist_ok=True)
         with open(args.output, "w", encoding="utf-8") as f:
@@ -38,10 +39,24 @@ def main():
         sys.exit(1)
 
     try:
-        with open(args.input, "r", encoding="utf-8-sig") as f:
-            req_data = json.load(f)
+        req_data = {}
+        if os.path.exists(args.input):
+            with open(args.input, "r", encoding="utf-8-sig") as f:
+                req_data = json.load(f)
 
-        if args.action == "sync":
+        if args.action == "prop_metadata":
+            res = gmat_engine.get_propagator_api_metadata()
+        elif args.action == "solver_metadata":
+            res = gmat_engine.get_solver_api_metadata()
+        elif args.action == "metadata":
+            p_meta = gmat_engine.get_propagator_api_metadata()
+            s_meta = gmat_engine.get_solver_api_metadata()
+            res = {
+                "success": True,
+                "propagator_metadata": p_meta,
+                "solver_metadata": s_meta
+            }
+        elif args.action == "sync":
             vessel_state = req_data.get("vessel_state", {})
             nodes = req_data.get("nodes", [])
             principia_comparator.update_principia_state(vessel_state, nodes)

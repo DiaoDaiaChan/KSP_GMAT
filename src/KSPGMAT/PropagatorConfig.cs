@@ -12,6 +12,7 @@ namespace KSPGMAT {
         public double maxStep = 2700.0;
         public int maxStepAttempts = 50;
         public bool stopIfAccuracyIsViolated = false;
+        public bool isDefault = false;
         public double errorThreshold = 0.0;
         public double smallestInterval = 0.0;
         public double lowerError = 0.0;

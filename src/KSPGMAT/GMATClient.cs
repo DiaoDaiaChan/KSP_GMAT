@@ -505,10 +505,25 @@ namespace KSPGMAT {
                     }
                     sb.Append("]");
 
-                    if (propagatorConfigs != null && propagatorConfigs.Count > 0) {
+                    // Propagator Configs from Registry
+                    var pConfigs = (propagatorConfigs != null && propagatorConfigs.Count > 0) ? propagatorConfigs : GMATParameterRegistry.GetAllPropagatorConfigs();
+                    if (pConfigs != null && pConfigs.Count > 0) {
                         sb.Append(",\"propagator_configs\": {");
                         bool first = true;
-                        foreach (var kv in propagatorConfigs) {
+                        foreach (var kv in pConfigs) {
+                            if (!first) sb.Append(",");
+                            sb.Append($"\"{kv.Key}\": {kv.Value.ToJson()}");
+                            first = false;
+                        }
+                        sb.Append("}");
+                    }
+
+                    // Solver / DifferentialCorrector Configs from Registry
+                    var solverConfigs = GMATParameterRegistry.GetAllSolverConfigs();
+                    if (solverConfigs != null && solverConfigs.Count > 0) {
+                        sb.Append(",\"solver_configs\": {");
+                        bool first = true;
+                        foreach (var kv in solverConfigs) {
                             if (!first) sb.Append(",");
                             sb.Append($"\"{kv.Key}\": {kv.Value.ToJson()}");
                             first = false;
