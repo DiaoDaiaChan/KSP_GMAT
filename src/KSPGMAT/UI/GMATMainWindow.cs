@@ -2097,7 +2097,7 @@ namespace KSPGMAT.UI {
             }
 
             // =========================================================================
-            // 4. IMPULSIVE BURN / MANEUVER (WITH TANK & THRUSTER BINDING)
+            // 4. IMPULSIVE BURN / MANEUVER (WITH VISUAL TANK & ENGINE SELECTOR & SYNC)
             // =========================================================================
             else if (step.type == "ImpulsiveBurn" || step.type == "Maneuver") {
                 Vessel v = FlightGlobals.ActiveVessel;
@@ -2105,22 +2105,27 @@ namespace KSPGMAT.UI {
                 var allEngines = ROEngineInterop.ScanVesselEngines(v);
 
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("<color=#38bdf8><b>机动对象 (Burn Object):</b></color>", labelValueStyle, GUILayout.Width(155));
-                step.burn_name = GUILayout.TextField(string.IsNullOrEmpty(step.burn_name) ? "LOI" : step.burn_name, GUILayout.Width(90), GUILayout.Height(20));
+                GUILayout.Label("<color=#38bdf8><b>脉冲机动配置 (Impulsive Maneuver):</b></color>", labelValueStyle, GUILayout.Width(170));
+                step.burn_name = GUILayout.TextField(string.IsNullOrEmpty(step.burn_name) ? "ImpulsiveBurn" : step.burn_name, GUILayout.Width(110), GUILayout.Height(20));
 
-                GUILayout.Label("<color=#94a3b8>参考系:</color>", labelValueStyle, GUILayout.Width(45));
-                step.burn_axes = GUILayout.TextField(string.IsNullOrEmpty(step.burn_axes) ? "VNB" : step.burn_axes, GUILayout.Width(50), GUILayout.Height(20));
+                GUILayout.Label("<color=#94a3b8>坐标轴:</color>", labelValueStyle, GUILayout.Width(45));
+                step.burn_axes = GUILayout.TextField(string.IsNullOrEmpty(step.burn_axes) ? "VNB" : step.burn_axes, GUILayout.Width(45), GUILayout.Height(20));
 
-                GUILayout.Label("<color=#94a3b8>中心天体:</color>", labelValueStyle, GUILayout.Width(55));
-                step.burn_origin = GUILayout.TextField(string.IsNullOrEmpty(step.burn_origin) ? "Luna" : step.burn_origin, GUILayout.Width(60), GUILayout.Height(20));
+                GUILayout.Label("<color=#94a3b8>参考天体:</color>", labelValueStyle, GUILayout.Width(60));
+                step.burn_origin = GUILayout.TextField(string.IsNullOrEmpty(step.burn_origin) ? "Earth" : step.burn_origin, GUILayout.Width(65), GUILayout.Height(20));
 
                 GUILayout.FlexibleSpace();
+                if (GUILayout.Button("🔄 重新同步飞船硬件", secondaryButtonStyle, GUILayout.Width(130), GUILayout.Height(20))) {
+                    allTanks = ROEngineInterop.ScanVesselTanks(v);
+                    allEngines = ROEngineInterop.ScanVesselEngines(v);
+                    ScreenMessages.PostScreenMessage("✅ 已实时同步当前飞船发动机与储罐！", 2.5f, ScreenMessageStyle.UPPER_CENTER);
+                }
                 GUILayout.EndHorizontal();
 
                 // Delta-V Components Row
                 GUILayout.Space(2);
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("切向 ΔV_V (m/s):", labelValueStyle, GUILayout.Width(100));
+                GUILayout.Label("切向 ΔV_V (m/s):", labelValueStyle, GUILayout.Width(95));
                 string sV = GUILayout.TextField(step.dv_v.ToString("F2"), GUILayout.Width(65));
                 double.TryParse(sV, out step.dv_v);
 
@@ -2137,61 +2142,65 @@ namespace KSPGMAT.UI {
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
 
-                // Tank & Thruster Hardware Binding Row
+                // Hardware Binding Section
                 GUILayout.Space(3);
                 GUILayout.BeginVertical(nestedCardBoxStyle);
-                GUILayout.BeginHorizontal();
-                GUILayout.Label("<b>⛽ 绑定燃料罐:</b>", labelValueStyle, GUILayout.Width(85));
-                if (allTanks.Count > 0) {
-                    for (int tk = 0; tk < Math.Min(4, allTanks.Count); tk++) {
-                        var tnk = allTanks[tk];
-                        string tkId = $"Tank_Stage{tnk.stageNumber}";
-                        bool isCurTank = (step.bound_tank == tkId) || (string.IsNullOrEmpty(step.bound_tank) && tk == 0);
-                        GUI.backgroundColor = isCurTank ? new Color(0.2f, 0.7f, 0.9f) : Color.white;
-                        if (GUILayout.Button($"Stage {tnk.stageNumber} ({tnk.fuelMassKg:F0}kg)", secondaryButtonStyle, GUILayout.Height(18))) {
-                            step.bound_tank = tkId;
-                        }
-                        GUI.backgroundColor = Color.white;
-                    }
-                } else {
-                    step.bound_tank = GUILayout.TextField(string.IsNullOrEmpty(step.bound_tank) ? "MainTank" : step.bound_tank, GUILayout.Width(100));
-                }
-                GUILayout.FlexibleSpace();
-                GUILayout.EndHorizontal();
 
-                GUILayout.Space(2);
+                // Engine Selector Row
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("<b>🚀 绑定推进器:</b>", labelValueStyle, GUILayout.Width(85));
+                GUILayout.Label("<b>🚀 点火发动机:</b>", labelValueStyle, GUILayout.Width(90));
                 if (allEngines.Count > 0) {
-                    for (int eg = 0; eg < Math.Min(3, allEngines.Count); eg++) {
+                    for (int eg = 0; eg < allEngines.Count; eg++) {
                         var eng = allEngines[eg];
                         string engId = GMATParameterRegistry.SanitizeGmatIdentifier(eng.title, "Engine");
                         bool isCurEng = (step.bound_thruster == engId) || (string.IsNullOrEmpty(step.bound_thruster) && eg == 0);
-                        GUI.backgroundColor = isCurEng ? new Color(0.2f, 0.8f, 0.5f) : Color.white;
-                        if (GUILayout.Button($"{eng.title} (Isp: {eng.ispVac:F0}s)", secondaryButtonStyle, GUILayout.Height(18))) {
+                        if (GUILayout.Button($"🚀 {eng.title} ({eng.thrustKN:F0}kN / {eng.ispVac:F0}s)", isCurEng ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
                             step.bound_thruster = engId;
                             step.burn_isp = eng.ispVac;
                             step.burn_decrement_mass = true;
                         }
-                        GUI.backgroundColor = Color.white;
                     }
                 } else {
-                    step.bound_thruster = GUILayout.TextField(string.IsNullOrEmpty(step.bound_thruster) ? "MainEngine" : step.bound_thruster, GUILayout.Width(100));
+                    step.bound_thruster = GUILayout.TextField(string.IsNullOrEmpty(step.bound_thruster) ? "MainEngine" : step.bound_thruster, GUILayout.Width(120));
                 }
-
-                step.burn_decrement_mass = GUILayout.Toggle(step.burn_decrement_mass, " 扣减质量", GUILayout.Width(80));
-                GUILayout.Label("比冲 Isp:", labelValueStyle, GUILayout.Width(55));
-                double curIsp = (step.burn_isp <= 0) ? 316.0 : step.burn_isp;
-                string sIsp = GUILayout.TextField(curIsp.ToString("F1"), GUILayout.Width(50));
-                if (double.TryParse(sIsp, out curIsp)) step.burn_isp = curIsp;
-
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
+
+                // Tank Selector Row
+                GUILayout.Space(2);
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("<b>⛽ 供油储罐:</b>", labelValueStyle, GUILayout.Width(90));
+                if (allTanks.Count > 0) {
+                    for (int tk = 0; tk < allTanks.Count; tk++) {
+                        var tnk = allTanks[tk];
+                        string tkId = $"Tank_Stage{tnk.stageNumber}";
+                        bool isCurTank = (step.bound_tank == tkId) || (string.IsNullOrEmpty(step.bound_tank) && tk == 0);
+                        if (GUILayout.Button($"⛽ Stage {tnk.stageNumber} ({tnk.fuelMassKg:F0}kg 燃料)", isCurTank ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
+                            step.bound_tank = tkId;
+                        }
+                    }
+                } else {
+                    step.bound_tank = GUILayout.TextField(string.IsNullOrEmpty(step.bound_tank) ? "MainTank" : step.bound_tank, GUILayout.Width(120));
+                }
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+
+                // Isp & Mass Decrement Row
+                GUILayout.Space(2);
+                GUILayout.BeginHorizontal();
+                step.burn_decrement_mass = GUILayout.Toggle(step.burn_decrement_mass, " 扣减消耗燃料质量", GUILayout.Width(140));
+                GUILayout.Label("比冲 Isp (s):", labelValueStyle, GUILayout.Width(80));
+                double curIsp = (step.burn_isp <= 0) ? 316.0 : step.burn_isp;
+                string sIsp = GUILayout.TextField(curIsp.ToString("F1"), GUILayout.Width(60));
+                if (double.TryParse(sIsp, out curIsp)) step.burn_isp = curIsp;
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+
                 GUILayout.EndVertical();
             }
 
             // =========================================================================
-            // 5. FINITE BURN STEP CARD (WITH MULTI-THRUSTER & TANK BINDING)
+            // 5. FINITE BURN STEP CARD (WITH VISUAL TANK & ENGINE SELECTOR & SYNC)
             // =========================================================================
             else if (step.type == "FiniteBurn") {
                 Vessel v = FlightGlobals.ActiveVessel;
@@ -2203,52 +2212,78 @@ namespace KSPGMAT.UI {
 
                 step.burn_use_vary_var = GUILayout.Toggle(step.burn_use_vary_var, " 使用 Vary 变量控制时长", GUILayout.Width(170));
                 if (step.burn_use_vary_var) {
-                    GUILayout.Label("变量名:", labelValueStyle, GUILayout.Width(45));
-                    step.burn_vary_var_name = GUILayout.TextField(string.IsNullOrEmpty(step.burn_vary_var_name) ? "burntime" : step.burn_vary_var_name, GUILayout.Width(80));
+                    GUILayout.Label("变量名:", labelValueStyle, GUILayout.Width(50));
+                    step.burn_vary_var_name = GUILayout.TextField(string.IsNullOrEmpty(step.burn_vary_var_name) ? "burntime" : step.burn_vary_var_name, GUILayout.Width(85));
                 } else {
                     GUILayout.Label("固定时长 (s):", labelValueStyle, GUILayout.Width(80));
-                    string sDur = GUILayout.TextField(step.duration.ToString("F1"), GUILayout.Width(60));
+                    string sDur = GUILayout.TextField(step.duration.ToString("F1"), GUILayout.Width(65));
                     double.TryParse(sDur, out step.duration);
                 }
+
                 GUILayout.FlexibleSpace();
+                if (GUILayout.Button("🔄 重新同步飞船硬件", secondaryButtonStyle, GUILayout.Width(130), GUILayout.Height(20))) {
+                    allEngines = ROEngineInterop.ScanVesselEngines(v);
+                    allTanks = ROEngineInterop.ScanVesselTanks(v);
+                    ScreenMessages.PostScreenMessage("✅ 已实时同步当前飞船发动机与储罐！", 2.5f, ScreenMessageStyle.UPPER_CENTER);
+                }
                 GUILayout.EndHorizontal();
 
-                // Thruster & Tank Selection Row
-                GUILayout.Space(2);
+                // Thruster & Tank Selection Box
+                GUILayout.Space(3);
                 GUILayout.BeginVertical(nestedCardBoxStyle);
+
+                // Engine Selector Row
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("<b>🚀 点火发动机:</b>", labelValueStyle, GUILayout.Width(85));
+                GUILayout.Label("<b>🚀 点火发动机:</b>", labelValueStyle, GUILayout.Width(90));
                 if (allEngines.Count > 0) {
-                    for (int eg = 0; eg < Math.Min(3, allEngines.Count); eg++) {
+                    for (int eg = 0; eg < allEngines.Count; eg++) {
                         var eng = allEngines[eg];
                         string engId = GMATParameterRegistry.SanitizeGmatIdentifier(eng.title, "Engine");
                         bool isCurEng = (step.bound_thruster == engId) || (string.IsNullOrEmpty(step.bound_thruster) && eg == 0);
-                        GUI.backgroundColor = isCurEng ? new Color(0.2f, 0.8f, 0.5f) : Color.white;
-                        if (GUILayout.Button($"{eng.title} ({eng.thrustKN:F0}kN / {eng.ispVac:F0}s)", secondaryButtonStyle, GUILayout.Height(18))) {
+                        if (GUILayout.Button($"🚀 {eng.title} ({eng.thrustKN:F0}kN / {eng.ispVac:F0}s)", isCurEng ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
                             step.bound_thruster = engId;
+                            step.burn_isp = eng.ispVac;
                         }
-                        GUI.backgroundColor = Color.white;
                     }
                 } else {
-                    step.bound_thruster = GUILayout.TextField(string.IsNullOrEmpty(step.bound_thruster) ? "MainEngine" : step.bound_thruster, GUILayout.Width(100));
+                    step.bound_thruster = GUILayout.TextField(string.IsNullOrEmpty(step.bound_thruster) ? "MainEngine" : step.bound_thruster, GUILayout.Width(120));
                 }
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
 
+                // Tank Selector Row
                 GUILayout.Space(2);
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("点火朝向 (Direction):", labelValueStyle, GUILayout.Width(125));
-                string[] bDirs = new string[] { "Prograde", "Retrograde", "Normal", "AntiNormal" };
-                for (int d = 0; d < bDirs.Length; d++) {
-                    bool isDirCur = (step.burn_direction == bDirs[d]);
-                    GUI.backgroundColor = isDirCur ? new Color(0.2f, 0.8f, 0.5f) : Color.white;
-                    if (GUILayout.Button(bDirs[d], secondaryButtonStyle, GUILayout.Height(18))) {
-                        step.burn_direction = bDirs[d];
+                GUILayout.Label("<b>⛽ 供油储罐:</b>", labelValueStyle, GUILayout.Width(90));
+                if (allTanks.Count > 0) {
+                    for (int tk = 0; tk < allTanks.Count; tk++) {
+                        var tnk = allTanks[tk];
+                        string tkId = $"Tank_Stage{tnk.stageNumber}";
+                        bool isCurTank = (step.bound_tank == tkId) || (string.IsNullOrEmpty(step.bound_tank) && tk == 0);
+                        if (GUILayout.Button($"⛽ Stage {tnk.stageNumber} ({tnk.fuelMassKg:F0}kg 燃料)", isCurTank ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
+                            step.bound_tank = tkId;
+                        }
                     }
-                    GUI.backgroundColor = Color.white;
+                } else {
+                    step.bound_tank = GUILayout.TextField(string.IsNullOrEmpty(step.bound_tank) ? "MainTank" : step.bound_tank, GUILayout.Width(120));
                 }
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
+
+                // Direction Row
+                GUILayout.Space(2);
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("点火朝向 (Direction):", labelValueStyle, GUILayout.Width(130));
+                string[] bDirs = new string[] { "Prograde", "Retrograde", "Normal", "AntiNormal" };
+                for (int d = 0; d < bDirs.Length; d++) {
+                    bool isDirCur = (step.burn_direction == bDirs[d]);
+                    if (GUILayout.Button(bDirs[d], isDirCur ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
+                        step.burn_direction = bDirs[d];
+                    }
+                }
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+
                 GUILayout.EndVertical();
             }
 
