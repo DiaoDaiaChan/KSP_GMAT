@@ -1414,6 +1414,25 @@ namespace KSPGMAT.UI {
                     // BEGIN PROMINENT OUTER GROUP BOUNDING BOX (Enclosing entire Target group)
                     GUILayout.BeginVertical(targetGroupBoxStyle);
 
+                    // Count child Vary and Achieve steps inside this Target block
+                    int varyCount = 0;
+                    int achieveCount = 0;
+                    for (int ch = i + 1; ch < missionSequence.Count; ch++) {
+                        if (missionSequence[ch].type == "EndTarget") break;
+                        if (missionSequence[ch].type == "Target") break;
+                        if (missionSequence[ch].type == "Vary") varyCount++;
+                        if (missionSequence[ch].type == "Achieve") achieveCount++;
+                    }
+
+                    // Check duplicate targeter name
+                    bool isDuplicateDcName = false;
+                    for (int ot = 0; ot < missionSequence.Count; ot++) {
+                        if (ot != i && missionSequence[ot].type == "Target" && missionSequence[ot].dc_name == step.dc_name) {
+                            isDuplicateDcName = true;
+                            break;
+                        }
+                    }
+
                     // Target Header Bar
                     GUILayout.BeginHorizontal();
 
@@ -1452,6 +1471,47 @@ namespace KSPGMAT.UI {
                         stepToDelete = i;
                     }
                     GUILayout.EndHorizontal();
+
+                    // Smart Targeter Diagnostics & 1-Click Auto-Fix Banners
+                    if (achieveCount > varyCount) {
+                        GUILayout.Space(3);
+                        GUILayout.BeginHorizontal(nestedCardBoxStyle);
+                        GUILayout.Label($"<color=#f43f5e><b>⚠️ 自由度不足:</b> 包含 {achieveCount} 个目标，但仅有 {varyCount} 个寻优变量！牛顿迭代需要 变量数 ≥ 目标数。</color>", labelValueStyle);
+                        if (GUILayout.Button("➕ 自动补齐法向偏转 Vary 变量", tabButtonActiveStyle, GUILayout.Height(20))) {
+                            string dc = string.IsNullOrEmpty(step.dc_name) ? "DefaultDC" : step.dc_name;
+                            missionSequence.Insert(i + 1, new MissionStep {
+                                type = "Vary",
+                                vary_variable = "Sat.GEO_Burn_Thruster.ThrustDirection2",
+                                vary_initial = -0.50,
+                                vary_lower = -1.0,
+                                vary_upper = 1.0,
+                                vary_max_step = 0.05,
+                                dc_name = dc,
+                                label = "Vary 法向偏转分量"
+                            });
+                            ScreenMessages.PostScreenMessage("✅ 已自动补齐法向推力偏转 Vary 寻优变量！", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                        }
+                        GUILayout.EndHorizontal();
+                    }
+
+                    if (isDuplicateDcName) {
+                        GUILayout.Space(2);
+                        GUILayout.BeginHorizontal(nestedCardBoxStyle);
+                        GUILayout.Label($"<color=#facc15><b>⚠️ 求解器重名:</b> 当前存在多个共享 '{step.dc_name}' 的求解组，可能导致导数矩阵冲突。</color>", labelValueStyle);
+                        if (GUILayout.Button("🔄 自动重命名为独立求解器", secondaryButtonStyle, GUILayout.Height(20))) {
+                            string newDc = $"DC_{i + 1}";
+                            step.dc_name = newDc;
+                            for (int ch = i + 1; ch < missionSequence.Count; ch++) {
+                                if (missionSequence[ch].type == "EndTarget") { missionSequence[ch].dc_name = newDc; break; }
+                                if (missionSequence[ch].type == "Target") break;
+                                if (missionSequence[ch].type == "Vary" || missionSequence[ch].type == "Achieve") {
+                                    missionSequence[ch].dc_name = newDc;
+                                }
+                            }
+                            ScreenMessages.PostScreenMessage($"✅ 已重命名为独立求解器: {newDc}", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                        }
+                        GUILayout.EndHorizontal();
+                    }
 
                     // Target Folded Summary Banner
                     if (step.is_collapsed) {
@@ -2679,6 +2739,8 @@ namespace KSPGMAT.UI {
                     GUILayout.Label($"<color=#34d399><b>🟢 单位推力矢量:</b></color> <color=#38bdf8>V = {uV:F3} (切向 {uV*100.0:F1}%)</color> | <color=#facc15>N = {uN:F3} (法向 {uN*100.0:F1}%)</color> | <color=#f472b6>B = {uB:F3} (径向 {uB*100.0:F1}%)</color>", labelValueStyle);
                     GUILayout.FlexibleSpace();
                     GUILayout.EndHorizontal();
+
+
 
                     GUILayout.EndVertical(); // Closes nested slider box
                 }
