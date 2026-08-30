@@ -2680,8 +2680,10 @@ namespace KSPGMAT.UI {
                     GUILayout.FlexibleSpace();
                     GUILayout.EndHorizontal();
 
-                    GUILayout.EndVertical();
+                    GUILayout.EndVertical(); // Closes nested slider box
                 }
+
+                GUILayout.EndVertical(); // Closes Thruster & Tank Selection Box (opened at line 2541)
             }
 
             // =========================================================================
