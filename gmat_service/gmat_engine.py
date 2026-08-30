@@ -1648,24 +1648,25 @@ def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None, 
                                 continue
             if not finite_rows:
                 raise RuntimeError("GMAT did not report finite-burn states")
-            last_burn_row = finite_rows[-1]
-            gm_start_time = last_burn_row[0]
-            dur = last_burn_row[1]
-            dv_thrust = last_burn_row[2]
-            dv_v = last_burn_row[3]
-            dv_n = last_burn_row[4]
-            dv_b = last_burn_row[5]
-            fuel_burned = last_burn_row[6]
-            orb_dv_mag = last_burn_row[7]
-            gravity_loss = last_burn_row[8]
-            gm_start_mass = last_burn_row[9]
-            gm_finish_mass = last_burn_row[10]
-            burn_x = last_burn_row[11] if len(last_burn_row) > 11 else 0.0
-            burn_y = last_burn_row[12] if len(last_burn_row) > 12 else 0.0
-            burn_z = last_burn_row[13] if len(last_burn_row) > 13 else 0.0
-            burn_vx = last_burn_row[14] if len(last_burn_row) > 14 else 0.0
-            burn_vy = last_burn_row[15] if len(last_burn_row) > 15 else 0.0
-            burn_vz = last_burn_row[16] if len(last_burn_row) > 16 else 0.0
+            # Correctly map each sequential FiniteBurn step to its own distinct row
+            cur_burn_row = finite_rows[finite_number] if finite_number < len(finite_rows) else finite_rows[-1]
+            gm_start_time = cur_burn_row[0]
+            dur = cur_burn_row[1]
+            dv_thrust = cur_burn_row[2]
+            dv_v = cur_burn_row[3]
+            dv_n = cur_burn_row[4]
+            dv_b = cur_burn_row[5]
+            fuel_burned = cur_burn_row[6]
+            orb_dv_mag = cur_burn_row[7]
+            gravity_loss = cur_burn_row[8]
+            gm_start_mass = cur_burn_row[9]
+            gm_finish_mass = cur_burn_row[10]
+            burn_x = cur_burn_row[11] if len(cur_burn_row) > 11 else 0.0
+            burn_y = cur_burn_row[12] if len(cur_burn_row) > 12 else 0.0
+            burn_z = cur_burn_row[13] if len(cur_burn_row) > 13 else 0.0
+            burn_vx = cur_burn_row[14] if len(cur_burn_row) > 14 else 0.0
+            burn_vy = cur_burn_row[15] if len(cur_burn_row) > 15 else 0.0
+            burn_vz = cur_burn_row[16] if len(cur_burn_row) > 16 else 0.0
 
             thrust_kn = float(craft_data.get("thrust") or craft_data.get("thrust_n") or 108100.0) / 1000.0
             isp = float(craft_data.get("isp") or craft_data.get("isp_s") or 465.0)

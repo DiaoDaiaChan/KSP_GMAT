@@ -2576,8 +2576,16 @@ namespace KSPGMAT.UI {
                 var allTanks = ROEngineInterop.ScanVesselTanks(v);
 
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("<color=#38bdf8><b>有限推力点火配置:</b></color>", labelValueStyle, GUILayout.Width(125));
+                GUILayout.Label("<color=#38bdf8><b>🔥 有限推力点火配置 (FiniteBurn):</b></color>", labelValueStyle, GUILayout.Width(190));
 
+                GUILayout.Label("点火对象名:", labelValueStyle, GUILayout.Width(75));
+                step.burn_name = GUILayout.TextField(string.IsNullOrEmpty(step.burn_name) ? $"Burn_{i + 1}" : step.burn_name, GUILayout.Width(95));
+
+                GUILayout.Label("参考系:", labelValueStyle, GUILayout.Width(48));
+                step.burn_coordinate_system = GUILayout.TextField(string.IsNullOrEmpty(step.burn_coordinate_system) ? "Local" : step.burn_coordinate_system, GUILayout.Width(60));
+                step.burn_axes = GUILayout.TextField(string.IsNullOrEmpty(step.burn_axes) ? "VNB" : step.burn_axes, GUILayout.Width(45));
+
+                GUILayout.Space(6);
                 step.burn_use_vary_var = GUILayout.Toggle(step.burn_use_vary_var, " 使用 Vary 变量控制时长", GUILayout.Width(170));
                 if (step.burn_use_vary_var) {
                     GUILayout.Label("变量名:", labelValueStyle, GUILayout.Width(50));

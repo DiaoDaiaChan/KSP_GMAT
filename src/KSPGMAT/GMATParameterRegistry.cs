@@ -1316,38 +1316,78 @@ namespace KSPGMAT {
                 string lhs = q.Substring(0, lastDotIdx).Trim();
                 string rhsSingle = q.Substring(lastDotIdx + 1).Trim().ToLowerInvariant();
 
-                // 1. LHS is a Spacecraft (e.g. "Sat.") -> Suggest Coordinate Systems, Bodies, & Properties!
+                // 1. LHS is a Spacecraft (e.g. "Sat.") -> Prioritize Attached Thrusters, Direct Properties & Active Body!
                 string matchedCraft = allCraft.Find(cr => cr.Equals(lhs, StringComparison.OrdinalIgnoreCase));
                 if (!string.IsNullOrEmpty(matchedCraft) || lhs.StartsWith("Sat", StringComparison.OrdinalIgnoreCase)) {
                     string cr = !string.IsNullOrEmpty(matchedCraft) ? matchedCraft : lhs;
+                    string actBody = (vessel != null && vessel.mainBody != null) ? MapBodyName(vessel.mainBody.name) : "Earth";
 
-                    // 1a. Coordinate Systems (as nested dot targets like Sat.EarthMoonRot.)
-                    for (int c = 0; c < allCoords.Count; c++) {
-                        string cs = allCoords[c];
-                        if (string.IsNullOrEmpty(rhsSingle) || cs.ToLowerInvariant().StartsWith(rhsSingle) || cs.ToLowerInvariant().Contains(rhsSingle)) {
-                            items.Add(new IntelliSenseItem($"{cr}.{cs}.", $"{cs}...", "[CoordSystem]", (I18n.Current == I18n.Lang.EN) ? $"{cs} coordinate frame (type dot to pick Z, X, Y...)" : $"{cs} 空间坐标系 (继续键入点号以选择 Z, X, Y 坐标分量)", IntelliSenseKind.CoordinateSystem));
+                    // 1a. TOP PRIORITY: Attached Thruster Hardware Steering & Properties (e.g. Sat.RL10..., Sat.GEO_Burn_Thruster...)
+                    var allEngines = ROEngineInterop.ScanVesselEngines(vessel);
+                    List<string> thNames = new List<string>();
+                    if (allEngines != null) {
+                        for (int e = 0; e < allEngines.Count; e++) {
+                            string sId = SanitizeGmatIdentifier(allEngines[e].title, "Engine");
+                            if (!thNames.Contains(sId)) thNames.Add(sId);
+                        }
+                    }
+                    thNames.Add("GTO_Burn_Thruster");
+                    thNames.Add("GEO_Burn_Thruster");
+                    thNames.Add("MainEngine");
+
+                    for (int th = 0; th < thNames.Count; th++) {
+                        string thName = thNames[th];
+                        string thLower = thName.ToLowerInvariant();
+                        if (string.IsNullOrEmpty(rhsSingle) || thLower.StartsWith(rhsSingle) || thLower.Contains(rhsSingle)) {
+                            // Direct full steering vector paths
+                            items.Add(new IntelliSenseItem($"{cr}.{thName}.ThrustDirection2", $"{thName}.ThrustDirection2", "[-1~1]", $"{thName}: 发动机法向推力偏转分量 (消除倾角打靶变量)", IntelliSenseKind.Parameter, -0.50, 0.05));
+                            items.Add(new IntelliSenseItem($"{cr}.{thName}.ThrustDirection1", $"{thName}.ThrustDirection1", "[0~1]", $"{thName}: 发动机切向推力偏转分量 (顺行加速)", IntelliSenseKind.Parameter, 0.65, 0.05));
+                            items.Add(new IntelliSenseItem($"{cr}.{thName}.ThrustDirection3", $"{thName}.ThrustDirection3", "[-1~1]", $"{thName}: 发动机径向推力偏转分量 (高度微调)", IntelliSenseKind.Parameter, 0.0, 0.05));
+                            items.Add(new IntelliSenseItem($"{cr}.{thName}.", $"{thName}...", "[Thruster]", $"{thName} 硬件推力器对象", IntelliSenseKind.Spacecraft));
                         }
                     }
 
-                    // 1b. Celestial Bodies (as nested dot targets like Sat.Earth.)
-                    for (int b = 0; b < allBodies.Count; b++) {
-                        string bd = allBodies[b];
-                        if (string.IsNullOrEmpty(rhsSingle) || bd.ToLowerInvariant().StartsWith(rhsSingle) || bd.ToLowerInvariant().Contains(rhsSingle)) {
-                            items.Add(new IntelliSenseItem($"{cr}.{bd}.", $"{bd}...", "[Body]", (I18n.Current == I18n.Lang.EN) ? $"Orbital elements relative to {bd} (type dot to pick SMA, ECC...)" : $"相对 {bd} 的轨道根数 (继续键入点号以选择 SMA, ECC, 高度...)", IntelliSenseKind.CelestialBody));
+                    // 1b. TOP PRIORITY: Active Central Body Direct Orbit Parameters (e.g. Sat.Earth.SMA, Sat.Earth.Altitude)
+                    string[] coreOrbParams = new string[] { "SMA", "Altitude", "Apoapsis", "Periapsis", "ECC", "INC", "RAAN", "AOP", "TA", "RMAG", "VMAG", "Energy" };
+                    string[] coreOrbUnits = new string[] { "[Km]", "[Km]", "[Event]", "[Event]", "[Unitless]", "[Deg]", "[Deg]", "[Deg]", "[Deg]", "[Km]", "[Km/s]", "[Km²/s²]" };
+                    string[] coreOrbDocsZh = new string[] { "轨道半长轴", "海平面高度", "远地点极值点", "近地点极值点", "轨道偏心率", "轨道倾角", "升交点赤经", "近地点幅角", "真近点角", "地心距离模长", "空间速度模长", "比轨道能量" };
+                    double[] coreOrbDefs = new double[] { 42164.14, 35786.0, 0.0, 0.0, 0.001, 0.0, 0.0, 180.0, 0.0, 42164.0, 3.07, -4.7 };
+
+                    for (int op = 0; op < coreOrbParams.Length; op++) {
+                        string opName = coreOrbParams[op];
+                        if (string.IsNullOrEmpty(rhsSingle) || opName.ToLowerInvariant().StartsWith(rhsSingle) || rhsSingle.Equals(actBody.ToLowerInvariant())) {
+                            items.Add(new IntelliSenseItem($"{cr}.{actBody}.{opName}", $"{actBody}.{opName}", coreOrbUnits[op], $"{actBody} {coreOrbDocsZh[op]}", IntelliSenseKind.Parameter, coreOrbDefs[op], 0.1));
                         }
                     }
 
-                    // 1c. Spacecraft Hardware & State Properties
-                    string[] craftDirectProps = new string[] { "TotalMass", "DryMass", "FuelMass", "ElapsedSecs", "A1ModJulian", "Z", "X", "Y" };
-                    string[] craftUnits = new string[] { "[kg]", "[kg]", "[kg]", "[s]", "[Day]", "[Km]", "[Km]", "[Km]" };
-                    string[] craftDocsZh = new string[] { "航天器当前总湿重", "航天器结构干重", "可用推进剂质量", "任务运行秒数", "A1修正儒略日历元", "地心惯性系Z坐标", "地心惯性系X坐标", "地心惯性系Y坐标" };
-                    string[] craftDocsEn = new string[] { "Total wet mass", "Dry structural mass", "Usable propellant mass", "Elapsed mission duration", "A1 Modified Julian Date", "Inertial Z coordinate", "Inertial X coordinate", "Inertial Y coordinate" };
+                    // 1c. Coordinate System Cartesian Parameters (e.g. Sat.EarthMJ2000Eq.VZ)
+                    items.Add(new IntelliSenseItem($"{cr}.EarthMJ2000Eq.VZ", "EarthMJ2000Eq.VZ", "[Km/s]", "J2000赤道惯性系法向/垂向速度 (消除倾角目标 VZ=0)", IntelliSenseKind.Parameter, 0.0, 0.001));
+                    items.Add(new IntelliSenseItem($"{cr}.EarthMJ2000Eq.Z", "EarthMJ2000Eq.Z", "[Km]", "J2000赤道面垂直位置 (赤道交点 Z=0)", IntelliSenseKind.Parameter, 0.0, 0.01));
+
+                    // 1d. Spacecraft Direct Physical Properties (Mass, Time)
+                    string[] craftDirectProps = new string[] { "TotalMass", "DryMass", "FuelMass", "ElapsedSecs", "A1ModJulian" };
+                    string[] craftUnits = new string[] { "[kg]", "[kg]", "[kg]", "[s]", "[Day]" };
+                    string[] craftDocsZh = new string[] { "航天器当前总湿重", "航天器结构干重", "可用推进剂质量", "任务运行秒数", "A1修正儒略日历元" };
 
                     for (int p = 0; p < craftDirectProps.Length; p++) {
                         string cp = craftDirectProps[p];
                         if (string.IsNullOrEmpty(rhsSingle) || cp.ToLowerInvariant().StartsWith(rhsSingle)) {
-                            string doc = (I18n.Current == I18n.Lang.EN) ? craftDocsEn[p] : craftDocsZh[p];
-                            items.Add(new IntelliSenseItem($"{cr}.{cp}", cp, craftUnits[p], $"{cr}: {doc}", IntelliSenseKind.Spacecraft, 0.0, 0.1));
+                            items.Add(new IntelliSenseItem($"{cr}.{cp}", cp, craftUnits[p], $"{cr}: {craftDocsZh[p]}", IntelliSenseKind.Spacecraft, 0.0, 0.1));
+                        }
+                    }
+
+                    // 1e. Main Celestial Bodies (Sorted: Active Body, Earth, Luna, Sun, Jupiter...)
+                    List<string> sortedBodies = new List<string> { actBody };
+                    if (!sortedBodies.Contains("Earth")) sortedBodies.Add("Earth");
+                    if (!sortedBodies.Contains("Luna")) sortedBodies.Add("Luna");
+                    if (!sortedBodies.Contains("Sun")) sortedBodies.Add("Sun");
+                    if (!sortedBodies.Contains("Mars")) sortedBodies.Add("Mars");
+                    if (!sortedBodies.Contains("Jupiter")) sortedBodies.Add("Jupiter");
+
+                    for (int b = 0; b < sortedBodies.Count; b++) {
+                        string bd = sortedBodies[b];
+                        if (string.IsNullOrEmpty(rhsSingle) || bd.ToLowerInvariant().StartsWith(rhsSingle)) {
+                            items.Add(new IntelliSenseItem($"{cr}.{bd}.", $"{bd}...", "[Body]", $"相对 {bd} 的轨道根数 (继续键入点号以选择 SMA, ECC, 高度...)", IntelliSenseKind.CelestialBody));
                         }
                     }
 
