@@ -194,17 +194,6 @@ namespace KSPGMAT.UI {
         private GUIStyle stepBoxReportStyle;
         private GUIStyle stepBoxEndTargetStyle;
 
-        // Multi-Color Target Group Box Styles & Accent Colors
-        private GUIStyle[] targetGroupBoxStyles;
-        private static readonly string[] TargetGroupAccentColors = new string[] {
-            "#38bdf8", // Group 1: Cyan / Ocean Blue
-            "#c084fc", // Group 2: Neon Violet / Purple
-            "#34d399", // Group 3: Emerald / Mint Green
-            "#fbbf24", // Group 4: Bright Gold / Amber
-            "#f472b6", // Group 5: Rose / Pink
-            "#2dd4bf"  // Group 6: Turquoise / Teal
-        };
-
         private bool stylesInitialized = false;
 
         void Awake() {
@@ -430,15 +419,15 @@ namespace KSPGMAT.UI {
             Texture2D inputBg = MakeBoxTex(8, 8, new Color(0.055f, 0.075f, 0.115f, 0.95f), new Color(0.16f, 0.22f, 0.30f, 1.0f), 1);
             Texture2D inputFocusBg = MakeBoxTex(8, 8, new Color(0.075f, 0.105f, 0.155f, 0.98f), new Color(0.14f, 0.52f, 0.78f, 1.0f), 1);
 
-            // Step Pill Backgrounds
-            Texture2D pillVaryBg = MakeBoxTex(8, 8, new Color(0.05f, 0.25f, 0.35f, 0.9f), new Color(0.15f, 0.65f, 0.85f, 1.0f), 1);
-            Texture2D pillAchieveBg = MakeBoxTex(8, 8, new Color(0.05f, 0.28f, 0.20f, 0.9f), new Color(0.16f, 0.72f, 0.45f, 1.0f), 1);
-            Texture2D pillBurnBg = MakeBoxTex(8, 8, new Color(0.35f, 0.16f, 0.05f, 0.9f), new Color(0.92f, 0.48f, 0.15f, 1.0f), 1);
-            Texture2D pillImpulseBg = MakeBoxTex(8, 8, new Color(0.25f, 0.10f, 0.32f, 0.9f), new Color(0.72f, 0.32f, 0.88f, 1.0f), 1);
-            Texture2D pillPropBg = MakeBoxTex(8, 8, new Color(0.35f, 0.08f, 0.12f, 0.92f), new Color(0.92f, 0.25f, 0.32f, 1.0f), 1);
-            Texture2D pillStageBg = MakeBoxTex(8, 8, new Color(0.32f, 0.22f, 0.05f, 0.9f), new Color(0.88f, 0.65f, 0.15f, 1.0f), 1);
-            Texture2D pillTargetBg = MakeBoxTex(8, 8, new Color(0.04f, 0.20f, 0.36f, 0.95f), new Color(0.18f, 0.62f, 0.95f, 1.0f), 1);
-            Texture2D pillEndTargetBg = MakeBoxTex(8, 8, new Color(0.12f, 0.16f, 0.22f, 0.9f), new Color(0.35f, 0.42f, 0.52f, 1.0f), 1);
+            // Refined Balanced Step Pill Backgrounds (Soft, low-fatigue tones)
+            Texture2D pillVaryBg = MakeBoxTex(8, 8, new Color(0.05f, 0.16f, 0.26f, 0.95f), new Color(0.12f, 0.42f, 0.65f, 0.9f), 1);
+            Texture2D pillAchieveBg = MakeBoxTex(8, 8, new Color(0.05f, 0.18f, 0.12f, 0.95f), new Color(0.12f, 0.48f, 0.32f, 0.9f), 1);
+            Texture2D pillBurnBg = MakeBoxTex(8, 8, new Color(0.24f, 0.12f, 0.05f, 0.95f), new Color(0.65f, 0.35f, 0.12f, 0.9f), 1);
+            Texture2D pillImpulseBg = MakeBoxTex(8, 8, new Color(0.18f, 0.08f, 0.24f, 0.95f), new Color(0.50f, 0.22f, 0.65f, 0.9f), 1);
+            Texture2D pillPropBg = MakeBoxTex(8, 8, new Color(0.24f, 0.08f, 0.10f, 0.95f), new Color(0.62f, 0.18f, 0.24f, 0.9f), 1);
+            Texture2D pillStageBg = MakeBoxTex(8, 8, new Color(0.22f, 0.16f, 0.05f, 0.95f), new Color(0.60f, 0.45f, 0.12f, 0.9f), 1);
+            Texture2D pillTargetBg = MakeBoxTex(8, 8, new Color(0.06f, 0.14f, 0.24f, 0.95f), new Color(0.18f, 0.40f, 0.65f, 0.9f), 1);
+            Texture2D pillEndTargetBg = MakeBoxTex(8, 8, new Color(0.08f, 0.11f, 0.16f, 0.95f), new Color(0.20f, 0.28f, 0.38f, 0.9f), 1);
 
             // 1. Window Style (Crucial: set onNormal, onFocused, focused, active to prevent Unity white glow)
             windowStyle = new GUIStyle(GUI.skin.window);
@@ -629,10 +618,10 @@ namespace KSPGMAT.UI {
             tooltipStyle.padding = new RectOffset(10, 10, 8, 8);
             tooltipStyle.alignment = TextAnchor.UpperLeft;
 
-            // 7. Modern Step Pill Badges
+            // 7. Modern Step Pill Badges (Balanced, readable chips)
             pillPropStyle = new GUIStyle(GUI.skin.box);
             pillPropStyle.normal.background = pillPropBg;
-            pillPropStyle.normal.textColor = new Color(1.0f, 0.45f, 0.50f);
+            pillPropStyle.normal.textColor = new Color(0.96f, 0.60f, 0.65f);
             pillPropStyle.fontStyle = FontStyle.Bold;
             pillPropStyle.fontSize = 10;
             pillPropStyle.padding = new RectOffset(6, 6, 2, 2);
@@ -640,7 +629,7 @@ namespace KSPGMAT.UI {
 
             pillVaryStyle = new GUIStyle(GUI.skin.box);
             pillVaryStyle.normal.background = pillVaryBg;
-            pillVaryStyle.normal.textColor = new Color(0.20f, 0.85f, 0.95f);
+            pillVaryStyle.normal.textColor = new Color(0.55f, 0.82f, 0.98f);
             pillVaryStyle.fontStyle = FontStyle.Bold;
             pillVaryStyle.fontSize = 10;
             pillVaryStyle.padding = new RectOffset(6, 6, 2, 2);
@@ -648,7 +637,7 @@ namespace KSPGMAT.UI {
 
             pillAchieveStyle = new GUIStyle(GUI.skin.box);
             pillAchieveStyle.normal.background = pillAchieveBg;
-            pillAchieveStyle.normal.textColor = new Color(0.22f, 0.92f, 0.60f);
+            pillAchieveStyle.normal.textColor = new Color(0.50f, 0.90f, 0.70f);
             pillAchieveStyle.fontStyle = FontStyle.Bold;
             pillAchieveStyle.fontSize = 10;
             pillAchieveStyle.padding = new RectOffset(6, 6, 2, 2);
@@ -656,7 +645,7 @@ namespace KSPGMAT.UI {
 
             pillBurnStyle = new GUIStyle(GUI.skin.box);
             pillBurnStyle.normal.background = pillBurnBg;
-            pillBurnStyle.normal.textColor = new Color(1.0f, 0.65f, 0.28f);
+            pillBurnStyle.normal.textColor = new Color(0.98f, 0.75f, 0.50f);
             pillBurnStyle.fontStyle = FontStyle.Bold;
             pillBurnStyle.fontSize = 10;
             pillBurnStyle.padding = new RectOffset(6, 6, 2, 2);
@@ -664,7 +653,7 @@ namespace KSPGMAT.UI {
 
             pillImpulseStyle = new GUIStyle(GUI.skin.box);
             pillImpulseStyle.normal.background = pillImpulseBg;
-            pillImpulseStyle.normal.textColor = new Color(0.85f, 0.55f, 1.0f);
+            pillImpulseStyle.normal.textColor = new Color(0.85f, 0.70f, 0.98f);
             pillImpulseStyle.fontStyle = FontStyle.Bold;
             pillImpulseStyle.fontSize = 10;
             pillImpulseStyle.padding = new RectOffset(6, 6, 2, 2);
@@ -672,7 +661,7 @@ namespace KSPGMAT.UI {
 
             pillStageStyle = new GUIStyle(GUI.skin.box);
             pillStageStyle.normal.background = pillStageBg;
-            pillStageStyle.normal.textColor = new Color(1.0f, 0.82f, 0.35f);
+            pillStageStyle.normal.textColor = new Color(0.95f, 0.85f, 0.45f);
             pillStageStyle.fontStyle = FontStyle.Bold;
             pillStageStyle.fontSize = 10;
             pillStageStyle.padding = new RectOffset(6, 6, 2, 2);
@@ -680,7 +669,7 @@ namespace KSPGMAT.UI {
 
             pillTargetStyle = new GUIStyle(GUI.skin.box);
             pillTargetStyle.normal.background = pillTargetBg;
-            pillTargetStyle.normal.textColor = new Color(0.35f, 0.78f, 1.0f);
+            pillTargetStyle.normal.textColor = new Color(0.60f, 0.85f, 1.0f);
             pillTargetStyle.fontStyle = FontStyle.Bold;
             pillTargetStyle.fontSize = 10;
             pillTargetStyle.padding = new RectOffset(6, 6, 2, 2);
@@ -738,80 +727,30 @@ namespace KSPGMAT.UI {
             stepLabelInputStyle.alignment = TextAnchor.MiddleLeft;
             stepLabelInputStyle.padding = new RectOffset(6, 6, 2, 2);
 
-            // 9. Modern Colored Step Box Styles (Borders match Pill Badges)
-            stepBoxPropStyle = CreateStepBoxStyle(new Color(0.075f, 0.038f, 0.045f, 0.95f), new Color(0.92f, 0.22f, 0.28f, 0.85f)); // Vibrant Red / Crimson
-            stepBoxVaryStyle = CreateStepBoxStyle(new Color(0.035f, 0.065f, 0.090f, 0.95f), new Color(0.12f, 0.68f, 0.85f, 0.85f));
-            stepBoxAchieveStyle = CreateStepBoxStyle(new Color(0.035f, 0.070f, 0.055f, 0.95f), new Color(0.15f, 0.75f, 0.48f, 0.85f));
-            stepBoxBurnStyle = CreateStepBoxStyle(new Color(0.075f, 0.045f, 0.030f, 0.95f), new Color(0.92f, 0.48f, 0.16f, 0.85f));
-            stepBoxImpulseStyle = CreateStepBoxStyle(new Color(0.065f, 0.038f, 0.080f, 0.95f), new Color(0.72f, 0.35f, 0.88f, 0.85f));
-            stepBoxStageStyle = CreateStepBoxStyle(new Color(0.070f, 0.058f, 0.030f, 0.95f), new Color(0.85f, 0.65f, 0.18f, 0.85f));
-            stepBoxReportStyle = CreateStepBoxStyle(new Color(0.040f, 0.052f, 0.075f, 0.95f), new Color(0.38f, 0.48f, 0.62f, 0.80f));
-            stepBoxEndTargetStyle = CreateStepBoxStyle(new Color(0.042f, 0.055f, 0.085f, 0.95f), new Color(0.30f, 0.45f, 0.68f, 0.80f));
+            // 9. Unified Clean Dark Slate Step Box Styles (No neon borders; cards share sleek cohesive look)
+            stepBoxPropStyle = nestedCardBoxStyle;
+            stepBoxVaryStyle = nestedCardBoxStyle;
+            stepBoxAchieveStyle = nestedCardBoxStyle;
+            stepBoxBurnStyle = nestedCardBoxStyle;
+            stepBoxImpulseStyle = nestedCardBoxStyle;
+            stepBoxStageStyle = nestedCardBoxStyle;
+            stepBoxReportStyle = nestedCardBoxStyle;
+            stepBoxEndTargetStyle = nestedCardBoxStyle;
 
-            // 10. Multi-Color Target Group Box Styles (Distinct colors per solver group)
-            targetGroupBoxStyles = new GUIStyle[6];
-            targetGroupBoxStyles[0] = CreateTargetGroupBoxStyle(new Color(0.035f, 0.052f, 0.085f, 0.96f), new Color(0.12f, 0.55f, 0.90f, 0.95f), 2); // 1: Cyan / Blue
-            targetGroupBoxStyles[1] = CreateTargetGroupBoxStyle(new Color(0.055f, 0.035f, 0.085f, 0.96f), new Color(0.65f, 0.28f, 0.95f, 0.95f), 2); // 2: Neon Violet / Purple
-            targetGroupBoxStyles[2] = CreateTargetGroupBoxStyle(new Color(0.035f, 0.075f, 0.055f, 0.96f), new Color(0.15f, 0.75f, 0.45f, 0.95f), 2); // 3: Emerald / Mint Green
-            targetGroupBoxStyles[3] = CreateTargetGroupBoxStyle(new Color(0.075f, 0.055f, 0.035f, 0.96f), new Color(0.92f, 0.65f, 0.15f, 0.95f), 2); // 4: Bright Gold / Amber
-            targetGroupBoxStyles[4] = CreateTargetGroupBoxStyle(new Color(0.075f, 0.035f, 0.055f, 0.96f), new Color(0.92f, 0.25f, 0.55f, 0.95f), 2); // 5: Rose / Pink
-            targetGroupBoxStyles[5] = CreateTargetGroupBoxStyle(new Color(0.035f, 0.075f, 0.075f, 0.96f), new Color(0.12f, 0.80f, 0.75f, 0.95f), 2); // 6: Turquoise / Teal
+            // 10. Clean Target Group Box (1px subtle slate border with dark nested backdrop)
+            targetGroupBoxStyle = new GUIStyle(GUI.skin.box);
+            targetGroupBoxStyle.normal.background = MakeBoxTex(8, 8, new Color(0.028f, 0.040f, 0.062f, 0.98f), new Color(0.18f, 0.26f, 0.38f, 0.90f), 1);
+            targetGroupBoxStyle.border = new RectOffset(3, 3, 3, 3);
+            targetGroupBoxStyle.padding = new RectOffset(8, 8, 8, 8);
 
             stylesInitialized = true;
         }
 
-        private GUIStyle CreateStepBoxStyle(Color fill, Color border, int borderWidth = 1) {
-            GUIStyle s = new GUIStyle(GUI.skin.box);
-            Texture2D tex = MakeBoxTex(8, 8, fill, border, borderWidth);
-            s.normal.background = tex;
-            s.onNormal.background = tex;
-            s.hover.background = tex;
-            s.onHover.background = tex;
-            s.active.background = tex;
-            s.onActive.background = tex;
-            s.focused.background = tex;
-            s.onFocused.background = tex;
-            s.border = new RectOffset(2, 2, 2, 2);
-            s.padding = new RectOffset(8, 8, 8, 8);
-            return s;
-        }
-
-        private GUIStyle CreateTargetGroupBoxStyle(Color fill, Color border, int borderWidth = 2) {
-            GUIStyle s = new GUIStyle(GUI.skin.box);
-            Texture2D tex = MakeBoxTex(8, 8, fill, border, borderWidth);
-            s.normal.background = tex;
-            s.onNormal.background = tex;
-            s.hover.background = tex;
-            s.onHover.background = tex;
-            s.active.background = tex;
-            s.onActive.background = tex;
-            s.focused.background = tex;
-            s.onFocused.background = tex;
-            s.border = new RectOffset(3, 3, 3, 3);
-            s.padding = new RectOffset(8, 8, 8, 8);
-            return s;
-        }
-
         private GUIStyle GetTargetGroupBoxStyle(int groupIndex) {
-            if (targetGroupBoxStyles == null || targetGroupBoxStyles.Length == 0) return targetGroupBoxStyle;
-            int idx = Math.Abs(groupIndex) % targetGroupBoxStyles.Length;
-            return targetGroupBoxStyles[idx] ?? targetGroupBoxStyle;
-        }
-
-        private string GetTargetGroupAccentColor(int groupIndex) {
-            int idx = Math.Abs(groupIndex) % TargetGroupAccentColors.Length;
-            return TargetGroupAccentColors[idx];
+            return targetGroupBoxStyle ?? cardBoxStyle;
         }
 
         private GUIStyle GetStepBoxStyle(string stepType) {
-            if (stepType == "Propagate") return stepBoxPropStyle ?? nestedCardBoxStyle;
-            if (stepType == "Vary") return stepBoxVaryStyle ?? nestedCardBoxStyle;
-            if (stepType == "Achieve") return stepBoxAchieveStyle ?? nestedCardBoxStyle;
-            if (stepType == "FiniteBurn") return stepBoxBurnStyle ?? nestedCardBoxStyle;
-            if (stepType == "ImpulsiveBurn" || stepType == "Maneuver") return stepBoxImpulseStyle ?? nestedCardBoxStyle;
-            if (stepType == "StageSeparation") return stepBoxStageStyle ?? nestedCardBoxStyle;
-            if (stepType == "Report" || stepType == "Equation") return stepBoxReportStyle ?? nestedCardBoxStyle;
-            if (stepType == "EndTarget") return stepBoxEndTargetStyle ?? nestedCardBoxStyle;
             return nestedCardBoxStyle;
         }
 
@@ -1630,11 +1569,11 @@ namespace KSPGMAT.UI {
                 });
                 missionSequence.Add(new MissionStep { 
                     type = "Achieve", 
-                    achieve_param = "Sat.LunaMJ2000Eq.VZ", 
+                    achieve_param = "Sat.Luna.INC", 
                     achieve_val = 0.0, 
-                    achieve_tolerance = 0.001, 
+                    achieve_tolerance = 0.5, 
                     dc_name = "DC_LOI", 
-                    label = "约束月心赤道面速度 VZ = 0 (0° 轨道倾角)" 
+                    label = "约束月心赤道倾角 INC = 0.0°" 
                 });
                 missionSequence.Add(new MissionStep { 
                     type = "Achieve", 
@@ -1664,6 +1603,196 @@ namespace KSPGMAT.UI {
                 });
 
                 ScreenMessages.PostScreenMessage("✅ 已加载 LEO ➔ TLI ➔ 0° 倾角 100km 低月轨道 (全流程有限推力双打靶) 预设！", 3.5f, ScreenMessageStyle.UPPER_CENTER);
+            }
+            if (GUILayout.Button("🛰️ 阿波罗/嫦娥标准地月全流程 (TLI ➔ TCM中途修正 ➔ 0°低月圆化)", secondaryButtonStyle, GUILayout.Height(24))) {
+                missionSequence.Clear();
+
+                // 1. LEO Coast to TLI Window
+                missionSequence.Add(new MissionStep { 
+                    type = "Propagate", 
+                    propagator = "LEOProp", 
+                    stop_type = "Sat.Earth.Latitude", 
+                    target_val = 0.0, 
+                    label = "积分至赤道升交点 (TLI 点火窗口)" 
+                });
+
+                // 2. Stage 1: TLI Targeter (Pure Prograde to establish Cislunar Corridor)
+                missionSequence.Add(new MissionStep { 
+                    type = "Target", 
+                    label = "阶段1: TLI 地月转移注入打靶 (粗调送入地月走廊)", 
+                    dc_name = "DC_TLI", 
+                    dc_algorithm = "NewtonRaphson", 
+                    dc_max_iter = 50 
+                });
+                missionSequence.Add(new MissionStep { 
+                    type = "Vary", 
+                    vary_variable = "TLI_Duration", 
+                    vary_initial = 310.0, 
+                    vary_lower = 50.0, 
+                    vary_upper = 600.0, 
+                    vary_max_step = 10.0, 
+                    vary_perturbation = 0.0001,
+                    dc_name = "DC_TLI", 
+                    label = "Vary TLI 顺行点火时长" 
+                });
+                missionSequence.Add(new MissionStep { 
+                    type = "FiniteBurn", 
+                    propagator = "LEOProp", 
+                    burn_name = "TLI_Burn", 
+                    burn_direction = "Prograde", 
+                    burn_use_vary_var = true, 
+                    burn_vary_var_name = "TLI_Duration", 
+                    label = "升交点执行 TLI 顺行加速点火 (ΔV ≈ 3150 m/s)" 
+                });
+                missionSequence.Add(new MissionStep { 
+                    type = "Propagate", 
+                    propagator = "CislunarProp", 
+                    stop_type = "Sat.Luna.Periapsis", 
+                    label = "地月深空三体巡航至近月点" 
+                });
+                missionSequence.Add(new MissionStep { 
+                    type = "Achieve", 
+                    achieve_param = "Sat.Luna.RMAG", 
+                    achieve_val = 3000.0, 
+                    achieve_tolerance = 50.0, 
+                    dc_name = "DC_TLI", 
+                    label = "粗调送入月球引力范围 (近月点半径 ≤ 3000km)" 
+                });
+                missionSequence.Add(new MissionStep { 
+                    type = "EndTarget", 
+                    dc_name = "DC_TLI", 
+                    label = "完成 TLI 粗入轨打靶" 
+                });
+
+                // 3. Stage 2: TCM Mid-Course Correction (Fine Tuning Inclination & Perilune at 48h)
+                missionSequence.Add(new MissionStep { 
+                    type = "Target", 
+                    label = "阶段2: TCM-1 中途修正打靶 (极小ΔV精确锁定100km高度与0°赤道面)", 
+                    dc_name = "DC_TCM", 
+                    dc_algorithm = "NewtonRaphson", 
+                    dc_max_iter = 50 
+                });
+                missionSequence.Add(new MissionStep { 
+                    type = "Vary", 
+                    vary_variable = "Sat.TCM_Burn_Thruster.ThrustDirection2", 
+                    vary_initial = 0.0, 
+                    vary_lower = -1.0, 
+                    vary_upper = 1.0, 
+                    vary_max_step = 0.05, 
+                    vary_perturbation = 0.0001,
+                    dc_name = "DC_TCM", 
+                    label = "Vary TCM 副法向推力偏转 (0° 倾角精细校准)" 
+                });
+                missionSequence.Add(new MissionStep { 
+                    type = "Vary", 
+                    vary_variable = "TCM_Duration", 
+                    vary_initial = 5.0, 
+                    vary_lower = 0.1, 
+                    vary_upper = 60.0, 
+                    vary_max_step = 1.0, 
+                    vary_perturbation = 0.0001,
+                    dc_name = "DC_TCM", 
+                    label = "Vary TCM 微调点火时长 (ΔV仅需数米/秒)" 
+                });
+                missionSequence.Add(new MissionStep { 
+                    type = "FiniteBurn", 
+                    propagator = "CislunarProp", 
+                    burn_name = "TCM_Burn", 
+                    burn_direction = "Custom", 
+                    burn_use_vary_var = true, 
+                    burn_vary_var_name = "TCM_Duration", 
+                    label = "执行地月巡航中途修正点火 TCM-1 (ΔV ≈ 5~15 m/s)" 
+                });
+                missionSequence.Add(new MissionStep { 
+                    type = "Propagate", 
+                    propagator = "CislunarProp", 
+                    stop_type = "Sat.Luna.Periapsis", 
+                    label = "精确巡航至 100km 近月点" 
+                });
+                missionSequence.Add(new MissionStep { 
+                    type = "Achieve", 
+                    achieve_param = "Sat.Luna.Altitude", 
+                    achieve_val = 100.0, 
+                    achieve_tolerance = 2.0, 
+                    dc_name = "DC_TCM", 
+                    label = "精确锁定近月点高度 = 100km" 
+                });
+                missionSequence.Add(new MissionStep { 
+                    type = "Achieve", 
+                    achieve_param = "Sat.Luna.INC", 
+                    achieve_val = 0.0, 
+                    achieve_tolerance = 0.5, 
+                    dc_name = "DC_TCM", 
+                    label = "精确锁定月心赤道倾角 INC = 0.0°" 
+                });
+                missionSequence.Add(new MissionStep { 
+                    type = "EndTarget", 
+                    dc_name = "DC_TCM", 
+                    label = "完成 TCM 中途修正" 
+                });
+
+                // 4. Stage 3: LOI Lunar Orbit Insertion (Pure Retrograde Braking into Circular Orbit)
+                missionSequence.Add(new MissionStep { 
+                    type = "Target", 
+                    label = "阶段3: LOI 近月制动捕获打靶 (100km 圆轨道圆化)", 
+                    dc_name = "DC_LOI", 
+                    dc_algorithm = "NewtonRaphson", 
+                    dc_max_iter = 50 
+                });
+                missionSequence.Add(new MissionStep { 
+                    type = "Vary", 
+                    vary_variable = "LOI_Duration", 
+                    vary_initial = 120.0, 
+                    vary_lower = 10.0, 
+                    vary_upper = 500.0, 
+                    vary_max_step = 10.0, 
+                    vary_perturbation = 0.0001,
+                    dc_name = "DC_LOI", 
+                    label = "Vary LOI 逆行制动点火时长" 
+                });
+                missionSequence.Add(new MissionStep { 
+                    type = "FiniteBurn", 
+                    propagator = "LunarNRHOProp", 
+                    burn_name = "LOI_Burn", 
+                    burn_direction = "Retrograde", 
+                    burn_use_vary_var = true, 
+                    burn_vary_var_name = "LOI_Duration", 
+                    label = "近月点执行逆行制动点火 (ΔV ≈ 850 m/s)" 
+                });
+                missionSequence.Add(new MissionStep { 
+                    type = "Propagate", 
+                    propagator = "LunarNRHOProp", 
+                    stop_type = "Sat.Luna.Apoapsis", 
+                    label = "环月滑行至远月点" 
+                });
+                missionSequence.Add(new MissionStep { 
+                    type = "Achieve", 
+                    achieve_param = "Sat.Luna.SMA", 
+                    achieve_val = 1837.4, 
+                    achieve_tolerance = 2.0, 
+                    dc_name = "DC_LOI", 
+                    label = "约束月球半长轴 SMA = 1837.4km (100km 圆轨道)" 
+                });
+                missionSequence.Add(new MissionStep { 
+                    type = "EndTarget", 
+                    dc_name = "DC_LOI", 
+                    label = "完成 100km 0° 低月轨道圆化" 
+                });
+
+                // 5. Science Cruise & Report
+                missionSequence.Add(new MissionStep { 
+                    type = "Propagate", 
+                    propagator = "LunarNRHOProp", 
+                    stop_type = "ElapsedDays", 
+                    duration = 3.0, 
+                    label = "0° 倾角 100km 低月轨道稳定巡航 3 天" 
+                });
+                missionSequence.Add(new MissionStep { 
+                    type = "Report", 
+                    label = "阿波罗/嫦娥地月全流程最终任务报告" 
+                });
+
+                ScreenMessages.PostScreenMessage("✅ 已加载阿波罗/嫦娥标准地月全流程 (TLI ➔ TCM中途修正 ➔ 0°低月圆化) 预设！", 3.5f, ScreenMessageStyle.UPPER_CENTER);
             }
             GUILayout.EndHorizontal();
 
@@ -1749,9 +1878,6 @@ namespace KSPGMAT.UI {
 
             bool insideTargetGroup = false;
             bool targetGroupCollapsed = false;
-            int targetGroupCounter = 0;
-            int currentTargetGroupIdx = 0;
-            string currentGroupAccent = "#38bdf8";
 
             for (int i = 0; i < missionSequence.Count; i++) {
                 var step = missionSequence[i];
@@ -1781,11 +1907,9 @@ namespace KSPGMAT.UI {
 
                     insideTargetGroup = true;
                     targetGroupCollapsed = step.is_collapsed;
-                    currentTargetGroupIdx = targetGroupCounter++;
-                    currentGroupAccent = GetTargetGroupAccentColor(currentTargetGroupIdx);
 
-                    // BEGIN PROMINENT OUTER GROUP BOUNDING BOX (Enclosing entire Target group with custom group color)
-                    GUILayout.BeginVertical(GetTargetGroupBoxStyle(currentTargetGroupIdx));
+                    // BEGIN PROMINENT OUTER GROUP BOUNDING BOX (Enclosing entire Target group)
+                    GUILayout.BeginVertical(targetGroupBoxStyle);
 
                     // Count child Vary and Achieve steps inside this Target block
                     int varyCount = 0;
@@ -1832,7 +1956,7 @@ namespace KSPGMAT.UI {
                     step.label = GUILayout.TextField(string.IsNullOrEmpty(step.label) ? "打靶求解组" : step.label, stepLabelInputStyle, GUILayout.MinWidth(140), GUILayout.MaxWidth(280), GUILayout.Height(20));
                     GUILayout.FlexibleSpace();
 
-                    string solverBadge = $"<color={currentGroupAccent}><b>[DC: {step.dc_name} | {step.dc_algorithm} | 迭代:{step.dc_max_iter}]</b></color>";
+                    string solverBadge = $"<color=#38bdf8><b>[DC: {step.dc_name} | {step.dc_algorithm} | 迭代:{step.dc_max_iter}]</b></color>";
                     GUILayout.Label(solverBadge, labelValueStyle);
 
                     bool showCfg = expandedSolverSettings.Contains(i);
@@ -1997,7 +2121,7 @@ namespace KSPGMAT.UI {
                         // Render EndTarget footer inside the group container with visual hierarchy guide
                         GUILayout.BeginHorizontal();
                         GUILayout.Space(6);
-                        GUILayout.Label($"<color={currentGroupAccent}>│ └─</color>", labelValueStyle, GUILayout.Width(24));
+                        GUILayout.Label("<color=#64748b>│ └─</color>", labelValueStyle, GUILayout.Width(24));
                         GUILayout.BeginVertical(GetStepBoxStyle("EndTarget"));
                         GUILayout.BeginHorizontal();
 
@@ -2053,7 +2177,7 @@ namespace KSPGMAT.UI {
                     // Render inner step nested neatly inside the prominent group box with typed colored border
                     GUILayout.BeginHorizontal();
                     GUILayout.Space(6); // Inner margin from outer group
-                    GUILayout.Label($"<color={currentGroupAccent}>│ ├─</color>", labelValueStyle, GUILayout.Width(24));
+                    GUILayout.Label("<color=#64748b>│ ├─</color>", labelValueStyle, GUILayout.Width(24));
                     GUILayout.BeginVertical(GetStepBoxStyle(step.type));
 
                     // Step Header Bar
@@ -2599,17 +2723,15 @@ namespace KSPGMAT.UI {
             // =========================================================================
             if (step.type == "Propagate") {
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("<color=#f87171><b>动力学传播子:</b></color>", labelValueStyle, GUILayout.Width(90));
+                GUILayout.Label("动力学传播子:", labelValueStyle, GUILayout.Width(85));
 
                 List<string> props = GMATParameterRegistry.GetAllPropagators();
                 for (int p = 0; p < props.Count; p++) {
                     string pr = props[p];
                     bool isCur = (step.propagator == pr);
-                    GUI.backgroundColor = isCur ? new Color(0.9f, 0.3f, 0.35f) : Color.white;
-                    if (GUILayout.Button(pr, secondaryButtonStyle, GUILayout.Height(18))) {
+                    if (GUILayout.Button(pr, isCur ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(18))) {
                         step.propagator = pr;
                     }
-                    GUI.backgroundColor = Color.white;
                 }
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
@@ -2617,7 +2739,7 @@ namespace KSPGMAT.UI {
                 // Stop Condition Row
                 GUILayout.Space(2);
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("<color=#f87171><b>停止条件:</b></color>", labelValueStyle, GUILayout.Width(75));
+                GUILayout.Label("停止条件:", labelValueStyle, GUILayout.Width(65));
 
                 GUI.SetNextControlName($"Field_PropStop_{i}");
                 string prevStop = step.stop_type ?? "Sat.Luna.Periapsis";
@@ -2641,7 +2763,7 @@ namespace KSPGMAT.UI {
 
                 string propBadge = GMATParameterRegistry.GetParamBadgeI18n(step.stop_type);
                 if (!string.IsNullOrEmpty(propBadge)) {
-                    GUILayout.Label($"<color=#f87171><b>[{propBadge}]</b></color>", labelValueStyle);
+                    GUILayout.Label($"<color=#38bdf8><b>[{propBadge}]</b></color>", labelValueStyle);
                 }
 
                 if (IsPureOrbitalEvent(step.stop_type)) {
@@ -2655,6 +2777,22 @@ namespace KSPGMAT.UI {
 
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
+
+                // Smart TLI Window Calculator Helper
+                Vessel activeV = FlightGlobals.ActiveVessel;
+                if (activeV != null && (step.label.Contains("TLI") || step.label.Contains("月") || (step.stop_type != null && (step.stop_type.Contains("Luna") || step.stop_type.Contains("Latitude") || step.stop_type.Contains("ElapsedSecs"))))) {
+                    GUILayout.Space(2);
+                    GUILayout.BeginHorizontal();
+                    if (GUILayout.Button("🔍 一键解算最近的 TLI 地月转移窗口等待时间 (地月超前角 ~135°)", secondaryButtonStyle, GUILayout.Height(20))) {
+                        double waitSec = ComputeTimeToNextTLIWindow(activeV);
+                        step.stop_type = "Sat.ElapsedSecs";
+                        step.target_val = Math.Round(waitSec, 1);
+                        step.duration = Math.Round(waitSec, 1);
+                        ScreenMessages.PostScreenMessage($"✅ 成功解算最近地月转移窗口！等待时间: {waitSec:F1}s (T+{waitSec / 60.0:F1}min)，目标地月超前角 ~135° 已对齐！", 4.0f, ScreenMessageStyle.UPPER_CENTER);
+                    }
+                    GUILayout.FlexibleSpace();
+                    GUILayout.EndHorizontal();
+                }
             }
 
             // =========================================================================
@@ -4659,7 +4797,47 @@ namespace KSPGMAT.UI {
         // 4. Absolute Solve Epoch Anchor: eliminates 100% of UI delay/time drift across all mission phases.
         // =========================================================================
 
-        public static double ComputeBurnInitialTime(Vessel vessel, SolvedBurn burn, double solveUT, out double targetEpoch, out double centroidLead) {
+        private double ComputeTimeToNextTLIWindow(Vessel vessel) {
+            if (vessel == null || vessel.orbit == null) return 3000.0;
+            CelestialBody moon = null;
+            if (FlightGlobals.Bodies != null) {
+                moon = FlightGlobals.Bodies.Find(b => b.name.Equals("Moon", StringComparison.OrdinalIgnoreCase) ||
+                                                      b.name.Equals("Luna", StringComparison.OrdinalIgnoreCase) ||
+                                                      b.name.Equals("Mun", StringComparison.OrdinalIgnoreCase));
+            }
+            if (moon == null || moon.orbit == null) return 3000.0;
+
+            double ut = Planetarium.GetUniversalTime();
+            Vector3d rSat = vessel.orbit.getRelativePositionAtUT(ut);
+            Vector3d rMoon = moon.orbit.getRelativePositionAtUT(ut);
+
+            // In-plane equatorial / orbital longitude
+            double lonSat = Math.Atan2(rSat.y, rSat.x) * (180.0 / Math.PI);
+            double lonMoon = Math.Atan2(rMoon.y, rMoon.x) * (180.0 / Math.PI);
+
+            // Current phase angle (Moon longitude - Sat longitude)
+            double currentPhase = lonMoon - lonSat;
+            while (currentPhase < 0.0) currentPhase += 360.0;
+            while (currentPhase >= 360.0) currentPhase -= 360.0;
+
+            // Standard theoretical lead angle for Earth->Moon Hohmann-like cislunar transfer (~3.8 days)
+            double targetPhase = 135.0; // Moon is ~135° ahead of Sat at TLI ignition
+
+            double dPhase = targetPhase - currentPhase;
+            while (dPhase < 0.0) dPhase += 360.0;
+            while (dPhase >= 360.0) dPhase -= 360.0;
+
+            double nSat = 360.0 / Math.Max(60.0, vessel.orbit.period); // deg/s (~0.068 deg/s)
+            double nMoon = 360.0 / Math.Max(86400.0, moon.orbit.period); // deg/s (~0.00015 deg/s)
+            double waitSec = dPhase / Math.Max(0.001, (nSat - nMoon));
+
+            // Ensure at least 60s preparation buffer if window is right now
+            if (waitSec < 60.0) waitSec += vessel.orbit.period;
+
+            return waitSec;
+        }
+
+        double ComputeBurnInitialTime(Vessel vessel, SolvedBurn burn, double solveUT, out double targetEpoch, out double centroidLead) {
             double currentUT = Planetarium.GetUniversalTime();
             double anchorUT = (solveUT > 0) ? solveUT : currentUT;
             centroidLead = 0.0;
