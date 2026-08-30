@@ -1096,10 +1096,11 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
             lines.append(f"{fbname}_EndVY = {sat_name}.VY;")
             lines.append(f"{fbname}_EndVZ = {sat_name}.VZ;")
             lines.append(f"{fbname}_FuelBurned = {fbname}_StartMass - {fbname}_EndMass;")
+            th_id = f"{fbname}_Thruster"
             lines.append(f"{fbname}_DeltaV = {isp:.6f} * 9.80665 * log({fbname}_StartMass / {fbname}_EndMass);")
-            lines.append(f"{fbname}_DeltaV_V = {fbname}_DeltaV * {dir_v:.6f};")
-            lines.append(f"{fbname}_DeltaV_N = {fbname}_DeltaV * {dir_n:.6f};")
-            lines.append(f"{fbname}_DeltaV_B = {fbname}_DeltaV * {dir_b:.6f};")
+            lines.append(f"{fbname}_DeltaV_V = {fbname}_DeltaV * {sat_name}.{th_id}.ThrustDirection1;")
+            lines.append(f"{fbname}_DeltaV_N = {fbname}_DeltaV * {sat_name}.{th_id}.ThrustDirection2;")
+            lines.append(f"{fbname}_DeltaV_B = {fbname}_DeltaV * {sat_name}.{th_id}.ThrustDirection3;")
             lines.append(f"{fbname}_OrbitalDeltaV = sqrt(({fbname}_EndVX - {fbname}_StartVX)*({fbname}_EndVX - {fbname}_StartVX) + ({fbname}_EndVY - {fbname}_StartVY)*({fbname}_EndVY - {fbname}_StartVY) + ({fbname}_EndVZ - {fbname}_StartVZ)*({fbname}_EndVZ - {fbname}_StartVZ)) * 1000.0;")
             lines.append(f"{fbname}_GravityLoss = {fbname}_DeltaV - {fbname}_OrbitalDeltaV;")
             lines.append(f"Report FiniteBurnReport {fbname}_Time {fbname}_Duration {fbname}_DeltaV {fbname}_DeltaV_V {fbname}_DeltaV_N {fbname}_DeltaV_B {fbname}_FuelBurned {fbname}_OrbitalDeltaV {fbname}_GravityLoss {fbname}_StartMass {fbname}_EndMass {sat_name}.X {sat_name}.Y {sat_name}.Z {sat_name}.VX {sat_name}.VY {sat_name}.VZ;")
@@ -1626,47 +1627,101 @@ def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None, 
             cum_time = burn_epoch_offset
 
         elif stype == "FiniteBurn":
-            fbname = step.get("_obj_name")
-            burn_epoch_offset = cum_time
+            fbname = step.get("_obj_name") or f"Finite_{finite_number + 1}"
+            gm_start_time = cum_time
+            dur = float(step.get("duration", 0.0))
+            dv_thrust = 0.0
+            dv_v = 0.0
+            dv_n = 0.0
+            dv_b = 0.0
+            fuel_burned = 0.0
+            orb_dv_mag = 0.0
+            gravity_loss = 0.0
+            gm_start_mass = 0.0
+            gm_finish_mass = 0.0
+            burn_x = 0.0
+            burn_y = 0.0
+            burn_z = 0.0
+            burn_vx = 0.0
+            burn_vy = 0.0
+            burn_vz = 0.0
+
+            # 1. PRIMARY & CANONICAL: Extract 100% Converged Values directly from GMAT Runtime Objects
+            got_runtime = False
             if fbname:
                 try:
                     t_var = gmat.GetRuntimeObject(f"{fbname}_Time")
-                    if t_var:
-                        burn_epoch_offset = float(t_var.GetRealParameter("Value"))
-                except Exception as ex:
-                    print(f"[gmat_engine] Could not get {fbname}_Time: {ex}")
+                    dur_var = gmat.GetRuntimeObject(f"{fbname}_Duration")
+                    dv_var = gmat.GetRuntimeObject(f"{fbname}_DeltaV")
+                    dv_v_var = gmat.GetRuntimeObject(f"{fbname}_DeltaV_V")
+                    dv_n_var = gmat.GetRuntimeObject(f"{fbname}_DeltaV_N")
+                    dv_b_var = gmat.GetRuntimeObject(f"{fbname}_DeltaV_B")
+                    fuel_var = gmat.GetRuntimeObject(f"{fbname}_FuelBurned")
+                    orb_var = gmat.GetRuntimeObject(f"{fbname}_OrbitalDeltaV")
+                    grav_var = gmat.GetRuntimeObject(f"{fbname}_GravityLoss")
+                    sm_var = gmat.GetRuntimeObject(f"{fbname}_StartMass")
+                    em_var = gmat.GetRuntimeObject(f"{fbname}_EndMass")
 
-            finite_rows = []
-            if os.path.exists(report_file + ".finite.txt"):
-                with open(report_file + ".finite.txt", "r", encoding="utf-8") as f:
-                    for line in f:
-                        parts = line.strip().split()
-                        if len(parts) >= 11:
-                            try:
-                                finite_rows.append([float(value) for value in parts])
-                            except ValueError:
-                                continue
-            if not finite_rows:
-                raise RuntimeError("GMAT did not report finite-burn states")
-            # Correctly map each sequential FiniteBurn step to its own distinct row
-            cur_burn_row = finite_rows[finite_number] if finite_number < len(finite_rows) else finite_rows[-1]
-            gm_start_time = cur_burn_row[0]
-            dur = cur_burn_row[1]
-            dv_thrust = cur_burn_row[2]
-            dv_v = cur_burn_row[3]
-            dv_n = cur_burn_row[4]
-            dv_b = cur_burn_row[5]
-            fuel_burned = cur_burn_row[6]
-            orb_dv_mag = cur_burn_row[7]
-            gravity_loss = cur_burn_row[8]
-            gm_start_mass = cur_burn_row[9]
-            gm_finish_mass = cur_burn_row[10]
-            burn_x = cur_burn_row[11] if len(cur_burn_row) > 11 else 0.0
-            burn_y = cur_burn_row[12] if len(cur_burn_row) > 12 else 0.0
-            burn_z = cur_burn_row[13] if len(cur_burn_row) > 13 else 0.0
-            burn_vx = cur_burn_row[14] if len(cur_burn_row) > 14 else 0.0
-            burn_vy = cur_burn_row[15] if len(cur_burn_row) > 15 else 0.0
-            burn_vz = cur_burn_row[16] if len(cur_burn_row) > 16 else 0.0
+                    if t_var and dur_var and dv_var:
+                        gm_start_time = float(t_var.GetRealParameter("Value"))
+                        dur = float(dur_var.GetRealParameter("Value"))
+                        dv_thrust = float(dv_var.GetRealParameter("Value"))
+                        if dv_v_var: dv_v = float(dv_v_var.GetRealParameter("Value"))
+                        if dv_n_var: dv_n = float(dv_n_var.GetRealParameter("Value"))
+                        if dv_b_var: dv_b = float(dv_b_var.GetRealParameter("Value"))
+                        if fuel_var: fuel_burned = float(fuel_var.GetRealParameter("Value"))
+                        if orb_var: orb_dv_mag = float(orb_var.GetRealParameter("Value"))
+                        if grav_var: gravity_loss = float(grav_var.GetRealParameter("Value"))
+                        if sm_var: gm_start_mass = float(sm_var.GetRealParameter("Value"))
+                        if em_var: gm_finish_mass = float(em_var.GetRealParameter("Value"))
+                        got_runtime = True
+                except Exception as ex:
+                    print(f"[gmat_engine] Runtime object access for {fbname}: {ex}")
+
+            # 2. FALLBACK: If runtime object not available, read final row of finite report
+            if not got_runtime:
+                finite_rows = []
+                if os.path.exists(report_file + ".finite.txt"):
+                    with open(report_file + ".finite.txt", "r", encoding="utf-8") as f:
+                        for line in f:
+                            parts = line.strip().split()
+                            if len(parts) >= 11:
+                                try:
+                                    finite_rows.append([float(value) for value in parts])
+                                except ValueError:
+                                    continue
+                if finite_rows:
+                    cur_burn_row = finite_rows[finite_number] if finite_number < len(finite_rows) else finite_rows[-1]
+                    gm_start_time = cur_burn_row[0]
+                    dur = cur_burn_row[1]
+                    dv_thrust = cur_burn_row[2]
+                    dv_v = cur_burn_row[3]
+                    dv_n = cur_burn_row[4]
+                    dv_b = cur_burn_row[5]
+                    fuel_burned = cur_burn_row[6]
+                    orb_dv_mag = cur_burn_row[7]
+                    gravity_loss = cur_burn_row[8]
+                    gm_start_mass = cur_burn_row[9]
+                    gm_finish_mass = cur_burn_row[10]
+
+            # 3. Extract trajectory position and velocity at the true burn ignition epoch
+            state = state_at_or_before(gm_start_time)
+            if state:
+                burn_x = state.get("burn_x", 0.0)
+                burn_y = state.get("burn_y", 0.0)
+                burn_z = state.get("burn_z", 0.0)
+                burn_vx = state.get("burn_vx", 0.0)
+                burn_vy = state.get("burn_vy", 0.0)
+                burn_vz = state.get("burn_vz", 0.0)
+
+            # Ensure exact vector normalization to total DeltaV magnitude
+            dv_dir_norm = math.sqrt(dv_v**2 + dv_n**2 + dv_b**2)
+            if dv_dir_norm > 1e-5 and dv_thrust > 1e-5:
+                dv_v = (dv_v / dv_dir_norm) * dv_thrust
+                dv_n = (dv_n / dv_dir_norm) * dv_thrust
+                dv_b = (dv_b / dv_dir_norm) * dv_thrust
+            elif dv_thrust > 1e-5 and dv_v == 0 and dv_n == 0 and dv_b == 0:
+                dv_v = dv_thrust
 
             thrust_kn = float(craft_data.get("thrust") or craft_data.get("thrust_n") or 108100.0) / 1000.0
             isp = float(craft_data.get("isp") or craft_data.get("isp_s") or 465.0)

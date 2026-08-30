@@ -106,7 +106,8 @@ def main():
                 except Exception as ex:
                     print(f"[GmatCLI] Ephemeris calibration warning: {ex}")
             custom_coords = req_data.get("custom_coordinate_systems") or []
-            res = gmat_engine.run_mission_sequence(craft, sequence, propagator_configs=propagator_configs, custom_coordinate_systems=custom_coords)
+            solver_configs = req_data.get("solver_configs")
+            res = gmat_engine.run_mission_sequence(craft, sequence, propagator_configs=propagator_configs, custom_coordinate_systems=custom_coords, solver_configs=solver_configs)
             if res.get("success"):
                 principia_comparator.update_gmat_result(res)
 
