@@ -714,6 +714,13 @@ namespace KSPGMAT {
             { "totalmass", "航天器全船总质量 (kg)" },
             { "drymass", "航天器结构干质量 (kg)" },
             { "fuelmass", "推进剂剩余质量 (kg)" },
+            // Impulsive Burn & Maneuver Vector Elements (VNB / Cartesian)
+            { "element1", "切向速度增量 ΔV_V (km/s)" },
+            { "element2", "法向变轨增量 ΔV_N (km/s)" },
+            { "element3", "副法向/径向增量 ΔV_B (km/s)" },
+            { "element_1", "切向速度增量 ΔV_V (km/s)" },
+            { "element_2", "法向变轨增量 ΔV_N (km/s)" },
+            { "element_3", "副法向/径向增量 ΔV_B (km/s)" },
             { "burntime", "主发动机点火持续时长 (s)" },
             { "duration", "机动点火时长 (s)" },
 

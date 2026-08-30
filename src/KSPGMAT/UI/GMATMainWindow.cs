@@ -2185,16 +2185,62 @@ namespace KSPGMAT.UI {
             }
 
             // =========================================================================
-            // 2. VARY STEP CARD (STREAMLINED COMPACT 2-ROW LAYOUT)
+            // 2. VARY STEP CARD (STREAMLINED COMPACT 2-ROW WITH MULTI-VECTOR CHIPS)
             // =========================================================================
             else if (step.type == "Vary") {
-                // Row 1: Variable Input + i18n Badge + Solver Selection
+                // Auto-detect target burn name from nearby steps (e.g. GEO_Burn, GTO_Burn)
+                string activeBurnName = "GEO_Burn";
+                for (int b = 0; b < missionSequence.Count; b++) {
+                    if (missionSequence[b].type == "ImpulsiveBurn" || missionSequence[b].type == "Maneuver") {
+                        if (!string.IsNullOrEmpty(missionSequence[b].burn_name)) {
+                            activeBurnName = missionSequence[b].burn_name;
+                            break;
+                        }
+                    }
+                }
+
+                // Row 1: Variable Input + Quick Axis Chips + i18n Badge + Solver Selection
                 GUILayout.BeginHorizontal();
                 GUILayout.Label("<color=#38bdf8><b>寻优变量:</b></color>", labelValueStyle, GUILayout.Width(65));
 
                 GUI.SetNextControlName($"Field_Vary_{i}");
                 string prevVary = step.vary_variable ?? "burntime";
-                string newVary = GUILayout.TextField(prevVary, GUILayout.Width(110), GUILayout.Height(20));
+                string newVary = GUILayout.TextField(prevVary, GUILayout.Width(130), GUILayout.Height(20));
+
+                // Quick Axis Chips: burntime, Element1 (V), Element2 (N), Element3 (B)
+                bool isBurntime = (prevVary == "burntime");
+                bool isEl1 = (prevVary == $"{activeBurnName}.Element1" || prevVary == "Element1");
+                bool isEl2 = (prevVary == $"{activeBurnName}.Element2" || prevVary == "Element2");
+                bool isEl3 = (prevVary == $"{activeBurnName}.Element3" || prevVary == "Element3");
+
+                if (GUILayout.Button("⏱️ burntime", isBurntime ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
+                    step.vary_variable = "burntime";
+                    step.vary_initial = 120.0;
+                    step.vary_lower = 0.0;
+                    step.vary_upper = 300.0;
+                    step.vary_max_step = 20.0;
+                }
+                if (GUILayout.Button("🚀 Element1 (ΔV_V)", isEl1 ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
+                    step.vary_variable = $"{activeBurnName}.Element1";
+                    step.vary_initial = 1.10;
+                    step.vary_lower = 0.1;
+                    step.vary_upper = 3.5;
+                    step.vary_max_step = 0.1;
+                }
+                if (GUILayout.Button("🧭 Element2 (ΔV_N)", isEl2 ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
+                    step.vary_variable = $"{activeBurnName}.Element2";
+                    step.vary_initial = 1.50;
+                    step.vary_lower = 0.1;
+                    step.vary_upper = 3.5;
+                    step.vary_max_step = 0.1;
+                }
+                if (GUILayout.Button("🌐 Element3 (ΔV_B)", isEl3 ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
+                    step.vary_variable = $"{activeBurnName}.Element3";
+                    step.vary_initial = 0.0;
+                    step.vary_lower = -2.0;
+                    step.vary_upper = 2.0;
+                    step.vary_max_step = 0.1;
+                }
 
                 string varyBadge = GMATParameterRegistry.GetParamBadgeI18n(step.vary_variable);
                 if (!string.IsNullOrEmpty(varyBadge)) {
@@ -2243,20 +2289,20 @@ namespace KSPGMAT.UI {
                 GUILayout.Space(3);
                 GUILayout.BeginHorizontal();
                 GUILayout.Label("初猜:", labelValueStyle, GUILayout.Width(35));
-                string sInit = GUILayout.TextField(step.vary_initial.ToString("F1"), GUILayout.Width(55));
+                string sInit = GUILayout.TextField(step.vary_initial.ToString("F2"), GUILayout.Width(55));
                 double.TryParse(sInit, out step.vary_initial);
 
                 GUILayout.Label("下界:", labelValueStyle, GUILayout.Width(35));
-                string sLow = GUILayout.TextField(step.vary_lower.ToString("F1"), GUILayout.Width(50));
+                string sLow = GUILayout.TextField(step.vary_lower.ToString("F2"), GUILayout.Width(50));
                 double.TryParse(sLow, out step.vary_lower);
 
                 GUILayout.Label("上界:", labelValueStyle, GUILayout.Width(35));
-                string sUp = GUILayout.TextField(step.vary_upper.ToString("F1"), GUILayout.Width(55));
+                string sUp = GUILayout.TextField(step.vary_upper.ToString("F2"), GUILayout.Width(55));
                 double.TryParse(sUp, out step.vary_upper);
 
                 GUILayout.Label("步长:", labelValueStyle, GUILayout.Width(35));
-                double mStep = (step.vary_max_step <= 0) ? 20.0 : step.vary_max_step;
-                string sStep = GUILayout.TextField(mStep.ToString("F1"), GUILayout.Width(45));
+                double mStep = (step.vary_max_step <= 0) ? 0.1 : step.vary_max_step;
+                string sStep = GUILayout.TextField(mStep.ToString("F2"), GUILayout.Width(45));
                 if (double.TryParse(sStep, out mStep)) step.vary_max_step = mStep;
 
                 // Inline Solved Value
@@ -2272,8 +2318,9 @@ namespace KSPGMAT.UI {
                         solvedVal = latestResult.solved_burns[0].duration;
                     }
                     if (solvedVal > 0) {
+                        string unitStr = (step.vary_variable != null && step.vary_variable.Contains("Element")) ? "km/s" : "s";
                         GUILayout.Space(10);
-                        GUILayout.Label($"<color=#34d399><b>➔ 🎯 求解收敛值: {solvedVal:F3} s</b></color>", labelValueStyle);
+                        GUILayout.Label($"<color=#34d399><b>➔ 🎯 求解收敛值: {solvedVal:F4} {unitStr}</b></color>", labelValueStyle);
                     }
                 }
 

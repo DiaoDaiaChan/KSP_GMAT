@@ -905,18 +905,30 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
             vary_dc_name = sanitize_gmat_identifier(step.get("dc_name") or step.get("vary_solver") or current_active_dc_name, "DC")
             var = (step.get("vary_variable") or step.get("variable") or "burntime").strip()
 
-            # Clean craft prefix if present
+            # Clean craft prefix if present or handle Burn.Element1/2/3
             if var.startswith(f"{sat_name}."):
                 var_ref = var
             elif "." in var:
-                # e.g. LOI.Element1, Change6.AOP, EarthMoonRot.Z
+                # e.g. GEO_Burn.Element1, LOI.Element2, Change6.AOP, EarthMoonRot.Z
                 parts = var.split(".", 1)
                 if parts[0].lower() in ("sat", "vessel", "spacecraft", "sc"):
                     var_ref = f"{sat_name}.{parts[1]}"
                 elif parts[0] in ("AOP", "RAAN", "SMA", "ECC", "INC", "TA", "Altitude", "RMAG"):
                     var_ref = f"{sat_name}.{var}"
+                elif parts[1].lower() in ("element1", "element2", "element3"):
+                    # Burn vector element e.g. GEO_Burn.Element1
+                    clean_bname = sanitize_gmat_identifier(parts[0], "IB")
+                    var_ref = f"{clean_bname}.{parts[1]}"
                 else:
                     var_ref = var
+            elif var.lower() in ("element1", "element2", "element3"):
+                # Default to nearest or active impulsive burn
+                active_ib = "GEO_Burn"
+                for st in mission_sequence:
+                    if st.get("type") in ("ImpulsiveBurn", "Maneuver") and st.get("burn_name"):
+                        active_ib = sanitize_gmat_identifier(st["burn_name"], "IB")
+                        break
+                var_ref = f"{active_ib}.{var}"
             else:
                 var_ref = var
 
@@ -1729,6 +1741,28 @@ def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None, 
                     rep_data["elapsed_secs"] = round(traj_points[-1].get("t", 0.0), 2)
 
             step_reports.append(rep_data)
+
+    # Check if targeters converged
+    has_target = any(s.get("type") in ("Target", "Targeter", "TargetApoapsis") for s in mission_sequence)
+    if has_target and dc_info and dc_info.get("converged") is False:
+        n_vars = sum(1 for s in mission_sequence if s.get("type") == "Vary")
+        n_goals = sum(1 for s in mission_sequence if s.get("type") == "Achieve")
+        v_str = f"{dc_info.get('variance')}" if dc_info.get('variance') is not None else "超差"
+        d_str = f"{dc_info.get('desired')}" if dc_info.get('desired') is not None else "未知"
+        diag_msg = f"打靶未收敛 (目标期望: {d_str}, 最终残差: {v_str})"
+        if n_goals > n_vars:
+            diag_msg += f"\n⚠️ 物理自由度不足: 当前打靶包含 {n_goals} 个 Achieve 目标约束 (如 Z=0 和 SMA=42164)，但仅配置了 {n_vars} 个 Vary 变量 (burntime)。\n单一标量点火时长无法同时满足轨道面内提升与面外倾角消除。请添加法向变轨变量 (如 GEO_Burn.Element2)！"
+        return {
+            "success": False,
+            "error": "GMAT 差分修正器未收敛 (达到最大迭代上限)",
+            "error_details": diag_msg,
+            "script_path": script_file,
+            "dc_summary": dc_info,
+            "final_state": final_state,
+            "solved_burns": solved_burns,
+            "updated_sequence": mission_sequence,
+            "calculation_authority": "GMAT_NATIVE_ONLY"
+        }
 
     return {
         "success": True,
