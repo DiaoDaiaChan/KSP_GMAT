@@ -374,9 +374,32 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
                 lines.append(f"{thname}.CoordinateSystem = Local;")
                 lines.append(f"{thname}.Origin = {central_body};")
                 lines.append(f"{thname}.Axes = VNB;")
-                lines.append(f"{thname}.ThrustDirection1 = 1;")
-                lines.append(f"{thname}.ThrustDirection2 = 0;")
-                lines.append(f"{thname}.ThrustDirection3 = 0;")
+                # Resolve custom or preset direction from step
+                t_dir1, t_dir2, t_dir3 = 1.0, 0.0, 0.0
+                for st in mission_sequence:
+                    if st.get("type") == "FiniteBurn":
+                        b_dir = (st.get("burn_direction") or "Prograde").strip()
+                        if b_dir.lower() == "custom":
+                            t_dir1 = float(st.get("thrust_dir1", 1.0))
+                            t_dir2 = float(st.get("thrust_dir2", 0.0))
+                            t_dir3 = float(st.get("thrust_dir3", 0.0))
+                        elif b_dir.lower() in ("retrograde", "-v"):
+                            t_dir1, t_dir2, t_dir3 = -1.0, 0.0, 0.0
+                        elif b_dir.lower() in ("normal", "+n"):
+                            t_dir1, t_dir2, t_dir3 = 0.0, 1.0, 0.0
+                        elif b_dir.lower() in ("antinormal", "-n"):
+                            t_dir1, t_dir2, t_dir3 = 0.0, -1.0, 0.0
+                        elif b_dir.lower() in ("radialout", "+b"):
+                            t_dir1, t_dir2, t_dir3 = 0.0, 0.0, 1.0
+                        elif b_dir.lower() in ("radialin", "-b"):
+                            t_dir1, t_dir2, t_dir3 = 0.0, 0.0, -1.0
+                        break
+                mag_th = (t_dir1**2 + t_dir2**2 + t_dir3**2) ** 0.5
+                if mag_th > 1e-8:
+                    t_dir1, t_dir2, t_dir3 = t_dir1/mag_th, t_dir2/mag_th, t_dir3/mag_th
+                lines.append(f"{thname}.ThrustDirection1 = {t_dir1:.8g};")
+                lines.append(f"{thname}.ThrustDirection2 = {t_dir2:.8g};")
+                lines.append(f"{thname}.ThrustDirection3 = {t_dir3:.8g};")
                 lines.append(f"{thname}.DutyCycle = 1.0;")
                 lines.append(f"{thname}.ThrustScaleFactor = 1.0;")
                 lines.append(f"{thname}.DecrementMass = true;")

@@ -2619,19 +2619,55 @@ namespace KSPGMAT.UI {
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
 
-                // Direction Row
+                // Direction Selection & Custom 3D Vector Row
                 GUILayout.Space(2);
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("点火朝向 (Direction):", labelValueStyle, GUILayout.Width(130));
-                string[] bDirs = new string[] { "Prograde", "Retrograde", "Normal", "AntiNormal" };
+                GUILayout.Label("<b>🧭 点火朝向 (Direction):</b>", labelValueStyle, GUILayout.Width(130));
+                string[] bDirs = new string[] { "Prograde", "Retrograde", "Normal", "AntiNormal", "RadialOut", "RadialIn", "Custom" };
+                string[] bDirLabels = new string[] { "顺行 (+V)", "逆行 (-V)", "法向 (+N)", "反法向 (-N)", "径向外 (+B)", "径向内 (-B)", "⚙️ 自定义三维矢量" };
                 for (int d = 0; d < bDirs.Length; d++) {
-                    bool isDirCur = (step.burn_direction == bDirs[d]);
-                    if (GUILayout.Button(bDirs[d], isDirCur ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
+                    bool isDirCur = (step.burn_direction == bDirs[d]) || (string.IsNullOrEmpty(step.burn_direction) && d == 0);
+                    if (GUILayout.Button(bDirLabels[d], isDirCur ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
                         step.burn_direction = bDirs[d];
+                        if (bDirs[d] == "Prograde") { step.thrust_dir1 = 1.0; step.thrust_dir2 = 0.0; step.thrust_dir3 = 0.0; }
+                        else if (bDirs[d] == "Retrograde") { step.thrust_dir1 = -1.0; step.thrust_dir2 = 0.0; step.thrust_dir3 = 0.0; }
+                        else if (bDirs[d] == "Normal") { step.thrust_dir1 = 0.0; step.thrust_dir2 = 1.0; step.thrust_dir3 = 0.0; }
+                        else if (bDirs[d] == "AntiNormal") { step.thrust_dir1 = 0.0; step.thrust_dir2 = -1.0; step.thrust_dir3 = 0.0; }
+                        else if (bDirs[d] == "RadialOut") { step.thrust_dir1 = 0.0; step.thrust_dir2 = 0.0; step.thrust_dir3 = 1.0; }
+                        else if (bDirs[d] == "RadialIn") { step.thrust_dir1 = 0.0; step.thrust_dir2 = 0.0; step.thrust_dir3 = -1.0; }
                     }
                 }
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
+
+                // Custom 3D VNB Vector Editor Row
+                if (step.burn_direction == "Custom") {
+                    GUILayout.Space(2);
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label("<color=#38bdf8><b>三维 VNB 分量:</b></color>", labelValueStyle, GUILayout.Width(110));
+
+                    GUILayout.Label("V (切向):", labelValueStyle, GUILayout.Width(55));
+                    string sDir1 = GUILayout.TextField(step.thrust_dir1.ToString("F2"), GUILayout.Width(50));
+                    double.TryParse(sDir1, out step.thrust_dir1);
+
+                    GUILayout.Label("N (法向):", labelValueStyle, GUILayout.Width(55));
+                    string sDir2 = GUILayout.TextField(step.thrust_dir2.ToString("F2"), GUILayout.Width(50));
+                    double.TryParse(sDir2, out step.thrust_dir2);
+
+                    GUILayout.Label("B (径向):", labelValueStyle, GUILayout.Width(55));
+                    string sDir3 = GUILayout.TextField(step.thrust_dir3.ToString("F2"), GUILayout.Width(50));
+                    double.TryParse(sDir3, out step.thrust_dir3);
+
+                    double dirMag = Math.Sqrt(step.thrust_dir1 * step.thrust_dir1 + step.thrust_dir2 * step.thrust_dir2 + step.thrust_dir3 * step.thrust_dir3);
+                    if (dirMag < 1e-6) dirMag = 1.0;
+                    double uV = step.thrust_dir1 / dirMag, uN = step.thrust_dir2 / dirMag, uB = step.thrust_dir3 / dirMag;
+                    double pitchDeg = Math.Asin(uN) * (180.0 / Math.PI);
+                    double yawDeg = Math.Atan2(uB, uV) * (180.0 / Math.PI);
+
+                    GUILayout.Label($"<color=#34d399><b>单位化: ({uV:F2}, {uN:F2}, {uB:F2})</b></color> <color=#94a3b8>(俯仰角: {pitchDeg:F1}° | 偏航角: {yawDeg:F1}°)</color>", labelValueStyle);
+                    GUILayout.FlexibleSpace();
+                    GUILayout.EndHorizontal();
+                }
 
                 GUILayout.EndVertical();
             }

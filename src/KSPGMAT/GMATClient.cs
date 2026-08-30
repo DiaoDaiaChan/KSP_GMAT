@@ -39,6 +39,9 @@ namespace KSPGMAT {
         public double epoch_offset = 0.0;
         public string variable = ""; // for Equation, e.g. "Sat.SMA" or "burntime"
         public string expression = ""; // for Equation, e.g. "-173.0"
+        public double thrust_dir1 = 1.0; // V-axis component
+        public double thrust_dir2 = 0.0; // N-axis component
+        public double thrust_dir3 = 0.0; // B-axis component
         public string burn_direction = "Prograde"; // Prograde, Retrograde, Normal, AntiNormal, RadialIn, RadialOut
         public string utc_epoch = ""; // for UTCGregorian stop, e.g. "08 Mar 1960 12:00:00.000"
         public string dc_algorithm = "NewtonRaphson"; // NewtonRaphson, Broyden
