@@ -180,6 +180,7 @@ namespace KSPGMAT.UI {
         private GUIStyle pillGenericStyle;
         private GUIStyle badgeDarkStyle;
         private GUIStyle numericInputStyle;
+        private GUIStyle stepLabelInputStyle;
         private GUIStyle gridLabelStyle;
         private GUIStyle sectionHeaderStyle;
 
@@ -714,6 +715,17 @@ namespace KSPGMAT.UI {
             numericInputStyle.normal.textColor = Color.white;
             numericInputStyle.fontSize = 11;
             numericInputStyle.alignment = TextAnchor.MiddleRight;
+
+            stepLabelInputStyle = new GUIStyle(GUI.skin.textField);
+            stepLabelInputStyle.normal.background = inputBg;
+            stepLabelInputStyle.focused.background = inputFocusBg;
+            stepLabelInputStyle.hover.background = inputFocusBg;
+            stepLabelInputStyle.normal.textColor = new Color(0.9f, 0.95f, 1f);
+            stepLabelInputStyle.focused.textColor = Color.white;
+            stepLabelInputStyle.fontSize = 11;
+            stepLabelInputStyle.fontStyle = FontStyle.Bold;
+            stepLabelInputStyle.alignment = TextAnchor.MiddleLeft;
+            stepLabelInputStyle.padding = new RectOffset(6, 6, 2, 2);
 
             // 9. Modern Colored Step Box Styles (Borders match Pill Badges)
             stepBoxPropStyle = CreateStepBoxStyle(new Color(0.038f, 0.058f, 0.095f, 0.95f), new Color(0.18f, 0.55f, 0.90f, 0.85f));
@@ -1633,7 +1645,8 @@ namespace KSPGMAT.UI {
                         draggedStepIndex = isBeingDragged ? -1 : i;
                     }
 
-                    GUILayout.Label($"<b>#{i + 1} 🎯 Target 求解组: '{(string.IsNullOrEmpty(step.label) ? "求解循环" : step.label)}'</b>", headerStyle);
+                    GUILayout.Label($"<b>#{i + 1} 🎯 Target 求解组:</b>", headerStyle, GUILayout.Width(130));
+                    step.label = GUILayout.TextField(string.IsNullOrEmpty(step.label) ? "打靶求解组" : step.label, stepLabelInputStyle, GUILayout.MinWidth(140), GUILayout.MaxWidth(280), GUILayout.Height(20));
                     GUILayout.FlexibleSpace();
 
                     string solverBadge = $"<color=#38bdf8>[DC: {step.dc_name} | {step.dc_algorithm} | 迭代:{step.dc_max_iter}]</color>";
@@ -1904,8 +1917,8 @@ namespace KSPGMAT.UI {
                         else summaryBadge = string.IsNullOrEmpty(step.label) ? "" : step.label;
                         GUILayout.Label(summaryBadge, labelValueStyle);
                     } else {
-                        string stepTitle = string.IsNullOrEmpty(step.label) ? "" : $"<b>{step.label}</b>";
-                        if (!string.IsNullOrEmpty(stepTitle)) GUILayout.Label(stepTitle, labelValueStyle);
+                        GUILayout.Space(2);
+                        step.label = GUILayout.TextField(string.IsNullOrEmpty(step.label) ? "" : step.label, stepLabelInputStyle, GUILayout.MinWidth(130), GUILayout.MaxWidth(280), GUILayout.Height(20));
                     }
 
                     GUILayout.FlexibleSpace();
@@ -1979,8 +1992,8 @@ namespace KSPGMAT.UI {
                     else summaryBadge = string.IsNullOrEmpty(step.label) ? "" : step.label;
                     GUILayout.Label(summaryBadge, labelValueStyle);
                 } else {
-                    string stepTitle = string.IsNullOrEmpty(step.label) ? "" : $"<b>{step.label}</b>";
-                    if (!string.IsNullOrEmpty(stepTitle)) GUILayout.Label(stepTitle, labelValueStyle);
+                    GUILayout.Space(2);
+                    step.label = GUILayout.TextField(string.IsNullOrEmpty(step.label) ? "" : step.label, stepLabelInputStyle, GUILayout.MinWidth(130), GUILayout.MaxWidth(280), GUILayout.Height(20));
                 }
 
                 GUILayout.FlexibleSpace();
