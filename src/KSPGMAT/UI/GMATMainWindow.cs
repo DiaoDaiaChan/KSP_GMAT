@@ -1360,6 +1360,7 @@ namespace KSPGMAT.UI {
             int stepToInsertVary = -1;
             int stepToInsertAchieve = -1;
             int stepToInsertBurn = -1;
+            int stepToInsertImpulsive = -1;
             int stepToInsertProp = -1;
 
             bool insideTargetGroup = false;
@@ -1764,6 +1765,9 @@ namespace KSPGMAT.UI {
             if (stepToInsertAchieve >= 0) {
                 missionSequence.Insert(stepToInsertAchieve, new MissionStep { type = "Achieve", achieve_param = "Earth.Altitude", achieve_val = 35786.0, achieve_tolerance = 0.1, label = "Achieve goal" });
             }
+            if (stepToInsertImpulsive >= 0) {
+                missionSequence.Insert(stepToInsertImpulsive, new MissionStep { type = "ImpulsiveBurn", burn_name = "GEO_Burn", dv_v = 1100.0, dv_n = 1500.0, dv_b = 0.0, burn_axes = "VNB", label = "脉冲矢量机动" });
+            }
             if (stepToInsertBurn >= 0) {
                 missionSequence.Insert(stepToInsertBurn, new MissionStep { type = "FiniteBurn", propagator = "LEOProp", burn_use_vary_var = true, burn_vary_var_name = "burntime", label = "变轨有限推力点火" });
             }
@@ -1833,8 +1837,11 @@ namespace KSPGMAT.UI {
             if (GUILayout.Button("✏️ 寻优变量", secondaryButtonStyle, GUILayout.Height(26))) {
                 missionSequence.Add(new MissionStep { type = "Vary", vary_variable = "burntime", vary_initial = 150.0, vary_lower = 0.0, vary_upper = 1000.0, vary_max_step = 20.0, label = "寻优点火时长" });
             }
-            if (GUILayout.Button("🔥 发动机点火", secondaryButtonStyle, GUILayout.Height(26))) {
-                missionSequence.Add(new MissionStep { type = "FiniteBurn", duration = 120.0, propagator = "LEOProp", burn_direction = "Prograde", label = "发动机点火变轨" });
+            if (GUILayout.Button("🚀 脉冲机动 (Maneuver)", secondaryButtonStyle, GUILayout.Height(26))) {
+                missionSequence.Add(new MissionStep { type = "ImpulsiveBurn", burn_name = "GEO_Burn", dv_v = 1100.0, dv_n = 1500.0, dv_b = 0.0, burn_axes = "VNB", label = "脉冲矢量机动" });
+            }
+            if (GUILayout.Button("🔥 有限推力点火", secondaryButtonStyle, GUILayout.Height(26))) {
+                missionSequence.Add(new MissionStep { type = "FiniteBurn", duration = 120.0, propagator = "LEOProp", burn_direction = "Prograde", label = "有限推力点火变轨" });
             }
             if (GUILayout.Button("🚀 级段分离", secondaryButtonStyle, GUILayout.Height(26))) {
                 double curDry = vessel != null ? vessel.totalMass * 1000.0 * 0.4 : 1500.0;

@@ -623,6 +623,26 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
     created_burn_names = set()
     created_finite_names = set()
 
+    # Pre-scan Vary steps to automatically instantiate referenced ImpulsiveBurns (e.g. GEO_Burn.Element1)
+    for st in mission_sequence:
+        if st.get("type") == "Vary":
+            v_var = (st.get("vary_variable") or st.get("variable") or "").strip()
+            if "." in v_var:
+                p_obj, p_elem = v_var.split(".", 1)
+                if p_elem.lower() in ("element1", "element2", "element3") and p_obj.lower() not in ("sat", "vessel"):
+                    clean_bname = sanitize_gmat_identifier(p_obj, "GEO_Burn")
+                    if clean_bname not in created_burn_names:
+                        created_burn_names.add(clean_bname)
+                        burn_defs.append(f"Create ImpulsiveBurn {clean_bname};")
+                        burn_defs.append(f"{clean_bname}.CoordinateSystem = Local;")
+                        burn_defs.append(f"{clean_bname}.Origin = {central_body};")
+                        burn_defs.append(f"{clean_bname}.Axes = VNB;")
+                        burn_defs.append(f"{clean_bname}.Element1 = 1.10;")
+                        burn_defs.append(f"{clean_bname}.Element2 = 1.50;")
+                        burn_defs.append(f"{clean_bname}.Element3 = 0.0;")
+                        burn_defs.append(f"{clean_bname}.DecrementMass = false;")
+                        burn_defs.append(f"{clean_bname}.Isp = 320.0;")
+
     for step_index, step in enumerate(mission_sequence):
         step_type = step.get("type")
         if step_type in ("ImpulsiveBurn", "Maneuver"):
