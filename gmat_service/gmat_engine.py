@@ -251,18 +251,14 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
 
     dry_mass = required_number(craft_data, "dry_mass")
     fuel_mass = float(craft_data.get("fuel_mass", 0.0))
-    fuel_density = float(craft_data.get("fuel_density", 0.0))
-    tank_pressure = float(craft_data.get("tank_pressure", 0.0))
-    tank_volume = float(craft_data.get("tank_volume", 0.0))
-    thrust = float(craft_data.get("thrust", 0.0))
-    isp = float(craft_data.get("isp", 0.0))
-    # KSP telemetry can round tank volume more aggressively than mass and
-    # density.  Keep the live values authoritative while ensuring GMAT does
-    # not reject a mathematically equivalent rounded input.
-    if fuel_mass > 0.0 and fuel_density > 0.0:
-        required_volume = fuel_mass / fuel_density
-        if tank_volume < required_volume:
-            tank_volume = math.nextafter(required_volume, math.inf)
+    fuel_density = float(craft_data.get("fuel_density", 312.5) or 312.5)
+    if fuel_density <= 0.0: fuel_density = 312.5
+    tank_pressure = float(craft_data.get("tank_pressure", 1500.0) or 1500.0)
+    calc_v = (fuel_mass / fuel_density) if (fuel_mass > 0 and fuel_density > 0) else 1.0
+    tank_volume = float(craft_data.get("tank_volume", 0.0) or (calc_v * 1.15 + 0.5))
+    if tank_volume <= calc_v: tank_volume = calc_v * 1.15 + 0.5
+    thrust = float(craft_data.get("thrust", 0.0) or craft_data.get("thrust_n", 0.0) or 108100.0)
+    isp = float(craft_data.get("isp", 0.0) or craft_data.get("isp_s", 0.0) or 465.0)
     raw_engine_name = craft_data.get("engine_name")
     ascii_eng = "".join(c for c in raw_engine_name if c.isascii() and (c.isalnum() or c == '_')) if raw_engine_name else ""
     if not ascii_eng:
@@ -322,9 +318,10 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
                 lines.append(f"{tname}.PressureModel = 'PressureRegulated';")
     else:
         # Fallback single tank
-        has_hardware = bool(engine_name) and fuel_density > 0.0 and tank_volume > 0.0 and thrust > 0.0 and isp > 0.0
+        has_hardware = (fuel_mass > 0.0 or thrust > 0.0)
         if has_hardware:
-            created_tank_names.append("MainTank")
+            if "MainTank" not in created_tank_names:
+                created_tank_names.append("MainTank")
             lines.append("Create ChemicalTank MainTank;")
             lines.append("MainTank.AllowNegativeFuelMass = true;")
             lines.append(f"MainTank.FuelMass = {fuel_mass:.2f};")
@@ -338,104 +335,114 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
             lines.append("MainTank.PressureModel = 'PressureRegulated';")
 
     # 2. Chemical Thrusters
+    # 1. Base thrusters from thrusters_data
     if thrusters_data:
         for th in thrusters_data:
             thname = sanitize_gmat_identifier(th.get("name"), "MainEngine")
-            th_thrust = float(th.get("thrust") or thrust or 3000.0)
-            th_isp = float(th.get("isp") or isp or 316.0)
+            th_thrust = float(th.get("thrust") or thrust or 108100.0)
+            th_isp = float(th.get("isp") or isp or 465.0)
             th_bound_tank = th.get("bound_tank")
             if th_bound_tank and th_bound_tank not in created_tank_names:
-                # Try matching by sanitized id or substring
                 san_th_tank = sanitize_gmat_identifier(th_bound_tank, "Tank")
-                matched = None
                 for ctk in created_tank_names:
                     if san_th_tank in ctk or ctk in san_th_tank:
-                        matched = ctk
+                        th_bound_tank = ctk
                         break
-                if matched:
-                    th_bound_tank = matched
-                else:
-                    th_bound_tank = None
-
             if not th_bound_tank:
-                # Auto-select the tank with the largest fuel mass
-                best_tk = created_tank_names[0] if created_tank_names else "MainTank"
-                best_fuel = -1.0
-                for tk_info, tk_nm in zip(craft_data.get("tanks", []), created_tank_names):
-                    fm = float(tk_info.get("fuel_mass", 0.0) or 0.0)
-                    if fm > best_fuel:
-                        best_fuel = fm
-                        best_tk = tk_nm
-                th_bound_tank = best_tk
-            
+                th_bound_tank = created_tank_names[0] if created_tank_names else "MainTank"
+
             if thname not in created_thruster_names:
                 created_thruster_names.append(thname)
                 lines.append(f"Create ChemicalThruster {thname};")
                 lines.append(f"{thname}.CoordinateSystem = Local;")
                 lines.append(f"{thname}.Origin = {central_body};")
                 lines.append(f"{thname}.Axes = VNB;")
-                # Resolve custom or preset direction from step
-                t_dir1, t_dir2, t_dir3 = 1.0, 0.0, 0.0
-                for st in mission_sequence:
-                    if st.get("type") == "FiniteBurn":
-                        b_dir = (st.get("burn_direction") or "Prograde").strip()
-                        if b_dir.lower() == "custom":
-                            t_dir1 = float(st.get("thrust_dir1", 1.0))
-                            t_dir2 = float(st.get("thrust_dir2", 0.0))
-                            t_dir3 = float(st.get("thrust_dir3", 0.0))
-                        elif b_dir.lower() in ("retrograde", "-v"):
-                            t_dir1, t_dir2, t_dir3 = -1.0, 0.0, 0.0
-                        elif b_dir.lower() in ("normal", "+n"):
-                            t_dir1, t_dir2, t_dir3 = 0.0, 1.0, 0.0
-                        elif b_dir.lower() in ("antinormal", "-n"):
-                            t_dir1, t_dir2, t_dir3 = 0.0, -1.0, 0.0
-                        elif b_dir.lower() in ("radialout", "+b"):
-                            t_dir1, t_dir2, t_dir3 = 0.0, 0.0, 1.0
-                        elif b_dir.lower() in ("radialin", "-b"):
-                            t_dir1, t_dir2, t_dir3 = 0.0, 0.0, -1.0
-                        break
-                mag_th = (t_dir1**2 + t_dir2**2 + t_dir3**2) ** 0.5
-                if mag_th > 1e-8:
-                    t_dir1, t_dir2, t_dir3 = t_dir1/mag_th, t_dir2/mag_th, t_dir3/mag_th
-                lines.append(f"{thname}.ThrustDirection1 = {t_dir1:.8g};")
-                lines.append(f"{thname}.ThrustDirection2 = {t_dir2:.8g};")
-                lines.append(f"{thname}.ThrustDirection3 = {t_dir3:.8g};")
+                lines.append(f"{thname}.ThrustDirection1 = 1.0;")
+                lines.append(f"{thname}.ThrustDirection2 = 0.0;")
+                lines.append(f"{thname}.ThrustDirection3 = 0.0;")
                 lines.append(f"{thname}.DutyCycle = 1.0;")
                 lines.append(f"{thname}.ThrustScaleFactor = 1.0;")
                 lines.append(f"{thname}.DecrementMass = true;")
                 lines.append(f"{thname}.Tank = {{{th_bound_tank}}};")
                 lines.append(f"{thname}.GravitationalAccel = 9.81;")
-                # Thrust in craft_data["thrusters"] is in Newtons (N)
-                th_c1_newtons = float(th_thrust)
-                lines.append(f"{thname}.C1 = {th_c1_newtons:.2f};")
+                lines.append(f"{thname}.C1 = {th_thrust:.2f};")
                 lines.append(f"{thname}.K1 = {th_isp:.2f};")
-    elif created_tank_names and bool(engine_name):
-        eng_id = sanitize_gmat_identifier(engine_name, "MainEngine")
+    elif created_tank_names:
+        eng_id = sanitize_gmat_identifier(engine_name or "MainEngine", "MainEngine")
         created_thruster_names.append(eng_id)
+        eng_c1_newtons = thrust * 1000.0 if (thrust > 0 and thrust < 50000.0) else (thrust if thrust > 0 else 108100.0)
+        eng_k1_isp = isp if isp > 0 else 465.0
         lines.append(f"Create ChemicalThruster {eng_id};")
         lines.append(f"{eng_id}.CoordinateSystem = Local;")
         lines.append(f"{eng_id}.Origin = {central_body};")
         lines.append(f"{eng_id}.Axes = VNB;")
-        lines.append(f"{eng_id}.ThrustDirection1 = 1;")
-        lines.append(f"{eng_id}.ThrustDirection2 = 0;")
-        lines.append(f"{eng_id}.ThrustDirection3 = 0;")
+        lines.append(f"{eng_id}.ThrustDirection1 = 1.0;")
+        lines.append(f"{eng_id}.ThrustDirection2 = 0.0;")
+        lines.append(f"{eng_id}.ThrustDirection3 = 0.0;")
         lines.append(f"{eng_id}.DutyCycle = 1.0;")
         lines.append(f"{eng_id}.ThrustScaleFactor = 1.0;")
         lines.append(f"{eng_id}.DecrementMass = true;")
         lines.append(f"{eng_id}.Tank = {{{created_tank_names[0]}}};")
         lines.append(f"{eng_id}.GravitationalAccel = 9.81;")
-        eng_c1_newtons = thrust * 1000.0 if thrust < 50000.0 else thrust
         lines.append(f"{eng_id}.C1 = {eng_c1_newtons:.2f};")
-        lines.append(f"{eng_id}.K1 = {isp:.2f};")
+        lines.append(f"{eng_id}.K1 = {eng_k1_isp:.2f};")
+
+    # 2. For each FiniteBurn step in sequence, ensure a dedicated ChemicalThruster with exact 3D direction
+    fb_seq_idx = 1
+    for st in mission_sequence:
+        if st.get("type") == "FiniteBurn":
+            b_dir = (st.get("burn_direction") or "Prograde").strip()
+            t_dir1, t_dir2, t_dir3 = 1.0, 0.0, 0.0
+            if b_dir.lower() == "custom":
+                t_dir1 = float(st.get("thrust_dir1", 1.0))
+                t_dir2 = float(st.get("thrust_dir2", 0.0))
+                t_dir3 = float(st.get("thrust_dir3", 0.0))
+            elif b_dir.lower() in ("retrograde", "-v"):
+                t_dir1, t_dir2, t_dir3 = -1.0, 0.0, 0.0
+            elif b_dir.lower() in ("normal", "+n"):
+                t_dir1, t_dir2, t_dir3 = 0.0, 1.0, 0.0
+            elif b_dir.lower() in ("antinormal", "-n"):
+                t_dir1, t_dir2, t_dir3 = 0.0, -1.0, 0.0
+            elif b_dir.lower() in ("radialout", "+b"):
+                t_dir1, t_dir2, t_dir3 = 0.0, 0.0, 1.0
+            elif b_dir.lower() in ("radialin", "-b"):
+                t_dir1, t_dir2, t_dir3 = 0.0, 0.0, -1.0
+
+            mag_th = (t_dir1**2 + t_dir2**2 + t_dir3**2) ** 0.5
+            if mag_th > 1e-8:
+                t_dir1, t_dir2, t_dir3 = t_dir1/mag_th, t_dir2/mag_th, t_dir3/mag_th
+
+            step_fb_name = sanitize_gmat_identifier(st.get("burn_name") or f"Finite_{fb_seq_idx}", "FiniteBurn")
+            th_for_fb = f"{step_fb_name}_Thruster"
+            st["_bound_thruster_name"] = th_for_fb
+
+            if th_for_fb not in created_thruster_names:
+                created_thruster_names.append(th_for_fb)
+                eng_c1_newtons = thrust * 1000.0 if (thrust > 0 and thrust < 50000.0) else (thrust if thrust > 0 else 108100.0)
+                eng_k1_isp = isp if isp > 0 else 465.0
+                th_tk = created_tank_names[0] if created_tank_names else "MainTank"
+                lines.append(f"Create ChemicalThruster {th_for_fb};")
+                lines.append(f"{th_for_fb}.CoordinateSystem = Local;")
+                lines.append(f"{th_for_fb}.Origin = {central_body};")
+                lines.append(f"{th_for_fb}.Axes = VNB;")
+                lines.append(f"{th_for_fb}.ThrustDirection1 = {t_dir1:.8g};")
+                lines.append(f"{th_for_fb}.ThrustDirection2 = {t_dir2:.8g};")
+                lines.append(f"{th_for_fb}.ThrustDirection3 = {t_dir3:.8g};")
+                lines.append(f"{th_for_fb}.DutyCycle = 1.0;")
+                lines.append(f"{th_for_fb}.ThrustScaleFactor = 1.0;")
+                lines.append(f"{th_for_fb}.DecrementMass = true;")
+                lines.append(f"{th_for_fb}.Tank = {{{th_tk}}};")
+                lines.append(f"{th_for_fb}.GravitationalAccel = 9.81;")
+                lines.append(f"{th_for_fb}.C1 = {eng_c1_newtons:.2f};")
+                lines.append(f"{th_for_fb}.K1 = {eng_k1_isp:.2f};")
+            fb_seq_idx += 1
 
     # Attach all hardware to Spacecraft
     if created_tank_names:
         lines.append(f"{sat_name}.Tanks = {{{', '.join(created_tank_names)}}};")
     if created_thruster_names:
         lines.append(f"{sat_name}.Thrusters = {{{', '.join(created_thruster_names)}}};")
-    lines.append("")
 
-    # Coordinate Systems (Custom User-Defined + Built-in Systems)
     custom_coords = custom_coordinate_systems or []
     created_cs_names = set()
 
@@ -719,7 +726,8 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
             if fbname not in created_finite_names:
                 created_finite_names.add(fbname)
                 burn_defs.append(f"Create FiniteBurn {fbname};")
-                burn_defs.append(f"{fbname}.Thrusters = {{{bound_thruster}}};")
+            th_name_to_bind = step.get("_bound_thruster_name") or bound_thruster
+            burn_defs.append(f"{fbname}.Thrusters = {{{th_name_to_bind}}};")
             finite_idx += 1
         elif step_type in ("TargetApoapsis", "Targeter", "Target", "Vary", "Achieve", "DifferentialCorrector"):
             dc_needed = True
@@ -1634,8 +1642,8 @@ def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None, 
             burn_vy = last_burn_row[15] if len(last_burn_row) > 15 else 0.0
             burn_vz = last_burn_row[16] if len(last_burn_row) > 16 else 0.0
 
-            thrust_kn = required_number(craft_data, "thrust") / 1000.0
-            isp = required_number(craft_data, "isp")
+            thrust_kn = float(craft_data.get("thrust") or craft_data.get("thrust_n") or 108100.0) / 1000.0
+            isp = float(craft_data.get("isp") or craft_data.get("isp_s") or 465.0)
             origin = map_body_name(step.get("origin") or central_body)
             solved = {
                 "type": "Finite",

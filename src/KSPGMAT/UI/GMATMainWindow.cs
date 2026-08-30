@@ -1837,11 +1837,8 @@ namespace KSPGMAT.UI {
             if (GUILayout.Button("✏️ 寻优变量", secondaryButtonStyle, GUILayout.Height(26))) {
                 missionSequence.Add(new MissionStep { type = "Vary", vary_variable = "burntime", vary_initial = 150.0, vary_lower = 0.0, vary_upper = 1000.0, vary_max_step = 20.0, label = "寻优点火时长" });
             }
-            if (GUILayout.Button("🚀 脉冲机动 (Maneuver)", secondaryButtonStyle, GUILayout.Height(26))) {
-                missionSequence.Add(new MissionStep { type = "ImpulsiveBurn", burn_name = "GEO_Burn", dv_v = 1100.0, dv_n = 1500.0, dv_b = 0.0, burn_axes = "VNB", label = "脉冲矢量机动" });
-            }
-            if (GUILayout.Button("🔥 有限推力点火", secondaryButtonStyle, GUILayout.Height(26))) {
-                missionSequence.Add(new MissionStep { type = "FiniteBurn", duration = 120.0, propagator = "LEOProp", burn_direction = "Prograde", label = "有限推力点火变轨" });
+            if (GUILayout.Button("🔥 发动机点火 (有限推力)", secondaryButtonStyle, GUILayout.Height(26))) {
+                missionSequence.Add(new MissionStep { type = "FiniteBurn", duration = 120.0, propagator = "LEOProp", burn_direction = "Prograde", burn_use_vary_var = true, burn_vary_var_name = "burntime", label = "发动机有限推力点火" });
             }
             if (GUILayout.Button("🚀 级段分离", secondaryButtonStyle, GUILayout.Height(26))) {
                 double curDry = vessel != null ? vessel.totalMass * 1000.0 * 0.4 : 1500.0;
@@ -2195,18 +2192,7 @@ namespace KSPGMAT.UI {
             // 2. VARY STEP CARD (STREAMLINED COMPACT 2-ROW WITH MULTI-VECTOR CHIPS)
             // =========================================================================
             else if (step.type == "Vary") {
-                // Auto-detect target burn name from nearby steps (e.g. GEO_Burn, GTO_Burn)
-                string activeBurnName = "GEO_Burn";
-                for (int b = 0; b < missionSequence.Count; b++) {
-                    if (missionSequence[b].type == "ImpulsiveBurn" || missionSequence[b].type == "Maneuver") {
-                        if (!string.IsNullOrEmpty(missionSequence[b].burn_name)) {
-                            activeBurnName = missionSequence[b].burn_name;
-                            break;
-                        }
-                    }
-                }
-
-                // Row 1: Variable Input + Quick Axis Chips + i18n Badge + Solver Selection
+                // Row 1: Variable Input + burntime Quick Chip + i18n Badge + Solver Selection
                 GUILayout.BeginHorizontal();
                 GUILayout.Label("<color=#38bdf8><b>寻优变量:</b></color>", labelValueStyle, GUILayout.Width(65));
 
@@ -2214,39 +2200,13 @@ namespace KSPGMAT.UI {
                 string prevVary = step.vary_variable ?? "burntime";
                 string newVary = GUILayout.TextField(prevVary, GUILayout.Width(130), GUILayout.Height(20));
 
-                // Quick Axis Chips: burntime, Element1 (V), Element2 (N), Element3 (B)
                 bool isBurntime = (prevVary == "burntime");
-                bool isEl1 = (prevVary == $"{activeBurnName}.Element1" || prevVary == "Element1");
-                bool isEl2 = (prevVary == $"{activeBurnName}.Element2" || prevVary == "Element2");
-                bool isEl3 = (prevVary == $"{activeBurnName}.Element3" || prevVary == "Element3");
-
-                if (GUILayout.Button("⏱️ burntime", isBurntime ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
+                if (GUILayout.Button("⏱️ burntime (点火时长)", isBurntime ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
                     step.vary_variable = "burntime";
                     step.vary_initial = 120.0;
-                    step.vary_lower = 0.0;
-                    step.vary_upper = 300.0;
-                    step.vary_max_step = 20.0;
-                }
-                if (GUILayout.Button("🚀 Element1 (ΔV_V)", isEl1 ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
-                    step.vary_variable = $"{activeBurnName}.Element1";
-                    step.vary_initial = 1.10;
-                    step.vary_lower = 0.1;
-                    step.vary_upper = 3.5;
-                    step.vary_max_step = 0.1;
-                }
-                if (GUILayout.Button("🧭 Element2 (ΔV_N)", isEl2 ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
-                    step.vary_variable = $"{activeBurnName}.Element2";
-                    step.vary_initial = 1.50;
-                    step.vary_lower = 0.1;
-                    step.vary_upper = 3.5;
-                    step.vary_max_step = 0.1;
-                }
-                if (GUILayout.Button("🌐 Element3 (ΔV_B)", isEl3 ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
-                    step.vary_variable = $"{activeBurnName}.Element3";
-                    step.vary_initial = 0.0;
-                    step.vary_lower = -2.0;
-                    step.vary_upper = 2.0;
-                    step.vary_max_step = 0.1;
+                    step.vary_lower = 5.0;
+                    step.vary_upper = 350.0;
+                    step.vary_max_step = 10.0;
                 }
 
                 string varyBadge = GMATParameterRegistry.GetParamBadgeI18n(step.vary_variable);
