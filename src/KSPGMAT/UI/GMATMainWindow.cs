@@ -183,6 +183,16 @@ namespace KSPGMAT.UI {
         private GUIStyle gridLabelStyle;
         private GUIStyle sectionHeaderStyle;
 
+        // Colored Step Container Box Styles
+        private GUIStyle stepBoxPropStyle;
+        private GUIStyle stepBoxVaryStyle;
+        private GUIStyle stepBoxAchieveStyle;
+        private GUIStyle stepBoxBurnStyle;
+        private GUIStyle stepBoxImpulseStyle;
+        private GUIStyle stepBoxStageStyle;
+        private GUIStyle stepBoxReportStyle;
+        private GUIStyle stepBoxEndTargetStyle;
+
         private bool stylesInitialized = false;
 
         void Awake() {
@@ -705,7 +715,45 @@ namespace KSPGMAT.UI {
             numericInputStyle.fontSize = 11;
             numericInputStyle.alignment = TextAnchor.MiddleRight;
 
+            // 9. Modern Colored Step Box Styles (Borders match Pill Badges)
+            stepBoxPropStyle = CreateStepBoxStyle(new Color(0.038f, 0.058f, 0.095f, 0.95f), new Color(0.18f, 0.55f, 0.90f, 0.85f));
+            stepBoxVaryStyle = CreateStepBoxStyle(new Color(0.035f, 0.065f, 0.090f, 0.95f), new Color(0.12f, 0.68f, 0.85f, 0.85f));
+            stepBoxAchieveStyle = CreateStepBoxStyle(new Color(0.035f, 0.070f, 0.055f, 0.95f), new Color(0.15f, 0.75f, 0.48f, 0.85f));
+            stepBoxBurnStyle = CreateStepBoxStyle(new Color(0.075f, 0.045f, 0.030f, 0.95f), new Color(0.92f, 0.48f, 0.16f, 0.85f));
+            stepBoxImpulseStyle = CreateStepBoxStyle(new Color(0.065f, 0.038f, 0.080f, 0.95f), new Color(0.72f, 0.35f, 0.88f, 0.85f));
+            stepBoxStageStyle = CreateStepBoxStyle(new Color(0.070f, 0.058f, 0.030f, 0.95f), new Color(0.85f, 0.65f, 0.18f, 0.85f));
+            stepBoxReportStyle = CreateStepBoxStyle(new Color(0.040f, 0.052f, 0.075f, 0.95f), new Color(0.38f, 0.48f, 0.62f, 0.80f));
+            stepBoxEndTargetStyle = CreateStepBoxStyle(new Color(0.042f, 0.055f, 0.085f, 0.95f), new Color(0.30f, 0.45f, 0.68f, 0.80f));
+
             stylesInitialized = true;
+        }
+
+        private GUIStyle CreateStepBoxStyle(Color fill, Color border, int borderWidth = 1) {
+            GUIStyle s = new GUIStyle(GUI.skin.box);
+            Texture2D tex = MakeBoxTex(8, 8, fill, border, borderWidth);
+            s.normal.background = tex;
+            s.onNormal.background = tex;
+            s.hover.background = tex;
+            s.onHover.background = tex;
+            s.active.background = tex;
+            s.onActive.background = tex;
+            s.focused.background = tex;
+            s.onFocused.background = tex;
+            s.border = new RectOffset(2, 2, 2, 2);
+            s.padding = new RectOffset(8, 8, 8, 8);
+            return s;
+        }
+
+        private GUIStyle GetStepBoxStyle(string stepType) {
+            if (stepType == "Propagate") return stepBoxPropStyle ?? nestedCardBoxStyle;
+            if (stepType == "Vary") return stepBoxVaryStyle ?? nestedCardBoxStyle;
+            if (stepType == "Achieve") return stepBoxAchieveStyle ?? nestedCardBoxStyle;
+            if (stepType == "FiniteBurn") return stepBoxBurnStyle ?? nestedCardBoxStyle;
+            if (stepType == "ImpulsiveBurn" || stepType == "Maneuver") return stepBoxImpulseStyle ?? nestedCardBoxStyle;
+            if (stepType == "StageSeparation") return stepBoxStageStyle ?? nestedCardBoxStyle;
+            if (stepType == "Report" || stepType == "Equation") return stepBoxReportStyle ?? nestedCardBoxStyle;
+            if (stepType == "EndTarget") return stepBoxEndTargetStyle ?? nestedCardBoxStyle;
+            return nestedCardBoxStyle;
         }
 
         private Texture2D MakeBoxTex(int width, int height, Color fill, Color border, int borderWidth = 1) {
@@ -1752,8 +1800,9 @@ namespace KSPGMAT.UI {
                     if (!targetGroupCollapsed) {
                         // Render EndTarget footer inside the group container with visual hierarchy guide
                         GUILayout.BeginHorizontal();
-                        GUILayout.Space(14);
-                        GUILayout.BeginVertical(nestedCardBoxStyle);
+                        GUILayout.Space(6);
+                        GUILayout.Label("<color=#38bdf8>│ └─</color>", labelValueStyle, GUILayout.Width(24));
+                        GUILayout.BeginVertical(GetStepBoxStyle("EndTarget"));
                         GUILayout.BeginHorizontal();
 
                         string foldIcon = step.is_collapsed ? "⊞" : "⊟";
@@ -1771,11 +1820,12 @@ namespace KSPGMAT.UI {
                         }
                         GUI.enabled = true;
 
-                        if (GUILayout.Button(isBeingDragged ? "✊ 拖动中 (点此取消)" : "☰ 拖动", isBeingDragged ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Width(isBeingDragged ? 120 : 54), GUILayout.Height(20))) {
+                        if (GUILayout.Button(isBeingDragged ? "✊ 拖动中" : "☰", isBeingDragged ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Width(isBeingDragged ? 65 : 26), GUILayout.Height(20))) {
                             draggedStepIndex = isBeingDragged ? -1 : i;
                         }
 
-                        GUILayout.Label($"<b>#{i + 1} ↵ EndTarget (闭合求解循环: '{(string.IsNullOrEmpty(step.label) ? "结束打靶" : step.label)}')</b>", labelValueStyle);
+                        GUILayout.Box("↵ EndTarget", pillEndTargetStyle, GUILayout.Width(80), GUILayout.Height(20));
+                        GUILayout.Label($"<b>闭合求解循环: '{(string.IsNullOrEmpty(step.label) ? "结束打靶" : step.label)}'</b>", labelValueStyle);
                         GUILayout.FlexibleSpace();
 
                         if (GUILayout.Button("✕", deleteButtonStyle, GUILayout.Width(22), GUILayout.Height(18))) {
@@ -1804,11 +1854,11 @@ namespace KSPGMAT.UI {
                         continue; // Skip rendering children when Target group is folded
                     }
 
-                    // Render inner step nested neatly inside the prominent group box
+                    // Render inner step nested neatly inside the prominent group box with typed colored border
                     GUILayout.BeginHorizontal();
                     GUILayout.Space(6); // Inner margin from outer group
                     GUILayout.Label("<color=#38bdf8>│ ├─</color>", labelValueStyle, GUILayout.Width(24));
-                    GUILayout.BeginVertical(nestedCardBoxStyle);
+                    GUILayout.BeginVertical(GetStepBoxStyle(step.type));
 
                     // Step Header Bar
                     GUILayout.BeginHorizontal();
@@ -1886,7 +1936,7 @@ namespace KSPGMAT.UI {
                 // ==========================================
                 // CASE 4: REGULAR STANDALONE STEPS OUTSIDE GROUPS
                 // ==========================================
-                GUILayout.BeginVertical(cardBoxStyle);
+                GUILayout.BeginVertical(GetStepBoxStyle(step.type));
                 GUILayout.BeginHorizontal();
 
                 string regularFoldIcon = step.is_collapsed ? "⊞" : "⊟";
@@ -2371,11 +2421,11 @@ namespace KSPGMAT.UI {
                 // Stop Condition Row
                 GUILayout.Space(2);
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("停止条件 (Stop Condition):", labelValueStyle, GUILayout.Width(155));
+                GUILayout.Label("<color=#38bdf8><b>停止条件:</b></color>", labelValueStyle, GUILayout.Width(75));
 
                 GUI.SetNextControlName($"Field_PropStop_{i}");
                 string prevStop = step.stop_type ?? "Sat.Luna.Periapsis";
-                string newStop = GUILayout.TextField(prevStop, GUILayout.Width(220), GUILayout.Height(20));
+                string newStop = GUILayout.TextField(prevStop, GUILayout.MinWidth(180), GUILayout.Width(220), GUILayout.Height(20));
 
                 if (Event.current.type == EventType.Repaint) {
                     if (GUI.GetNameOfFocusedControl() == $"Field_PropStop_{i}") {
@@ -2395,14 +2445,15 @@ namespace KSPGMAT.UI {
 
                 string propBadge = GMATParameterRegistry.GetParamBadgeI18n(step.stop_type);
                 if (!string.IsNullOrEmpty(propBadge)) {
-                    GUILayout.Label($"<color=#38bdf8><b>| {propBadge}</b></color>", labelValueStyle);
+                    GUILayout.Label($"<color=#38bdf8><b>[{propBadge}]</b></color>", labelValueStyle);
                 }
 
                 if (IsPureOrbitalEvent(step.stop_type)) {
                     GUILayout.Label("<color=#34d399><b>● 极值事件 (自动精确积分至最高/低点，无需设值)</b></color>", labelValueStyle);
                 } else {
-                    GUILayout.Label("目标阈值:", labelValueStyle, GUILayout.Width(60));
-                    string sTVal = GUILayout.TextField(step.target_val.ToString("F3"), GUILayout.Width(75));
+                    GUILayout.Space(8);
+                    GUILayout.Label("<color=#94a3b8>目标阈值:</color>", gridLabelStyle, GUILayout.Width(60));
+                    string sTVal = GUILayout.TextField(step.target_val.ToString("F3"), numericInputStyle, GUILayout.Width(75));
                     double.TryParse(sTVal, out step.target_val);
                 }
 
@@ -2723,23 +2774,24 @@ namespace KSPGMAT.UI {
                 var allTanks = ROEngineInterop.ScanVesselTanks(v);
 
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("<color=#38bdf8><b>🔥 有限推力点火配置 (FiniteBurn):</b></color>", labelValueStyle, GUILayout.Width(190));
+                GUILayout.Label("<color=#f97316><b>🔥 有限推力点火配置:</b></color>", labelValueStyle, GUILayout.Width(135));
 
-                GUILayout.Label("点火对象名:", labelValueStyle, GUILayout.Width(75));
-                step.burn_name = GUILayout.TextField(string.IsNullOrEmpty(step.burn_name) ? $"Burn_{i + 1}" : step.burn_name, GUILayout.Width(95));
-
-                GUILayout.Label("参考系:", labelValueStyle, GUILayout.Width(48));
-                step.burn_coordinate_system = GUILayout.TextField(string.IsNullOrEmpty(step.burn_coordinate_system) ? "Local" : step.burn_coordinate_system, GUILayout.Width(60));
-                step.burn_axes = GUILayout.TextField(string.IsNullOrEmpty(step.burn_axes) ? "VNB" : step.burn_axes, GUILayout.Width(45));
+                GUILayout.Label("<color=#94a3b8>对象名:</color>", gridLabelStyle, GUILayout.Width(45));
+                step.burn_name = GUILayout.TextField(string.IsNullOrEmpty(step.burn_name) ? $"Burn_{i + 1}" : step.burn_name, GUILayout.Width(85), GUILayout.Height(20));
 
                 GUILayout.Space(6);
-                step.burn_use_vary_var = GUILayout.Toggle(step.burn_use_vary_var, " 使用 Vary 变量控制时长", GUILayout.Width(170));
+                GUILayout.Label("<color=#94a3b8>参考系:</color>", gridLabelStyle, GUILayout.Width(45));
+                step.burn_coordinate_system = GUILayout.TextField(string.IsNullOrEmpty(step.burn_coordinate_system) ? "Local" : step.burn_coordinate_system, GUILayout.Width(55), GUILayout.Height(20));
+                step.burn_axes = GUILayout.TextField(string.IsNullOrEmpty(step.burn_axes) ? "VNB" : step.burn_axes, GUILayout.Width(42), GUILayout.Height(20));
+
+                GUILayout.Space(8);
+                step.burn_use_vary_var = GUILayout.Toggle(step.burn_use_vary_var, " 使用 Vary 变量控制时长", GUILayout.Width(160));
                 if (step.burn_use_vary_var) {
-                    GUILayout.Label("变量名:", labelValueStyle, GUILayout.Width(50));
-                    step.burn_vary_var_name = GUILayout.TextField(string.IsNullOrEmpty(step.burn_vary_var_name) ? "burntime" : step.burn_vary_var_name, GUILayout.Width(85));
+                    GUILayout.Label("<color=#94a3b8>变量名:</color>", gridLabelStyle, GUILayout.Width(45));
+                    step.burn_vary_var_name = GUILayout.TextField(string.IsNullOrEmpty(step.burn_vary_var_name) ? "burntime" : step.burn_vary_var_name, GUILayout.Width(85), GUILayout.Height(20));
                 } else {
-                    GUILayout.Label("固定时长 (s):", labelValueStyle, GUILayout.Width(80));
-                    string sDur = GUILayout.TextField(step.duration.ToString("F1"), GUILayout.Width(65));
+                    GUILayout.Label("<color=#94a3b8>固定时长 (s):</color>", gridLabelStyle, GUILayout.Width(75));
+                    string sDur = GUILayout.TextField(step.duration.ToString("F1"), numericInputStyle, GUILayout.Width(65));
                     double.TryParse(sDur, out step.duration);
                 }
 
@@ -2757,7 +2809,7 @@ namespace KSPGMAT.UI {
 
                 // Engine Selector Row
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("<b>🚀 点火发动机:</b>", labelValueStyle, GUILayout.Width(90));
+                GUILayout.Label("<b>🚀 点火发动机:</b>", labelValueStyle, GUILayout.Width(85));
                 if (allEngines.Count > 0) {
                     for (int eg = 0; eg < allEngines.Count; eg++) {
                         var eng = allEngines[eg];
@@ -2790,7 +2842,7 @@ namespace KSPGMAT.UI {
                 // Tank Selector Row
                 GUILayout.Space(2);
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("<b>⛽ 供油储罐:</b>", labelValueStyle, GUILayout.Width(90));
+                GUILayout.Label("<b>⛽ 供油储罐:</b>", labelValueStyle, GUILayout.Width(85));
                 if (allTanks.Count > 0) {
                     for (int tk = 0; tk < allTanks.Count; tk++) {
                         var tnk = allTanks[tk];
@@ -2809,9 +2861,9 @@ namespace KSPGMAT.UI {
                 // Direction Selection & Smart Angle-Based Preset Row
                 GUILayout.Space(2);
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("<b>🧭 点火朝向 (Direction):</b>", labelValueStyle, GUILayout.Width(130));
+                GUILayout.Label("<b>🧭 点火朝向:</b>", labelValueStyle, GUILayout.Width(85));
                 string[] bDirs = new string[] { "Prograde", "Retrograde", "Normal", "AntiNormal", "GEOSynthesis", "Custom" };
-                string[] bDirLabels = new string[] { "顺行 (+V)", "逆行 (-V)", "法向 (+N)", "反法向 (-N)", "🌐 顺行+法向 (GEO常用)", "⚙️ 自定义角度/矢量" };
+                string[] bDirLabels = new string[] { "顺行 (切向 +V)", "逆行 (切向 -V)", "副法向 (变倾角 +N)", "反副法向 (变倾角 -N)", "🌐 顺行+副法向合成 (变倾角圆化)", "⚙️ 自定义角度/滑块" };
                 for (int d = 0; d < bDirs.Length; d++) {
                     bool isDirCur = (step.burn_direction == bDirs[d]) || (string.IsNullOrEmpty(step.burn_direction) && d == 0);
                     if (GUILayout.Button(bDirLabels[d], isDirCur ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
@@ -2826,7 +2878,7 @@ namespace KSPGMAT.UI {
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
 
-                // Intuitive Interactive Sliders & Real-Time 3D Vector HUD
+                // Intuitive Interactive Sliders & Real-Time 3D Vector HUD (Synchronized with Principia Frenet)
                 if (step.burn_direction == "Custom" || step.burn_direction == "GEOSynthesis") {
                     GUILayout.Space(4);
                     GUILayout.BeginVertical(nestedCardBoxStyle);
@@ -2834,14 +2886,14 @@ namespace KSPGMAT.UI {
                     double curMag = Math.Sqrt(step.thrust_dir1 * step.thrust_dir1 + step.thrust_dir2 * step.thrust_dir2 + step.thrust_dir3 * step.thrust_dir3);
                     if (curMag < 1e-6) curMag = 1.0;
                     double uV = step.thrust_dir1 / curMag, uN = step.thrust_dir2 / curMag, uB = step.thrust_dir3 / curMag;
-                    double yawAngle = Math.Atan2(uN, uV) * (180.0 / Math.PI); // -180 to +180
-                    double pitchAngle = Math.Asin(Math.Max(-1.0, Math.Min(1.0, uB))) * (180.0 / Math.PI);
+                    double yawAngle = Math.Atan2(uN, uV) * (180.0 / Math.PI); // -180 to +180 (Yaw: Angle towards Binormal N / Out-of-Plane)
+                    double pitchAngle = Math.Asin(Math.Max(-1.0, Math.Min(1.0, uB))) * (180.0 / Math.PI); // Pitch: Angle towards Normal B / In-Plane Radial
 
-                    // Row 1: Yaw Angle (Normal / Out-of-Plane Steering Slider)
+                    // Row 1: Yaw Angle (Binormal / Out-of-Plane Inclination Change Slider)
                     GUILayout.BeginHorizontal();
-                    GUILayout.Label("<color=#38bdf8><b>🧭 法向偏转角 (Yaw):</b></color>", labelValueStyle, GUILayout.Width(140));
+                    GUILayout.Label("<color=#facc15><b>🧭 副法向偏转角 (Yaw / 变倾角):</b></color>", labelValueStyle, GUILayout.Width(190));
                     float fYaw = (float)yawAngle;
-                    float newSliderYaw = GUILayout.HorizontalSlider(fYaw, -90f, 90f, GUILayout.MinWidth(160), GUILayout.ExpandWidth(true));
+                    float newSliderYaw = GUILayout.HorizontalSlider(fYaw, -90f, 90f, GUILayout.MinWidth(140), GUILayout.ExpandWidth(true));
                     if (Math.Abs(newSliderYaw - fYaw) > 0.05f) {
                         double radYaw = newSliderYaw * (Math.PI / 180.0);
                         double radPitch = pitchAngle * (Math.PI / 180.0);
@@ -2858,16 +2910,16 @@ namespace KSPGMAT.UI {
                         step.thrust_dir3 = Math.Sin(radPitch);
                     }
                     GUILayout.Label("°", labelValueStyle, GUILayout.Width(15));
-                    string yawDesc = (newSliderYaw > 5f) ? "<color=#38bdf8>(向法向+N倾斜)</color>" : (newSliderYaw < -5f) ? "<color=#f43f5e>(向反法向-N倾斜)</color>" : "<color=#34d399>(正顺行)</color>";
-                    GUILayout.Label(yawDesc, labelValueStyle, GUILayout.Width(125));
+                    string yawDesc = (newSliderYaw > 5f) ? "<color=#facc15>(向副法向+N倾斜 / 变倾角)</color>" : (newSliderYaw < -5f) ? "<color=#f43f5e>(向反副法向-N倾斜 / 变倾角)</color>" : "<color=#34d399>(正切向顺行/面内)</color>";
+                    GUILayout.Label(yawDesc, labelValueStyle, GUILayout.Width(160));
                     GUILayout.EndHorizontal();
 
-                    // Row 2: Pitch Angle (Radial Steering Slider)
+                    // Row 2: Pitch Angle (In-Plane Normal / Radial Steering Slider)
                     GUILayout.Space(2);
                     GUILayout.BeginHorizontal();
-                    GUILayout.Label("<color=#38bdf8><b>🌐 俯仰偏转角 (Pitch):</b></color>", labelValueStyle, GUILayout.Width(140));
+                    GUILayout.Label("<color=#f472b6><b>🌐 法向/径向俯仰角 (Pitch / 径向):</b></color>", labelValueStyle, GUILayout.Width(190));
                     float fPitch = (float)pitchAngle;
-                    float newSliderPitch = GUILayout.HorizontalSlider(fPitch, -90f, 90f, GUILayout.MinWidth(160), GUILayout.ExpandWidth(true));
+                    float newSliderPitch = GUILayout.HorizontalSlider(fPitch, -90f, 90f, GUILayout.MinWidth(140), GUILayout.ExpandWidth(true));
                     if (Math.Abs(newSliderPitch - fPitch) > 0.05f) {
                         double radYaw = yawAngle * (Math.PI / 180.0);
                         double radPitch = newSliderPitch * (Math.PI / 180.0);
@@ -2884,18 +2936,46 @@ namespace KSPGMAT.UI {
                         step.thrust_dir3 = Math.Sin(radPitch);
                     }
                     GUILayout.Label("°", labelValueStyle, GUILayout.Width(15));
-                    string pitchDesc = (newSliderPitch > 5f) ? "<color=#38bdf8>(向径向外+B仰起)</color>" : (newSliderPitch < -5f) ? "<color=#f43f5e>(向径向内-B俯冲)</color>" : "<color=#34d399>(轨道面内)</color>";
-                    GUILayout.Label(pitchDesc, labelValueStyle, GUILayout.Width(125));
+                    string pitchDesc = (newSliderPitch > 5f) ? "<color=#38bdf8>(向径向外+B仰起)</color>" : (newSliderPitch < -5f) ? "<color=#f43f5e>(向径向内-B俯冲)</color>" : "<color=#34d399>(轨道切向平面)</color>";
+                    GUILayout.Label(pitchDesc, labelValueStyle, GUILayout.Width(160));
                     GUILayout.EndHorizontal();
 
-                    // Row 3: Real-Time Dynamic Vector HUD
+                    // Row 3: Real-Time Dynamic Vector HUD (100% Principia Frenet Alignment)
                     GUILayout.Space(3);
                     GUILayout.BeginHorizontal();
-                    GUILayout.Label($"<color=#34d399><b>🟢 单位推力矢量:</b></color> <color=#38bdf8>V = {uV:F3} (切向 {uV*100.0:F1}%)</color> | <color=#facc15>N = {uN:F3} (法向 {uN*100.0:F1}%)</color> | <color=#f472b6>B = {uB:F3} (径向 {uB*100.0:F1}%)</color>", labelValueStyle);
+                    GUILayout.Label($"<color=#34d399><b>🟢 单位推力矢量:</b></color> <color=#38bdf8>切向 (V) = {uV:F3} ({uV*100.0:F1}%)</color> | <color=#facc15>副法向/变倾角 (N) = {uN:F3} ({uN*100.0:F1}%)</color> | <color=#f472b6>法向/径向 (B) = {uB:F3} ({uB*100.0:F1}%)</color>", labelValueStyle);
                     GUILayout.FlexibleSpace();
                     GUILayout.EndHorizontal();
 
-
+                    // Row 4: Bi-directional Synchronization from Principia In-Game Maneuver Node
+                    if (cachedFlightPlanNodes != null && cachedFlightPlanNodes.Count > 0) {
+                        int fbIdx = 0;
+                        for (int k = 0; k < i && k < missionSequence.Count; k++) {
+                            if (missionSequence[k].type == "FiniteBurn") fbIdx++;
+                        }
+                        if (fbIdx < cachedFlightPlanNodes.Count) {
+                            var pNode = cachedFlightPlanNodes[fbIdx];
+                            if (pNode != null && pNode.hasDeltaV) {
+                                GUILayout.Space(3);
+                                GUILayout.BeginHorizontal();
+                                if (GUILayout.Button($"📥 从 Principia #{fbIdx + 1} 实机节点同步 (切向: {pNode.deltaV.x:F1}, 副法向: {pNode.deltaV.z:F1}, 法向/径向: {pNode.deltaV.y:F1} m/s | 时长: {pNode.duration:F1}s)", secondaryButtonStyle, GUILayout.Height(22))) {
+                                    double pMag = Math.Sqrt(pNode.deltaV.x * pNode.deltaV.x + pNode.deltaV.y * pNode.deltaV.y + pNode.deltaV.z * pNode.deltaV.z);
+                                    if (pMag > 1e-5) {
+                                        step.thrust_dir1 = pNode.deltaV.x / pMag;
+                                        step.thrust_dir2 = pNode.deltaV.z / pMag; // Principia Binormal (z) -> GMAT Normal (N)
+                                        step.thrust_dir3 = pNode.deltaV.y / pMag; // Principia Normal (y) -> GMAT Radial (B)
+                                    }
+                                    if (pNode.duration > 0.1) {
+                                        step.duration = pNode.duration;
+                                    }
+                                    step.burn_direction = "Custom";
+                                    ScreenMessages.PostScreenMessage($"✅ 成功从 Principia #{fbIdx + 1} 节点同步推力朝向与时长！", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                                }
+                                GUILayout.FlexibleSpace();
+                                GUILayout.EndHorizontal();
+                            }
+                        }
+                    }
 
                     GUILayout.EndVertical(); // Closes nested slider box
                 }
