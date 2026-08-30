@@ -2208,48 +2208,17 @@ namespace KSPGMAT.UI {
             // 2. VARY STEP CARD (STREAMLINED COMPACT 2-ROW WITH MULTI-VECTOR CHIPS)
             // =========================================================================
             else if (step.type == "Vary") {
-                // Find nearest FiniteBurn thruster name in sequence
-                string activeThName = "Finite_1_Thruster";
-                for (int b = 0; b < missionSequence.Count; b++) {
-                    if (missionSequence[b].type == "FiniteBurn") {
-                        string bName = string.IsNullOrEmpty(missionSequence[b].burn_name) ? $"Finite_{b + 1}" : missionSequence[b].burn_name;
-                        activeThName = $"{GMATParameterRegistry.SanitizeGmatIdentifier(bName, "Finite")}_Thruster";
-                        break;
-                    }
-                }
-
-                // Row 1: Variable Input + Smart Quick Chips + i18n Badge + Solver Selection
+                // Row 1: Fully Expanding Variable Input + Official GMAT [Edit] Dialog Button (Image 3)
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("<color=#38bdf8><b>寻优变量:</b></color>", labelValueStyle, GUILayout.Width(65));
+                GUILayout.Label("<color=#38bdf8><b>寻优变量 (Variable):</b></color>", labelValueStyle, GUILayout.Width(140));
 
                 GUI.SetNextControlName($"Field_Vary_{i}");
                 string prevVary = step.vary_variable ?? "burntime";
-                string newVary = GUILayout.TextField(prevVary, GUILayout.Width(130), GUILayout.Height(20));
+                string newVary = GUILayout.TextField(prevVary, GUILayout.MinWidth(240), GUILayout.ExpandWidth(true), GUILayout.Height(22));
+                if (newVary != prevVary) step.vary_variable = newVary;
 
-                bool isBurntime = (prevVary == "burntime");
-                bool isThDir2 = (prevVary.Contains("ThrustDirection2"));
-                bool isThDir1 = (prevVary.Contains("ThrustDirection1"));
-
-                if (GUILayout.Button("⏱️ burntime (点火时长)", isBurntime ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
-                    step.vary_variable = "burntime";
-                    step.vary_initial = 120.0;
-                    step.vary_lower = 5.0;
-                    step.vary_upper = 350.0;
-                    step.vary_max_step = 10.0;
-                }
-                if (GUILayout.Button("🧭 ThrustDirection2 (法向偏转)", isThDir2 ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
-                    step.vary_variable = $"Sat.{activeThName}.ThrustDirection2";
-                    step.vary_initial = -0.50;
-                    step.vary_lower = -1.0;
-                    step.vary_upper = 1.0;
-                    step.vary_max_step = 0.05;
-                }
-                if (GUILayout.Button("🚀 ThrustDirection1 (切向偏转)", isThDir1 ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
-                    step.vary_variable = $"Sat.{activeThName}.ThrustDirection1";
-                    step.vary_initial = 0.65;
-                    step.vary_lower = 0.0;
-                    step.vary_upper = 1.0;
-                    step.vary_max_step = 0.05;
+                if (GUILayout.Button("📝 Edit / 选择变量...", tabButtonActiveStyle, GUILayout.Width(130), GUILayout.Height(22))) {
+                    OpenGMATParameterSelectDialog(i, "vary", step.vary_variable);
                 }
 
                 string varyBadge = GMATParameterRegistry.GetParamBadgeI18n(step.vary_variable);
@@ -2342,16 +2311,16 @@ namespace KSPGMAT.UI {
             // 3. ACHIEVE STEP CARD (STREAMLINED COMPACT 2-ROW LAYOUT)
             // =========================================================================
             else if (step.type == "Achieve") {
-                // Row 1: Target Goal Input + i18n Badge + Param Picker + Solver Selector
+                // Row 1: Target Goal Input + i18n Badge + [Edit] Dialog + Solver Selector
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("<color=#38bdf8><b>约束目标:</b></color>", labelValueStyle, GUILayout.Width(65));
+                GUILayout.Label("<color=#38bdf8><b>约束目标 (Goal):</b></color>", labelValueStyle, GUILayout.Width(110));
 
                 GUI.SetNextControlName($"Field_Achieve_{i}");
                 string prevAchieve = step.achieve_param ?? "Sat.Earth.Altitude";
-                string newAchieve = GUILayout.TextField(prevAchieve, GUILayout.Width(160), GUILayout.Height(20));
+                string newAchieve = GUILayout.TextField(prevAchieve, GUILayout.MinWidth(220), GUILayout.ExpandWidth(true), GUILayout.Height(22));
 
-                if (GUILayout.Button("📋 参数库", secondaryButtonStyle, GUILayout.Width(65), GUILayout.Height(20))) {
-                    OpenParamPicker(i, "achieve");
+                if (GUILayout.Button("📝 Edit / 选择目标...", tabButtonActiveStyle, GUILayout.Width(130), GUILayout.Height(22))) {
+                    OpenGMATParameterSelectDialog(i, "achieve", step.achieve_param);
                 }
 
                 string achBadge = GMATParameterRegistry.GetParamBadgeI18n(step.achieve_param);
@@ -2786,7 +2755,276 @@ namespace KSPGMAT.UI {
             showParamPickerModal = true;
         }
 
+        // =========================================================================
+        // GMAT OFFICIAL PARAMETER SELECT DIALOG (100% REPLICATING GMAT GUI - IMAGE 3)
+        // 3-Column Architecture: Object Type | Object Properties | Selected Value(s)
+        // =========================================================================
+        private int psdSelectedObjectTypeIndex = 0;
+        private string psdSelectedHardwareName = "";
+        private string psdPendingSelectedValue = "";
+        private Vector2 psdScrollObjType = Vector2.zero;
+        private Vector2 psdScrollObjProps = Vector2.zero;
+
+        private void OpenGMATParameterSelectDialog(int stepIndex, string mode, string currentVal) {
+            paramPickerTargetStepIndex = stepIndex;
+            paramPickerMode = mode;
+            psdPendingSelectedValue = currentVal ?? "";
+            paramPickerSearchQuery = "";
+            showParamPickerModal = true;
+            if (paramPickerWindowRect.width < 760 || paramPickerWindowRect.height < 480) {
+                paramPickerWindowRect = new Rect((Screen.width - 780) / 2, (Screen.height - 520) / 2, 780, 520);
+            }
+        }
+
         private void DrawParamPickerWindow(int windowID) {
+            Vessel v = FlightGlobals.ActiveVessel;
+            string cb = (v != null) ? v.mainBody.bodyName : "Earth";
+            if (cb == "Kerbin") cb = "Earth"; else if (cb == "Mun") cb = "Luna";
+
+            // Title Bar
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("<b>🌐 ParameterSelectDialog (GMAT 官方参数与硬件对象选择器)</b>", headerStyle);
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button("✕", deleteButtonStyle, GUILayout.Width(24), GUILayout.Height(20))) {
+                showParamPickerModal = false;
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(4);
+
+            // Search Bar
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("🔍 快速搜索过滤:", labelValueStyle, GUILayout.Width(100));
+            paramPickerSearchQuery = GUILayout.TextField(paramPickerSearchQuery, GUILayout.MinWidth(200), GUILayout.ExpandWidth(true));
+            if (GUILayout.Button("清空", secondaryButtonStyle, GUILayout.Width(45), GUILayout.Height(20))) {
+                paramPickerSearchQuery = "";
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(6);
+
+            // 3-COLUMN MAIN LAYOUT (Image 3)
+            GUILayout.BeginHorizontal();
+
+            // -----------------------------------------------------------------
+            // COLUMN 1: Object Type & Attached Hardware List (Width: 200px)
+            // -----------------------------------------------------------------
+            GUILayout.BeginVertical(cardBoxStyle, GUILayout.Width(210));
+            GUILayout.Label("<b>Object Type (对象类型)</b>", subHeaderStyle);
+            psdScrollObjType = GUILayout.BeginScrollView(psdScrollObjType);
+
+            string[] objTypes = new string[] { "Spacecraft", "Variable", "ChemicalThruster", "ChemicalTank", "ImpulsiveBurn", "CoordinateSystem", "Array" };
+            string[] objTypeLabels = new string[] { "🚀 Spacecraft (航天器)", "🔢 Variable (自定义变量)", "🔥 ChemicalThruster (推力器)", "⛽ ChemicalTank (储罐)", "💥 ImpulsiveBurn (脉冲机动)", "🌐 CoordinateSystem (坐标系)", "📊 Array (数组矩阵)" };
+
+            for (int t = 0; t < objTypes.Length; t++) {
+                bool isCurType = (psdSelectedObjectTypeIndex == t && string.IsNullOrEmpty(psdSelectedHardwareName));
+                if (GUILayout.Button(objTypeLabels[t], isCurType ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(22))) {
+                    psdSelectedObjectTypeIndex = t;
+                    psdSelectedHardwareName = "";
+                }
+            }
+
+            // Attached Hardware Section (Scan actual craft + sequence)
+            GUILayout.Space(6);
+            GUILayout.Label("<color=#94a3b8><b>Attached Hardware:</b></color>", labelValueStyle);
+
+            // Thrusters
+            var allEngines = ROEngineInterop.ScanVesselEngines(v);
+            List<string> thList = new List<string>();
+            if (allEngines != null) {
+                for (int e = 0; e < allEngines.Count; e++) thList.Add(GMATParameterRegistry.SanitizeGmatIdentifier(allEngines[e].title, "Engine"));
+            }
+            for (int s = 0; s < missionSequence.Count; s++) {
+                if (missionSequence[s].type == "FiniteBurn") {
+                    string bn = string.IsNullOrEmpty(missionSequence[s].burn_name) ? $"Finite_{s + 1}" : missionSequence[s].burn_name;
+                    string thId = $"{GMATParameterRegistry.SanitizeGmatIdentifier(bn, "Finite")}_Thruster";
+                    if (!thList.Contains(thId)) thList.Add(thId);
+                }
+            }
+            for (int th = 0; th < thList.Count; th++) {
+                string tName = thList[th];
+                bool isCurHw = (psdSelectedHardwareName == tName);
+                if (GUILayout.Button($"🔥 {tName}", isCurHw ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
+                    psdSelectedHardwareName = tName;
+                    psdSelectedObjectTypeIndex = 2; // Thruster
+                }
+            }
+
+            // Tanks
+            var allTanks = ROEngineInterop.ScanVesselTanks(v);
+            List<string> tkList = new List<string>();
+            if (allTanks != null) {
+                for (int tk = 0; tk < allTanks.Count; tk++) tkList.Add(GMATParameterRegistry.SanitizeGmatIdentifier(allTanks[tk].id, "Tank"));
+            }
+            if (tkList.Count == 0) tkList.Add("MainTank");
+            for (int tk = 0; tk < tkList.Count; tk++) {
+                string tName = tkList[tk];
+                bool isCurHw = (psdSelectedHardwareName == tName);
+                if (GUILayout.Button($"⛽ {tName}", isCurHw ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
+                    psdSelectedHardwareName = tName;
+                    psdSelectedObjectTypeIndex = 3; // Tank
+                }
+            }
+
+            GUILayout.EndScrollView();
+            GUILayout.EndVertical();
+
+            GUILayout.Space(6);
+
+            // -----------------------------------------------------------------
+            // COLUMN 2: Object Properties List (Width: 320px)
+            // -----------------------------------------------------------------
+            GUILayout.BeginVertical(cardBoxStyle, GUILayout.MinWidth(280), GUILayout.ExpandWidth(true));
+            string curObjTypeName = objTypes[psdSelectedObjectTypeIndex];
+            string headerTitle = !string.IsNullOrEmpty(psdSelectedHardwareName) ? $"Properties of [{psdSelectedHardwareName}]" : $"Properties of [{curObjTypeName}]";
+            GUILayout.Label($"<b>{headerTitle}</b>", subHeaderStyle);
+
+            psdScrollObjProps = GUILayout.BeginScrollView(psdScrollObjProps);
+
+            // Populate properties dynamically based on selected Object Type
+            List<KeyValuePair<string, string>> propList = new List<KeyValuePair<string, string>>();
+
+            if (curObjTypeName == "Spacecraft" && string.IsNullOrEmpty(psdSelectedHardwareName)) {
+                // Spacecraft Orbital & Cartesian Properties
+                string[] scProps = new string[] {
+                    "SMA", "ECC", "INC", "RAAN", "AOP", "TA", "Altitude", "Apoapsis", "Periapsis",
+                    "RadApo", "RadPer", "RMAG", "VMAG", "Energy", "OrbitPeriod", "Latitude", "Longitude",
+                    "X", "Y", "Z", "VX", "VY", "VZ", "DryMass", "TotalMass", "FuelMass",
+                    "ElapsedSecs", "ElapsedDays", "A1ModJulian", "Epoch"
+                };
+                for (int sp = 0; sp < scProps.Length; sp++) {
+                    string pKey = scProps[sp];
+                    string pDesc = GMATParameterRegistry.GetParamBadgeI18n(pKey);
+                    propList.Add(new KeyValuePair<string, string>(pKey, pDesc));
+                }
+            } else if (curObjTypeName == "ChemicalThruster" || (!string.IsNullOrEmpty(psdSelectedHardwareName) && (psdSelectedHardwareName.Contains("Thruster") || psdSelectedHardwareName.Contains("Engine") || psdSelectedHardwareName.Contains("RL10")))) {
+                // Thruster Properties
+                propList.Add(new KeyValuePair<string, string>("ThrustDirection1", "切向推力偏转分量 (0~1)"));
+                propList.Add(new KeyValuePair<string, string>("ThrustDirection2", "法向推力偏转分量 (-1~1)"));
+                propList.Add(new KeyValuePair<string, string>("ThrustDirection3", "径向推力偏转分量 (-1~1)"));
+                propList.Add(new KeyValuePair<string, string>("C1", "推力大小 (Newtons N)"));
+                propList.Add(new KeyValuePair<string, string>("K1", "真空比冲 (Isp s)"));
+                propList.Add(new KeyValuePair<string, string>("DutyCycle", "占空比开度 (0.0~1.0)"));
+                propList.Add(new KeyValuePair<string, string>("ThrustScaleFactor", "推力缩放因子"));
+                propList.Add(new KeyValuePair<string, string>("GravitationalAccel", "标准重力加速度 (9.81 m/s²)"));
+            } else if (curObjTypeName == "ChemicalTank" || (!string.IsNullOrEmpty(psdSelectedHardwareName) && psdSelectedHardwareName.Contains("Tank"))) {
+                // Tank Properties
+                propList.Add(new KeyValuePair<string, string>("FuelMass", "储罐当前推进剂质量 (kg)"));
+                propList.Add(new KeyValuePair<string, string>("FuelDensity", "燃料混合密度 (kg/m³)"));
+                propList.Add(new KeyValuePair<string, string>("Pressure", "储罐工作压力 (kPa)"));
+                propList.Add(new KeyValuePair<string, string>("Volume", "储罐物理容积 (m³)"));
+                propList.Add(new KeyValuePair<string, string>("Temperature", "推进剂温度 (°C)"));
+            } else if (curObjTypeName == "Variable") {
+                // User declared sequence variables
+                List<string> declaredVars = new List<string>() { "burntime", "GTO_Duration", "GEO_Duration", "LOI_Duration1", "LOI_Duration2", "LOI_Duration3", "TLI_Duration" };
+                for (int st = 0; st < missionSequence.Count; st++) {
+                    var ms = missionSequence[st];
+                    if (!string.IsNullOrEmpty(ms.vary_variable) && !declaredVars.Contains(ms.vary_variable) && !ms.vary_variable.Contains(".")) {
+                        declaredVars.Add(ms.vary_variable);
+                    }
+                    if (!string.IsNullOrEmpty(ms.variable) && !declaredVars.Contains(ms.variable)) {
+                        declaredVars.Add(ms.variable);
+                    }
+                }
+                for (int dv = 0; dv < declaredVars.Count; dv++) {
+                    propList.Add(new KeyValuePair<string, string>(declaredVars[dv], "用户标量时间/寻优变量 (s)"));
+                }
+            } else if (curObjTypeName == "ImpulsiveBurn") {
+                propList.Add(new KeyValuePair<string, string>("Element1", "切向速度增量 ΔV_V (km/s)"));
+                propList.Add(new KeyValuePair<string, string>("Element2", "法向速度增量 ΔV_N (km/s)"));
+                propList.Add(new KeyValuePair<string, string>("Element3", "径向速度增量 ΔV_B (km/s)"));
+            } else if (curObjTypeName == "CoordinateSystem") {
+                propList.Add(new KeyValuePair<string, string>("EarthMJ2000Eq", "地球标准赤道惯性坐标系"));
+                propList.Add(new KeyValuePair<string, string>("Local", "局部轨道面 VNB 坐标系"));
+                propList.Add(new KeyValuePair<string, string>("MoonInertial", "月心惯性坐标系"));
+            }
+
+            // Apply search filter if present
+            if (!string.IsNullOrEmpty(paramPickerSearchQuery)) {
+                string q = paramPickerSearchQuery.Trim().ToLowerInvariant();
+                propList = propList.FindAll(x => x.Key.ToLowerInvariant().Contains(q) || (x.Value != null && x.Value.ToLowerInvariant().Contains(q)));
+            }
+
+            for (int p = 0; p < propList.Count; p++) {
+                var kv = propList[p];
+                string propKey = kv.Key;
+                string propDesc = kv.Value;
+
+                // Formulate fully-qualified GMAT path
+                string fullGmatPath = propKey;
+                if (!string.IsNullOrEmpty(psdSelectedHardwareName)) {
+                    fullGmatPath = $"Sat.{psdSelectedHardwareName}.{propKey}";
+                } else if (curObjTypeName == "Spacecraft") {
+                    if (propKey == "X" || propKey == "Y" || propKey == "Z" || propKey == "VX" || propKey == "VY" || propKey == "VZ") {
+                        fullGmatPath = $"Sat.EarthMJ2000Eq.{propKey}";
+                    } else if (propKey == "TotalMass" || propKey == "DryMass" || propKey == "FuelMass" || propKey == "ElapsedSecs" || propKey == "ElapsedDays") {
+                        fullGmatPath = $"Sat.{propKey}";
+                    } else {
+                        fullGmatPath = $"Sat.{cb}.{propKey}";
+                    }
+                } else if (curObjTypeName == "ImpulsiveBurn") {
+                    fullGmatPath = $"GEO_Burn.{propKey}";
+                }
+
+                bool isSelected = (psdPendingSelectedValue == fullGmatPath || psdPendingSelectedValue == propKey);
+                GUILayout.BeginHorizontal();
+                if (GUILayout.Button($"➔ {propKey}", isSelected ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Width(170), GUILayout.Height(20))) {
+                    psdPendingSelectedValue = fullGmatPath;
+                }
+                GUILayout.Label($"<color=#facc15>{propDesc}</color>", labelValueStyle);
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+            }
+
+            GUILayout.EndScrollView();
+            GUILayout.EndVertical();
+
+            GUILayout.Space(6);
+
+            // -----------------------------------------------------------------
+            // COLUMN 3: Selected Value(s) & Confirmation Actions (Width: 220px)
+            // -----------------------------------------------------------------
+            GUILayout.BeginVertical(cardBoxStyle, GUILayout.Width(220));
+            GUILayout.Label("<b>Selected Value(s)</b>", subHeaderStyle);
+            GUILayout.Space(4);
+
+            GUILayout.Label("<color=#94a3b8>完整 GMAT 变量表达式:</color>", labelValueStyle);
+            psdPendingSelectedValue = GUILayout.TextField(psdPendingSelectedValue, GUILayout.Height(26));
+
+            GUILayout.Space(8);
+            string i18nSummary = GMATParameterRegistry.GetParamBadgeI18n(psdPendingSelectedValue);
+            if (!string.IsNullOrEmpty(i18nSummary)) {
+                GUILayout.Label($"<color=#34d399><b>[{i18nSummary}]</b></color>", labelValueStyle);
+            }
+
+            GUILayout.FlexibleSpace();
+
+            // [OK] & [Cancel] Buttons (Image 3)
+            if (GUILayout.Button("✔ OK / 确定应用", successButtonStyle, GUILayout.Height(28))) {
+                if (paramPickerTargetStepIndex >= 0 && paramPickerTargetStepIndex < missionSequence.Count) {
+                    var s = missionSequence[paramPickerTargetStepIndex];
+                    if (paramPickerMode == "vary") {
+                        s.vary_variable = psdPendingSelectedValue;
+                    } else if (paramPickerMode == "achieve") {
+                        s.achieve_param = psdPendingSelectedValue;
+                    } else if (paramPickerMode == "stop" || paramPickerMode == "prop_stop") {
+                        s.stop_type = psdPendingSelectedValue;
+                    }
+                }
+                showParamPickerModal = false;
+            }
+
+            GUILayout.Space(4);
+            if (GUILayout.Button("✕ Cancel / 取消", secondaryButtonStyle, GUILayout.Height(24))) {
+                showParamPickerModal = false;
+            }
+
+            GUILayout.EndVertical();
+
+            GUILayout.EndHorizontal();
+        }
+
+        private void DrawOldParamPickerWindow_Deprecated(int windowID) {
             bool isPropStop = (paramPickerMode == "prop_stop" || paramPickerMode == "stop");
             string cb = FlightGlobals.ActiveVessel != null ? FlightGlobals.ActiveVessel.mainBody.bodyName : "Earth";
             if (cb == "Kerbin") cb = "Earth"; else if (cb == "Mun") cb = "Luna";
