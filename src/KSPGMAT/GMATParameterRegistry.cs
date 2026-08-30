@@ -721,6 +721,13 @@ namespace KSPGMAT {
             { "element_1", "切向速度增量 ΔV_V (km/s)" },
             { "element_2", "法向变轨增量 ΔV_N (km/s)" },
             { "element_3", "副法向/径向增量 ΔV_B (km/s)" },
+            // Thruster Directional Cosines / Vector Steering
+            { "thrustdirection1", "发动机切向推力偏转分量 (0~1)" },
+            { "thrustdirection2", "发动机法向推力偏转分量 (0~1)" },
+            { "thrustdirection3", "发动机径向推力偏转分量 (0~1)" },
+            { "thrust_direction1", "发动机切向推力偏转分量 (0~1)" },
+            { "thrust_direction2", "发动机法向推力偏转分量 (0~1)" },
+            { "thrust_direction3", "发动机径向推力偏转分量 (0~1)" },
             { "burntime", "主发动机点火持续时长 (s)" },
             { "duration", "机动点火时长 (s)" },
 

@@ -956,30 +956,31 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
             vary_dc_name = sanitize_gmat_identifier(step.get("dc_name") or step.get("vary_solver") or current_active_dc_name, "DC")
             var = (step.get("vary_variable") or step.get("variable") or "burntime").strip()
 
-            # Clean craft prefix if present or handle Burn.Element1/2/3
+            # Resolve Spacecraft parameter, Thruster Direction, or custom variable
             if var.startswith(f"{sat_name}."):
                 var_ref = var
             elif "." in var:
-                # e.g. GEO_Burn.Element1, LOI.Element2, Change6.AOP, EarthMoonRot.Z
                 parts = var.split(".", 1)
-                if parts[0].lower() in ("sat", "vessel", "spacecraft", "sc"):
-                    var_ref = f"{sat_name}.{parts[1]}"
+                p_first = parts[0].lower()
+                p_second = parts[1]
+                if p_first in ("sat", "vessel", "spacecraft", "sc"):
+                    var_ref = f"{sat_name}.{p_second}"
+                elif "thrustdirection" in p_second.lower():
+                    # e.g. GEO_Finite_Thruster.ThrustDirection2 -> Sat.GEO_Finite_Thruster.ThrustDirection2
+                    clean_th = sanitize_gmat_identifier(parts[0], "MainEngine")
+                    var_ref = f"{sat_name}.{clean_th}.{p_second}"
                 elif parts[0] in ("AOP", "RAAN", "SMA", "ECC", "INC", "TA", "Altitude", "RMAG"):
                     var_ref = f"{sat_name}.{var}"
-                elif parts[1].lower() in ("element1", "element2", "element3"):
-                    # Burn vector element e.g. GEO_Burn.Element1
-                    clean_bname = sanitize_gmat_identifier(parts[0], "IB")
-                    var_ref = f"{clean_bname}.{parts[1]}"
                 else:
                     var_ref = var
-            elif var.lower() in ("element1", "element2", "element3"):
-                # Default to nearest or active impulsive burn
-                active_ib = "GEO_Burn"
+            elif "thrustdirection" in var.lower():
+                # Direct reference to active finite burn thruster
+                active_th = "Finite_1_Thruster"
                 for st in mission_sequence:
-                    if st.get("type") in ("ImpulsiveBurn", "Maneuver") and st.get("burn_name"):
-                        active_ib = sanitize_gmat_identifier(st["burn_name"], "IB")
+                    if st.get("type") == "FiniteBurn" and st.get("_bound_thruster_name"):
+                        active_th = st["_bound_thruster_name"]
                         break
-                var_ref = f"{active_ib}.{var}"
+                var_ref = f"{sat_name}.{active_th}.{var}"
             else:
                 var_ref = var
 

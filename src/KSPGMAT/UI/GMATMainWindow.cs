@@ -2192,7 +2192,17 @@ namespace KSPGMAT.UI {
             // 2. VARY STEP CARD (STREAMLINED COMPACT 2-ROW WITH MULTI-VECTOR CHIPS)
             // =========================================================================
             else if (step.type == "Vary") {
-                // Row 1: Variable Input + burntime Quick Chip + i18n Badge + Solver Selection
+                // Find nearest FiniteBurn thruster name in sequence
+                string activeThName = "Finite_1_Thruster";
+                for (int b = 0; b < missionSequence.Count; b++) {
+                    if (missionSequence[b].type == "FiniteBurn") {
+                        string bName = string.IsNullOrEmpty(missionSequence[b].burn_name) ? $"Finite_{b + 1}" : missionSequence[b].burn_name;
+                        activeThName = $"{GMATParameterRegistry.SanitizeGmatIdentifier(bName, "Finite")}_Thruster";
+                        break;
+                    }
+                }
+
+                // Row 1: Variable Input + Smart Quick Chips + i18n Badge + Solver Selection
                 GUILayout.BeginHorizontal();
                 GUILayout.Label("<color=#38bdf8><b>寻优变量:</b></color>", labelValueStyle, GUILayout.Width(65));
 
@@ -2201,12 +2211,29 @@ namespace KSPGMAT.UI {
                 string newVary = GUILayout.TextField(prevVary, GUILayout.Width(130), GUILayout.Height(20));
 
                 bool isBurntime = (prevVary == "burntime");
+                bool isThDir2 = (prevVary.Contains("ThrustDirection2"));
+                bool isThDir1 = (prevVary.Contains("ThrustDirection1"));
+
                 if (GUILayout.Button("⏱️ burntime (点火时长)", isBurntime ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
                     step.vary_variable = "burntime";
                     step.vary_initial = 120.0;
                     step.vary_lower = 5.0;
                     step.vary_upper = 350.0;
                     step.vary_max_step = 10.0;
+                }
+                if (GUILayout.Button("🧭 ThrustDirection2 (法向偏转)", isThDir2 ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
+                    step.vary_variable = $"Sat.{activeThName}.ThrustDirection2";
+                    step.vary_initial = 0.75;
+                    step.vary_lower = 0.0;
+                    step.vary_upper = 1.0;
+                    step.vary_max_step = 0.05;
+                }
+                if (GUILayout.Button("🚀 ThrustDirection1 (切向偏转)", isThDir1 ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
+                    step.vary_variable = $"Sat.{activeThName}.ThrustDirection1";
+                    step.vary_initial = 0.65;
+                    step.vary_lower = 0.0;
+                    step.vary_upper = 1.0;
+                    step.vary_max_step = 0.05;
                 }
 
                 string varyBadge = GMATParameterRegistry.GetParamBadgeI18n(step.vary_variable);
@@ -2579,12 +2606,12 @@ namespace KSPGMAT.UI {
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
 
-                // Direction Selection & Custom 3D Vector Row
+                // Direction Selection & Smart Angle-Based Preset Row
                 GUILayout.Space(2);
                 GUILayout.BeginHorizontal();
                 GUILayout.Label("<b>🧭 点火朝向 (Direction):</b>", labelValueStyle, GUILayout.Width(130));
-                string[] bDirs = new string[] { "Prograde", "Retrograde", "Normal", "AntiNormal", "RadialOut", "RadialIn", "Custom" };
-                string[] bDirLabels = new string[] { "顺行 (+V)", "逆行 (-V)", "法向 (+N)", "反法向 (-N)", "径向外 (+B)", "径向内 (-B)", "⚙️ 自定义三维矢量" };
+                string[] bDirs = new string[] { "Prograde", "Retrograde", "Normal", "AntiNormal", "GEOSynthesis", "Custom" };
+                string[] bDirLabels = new string[] { "顺行 (+V)", "逆行 (-V)", "法向 (+N)", "反法向 (-N)", "🌐 顺行+法向 (GEO常用)", "⚙️ 自定义角度/矢量" };
                 for (int d = 0; d < bDirs.Length; d++) {
                     bool isDirCur = (step.burn_direction == bDirs[d]) || (string.IsNullOrEmpty(step.burn_direction) && d == 0);
                     if (GUILayout.Button(bDirLabels[d], isDirCur ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
@@ -2593,38 +2620,49 @@ namespace KSPGMAT.UI {
                         else if (bDirs[d] == "Retrograde") { step.thrust_dir1 = -1.0; step.thrust_dir2 = 0.0; step.thrust_dir3 = 0.0; }
                         else if (bDirs[d] == "Normal") { step.thrust_dir1 = 0.0; step.thrust_dir2 = 1.0; step.thrust_dir3 = 0.0; }
                         else if (bDirs[d] == "AntiNormal") { step.thrust_dir1 = 0.0; step.thrust_dir2 = -1.0; step.thrust_dir3 = 0.0; }
-                        else if (bDirs[d] == "RadialOut") { step.thrust_dir1 = 0.0; step.thrust_dir2 = 0.0; step.thrust_dir3 = 1.0; }
-                        else if (bDirs[d] == "RadialIn") { step.thrust_dir1 = 0.0; step.thrust_dir2 = 0.0; step.thrust_dir3 = -1.0; }
+                        else if (bDirs[d] == "GEOSynthesis") { step.thrust_dir1 = 0.632; step.thrust_dir2 = 0.775; step.thrust_dir3 = 0.0; }
                     }
                 }
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
 
-                // Custom 3D VNB Vector Editor Row
-                if (step.burn_direction == "Custom") {
-                    GUILayout.Space(2);
+                // Simplified Angle & Vector Controls (Two-Way Auto Sync)
+                if (step.burn_direction == "Custom" || step.burn_direction == "GEOSynthesis") {
+                    GUILayout.Space(3);
                     GUILayout.BeginHorizontal();
-                    GUILayout.Label("<color=#38bdf8><b>三维 VNB 分量:</b></color>", labelValueStyle, GUILayout.Width(110));
+                    
+                    // 1. Intuitive Angle Controls (Yaw & Pitch)
+                    double curMag = Math.Sqrt(step.thrust_dir1 * step.thrust_dir1 + step.thrust_dir2 * step.thrust_dir2 + step.thrust_dir3 * step.thrust_dir3);
+                    if (curMag < 1e-6) curMag = 1.0;
+                    double uV = step.thrust_dir1 / curMag, uN = step.thrust_dir2 / curMag, uB = step.thrust_dir3 / curMag;
+                    double yawAngle = Math.Atan2(uN, uV) * (180.0 / Math.PI); // Angle from Prograde toward Normal
+                    double pitchAngle = Math.Asin(Math.Max(-1.0, Math.Min(1.0, uB))) * (180.0 / Math.PI);
 
-                    GUILayout.Label("V (切向):", labelValueStyle, GUILayout.Width(55));
-                    string sDir1 = GUILayout.TextField(step.thrust_dir1.ToString("F2"), GUILayout.Width(50));
-                    double.TryParse(sDir1, out step.thrust_dir1);
+                    GUILayout.Label("<color=#38bdf8><b>法向偏转角 (Yaw):</b></color>", labelValueStyle, GUILayout.Width(110));
+                    string sYaw = GUILayout.TextField(yawAngle.ToString("F1"), GUILayout.Width(45));
+                    if (double.TryParse(sYaw, out double newYaw) && Math.Abs(newYaw - yawAngle) > 0.05) {
+                        double radYaw = newYaw * (Math.PI / 180.0);
+                        double radPitch = pitchAngle * (Math.PI / 180.0);
+                        step.thrust_dir1 = Math.Cos(radPitch) * Math.Cos(radYaw);
+                        step.thrust_dir2 = Math.Cos(radPitch) * Math.Sin(radYaw);
+                        step.thrust_dir3 = Math.Sin(radPitch);
+                    }
+                    GUILayout.Label("°", labelValueStyle, GUILayout.Width(15));
 
-                    GUILayout.Label("N (法向):", labelValueStyle, GUILayout.Width(55));
-                    string sDir2 = GUILayout.TextField(step.thrust_dir2.ToString("F2"), GUILayout.Width(50));
-                    double.TryParse(sDir2, out step.thrust_dir2);
+                    GUILayout.Space(8);
+                    GUILayout.Label("<color=#38bdf8><b>俯仰角 (Pitch):</b></color>", labelValueStyle, GUILayout.Width(80));
+                    string sPitch = GUILayout.TextField(pitchAngle.ToString("F1"), GUILayout.Width(45));
+                    if (double.TryParse(sPitch, out double newPitch) && Math.Abs(newPitch - pitchAngle) > 0.05) {
+                        double radYaw = yawAngle * (Math.PI / 180.0);
+                        double radPitch = newPitch * (Math.PI / 180.0);
+                        step.thrust_dir1 = Math.Cos(radPitch) * Math.Cos(radYaw);
+                        step.thrust_dir2 = Math.Cos(radPitch) * Math.Sin(radYaw);
+                        step.thrust_dir3 = Math.Sin(radPitch);
+                    }
+                    GUILayout.Label("°", labelValueStyle, GUILayout.Width(15));
 
-                    GUILayout.Label("B (径向):", labelValueStyle, GUILayout.Width(55));
-                    string sDir3 = GUILayout.TextField(step.thrust_dir3.ToString("F2"), GUILayout.Width(50));
-                    double.TryParse(sDir3, out step.thrust_dir3);
-
-                    double dirMag = Math.Sqrt(step.thrust_dir1 * step.thrust_dir1 + step.thrust_dir2 * step.thrust_dir2 + step.thrust_dir3 * step.thrust_dir3);
-                    if (dirMag < 1e-6) dirMag = 1.0;
-                    double uV = step.thrust_dir1 / dirMag, uN = step.thrust_dir2 / dirMag, uB = step.thrust_dir3 / dirMag;
-                    double pitchDeg = Math.Asin(uN) * (180.0 / Math.PI);
-                    double yawDeg = Math.Atan2(uB, uV) * (180.0 / Math.PI);
-
-                    GUILayout.Label($"<color=#34d399><b>单位化: ({uV:F2}, {uN:F2}, {uB:F2})</b></color> <color=#94a3b8>(俯仰角: {pitchDeg:F1}° | 偏航角: {yawDeg:F1}°)</color>", labelValueStyle);
+                    GUILayout.Space(12);
+                    GUILayout.Label($"<color=#34d399><b>方向余弦: ({uV:F3}, {uN:F3}, {uB:F3})</b></color>", labelValueStyle);
                     GUILayout.FlexibleSpace();
                     GUILayout.EndHorizontal();
                 }
