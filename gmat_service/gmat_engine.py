@@ -679,7 +679,7 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
             if "." in v_var:
                 p_obj, p_elem = v_var.split(".", 1)
                 if p_elem.lower() in ("element1", "element2", "element3") and p_obj.lower() not in ("sat", "vessel"):
-                    clean_bname = sanitize_gmat_identifier(p_obj, "GEO_Burn")
+                    clean_bname = sanitize_gmat_identifier(p_obj, "Burn_1")
                     if clean_bname not in created_burn_names:
                         created_burn_names.add(clean_bname)
                         burn_defs.append(f"Create ImpulsiveBurn {clean_bname};")
@@ -1828,7 +1828,7 @@ def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None, 
         d_str = f"{dc_info.get('desired')}" if dc_info.get('desired') is not None else "未知"
         diag_msg = f"打靶未收敛 (目标期望: {d_str}, 最终残差: {v_str})"
         if n_goals > n_vars:
-            diag_msg += f"\n⚠️ 物理自由度不足: 当前打靶包含 {n_goals} 个 Achieve 目标约束 (如 Z=0 和 SMA=42164)，但仅配置了 {n_vars} 个 Vary 变量 (burntime)。\n单一标量点火时长无法同时满足轨道面内提升与面外倾角消除。请添加法向变轨变量 (如 GEO_Burn.Element2)！"
+            diag_msg += f"\n⚠️ 物理自由度不足: 当前打靶包含 {n_goals} 个 Achieve 目标约束 (如 垂向速度 VZ 和 目标半长轴 SMA)，但仅配置了 {n_vars} 个 Vary 变量 (burntime)。\n单一标量点火时长无法同时满足轨道面内提升与面外倾角消除。请添加法向变轨变量 (如 GEO_Burn.Element2)！"
         return {
             "success": False,
             "error": "GMAT 差分修正器未收敛 (达到最大迭代上限)",

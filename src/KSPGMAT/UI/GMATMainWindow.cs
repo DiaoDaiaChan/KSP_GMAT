@@ -1477,19 +1477,28 @@ namespace KSPGMAT.UI {
                         GUILayout.Space(3);
                         GUILayout.BeginHorizontal(nestedCardBoxStyle);
                         GUILayout.Label($"<color=#f43f5e><b>⚠️ 自由度不足:</b> 包含 {achieveCount} 个目标，但仅有 {varyCount} 个寻优变量！牛顿迭代需要 变量数 ≥ 目标数。</color>", labelValueStyle);
-                        if (GUILayout.Button("➕ 自动补齐法向偏转 Vary 变量", tabButtonActiveStyle, GUILayout.Height(20))) {
-                            string dc = string.IsNullOrEmpty(step.dc_name) ? "DefaultDC" : step.dc_name;
+                        if (GUILayout.Button("➕ 自动补齐推力方向 Vary 变量", tabButtonActiveStyle, GUILayout.Height(20))) {
+                            string dc = string.IsNullOrEmpty(step.dc_name) ? $"DC_{i + 1}" : step.dc_name;
+                            // Dynamically find active thruster name from vessel or sequence
+                            string activeThruster = "MainEngine";
+                            for (int ch = i + 1; ch < missionSequence.Count; ch++) {
+                                if (missionSequence[ch].type == "EndTarget") break;
+                                if (!string.IsNullOrEmpty(missionSequence[ch].bound_thruster)) {
+                                    activeThruster = missionSequence[ch].bound_thruster;
+                                    break;
+                                }
+                            }
                             missionSequence.Insert(i + 1, new MissionStep {
                                 type = "Vary",
-                                vary_variable = "Sat.GEO_Burn_Thruster.ThrustDirection2",
-                                vary_initial = -0.50,
+                                vary_variable = $"Sat.{activeThruster}.ThrustDirection2",
+                                vary_initial = 0.0,
                                 vary_lower = -1.0,
                                 vary_upper = 1.0,
                                 vary_max_step = 0.05,
                                 dc_name = dc,
-                                label = "Vary 法向偏转分量"
+                                label = "Vary 法向推力矢量偏转"
                             });
-                            ScreenMessages.PostScreenMessage("✅ 已自动补齐法向推力偏转 Vary 寻优变量！", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                            ScreenMessages.PostScreenMessage($"✅ 已自动为推力器 '{activeThruster}' 补齐推力方向 Vary 寻优变量！", 3.0f, ScreenMessageStyle.UPPER_CENTER);
                         }
                         GUILayout.EndHorizontal();
                     }

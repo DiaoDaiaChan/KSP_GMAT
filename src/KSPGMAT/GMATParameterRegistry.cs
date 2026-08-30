@@ -1331,9 +1331,13 @@ namespace KSPGMAT {
                             if (!thNames.Contains(sId)) thNames.Add(sId);
                         }
                     }
-                    thNames.Add("GTO_Burn_Thruster");
-                    thNames.Add("GEO_Burn_Thruster");
-                    thNames.Add("MainEngine");
+                    if (RealtimeUserBurns != null) {
+                        foreach (var b in RealtimeUserBurns) {
+                            string bId = SanitizeGmatIdentifier(b, "Burn");
+                            if (!thNames.Contains(bId)) thNames.Add(bId);
+                        }
+                    }
+                    if (thNames.Count == 0) thNames.Add("MainEngine");
 
                     for (int th = 0; th < thNames.Count; th++) {
                         string thName = thNames[th];
