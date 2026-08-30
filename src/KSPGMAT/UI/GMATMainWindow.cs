@@ -1211,27 +1211,43 @@ namespace KSPGMAT.UI {
 
             // Quick Preset Buttons
             GUILayout.BeginHorizontal();
+            if (GUILayout.Button("🚀 28.6° LEO ➔ GTO ➔ 0° GEO (全流程有限推力)", tabButtonActiveStyle, GUILayout.Height(24))) {
+                missionSequence.Clear();
+                // 1. Propagate to Ascending Node
+                missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LEOProp", stop_type = "Sat.Earth.Latitude", target_val = 0.0, label = "积分至赤道升交点 (纬度=0°)" });
+
+                // 2. Target GTO (Altitude = 35786 km)
+                missionSequence.Add(new MissionStep { type = "Target", label = "GTO 远地点有限推力打靶", dc_name = "DC_GTO", dc_algorithm = "NewtonRaphson", dc_max_iter = 50 });
+                missionSequence.Add(new MissionStep { type = "Vary", vary_variable = "GTO_Duration", vary_initial = 120.0, vary_lower = 10.0, vary_upper = 300.0, vary_max_step = 10.0, dc_name = "DC_GTO", label = "Vary GTO 点火时长" });
+                missionSequence.Add(new MissionStep { type = "FiniteBurn", propagator = "LEOProp", burn_name = "GTO_Burn", burn_direction = "Prograde", burn_use_vary_var = true, burn_vary_var_name = "GTO_Duration", label = "升交点顺行有限推力点火" });
+                missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LEOProp", stop_type = "Sat.Earth.Apoapsis", label = "滑行至 GTO 远地点" });
+                missionSequence.Add(new MissionStep { type = "Achieve", achieve_param = "Sat.Earth.Altitude", achieve_val = 35786.0, achieve_tolerance = 0.5, dc_name = "DC_GTO", label = "约束远地点高度 = 35786km" });
+                missionSequence.Add(new MissionStep { type = "EndTarget", dc_name = "DC_GTO", label = "完成 GTO 入轨打靶" });
+
+                // 3. Target GEO (0° inclination removal + circularization)
+                missionSequence.Add(new MissionStep { type = "Target", label = "GEO 远地点圆化与 0° 倾角消除打靶", dc_name = "DC_GEO", dc_algorithm = "NewtonRaphson", dc_max_iter = 50 });
+                missionSequence.Add(new MissionStep { type = "Vary", vary_variable = "Sat.GEO_Burn_Thruster.ThrustDirection2", vary_initial = 0.44, vary_lower = 0.0, vary_upper = 1.0, vary_max_step = 0.05, dc_name = "DC_GEO", label = "Vary 法向偏转分量" });
+                missionSequence.Add(new MissionStep { type = "Vary", vary_variable = "GEO_Duration", vary_initial = 70.0, vary_lower = 10.0, vary_upper = 200.0, vary_max_step = 10.0, dc_name = "DC_GEO", label = "Vary GEO 点火时长" });
+                missionSequence.Add(new MissionStep { type = "FiniteBurn", propagator = "LEOProp", burn_name = "GEO_Burn", burn_direction = "GEOSynthesis", thrust_dir1 = 0.632, thrust_dir2 = 0.775, thrust_dir3 = 0.0, burn_use_vary_var = true, burn_vary_var_name = "GEO_Duration", label = "远地点合成矢量点火 (0°倾角+圆化)" });
+                missionSequence.Add(new MissionStep { type = "Achieve", achieve_param = "Sat.EarthMJ2000Eq.VZ", achieve_val = 0.0, achieve_tolerance = 0.001, dc_name = "DC_GEO", label = "约束赤纬速度 VZ = 0 km/s (0°倾角)" });
+                missionSequence.Add(new MissionStep { type = "Achieve", achieve_param = "Sat.Earth.SMA", achieve_val = 42164.14, achieve_tolerance = 0.5, dc_name = "DC_GEO", label = "约束 GEO 同步半长轴 = 42164km" });
+                missionSequence.Add(new MissionStep { type = "EndTarget", dc_name = "DC_GEO", label = "完成 0° GEO 定轨打靶" });
+
+                // 4. Coast in GEO
+                missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LEOProp", stop_type = "Sat.ElapsedSecs", duration = 86164.0, label = "GEO 轨道 24 小时定轨巡航" });
+                missionSequence.Add(new MissionStep { type = "Report", label = "0° GEO 最终入轨状态报告" });
+                ScreenMessages.PostScreenMessage("✅ 已加载 28.6° LEO ➔ GTO ➔ 0° GEO 全流程有限推力基准序列！", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+            }
             if (GUILayout.Button("🛰️ GTO 转移", secondaryButtonStyle, GUILayout.Height(24))) {
                 missionSequence.Clear();
-                missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LEOProp", stop_type = "Sat.Earth.Latitude", target_val = 0.0, label = "传播至赤道交点" });
-                missionSequence.Add(new MissionStep { type = "Target", label = "GTO 远地点打靶", dc_name = "DefaultDC", dc_algorithm = "NewtonRaphson", dc_max_iter = 50 });
-                missionSequence.Add(new MissionStep { type = "Vary", vary_variable = "burntime", vary_initial = 350.0, vary_lower = 10.0, vary_upper = 1500.0, vary_max_step = 30.0, label = "Vary GTO 点火时长" });
-                missionSequence.Add(new MissionStep { type = "FiniteBurn", propagator = "LEOProp", burn_direction = "Prograde", burn_use_vary_var = true, burn_vary_var_name = "burntime", label = "交点顺行有限推力点火" });
-                missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LEOProp", stop_type = "Sat.Earth.Apoapsis", label = "积分至远地点" });
-                missionSequence.Add(new MissionStep { type = "Achieve", achieve_param = "Sat.Earth.Altitude", achieve_val = 35786.0, achieve_tolerance = 0.5, label = "约束远地点高度=35786km" });
-                missionSequence.Add(new MissionStep { type = "EndTarget", label = "结束 GTO 打靶" });
+                missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LEOProp", stop_type = "Sat.Earth.Latitude", target_val = 0.0, label = "积分至赤道升交点" });
+                missionSequence.Add(new MissionStep { type = "Target", label = "GTO 远地点打靶", dc_name = "DC_GTO", dc_algorithm = "NewtonRaphson", dc_max_iter = 50 });
+                missionSequence.Add(new MissionStep { type = "Vary", vary_variable = "GTO_Duration", vary_initial = 120.0, vary_lower = 10.0, vary_upper = 300.0, vary_max_step = 10.0, dc_name = "DC_GTO", label = "Vary GTO 点火时长" });
+                missionSequence.Add(new MissionStep { type = "FiniteBurn", propagator = "LEOProp", burn_name = "GTO_Burn", burn_direction = "Prograde", burn_use_vary_var = true, burn_vary_var_name = "GTO_Duration", label = "升交点顺行有限推力点火" });
+                missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LEOProp", stop_type = "Sat.Earth.Apoapsis", label = "滑行至远地点" });
+                missionSequence.Add(new MissionStep { type = "Achieve", achieve_param = "Sat.Earth.Altitude", achieve_val = 35786.0, achieve_tolerance = 0.5, dc_name = "DC_GTO", label = "约束远地点高度=35786km" });
+                missionSequence.Add(new MissionStep { type = "EndTarget", dc_name = "DC_GTO", label = "结束 GTO 打靶" });
                 missionSequence.Add(new MissionStep { type = "Report", label = "GTO 入轨报告" });
-            }
-            if (GUILayout.Button("🌍 GEO 圆化", secondaryButtonStyle, GUILayout.Height(24))) {
-                missionSequence.Clear();
-                missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LEOProp", stop_type = "Apoapsis", label = "推进至远地点" });
-                missionSequence.Add(new MissionStep { type = "Target", label = "GEO circularize", dc_name = "DefaultDC", dc_algorithm = "NewtonRaphson", dc_max_iter = 50 });
-                missionSequence.Add(new MissionStep { type = "Vary", vary_variable = "burntime", vary_initial = 200.0, vary_lower = 0.0, vary_upper = 2000.0, vary_max_step = 2.0, label = "Vary circularize burntime" });
-                missionSequence.Add(new MissionStep { type = "FiniteBurn", propagator = "LEOProp", burn_use_vary_var = true, burn_vary_var_name = "burntime", label = "远地点圆化点火" });
-                missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LEOProp", stop_type = "Periapsis", label = "推进至近地点" });
-                missionSequence.Add(new MissionStep { type = "Achieve", achieve_param = "Earth.ECC", achieve_val = 0.0, achieve_tolerance = 0.001, label = "Achieve ECC=0.0" });
-                missionSequence.Add(new MissionStep { type = "EndTarget", label = "结束 GEO 打靶" });
-                missionSequence.Add(new MissionStep { type = "Report", label = "GEO 入轨报告" });
             }
             if (GUILayout.Button("🌖 嫦娥六号 3次近月制动 (有限推力)", secondaryButtonStyle, GUILayout.Height(24))) {
                 missionSequence.Clear();
