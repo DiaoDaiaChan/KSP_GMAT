@@ -2611,48 +2611,77 @@ namespace KSPGMAT.UI {
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
 
-                // Simplified Angle & Vector Controls (Two-Way Auto Sync)
+                // Intuitive Interactive Sliders & Real-Time 3D Vector HUD
                 if (step.burn_direction == "Custom" || step.burn_direction == "GEOSynthesis") {
-                    GUILayout.Space(3);
-                    GUILayout.BeginHorizontal();
-                    
-                    // 1. Intuitive Angle Controls (Yaw & Pitch)
+                    GUILayout.Space(4);
+                    GUILayout.BeginVertical(nestedCardBoxStyle);
+
                     double curMag = Math.Sqrt(step.thrust_dir1 * step.thrust_dir1 + step.thrust_dir2 * step.thrust_dir2 + step.thrust_dir3 * step.thrust_dir3);
                     if (curMag < 1e-6) curMag = 1.0;
                     double uV = step.thrust_dir1 / curMag, uN = step.thrust_dir2 / curMag, uB = step.thrust_dir3 / curMag;
-                    double yawAngle = Math.Atan2(uN, uV) * (180.0 / Math.PI); // Angle from Prograde toward Normal
+                    double yawAngle = Math.Atan2(uN, uV) * (180.0 / Math.PI); // -180 to +180
                     double pitchAngle = Math.Asin(Math.Max(-1.0, Math.Min(1.0, uB))) * (180.0 / Math.PI);
 
-                    GUILayout.Label("<color=#38bdf8><b>法向偏转角 (Yaw):</b></color>", labelValueStyle, GUILayout.Width(110));
-                    string sYaw = GUILayout.TextField(yawAngle.ToString("F1"), GUILayout.Width(45));
-                    if (double.TryParse(sYaw, out double newYaw) && Math.Abs(newYaw - yawAngle) > 0.05) {
-                        double radYaw = newYaw * (Math.PI / 180.0);
+                    // Row 1: Yaw Angle (Normal / Out-of-Plane Steering Slider)
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label("<color=#38bdf8><b>🧭 法向偏转角 (Yaw):</b></color>", labelValueStyle, GUILayout.Width(140));
+                    float fYaw = (float)yawAngle;
+                    float newSliderYaw = GUILayout.HorizontalSlider(fYaw, -90f, 90f, GUILayout.MinWidth(160), GUILayout.ExpandWidth(true));
+                    if (Math.Abs(newSliderYaw - fYaw) > 0.05f) {
+                        double radYaw = newSliderYaw * (Math.PI / 180.0);
+                        double radPitch = pitchAngle * (Math.PI / 180.0);
+                        step.thrust_dir1 = Math.Cos(radPitch) * Math.Cos(radYaw);
+                        step.thrust_dir2 = Math.Cos(radPitch) * Math.Sin(radYaw);
+                        step.thrust_dir3 = Math.Sin(radPitch);
+                    }
+                    string sYaw = GUILayout.TextField(newSliderYaw.ToString("F1"), GUILayout.Width(50));
+                    if (double.TryParse(sYaw, out double txtYaw) && Math.Abs(txtYaw - newSliderYaw) > 0.05) {
+                        double radYaw = txtYaw * (Math.PI / 180.0);
                         double radPitch = pitchAngle * (Math.PI / 180.0);
                         step.thrust_dir1 = Math.Cos(radPitch) * Math.Cos(radYaw);
                         step.thrust_dir2 = Math.Cos(radPitch) * Math.Sin(radYaw);
                         step.thrust_dir3 = Math.Sin(radPitch);
                     }
                     GUILayout.Label("°", labelValueStyle, GUILayout.Width(15));
+                    string yawDesc = (newSliderYaw > 5f) ? "<color=#38bdf8>(向法向+N倾斜)</color>" : (newSliderYaw < -5f) ? "<color=#f43f5e>(向反法向-N倾斜)</color>" : "<color=#34d399>(正顺行)</color>";
+                    GUILayout.Label(yawDesc, labelValueStyle, GUILayout.Width(125));
+                    GUILayout.EndHorizontal();
 
-                    GUILayout.Space(8);
-                    GUILayout.Label("<color=#38bdf8><b>俯仰角 (Pitch):</b></color>", labelValueStyle, GUILayout.Width(80));
-                    string sPitch = GUILayout.TextField(pitchAngle.ToString("F1"), GUILayout.Width(45));
-                    if (double.TryParse(sPitch, out double newPitch) && Math.Abs(newPitch - pitchAngle) > 0.05) {
+                    // Row 2: Pitch Angle (Radial Steering Slider)
+                    GUILayout.Space(2);
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label("<color=#38bdf8><b>🌐 俯仰偏转角 (Pitch):</b></color>", labelValueStyle, GUILayout.Width(140));
+                    float fPitch = (float)pitchAngle;
+                    float newSliderPitch = GUILayout.HorizontalSlider(fPitch, -90f, 90f, GUILayout.MinWidth(160), GUILayout.ExpandWidth(true));
+                    if (Math.Abs(newSliderPitch - fPitch) > 0.05f) {
                         double radYaw = yawAngle * (Math.PI / 180.0);
-                        double radPitch = newPitch * (Math.PI / 180.0);
+                        double radPitch = newSliderPitch * (Math.PI / 180.0);
+                        step.thrust_dir1 = Math.Cos(radPitch) * Math.Cos(radYaw);
+                        step.thrust_dir2 = Math.Cos(radPitch) * Math.Sin(radYaw);
+                        step.thrust_dir3 = Math.Sin(radPitch);
+                    }
+                    string sPitch = GUILayout.TextField(newSliderPitch.ToString("F1"), GUILayout.Width(50));
+                    if (double.TryParse(sPitch, out double txtPitch) && Math.Abs(txtPitch - newSliderPitch) > 0.05) {
+                        double radYaw = yawAngle * (Math.PI / 180.0);
+                        double radPitch = txtPitch * (Math.PI / 180.0);
                         step.thrust_dir1 = Math.Cos(radPitch) * Math.Cos(radYaw);
                         step.thrust_dir2 = Math.Cos(radPitch) * Math.Sin(radYaw);
                         step.thrust_dir3 = Math.Sin(radPitch);
                     }
                     GUILayout.Label("°", labelValueStyle, GUILayout.Width(15));
+                    string pitchDesc = (newSliderPitch > 5f) ? "<color=#38bdf8>(向径向外+B仰起)</color>" : (newSliderPitch < -5f) ? "<color=#f43f5e>(向径向内-B俯冲)</color>" : "<color=#34d399>(轨道面内)</color>";
+                    GUILayout.Label(pitchDesc, labelValueStyle, GUILayout.Width(125));
+                    GUILayout.EndHorizontal();
 
-                    GUILayout.Space(12);
-                    GUILayout.Label($"<color=#34d399><b>方向余弦: ({uV:F3}, {uN:F3}, {uB:F3})</b></color>", labelValueStyle);
+                    // Row 3: Real-Time Dynamic Vector HUD
+                    GUILayout.Space(3);
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label($"<color=#34d399><b>🟢 单位推力矢量:</b></color> <color=#38bdf8>V = {uV:F3} (切向 {uV*100.0:F1}%)</color> | <color=#facc15>N = {uN:F3} (法向 {uN*100.0:F1}%)</color> | <color=#f472b6>B = {uB:F3} (径向 {uB*100.0:F1}%)</color>", labelValueStyle);
                     GUILayout.FlexibleSpace();
                     GUILayout.EndHorizontal();
-                }
 
-                GUILayout.EndVertical();
+                    GUILayout.EndVertical();
+                }
             }
 
             // =========================================================================
