@@ -15,8 +15,7 @@ namespace KSPGMAT.UI {
         // Floating IDE-Style IntelliSense State
         private bool intelliSenseOpen = false;
         private bool intelliSenseDismissed = false;
-        private string intelliSenseLastFocusedControl = "";
-        private bool isHoldingDrag = false;
+        private string pendingFocusControl = "";
         private float lastHardwareScanTime = 0f;
         private const float HARDWARE_SCAN_INTERVAL = 0.15f; // 6.7 Hz high-frequency live telemetry (Zero GC, <0.02ms CPU cost)
         private int intelliSenseTargetStepIndex = -1;
@@ -168,6 +167,22 @@ namespace KSPGMAT.UI {
         private GUIStyle deleteButtonStyle;
         private GUIStyle successButtonStyle;
         private GUIStyle tooltipStyle;
+
+        // Modernized Step Pill & Numeric Styles
+        private GUIStyle pillPropStyle;
+        private GUIStyle pillVaryStyle;
+        private GUIStyle pillAchieveStyle;
+        private GUIStyle pillBurnStyle;
+        private GUIStyle pillImpulseStyle;
+        private GUIStyle pillStageStyle;
+        private GUIStyle pillTargetStyle;
+        private GUIStyle pillEndTargetStyle;
+        private GUIStyle pillGenericStyle;
+        private GUIStyle badgeDarkStyle;
+        private GUIStyle numericInputStyle;
+        private GUIStyle gridLabelStyle;
+        private GUIStyle sectionHeaderStyle;
+
         private bool stylesInitialized = false;
 
         void Awake() {
@@ -368,10 +383,10 @@ namespace KSPGMAT.UI {
             if (stylesInitialized) return;
 
             // Deep Space Dark Theme Palettes (Zero blinding white flashes when focused)
-            Texture2D darkBg = MakeBoxTex(8, 8, new Color(0.043f, 0.055f, 0.078f, 0.98f), new Color(0.18f, 0.22f, 0.28f, 1.0f), 1);
-            Texture2D darkFocusedBg = MakeBoxTex(8, 8, new Color(0.043f, 0.055f, 0.078f, 0.98f), new Color(0.14f, 0.38f, 0.58f, 1.0f), 1);
-            Texture2D cardBg = MakeBoxTex(8, 8, new Color(0.07f, 0.09f, 0.13f, 0.94f), new Color(0.16f, 0.20f, 0.27f, 0.9f), 1);
-            Texture2D nestedCardBg = MakeBoxTex(8, 8, new Color(0.05f, 0.07f, 0.11f, 0.95f), new Color(0.18f, 0.35f, 0.50f, 0.85f), 1);
+            Texture2D darkBg = MakeBoxTex(8, 8, new Color(0.038f, 0.048f, 0.070f, 0.98f), new Color(0.16f, 0.20f, 0.26f, 1.0f), 1);
+            Texture2D darkFocusedBg = MakeBoxTex(8, 8, new Color(0.038f, 0.048f, 0.070f, 0.98f), new Color(0.14f, 0.38f, 0.58f, 1.0f), 1);
+            Texture2D cardBg = MakeBoxTex(8, 8, new Color(0.065f, 0.082f, 0.120f, 0.94f), new Color(0.15f, 0.19f, 0.26f, 0.9f), 1);
+            Texture2D nestedCardBg = MakeBoxTex(8, 8, new Color(0.045f, 0.060f, 0.095f, 0.95f), new Color(0.15f, 0.28f, 0.42f, 0.85f), 1);
             
             Texture2D activeTabBg = MakeBoxTex(8, 8, new Color(0.02f, 0.35f, 0.55f, 1.0f), new Color(0.22f, 0.74f, 0.97f, 1.0f), 1);
             Texture2D hoverTabBg = MakeBoxTex(8, 8, new Color(0.09f, 0.12f, 0.18f, 1.0f), new Color(0.22f, 0.32f, 0.44f, 1.0f), 1);
@@ -380,18 +395,28 @@ namespace KSPGMAT.UI {
             Texture2D actionBtnHoverBg = MakeBoxTex(8, 8, new Color(0.02f, 0.48f, 0.74f, 1.0f), new Color(0.38f, 0.82f, 1.0f, 1.0f), 1);
             Texture2D actionBtnActiveBg = MakeBoxTex(8, 8, new Color(0.01f, 0.32f, 0.50f, 1.0f), new Color(0.18f, 0.60f, 0.82f, 1.0f), 1);
 
-            Texture2D successBtnBg = MakeBoxTex(8, 8, new Color(0.08f, 0.45f, 0.25f, 1.0f), new Color(0.24f, 0.78f, 0.45f, 1.0f), 1);
-            Texture2D successBtnHoverBg = MakeBoxTex(8, 8, new Color(0.10f, 0.52f, 0.30f, 1.0f), new Color(0.30f, 0.88f, 0.52f, 1.0f), 1);
+            Texture2D successBtnBg = MakeBoxTex(8, 8, new Color(0.06f, 0.42f, 0.24f, 1.0f), new Color(0.20f, 0.75f, 0.42f, 1.0f), 1);
+            Texture2D successBtnHoverBg = MakeBoxTex(8, 8, new Color(0.08f, 0.50f, 0.28f, 1.0f), new Color(0.28f, 0.85f, 0.50f, 1.0f), 1);
 
-            Texture2D deleteBtnBg = MakeBoxTex(8, 8, new Color(0.62f, 0.16f, 0.16f, 1.0f), new Color(0.92f, 0.35f, 0.35f, 1.0f), 1);
-            Texture2D deleteBtnHoverBg = MakeBoxTex(8, 8, new Color(0.72f, 0.20f, 0.20f, 1.0f), new Color(1.0f, 0.45f, 0.45f, 1.0f), 1);
+            Texture2D deleteBtnBg = MakeBoxTex(8, 8, new Color(0.55f, 0.14f, 0.14f, 1.0f), new Color(0.85f, 0.30f, 0.30f, 1.0f), 1);
+            Texture2D deleteBtnHoverBg = MakeBoxTex(8, 8, new Color(0.68f, 0.18f, 0.18f, 1.0f), new Color(0.98f, 0.40f, 0.40f, 1.0f), 1);
 
-            Texture2D secondaryBtnBg = MakeBoxTex(8, 8, new Color(0.10f, 0.13f, 0.18f, 1.0f), new Color(0.22f, 0.28f, 0.38f, 1.0f), 1);
-            Texture2D secondaryBtnHoverBg = MakeBoxTex(8, 8, new Color(0.14f, 0.18f, 0.25f, 1.0f), new Color(0.28f, 0.38f, 0.52f, 1.0f), 1);
-            Texture2D secondaryBtnActiveBg = MakeBoxTex(8, 8, new Color(0.07f, 0.10f, 0.14f, 1.0f), new Color(0.18f, 0.22f, 0.30f, 1.0f), 1);
+            Texture2D secondaryBtnBg = MakeBoxTex(8, 8, new Color(0.09f, 0.12f, 0.17f, 1.0f), new Color(0.20f, 0.26f, 0.36f, 1.0f), 1);
+            Texture2D secondaryBtnHoverBg = MakeBoxTex(8, 8, new Color(0.13f, 0.17f, 0.24f, 1.0f), new Color(0.26f, 0.36f, 0.50f, 1.0f), 1);
+            Texture2D secondaryBtnActiveBg = MakeBoxTex(8, 8, new Color(0.06f, 0.09f, 0.13f, 1.0f), new Color(0.16f, 0.20f, 0.28f, 1.0f), 1);
 
-            Texture2D inputBg = MakeBoxTex(8, 8, new Color(0.06f, 0.08f, 0.12f, 0.95f), new Color(0.18f, 0.24f, 0.32f, 1.0f), 1);
-            Texture2D inputFocusBg = MakeBoxTex(8, 8, new Color(0.08f, 0.11f, 0.16f, 0.98f), new Color(0.14f, 0.48f, 0.72f, 1.0f), 1);
+            Texture2D inputBg = MakeBoxTex(8, 8, new Color(0.055f, 0.075f, 0.115f, 0.95f), new Color(0.16f, 0.22f, 0.30f, 1.0f), 1);
+            Texture2D inputFocusBg = MakeBoxTex(8, 8, new Color(0.075f, 0.105f, 0.155f, 0.98f), new Color(0.14f, 0.52f, 0.78f, 1.0f), 1);
+
+            // Step Pill Backgrounds
+            Texture2D pillVaryBg = MakeBoxTex(8, 8, new Color(0.05f, 0.25f, 0.35f, 0.9f), new Color(0.15f, 0.65f, 0.85f, 1.0f), 1);
+            Texture2D pillAchieveBg = MakeBoxTex(8, 8, new Color(0.05f, 0.28f, 0.20f, 0.9f), new Color(0.16f, 0.72f, 0.45f, 1.0f), 1);
+            Texture2D pillBurnBg = MakeBoxTex(8, 8, new Color(0.35f, 0.16f, 0.05f, 0.9f), new Color(0.92f, 0.48f, 0.15f, 1.0f), 1);
+            Texture2D pillImpulseBg = MakeBoxTex(8, 8, new Color(0.25f, 0.10f, 0.32f, 0.9f), new Color(0.72f, 0.32f, 0.88f, 1.0f), 1);
+            Texture2D pillPropBg = MakeBoxTex(8, 8, new Color(0.08f, 0.18f, 0.32f, 0.9f), new Color(0.24f, 0.55f, 0.88f, 1.0f), 1);
+            Texture2D pillStageBg = MakeBoxTex(8, 8, new Color(0.32f, 0.22f, 0.05f, 0.9f), new Color(0.88f, 0.65f, 0.15f, 1.0f), 1);
+            Texture2D pillTargetBg = MakeBoxTex(8, 8, new Color(0.04f, 0.20f, 0.36f, 0.95f), new Color(0.18f, 0.62f, 0.95f, 1.0f), 1);
+            Texture2D pillEndTargetBg = MakeBoxTex(8, 8, new Color(0.12f, 0.16f, 0.22f, 0.9f), new Color(0.35f, 0.42f, 0.52f, 1.0f), 1);
 
             // 1. Window Style (Crucial: set onNormal, onFocused, focused, active to prevent Unity white glow)
             windowStyle = new GUIStyle(GUI.skin.window);
@@ -458,7 +483,7 @@ namespace KSPGMAT.UI {
             nestedCardBoxStyle.padding = new RectOffset(8, 8, 8, 8);
 
             // Prominent Group Bounding Box (High-contrast 2px cyan border enclosing entire group)
-            Texture2D groupBorderBg = MakeBoxTex(8, 8, new Color(0.035f, 0.055f, 0.09f, 0.96f), new Color(0.12f, 0.58f, 0.95f, 0.95f), 2);
+            Texture2D groupBorderBg = MakeBoxTex(8, 8, new Color(0.035f, 0.052f, 0.085f, 0.96f), new Color(0.12f, 0.55f, 0.90f, 0.95f), 2);
             targetGroupBoxStyle = new GUIStyle(GUI.skin.box);
             targetGroupBoxStyle.normal.background = groupBorderBg;
             targetGroupBoxStyle.onNormal.background = groupBorderBg;
@@ -582,6 +607,104 @@ namespace KSPGMAT.UI {
             tooltipStyle.padding = new RectOffset(10, 10, 8, 8);
             tooltipStyle.alignment = TextAnchor.UpperLeft;
 
+            // 7. Modern Step Pill Badges
+            pillPropStyle = new GUIStyle(GUI.skin.box);
+            pillPropStyle.normal.background = pillPropBg;
+            pillPropStyle.normal.textColor = new Color(0.38f, 0.75f, 1.0f);
+            pillPropStyle.fontStyle = FontStyle.Bold;
+            pillPropStyle.fontSize = 10;
+            pillPropStyle.padding = new RectOffset(6, 6, 2, 2);
+            pillPropStyle.alignment = TextAnchor.MiddleCenter;
+
+            pillVaryStyle = new GUIStyle(GUI.skin.box);
+            pillVaryStyle.normal.background = pillVaryBg;
+            pillVaryStyle.normal.textColor = new Color(0.20f, 0.85f, 0.95f);
+            pillVaryStyle.fontStyle = FontStyle.Bold;
+            pillVaryStyle.fontSize = 10;
+            pillVaryStyle.padding = new RectOffset(6, 6, 2, 2);
+            pillVaryStyle.alignment = TextAnchor.MiddleCenter;
+
+            pillAchieveStyle = new GUIStyle(GUI.skin.box);
+            pillAchieveStyle.normal.background = pillAchieveBg;
+            pillAchieveStyle.normal.textColor = new Color(0.22f, 0.92f, 0.60f);
+            pillAchieveStyle.fontStyle = FontStyle.Bold;
+            pillAchieveStyle.fontSize = 10;
+            pillAchieveStyle.padding = new RectOffset(6, 6, 2, 2);
+            pillAchieveStyle.alignment = TextAnchor.MiddleCenter;
+
+            pillBurnStyle = new GUIStyle(GUI.skin.box);
+            pillBurnStyle.normal.background = pillBurnBg;
+            pillBurnStyle.normal.textColor = new Color(1.0f, 0.65f, 0.28f);
+            pillBurnStyle.fontStyle = FontStyle.Bold;
+            pillBurnStyle.fontSize = 10;
+            pillBurnStyle.padding = new RectOffset(6, 6, 2, 2);
+            pillBurnStyle.alignment = TextAnchor.MiddleCenter;
+
+            pillImpulseStyle = new GUIStyle(GUI.skin.box);
+            pillImpulseStyle.normal.background = pillImpulseBg;
+            pillImpulseStyle.normal.textColor = new Color(0.85f, 0.55f, 1.0f);
+            pillImpulseStyle.fontStyle = FontStyle.Bold;
+            pillImpulseStyle.fontSize = 10;
+            pillImpulseStyle.padding = new RectOffset(6, 6, 2, 2);
+            pillImpulseStyle.alignment = TextAnchor.MiddleCenter;
+
+            pillStageStyle = new GUIStyle(GUI.skin.box);
+            pillStageStyle.normal.background = pillStageBg;
+            pillStageStyle.normal.textColor = new Color(1.0f, 0.82f, 0.35f);
+            pillStageStyle.fontStyle = FontStyle.Bold;
+            pillStageStyle.fontSize = 10;
+            pillStageStyle.padding = new RectOffset(6, 6, 2, 2);
+            pillStageStyle.alignment = TextAnchor.MiddleCenter;
+
+            pillTargetStyle = new GUIStyle(GUI.skin.box);
+            pillTargetStyle.normal.background = pillTargetBg;
+            pillTargetStyle.normal.textColor = new Color(0.35f, 0.78f, 1.0f);
+            pillTargetStyle.fontStyle = FontStyle.Bold;
+            pillTargetStyle.fontSize = 10;
+            pillTargetStyle.padding = new RectOffset(6, 6, 2, 2);
+            pillTargetStyle.alignment = TextAnchor.MiddleCenter;
+
+            pillEndTargetStyle = new GUIStyle(GUI.skin.box);
+            pillEndTargetStyle.normal.background = pillEndTargetBg;
+            pillEndTargetStyle.normal.textColor = new Color(0.70f, 0.78f, 0.88f);
+            pillEndTargetStyle.fontStyle = FontStyle.Bold;
+            pillEndTargetStyle.fontSize = 10;
+            pillEndTargetStyle.padding = new RectOffset(6, 6, 2, 2);
+            pillEndTargetStyle.alignment = TextAnchor.MiddleCenter;
+
+            pillGenericStyle = new GUIStyle(GUI.skin.box);
+            pillGenericStyle.normal.background = secondaryBtnBg;
+            pillGenericStyle.normal.textColor = new Color(0.65f, 0.75f, 0.88f);
+            pillGenericStyle.fontSize = 10;
+            pillGenericStyle.padding = new RectOffset(6, 6, 2, 2);
+            pillGenericStyle.alignment = TextAnchor.MiddleCenter;
+
+            // 8. Numerical & Grid Styles
+            gridLabelStyle = new GUIStyle(GUI.skin.label);
+            gridLabelStyle.fontSize = 11;
+            gridLabelStyle.normal.textColor = new Color(0.58f, 0.66f, 0.78f);
+            gridLabelStyle.alignment = TextAnchor.MiddleLeft;
+
+            sectionHeaderStyle = new GUIStyle(GUI.skin.label);
+            sectionHeaderStyle.fontSize = 11;
+            sectionHeaderStyle.fontStyle = FontStyle.Bold;
+            sectionHeaderStyle.normal.textColor = new Color(0.24f, 0.70f, 0.95f);
+
+            badgeDarkStyle = new GUIStyle(GUI.skin.box);
+            badgeDarkStyle.normal.background = MakeBoxTex(4, 4, new Color(0.04f, 0.06f, 0.09f, 0.9f), new Color(0.14f, 0.22f, 0.32f, 0.8f), 1);
+            badgeDarkStyle.normal.textColor = new Color(0.95f, 0.82f, 0.30f);
+            badgeDarkStyle.fontSize = 10;
+            badgeDarkStyle.padding = new RectOffset(5, 5, 2, 2);
+            badgeDarkStyle.alignment = TextAnchor.MiddleLeft;
+
+            numericInputStyle = new GUIStyle(GUI.skin.textField);
+            numericInputStyle.normal.background = inputBg;
+            numericInputStyle.focused.background = inputFocusBg;
+            numericInputStyle.hover.background = inputFocusBg;
+            numericInputStyle.normal.textColor = Color.white;
+            numericInputStyle.fontSize = 11;
+            numericInputStyle.alignment = TextAnchor.MiddleRight;
+
             stylesInitialized = true;
         }
 
@@ -603,6 +726,14 @@ namespace KSPGMAT.UI {
             if (!visible) return;
             EnsureWindowInitialized();
             InitStyles();
+
+            // Seamless focus restoration for IntelliSense & ParamPicker
+            if (!string.IsNullOrEmpty(pendingFocusControl)) {
+                GUI.FocusControl(pendingFocusControl);
+                if (Event.current.type == EventType.Repaint) {
+                    pendingFocusControl = "";
+                }
+            }
 
             // Sync real-time session objects into GMATParameterRegistry (zero hardcoding)
             GMATParameterRegistry.SyncRealtimeSequenceObjects(missionSequence, FlightGlobals.ActiveVessel);
@@ -635,7 +766,6 @@ namespace KSPGMAT.UI {
                     } else if (e.keyCode == KeyCode.Escape) {
                         intelliSenseOpen = false;
                         intelliSenseDismissed = true;
-                        GUIUtility.keyboardControl = 0;
                         e.Use();
                     }
                 }
@@ -1676,7 +1806,8 @@ namespace KSPGMAT.UI {
 
                     // Render inner step nested neatly inside the prominent group box
                     GUILayout.BeginHorizontal();
-                    GUILayout.Space(8); // Inner margin from the outer group border
+                    GUILayout.Space(6); // Inner margin from outer group
+                    GUILayout.Label("<color=#38bdf8>│ ├─</color>", labelValueStyle, GUILayout.Width(24));
                     GUILayout.BeginVertical(nestedCardBoxStyle);
 
                     // Step Header Bar
@@ -1696,31 +1827,35 @@ namespace KSPGMAT.UI {
                     }
                     GUI.enabled = true;
 
-                    if (GUILayout.Button(isBeingDragged ? "✊ 拖动中 (点此取消)" : "☰ 拖动", isBeingDragged ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Width(isBeingDragged ? 120 : 54), GUILayout.Height(20))) {
+                    if (GUILayout.Button(isBeingDragged ? "✊ 拖动中" : "☰", isBeingDragged ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Width(isBeingDragged ? 65 : 26), GUILayout.Height(20))) {
                         draggedStepIndex = isBeingDragged ? -1 : i;
                     }
 
+                    // Modern Pill Badge by Type
+                    if (step.type == "Propagate") GUILayout.Box("🌐 轨道积分", pillPropStyle, GUILayout.Width(72), GUILayout.Height(20));
+                    else if (step.type == "Vary") GUILayout.Box("✏️ Vary 寻优", pillVaryStyle, GUILayout.Width(76), GUILayout.Height(20));
+                    else if (step.type == "Achieve") GUILayout.Box("🎯 Achieve 目标", pillAchieveStyle, GUILayout.Width(86), GUILayout.Height(20));
+                    else if (step.type == "FiniteBurn") GUILayout.Box("🔥 有限点火", pillBurnStyle, GUILayout.Width(72), GUILayout.Height(20));
+                    else if (step.type == "ImpulsiveBurn") GUILayout.Box("💥 脉冲机动", pillImpulseStyle, GUILayout.Width(72), GUILayout.Height(20));
+                    else if (step.type == "StageSeparation") GUILayout.Box("🚀 级段分离", pillStageStyle, GUILayout.Width(72), GUILayout.Height(20));
+                    else if (step.type == "Report") GUILayout.Box("🧾 状态报告", pillGenericStyle, GUILayout.Width(72), GUILayout.Height(20));
+                    else if (step.type == "Equation") GUILayout.Box("📐 变量赋值", pillGenericStyle, GUILayout.Width(72), GUILayout.Height(20));
+                    else GUILayout.Box(step.type, pillGenericStyle, GUILayout.Width(65), GUILayout.Height(20));
+
                     if (step.is_collapsed) {
                         string summaryBadge = "";
-                        if (step.type == "Propagate") summaryBadge = $"🌐 <b>#{i + 1} 轨道积分</b>: <color=#38bdf8>{step.propagator}</color> → 停止: <b>{step.stop_type}</b> {(step.stop_type == "Time" ? $"({step.duration:F0}s)" : "")}";
-                        else if (step.type == "Vary") summaryBadge = $"✏️ <b>#{i + 1} Vary 寻优</b>: <color=#38bdf8>{step.vary_variable}</color> (初猜: {step.vary_initial:F1}, 范围: [{step.vary_lower:F1}, {step.vary_upper:F1}])";
-                        else if (step.type == "Achieve") summaryBadge = $"🎯 <b>#{i + 1} Achieve 约束</b>: <color=#38bdf8>{step.achieve_param}</color> = <b>{step.achieve_val:F2}</b> (容差: ±{step.achieve_tolerance})";
-                        else if (step.type == "FiniteBurn") summaryBadge = $"🔥 <b>#{i + 1} 有限点火</b>: 时长 <b>{step.vary_variable}</b> s (变质量流与比冲)";
-                        else if (step.type == "ImpulsiveBurn") summaryBadge = $"💥 <b>#{i + 1} 脉冲机动</b>: ΔV = ({step.dv_v:F1}, {step.dv_n:F1}, {step.dv_b:F1}) m/s";
-                        else if (step.type == "Equation") summaryBadge = $"📐 <b>#{i + 1} 方程</b>: {step.variable} = {step.expression}";
-                        else if (step.type == "StageSeparation") summaryBadge = $"🚀 <b>#{i + 1} 级段分离</b>: 抛离死重 {step.separated_mass:F0} kg (剩余干重 {step.remaining_dry_mass:F0} kg)";
-                        else if (step.type == "Report") summaryBadge = $"🧾 <b>#{i + 1} 状态报告</b>";
-                        else summaryBadge = $"#{i + 1} <b>{step.type}</b>";
+                        if (step.type == "Propagate") summaryBadge = $"<color=#38bdf8><b>{step.propagator}</b></color> ➔ 停止: <b>{step.stop_type}</b> {(step.stop_type == "Time" ? $"({step.duration:F0}s)" : "")}";
+                        else if (step.type == "Vary") summaryBadge = $"<color=#38bdf8><b>{step.vary_variable}</b></color> (初猜: {step.vary_initial:F1}, 范围: [{step.vary_lower:F1}, {step.vary_upper:F1}])";
+                        else if (step.type == "Achieve") summaryBadge = $"<color=#38bdf8><b>{step.achieve_param}</b></color> = <b>{step.achieve_val:F2}</b> (容差: ±{step.achieve_tolerance})";
+                        else if (step.type == "FiniteBurn") summaryBadge = $"时长: <b>{(step.burn_use_vary_var ? step.burn_vary_var_name : step.duration.ToString("F1") + "s")}</b> (变质量与比冲)";
+                        else if (step.type == "ImpulsiveBurn") summaryBadge = $"ΔV = ({step.dv_v:F1}, {step.dv_n:F1}, {step.dv_b:F1}) m/s";
+                        else if (step.type == "Equation") summaryBadge = $"{step.variable} = {step.expression}";
+                        else if (step.type == "StageSeparation") summaryBadge = $"抛离死重: {step.separated_mass:F0} kg (剩余干重: {step.remaining_dry_mass:F0} kg)";
+                        else summaryBadge = string.IsNullOrEmpty(step.label) ? "" : step.label;
                         GUILayout.Label(summaryBadge, labelValueStyle);
                     } else {
-                        string typeBadge = step.type == "Propagate" ? $"🌐 轨道积分 [{step.propagator}]" :
-                                           step.type == "ImpulsiveBurn" ? $"💥 脉冲机动 {(string.IsNullOrEmpty(step.label) ? "" : "- " + step.label)}" :
-                                           step.type == "FiniteBurn" ? $"🔥 有限推力点火 {(string.IsNullOrEmpty(step.label) ? "" : "- " + step.label)}" :
-                                           step.type == "Vary" ? $"✏️ Vary 寻优变量 [{step.vary_variable}]" :
-                                           step.type == "Achieve" ? $"🎯 Achieve 目标约束 [{step.achieve_param}]" :
-                                           step.type == "Report" ? "🧾 状态报告" :
-                                           step.type == "Equation" ? "📐 变量/方程赋值" : step.type;
-                        GUILayout.Label($"#{i + 1} <b>{typeBadge}</b>", labelValueStyle);
+                        string stepTitle = string.IsNullOrEmpty(step.label) ? "" : $"<b>{step.label}</b>";
+                        if (!string.IsNullOrEmpty(stepTitle)) GUILayout.Label(stepTitle, labelValueStyle);
                     }
 
                     GUILayout.FlexibleSpace();
@@ -1769,29 +1904,33 @@ namespace KSPGMAT.UI {
                 }
                 GUI.enabled = true;
 
-                if (GUILayout.RepeatButton(isBeingDragged ? "✊ 拖动中" : "☰ 拖动", isBeingDragged ? successButtonStyle : secondaryButtonStyle, GUILayout.Width(54), GUILayout.Height(20))) {
-                    if (!isHoldingDrag) {
-                        draggedStepIndex = i;
-                        isHoldingDrag = true;
-                    }
+                if (GUILayout.Button(isBeingDragged ? "✊ 拖动中" : "☰", isBeingDragged ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Width(isBeingDragged ? 65 : 26), GUILayout.Height(20))) {
+                    draggedStepIndex = isBeingDragged ? -1 : i;
                 }
+
+                // Modern Pill Badge by Type
+                if (step.type == "Propagate") GUILayout.Box("🌐 轨道积分", pillPropStyle, GUILayout.Width(72), GUILayout.Height(20));
+                else if (step.type == "Vary") GUILayout.Box("✏️ Vary 寻优", pillVaryStyle, GUILayout.Width(76), GUILayout.Height(20));
+                else if (step.type == "Achieve") GUILayout.Box("🎯 Achieve 目标", pillAchieveStyle, GUILayout.Width(86), GUILayout.Height(20));
+                else if (step.type == "FiniteBurn") GUILayout.Box("🔥 有限点火", pillBurnStyle, GUILayout.Width(72), GUILayout.Height(20));
+                else if (step.type == "ImpulsiveBurn") GUILayout.Box("💥 脉冲机动", pillImpulseStyle, GUILayout.Width(72), GUILayout.Height(20));
+                else if (step.type == "StageSeparation") GUILayout.Box("🚀 级段分离", pillStageStyle, GUILayout.Width(72), GUILayout.Height(20));
+                else if (step.type == "Report") GUILayout.Box("🧾 状态报告", pillGenericStyle, GUILayout.Width(72), GUILayout.Height(20));
+                else if (step.type == "Equation") GUILayout.Box("📐 变量赋值", pillGenericStyle, GUILayout.Width(72), GUILayout.Height(20));
+                else GUILayout.Box(step.type, pillGenericStyle, GUILayout.Width(65), GUILayout.Height(20));
 
                 if (step.is_collapsed) {
                     string summaryBadge = "";
-                    if (step.type == "Propagate") summaryBadge = $"🌐 <b>#{i + 1} 轨道积分</b>: <color=#38bdf8>{step.propagator}</color> → 停止: <b>{step.stop_type}</b> {(step.stop_type == "Time" ? $"({step.duration:F0}s)" : "")}";
-                    else if (step.type == "Report") summaryBadge = $"🧾 <b>#{i + 1} 状态报告</b>";
-                    else if (step.type == "Equation") summaryBadge = $"📐 <b>#{i + 1} 方程</b>: {step.variable} = {step.expression}";
-                    else if (step.type == "FiniteBurn") summaryBadge = $"🔥 <b>#{i + 1} 有限点火</b>: 时长 <b>{step.vary_variable}</b> s";
-                    else if (step.type == "ImpulsiveBurn") summaryBadge = $"💥 <b>#{i + 1} 脉冲机动</b>: ΔV = ({step.dv_v:F1}, {step.dv_n:F1}, {step.dv_b:F1}) m/s";
-                    else summaryBadge = $"#{i + 1} <b>{step.type}</b>";
+                    if (step.type == "Propagate") summaryBadge = $"<color=#38bdf8><b>{step.propagator}</b></color> ➔ 停止: <b>{step.stop_type}</b> {(step.stop_type == "Time" ? $"({step.duration:F0}s)" : "")}";
+                    else if (step.type == "Report") summaryBadge = $"🧾 <b>状态报告</b>";
+                    else if (step.type == "Equation") summaryBadge = $"{step.variable} = {step.expression}";
+                    else if (step.type == "FiniteBurn") summaryBadge = $"时长: <b>{(step.burn_use_vary_var ? step.burn_vary_var_name : step.duration.ToString("F1") + "s")}</b>";
+                    else if (step.type == "ImpulsiveBurn") summaryBadge = $"ΔV = ({step.dv_v:F1}, {step.dv_n:F1}, {step.dv_b:F1}) m/s";
+                    else summaryBadge = string.IsNullOrEmpty(step.label) ? "" : step.label;
                     GUILayout.Label(summaryBadge, labelValueStyle);
                 } else {
-                    string typeBadge = step.type == "Propagate" ? $"🌐 轨道积分 [{step.propagator}]" :
-                                       step.type == "ImpulsiveBurn" ? $"💥 脉冲机动 {(string.IsNullOrEmpty(step.label) ? "" : "- " + step.label)}" :
-                                       step.type == "FiniteBurn" ? $"🔥 有限推力点火 {(string.IsNullOrEmpty(step.label) ? "" : "- " + step.label)}" :
-                                       step.type == "Report" ? "🧾 状态报告" :
-                                       step.type == "Equation" ? "📐 变量/方程赋值" : step.type;
-                    GUILayout.Label($"#{i + 1} <b>{typeBadge}</b>", labelValueStyle);
+                    string stepTitle = string.IsNullOrEmpty(step.label) ? "" : $"<b>{step.label}</b>";
+                    if (!string.IsNullOrEmpty(stepTitle)) GUILayout.Label(stepTitle, labelValueStyle);
                 }
 
                 GUILayout.FlexibleSpace();
@@ -2068,32 +2207,18 @@ namespace KSPGMAT.UI {
 
             GUILayout.Space(6);
 
-            // Sub-Windows Entry Buttons
+            // =========================================================================
+            // CARD 2: Pinned Live Solution Summary Box & Detailed Error Diagnostic
+            // =========================================================================
             GUILayout.BeginVertical(cardBoxStyle);
-            GUILayout.Label("🪟 专属分析子界面", headerStyle);
-            if (GUILayout.Button("🖼️ 查看 GMAT 仿真轨迹图像", actionButtonStyle, GUILayout.Height(28))) {
-                LoadSimulationTexture();
-                showSimulationImageWindow = true;
-            }
-            if (GUILayout.Button("⚙️ 传播子与受力模型深度配置", secondaryButtonStyle, GUILayout.Height(26))) {
-                showPropagatorConfigWindow = true;
-            }
-            if (GUILayout.Button("🛰️ 查看航天器已同步参数快照", secondaryButtonStyle, GUILayout.Height(26))) {
-                showCraftDetailsWindow = true;
-            }
-            GUILayout.EndVertical();
-
-            GUILayout.Space(6);
-
-            // Pinned Live Solution Summary Box & Detailed Error Diagnostic
-            GUILayout.BeginVertical(cardBoxStyle);
-            GUILayout.Label("📊 最新轨道求解结果", headerStyle);
+            GUILayout.Label("<b>📊 轨道求解诊断与结果 (Results)</b>", headerStyle);
+            GUILayout.Space(2);
 
             if (latestResult != null && latestResult.success) {
-                GUILayout.Label($"最终半长轴 (SMA): <b>{latestResult.final_sma:F1} km</b>", labelValueStyle);
-                GUILayout.Label($"最终离心率 (ECC): <b>{latestResult.final_ecc:F4}</b>", labelValueStyle);
-                GUILayout.Label($"最终倾角 (INC): <b>{latestResult.final_inc:F2}°</b>", labelValueStyle);
-                GUILayout.Label($"生成机动点火: <b>{latestResult.solved_burns.Count} 个</b>", labelValueStyle);
+                GUILayout.Label($"最终半长轴 (SMA): <color=#38bdf8><b>{latestResult.final_sma:F1} km</b></color>", labelValueStyle);
+                GUILayout.Label($"最终离心率 (ECC): <color=#38bdf8><b>{latestResult.final_ecc:F4}</b></color>", labelValueStyle);
+                GUILayout.Label($"最终倾角 (INC): <color=#38bdf8><b>{latestResult.final_inc:F2}°</b></color>", labelValueStyle);
+                GUILayout.Label($"生成机动点火: <color=#34d399><b>{latestResult.solved_burns.Count} 个</b></color>", labelValueStyle);
                 if (latestResult.has_fuel_deficit) {
                     GUILayout.Label($"<color=#f87171>⚠️ 燃料赤字: {latestResult.fuel_deficit:F1} kg</color>", labelValueStyle);
                 }
@@ -2113,21 +2238,21 @@ namespace KSPGMAT.UI {
                     ScreenMessages.PostScreenMessage("📋 完整报错日志已复制至系统剪贴板！", 2.5f, ScreenMessageStyle.UPPER_CENTER);
                 }
             } else {
-                GUILayout.Label("<color=#64748b>点击上方按钮启动计算，结果将实时显示于此。</color>", labelValueStyle);
+                GUILayout.Label("<color=#64748b>就绪。点击上方按钮启动高保真多体引力打靶计算。</color>", labelValueStyle);
             }
             GUILayout.EndVertical();
 
             GUILayout.Space(6);
 
             // =========================================================================
-            // VEHICLE & PROPULSION SNAPSHOT (MATCHING IMAGE 2 DIRECTLY IN RIGHT PANEL)
+            // CARD 3: VEHICLE & PROPULSION SNAPSHOT (STAGING & ENGINES)
             // =========================================================================
             GUILayout.BeginVertical(cardBoxStyle);
             GUILayout.BeginHorizontal();
             var selStages = GetSelectedStagesList();
-            GUILayout.Label($"<b>🚀 多级火箭质量与 ΔV 组合 (已选 {selStages.Count} 个分级)</b>", headerStyle);
+            GUILayout.Label($"<b>🚀 多级火箭推进与质量预算 ({selStages.Count} 分级)</b>", headerStyle);
             GUILayout.FlexibleSpace();
-            GUILayout.Label("<color=#34d399><size=11>● LIVE 实时同步</size></color>", labelValueStyle);
+            GUILayout.Label("<color=#34d399><size=11>● LIVE 同步</size></color>", labelValueStyle);
             GUILayout.EndHorizontal();
 
             if (selStages != null && selStages.Count > 0) {
@@ -2137,19 +2262,17 @@ namespace KSPGMAT.UI {
                     sumFuel += st.fuelMassTonnes;
                     if (st.wetMassTonnes > maxWet) maxWet = st.wetMassTonnes;
                     if (st.dryMassTonnes < minDry) minDry = st.dryMassTonnes;
-                    GUILayout.Label($" • <b>Stage {st.stageNumber}</b>: <color=#38bdf8>ΔV={st.deltaV:F0} m/s</color> | 湿重=<b>{st.wetMassTonnes:F2}t</b> | 燃料=<b>{st.fuelMassTonnes:F2}t</b> | 干重=<b>{st.dryMassTonnes:F2}t</b>", labelValueStyle);
+                    GUILayout.Label($" • <b>Stage {st.stageNumber}</b>: <color=#38bdf8>ΔV={st.deltaV:F0}m/s</color> | 湿重=<b>{st.wetMassTonnes:F2}t</b> | 燃料=<b>{st.fuelMassTonnes:F2}t</b> | 干重=<b>{st.dryMassTonnes:F2}t</b>", labelValueStyle);
                 }
                 if (minDry == double.MaxValue) minDry = 0;
-                GUILayout.Label($"<color=#34d399>组合初始湿重: <b>{maxWet:F2} 吨</b> | 最终干重: <b>{minDry:F2} 吨</b> | 推进剂: <b>{sumFuel:F2} 吨</b> | 总设计ΔV: <b>{sumDv:F0} m/s</b></color>", labelValueStyle);
+                GUILayout.Label($"<color=#34d399>组合湿重: <b>{maxWet:F2}t</b> | 干重: <b>{minDry:F2}t</b> | 推进剂: <b>{sumFuel:F2}t</b> | 设计ΔV: <b>{sumDv:F0}m/s</b></color>", labelValueStyle);
             } else if (vessel != null) {
                 GUILayout.Label($"飞船总质量: <b>{vessel.GetTotalMass():F2} 吨</b>", labelValueStyle);
             }
 
-            GUILayout.Space(4);
+            GUILayout.Space(3);
 
-            // RealismOverhaul Propulsion Architecture
-            GUILayout.Label("<b>🔥 RealismOverhaul 推进系统动力学</b>", headerStyle);
-            // Auto-detect engine from mission sequence if present
+            // Active RealismOverhaul Engine Telemetry
             if (cachedEngines != null && cachedEngines.Count > 0) {
                 for (int s = 0; s < missionSequence.Count; s++) {
                     if (missionSequence[s].type == "FiniteBurn" && !string.IsNullOrEmpty(missionSequence[s].bound_thruster)) {
@@ -2167,34 +2290,48 @@ namespace KSPGMAT.UI {
             }
             var curEng = (cachedEngines != null && selectedEngineIndex < cachedEngines.Count) ? cachedEngines[selectedEngineIndex] : (cachedEngines != null && cachedEngines.Count > 0 ? cachedEngines[0] : null);
             if (curEng != null) {
-                GUILayout.Label($"主发动机: <b>{curEng.title}</b> | 真空推力: <color=#38bdf8><b>{curEng.thrustKN:F1} kN</b></color> | 真空比冲: <color=#38bdf8><b>{curEng.ispVac:F0} s</b></color>", labelValueStyle);
-                GUILayout.Label($"推进剂组元: <color=#facc15><b>{curEng.propellantDesc}</b></color>", labelValueStyle);
-                GUILayout.Label($"推进剂混合密度: <b>{curEng.fuelDensityKgM3:F1} kg/m³</b> | 储罐容积: <b>{curEng.tankVolumeM3:F3} m³</b> | 调节压力: <b>{curEng.tankPressureKPa:F0} kPa</b>", labelValueStyle);
-            } else {
-                GUILayout.Label("<color=#64748b>未检测到 RealismOverhaul 发动机配置或处于纯惯性段。</color>", labelValueStyle);
+                GUILayout.Label($"当前发动机: <b>{curEng.title}</b> | 推力: <color=#38bdf8><b>{curEng.thrustKN:F1} kN</b></color> | 比冲: <color=#38bdf8><b>{curEng.ispVac:F0} s</b></color>", labelValueStyle);
+                GUILayout.Label($"推进剂: <color=#facc15><b>{curEng.propellantDesc}</b></color> ({curEng.fuelDensityKgM3:F0} kg/m³)", labelValueStyle);
             }
             GUILayout.EndVertical();
 
             GUILayout.Space(6);
 
-            // Direct Actions Box
+            // =========================================================================
+            // CARD 4: TOOLS & EXTERNAL INTEROP
+            // =========================================================================
             GUILayout.BeginVertical(cardBoxStyle);
-            GUILayout.Label("🔗 一键联动快捷操作", headerStyle);
+            GUILayout.Label("<b>🔗 分析工具与外部联动 (Tools & Interop)</b>", headerStyle);
+            GUILayout.Space(2);
+
+            if (GUILayout.Button("🖼️ 查看 GMAT 仿真轨迹图像", actionButtonStyle, GUILayout.Height(26))) {
+                LoadSimulationTexture();
+                showSimulationImageWindow = true;
+            }
+
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("⚙️ 传播子配置", secondaryButtonStyle, GUILayout.Height(24))) {
+                showPropagatorConfigWindow = true;
+            }
+            if (GUILayout.Button("🛰️ 航天器参数", secondaryButtonStyle, GUILayout.Height(24))) {
+                showCraftDetailsWindow = true;
+            }
+            GUILayout.EndHorizontal();
 
             GUI.enabled = (latestResult != null && latestResult.success && latestResult.solved_burns.Count > 0);
-            if (GUILayout.Button("🔥 一键写入所有机动至 Principia", successButtonStyle, GUILayout.Height(34))) {
+            if (GUILayout.Button("🔥 一键写入所有机动至 Principia", successButtonStyle, GUILayout.Height(30))) {
                 WriteBurnsToPrincipia(vessel);
             }
             GUI.enabled = (latestResult != null && latestResult.success);
 
-            if (GUILayout.Button("🖥️ 在 GMAT 桌面端打开 3D 渲染", secondaryButtonStyle, GUILayout.Height(26))) {
+            if (GUILayout.Button("🖥️ 在 GMAT 桌面端打开 3D 渲染", secondaryButtonStyle, GUILayout.Height(24))) {
                 if (!string.IsNullOrEmpty(latestResult.script_path)) {
                     GMATClient.OpenGmatDesktop(latestResult.script_path);
                     ScreenMessages.PostScreenMessage("正在启动 GMAT 桌面端 GUI...", 3.0f, ScreenMessageStyle.UPPER_CENTER);
                 }
             }
-
             GUI.enabled = true;
+
             GUILayout.EndVertical();
 
             GUILayout.EndVertical();
@@ -2279,11 +2416,11 @@ namespace KSPGMAT.UI {
             else if (step.type == "Vary") {
                 // Row 1: Fully Expanding Variable Input + Official GMAT [Edit] Dialog Button (Image 3)
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("<color=#38bdf8><b>寻优变量 (Variable):</b></color>", labelValueStyle, GUILayout.Width(140));
+                GUILayout.Label("<color=#38bdf8><b>寻优变量 (Variable):</b></color>", labelValueStyle, GUILayout.Width(130));
 
                 GUI.SetNextControlName($"Field_Vary_{i}");
                 string prevVary = step.vary_variable ?? "burntime";
-                string newVary = GUILayout.TextField(prevVary, GUILayout.MinWidth(240), GUILayout.ExpandWidth(true), GUILayout.Height(22));
+                string newVary = GUILayout.TextField(prevVary, GUILayout.MinWidth(200), GUILayout.ExpandWidth(true), GUILayout.Height(22));
                 if (newVary != prevVary) step.vary_variable = newVary;
 
                 if (GUILayout.Button("📝 Edit / 选择变量...", tabButtonActiveStyle, GUILayout.Width(130), GUILayout.Height(22))) {
@@ -2307,26 +2444,23 @@ namespace KSPGMAT.UI {
                     TriggerIntelliSense(newVary, "vary", i);
                 }
 
-                GUILayout.Space(12);
+                GUILayout.Space(10);
                 GUILayout.Label("<color=#94a3b8>求解器:</color>", labelValueStyle, GUILayout.Width(45));
                 string parentDc = GetParentTargetDcName(i);
-                string currentVaryDc = string.IsNullOrEmpty(step.dc_name) ? parentDc : step.dc_name;
+                string currentVaryDc = string.IsNullOrEmpty(step.dc_name) ? (string.IsNullOrEmpty(parentDc) ? "DefaultDC" : parentDc) : step.dc_name;
 
-                List<string> activeSolvers = GetActiveSolverNames();
-                for (int s = 0; s < activeSolvers.Count; s++) {
-                    string sName = activeSolvers[s];
-                    bool isSel = (currentVaryDc == sName);
-                    if (GUILayout.Button(sName, isSel ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(18))) {
-                        step.dc_name = sName;
-                    }
-                }
-
-                string newVaryDc = GUILayout.TextField(currentVaryDc, GUILayout.Width(80), GUILayout.Height(18));
+                string newVaryDc = GUILayout.TextField(currentVaryDc, GUILayout.Width(85), GUILayout.Height(20));
                 if (newVaryDc != currentVaryDc) step.dc_name = newVaryDc;
 
-                if (!string.IsNullOrEmpty(parentDc) && step.dc_name != parentDc) {
-                    if (GUILayout.Button($"↺ {parentDc}", secondaryButtonStyle, GUILayout.Height(18))) {
-                        step.dc_name = parentDc;
+                List<string> activeSolvers = GetActiveSolverNames();
+                if (!activeSolvers.Contains("DefaultDC")) activeSolvers.Insert(0, "DefaultDC");
+                if (!string.IsNullOrEmpty(parentDc) && !activeSolvers.Contains(parentDc)) activeSolvers.Insert(0, parentDc);
+
+                if (activeSolvers.Count > 1) {
+                    int curIdx = activeSolvers.IndexOf(step.dc_name);
+                    if (curIdx < 0) curIdx = 0;
+                    if (GUILayout.Button("▾ 切换", secondaryButtonStyle, GUILayout.Width(50), GUILayout.Height(20))) {
+                        step.dc_name = activeSolvers[(curIdx + 1) % activeSolvers.Count];
                     }
                 }
 
@@ -2336,21 +2470,24 @@ namespace KSPGMAT.UI {
                 // Row 2: Search Bounds & Inline Solved Value Result
                 GUILayout.Space(3);
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("初猜:", labelValueStyle, GUILayout.Width(35));
-                string sInit = GUILayout.TextField(step.vary_initial.ToString("F2"), GUILayout.Width(55));
+                GUILayout.Label("<color=#94a3b8>初猜:</color>", gridLabelStyle, GUILayout.Width(35));
+                string sInit = GUILayout.TextField(step.vary_initial.ToString("F2"), numericInputStyle, GUILayout.Width(60));
                 double.TryParse(sInit, out step.vary_initial);
 
-                GUILayout.Label("下界:", labelValueStyle, GUILayout.Width(35));
-                string sLow = GUILayout.TextField(step.vary_lower.ToString("F2"), GUILayout.Width(50));
+                GUILayout.Space(6);
+                GUILayout.Label("<color=#94a3b8>下界:</color>", gridLabelStyle, GUILayout.Width(35));
+                string sLow = GUILayout.TextField(step.vary_lower.ToString("F2"), numericInputStyle, GUILayout.Width(60));
                 double.TryParse(sLow, out step.vary_lower);
 
-                GUILayout.Label("上界:", labelValueStyle, GUILayout.Width(35));
-                string sUp = GUILayout.TextField(step.vary_upper.ToString("F2"), GUILayout.Width(55));
+                GUILayout.Space(6);
+                GUILayout.Label("<color=#94a3b8>上界:</color>", gridLabelStyle, GUILayout.Width(35));
+                string sUp = GUILayout.TextField(step.vary_upper.ToString("F2"), numericInputStyle, GUILayout.Width(60));
                 double.TryParse(sUp, out step.vary_upper);
 
-                GUILayout.Label("步长:", labelValueStyle, GUILayout.Width(35));
+                GUILayout.Space(6);
+                GUILayout.Label("<color=#94a3b8>步长:</color>", gridLabelStyle, GUILayout.Width(35));
                 double mStep = (step.vary_max_step <= 0) ? 0.1 : step.vary_max_step;
-                string sStep = GUILayout.TextField(mStep.ToString("F2"), GUILayout.Width(45));
+                string sStep = GUILayout.TextField(mStep.ToString("F2"), numericInputStyle, GUILayout.Width(55));
                 if (double.TryParse(sStep, out mStep)) step.vary_max_step = mStep;
 
                 // Inline Solved Value
@@ -2367,8 +2504,8 @@ namespace KSPGMAT.UI {
                     }
                     if (solvedVal > 0) {
                         string unitStr = (step.vary_variable != null && step.vary_variable.Contains("Element")) ? "km/s" : "s";
-                        GUILayout.Space(10);
-                        GUILayout.Label($"<color=#34d399><b>➔ 🎯 求解收敛值: {solvedVal:F4} {unitStr}</b></color>", labelValueStyle);
+                        GUILayout.Space(12);
+                        GUILayout.Label($"<color=#34d399><b>➔ 🎯 求解收敛解: {solvedVal:F4} {unitStr}</b></color>", labelValueStyle);
                     }
                 }
 
@@ -2386,7 +2523,7 @@ namespace KSPGMAT.UI {
 
                 GUI.SetNextControlName($"Field_Achieve_{i}");
                 string prevAchieve = step.achieve_param ?? "Sat.Earth.Altitude";
-                string newAchieve = GUILayout.TextField(prevAchieve, GUILayout.MinWidth(220), GUILayout.ExpandWidth(true), GUILayout.Height(22));
+                string newAchieve = GUILayout.TextField(prevAchieve, GUILayout.MinWidth(200), GUILayout.ExpandWidth(true), GUILayout.Height(22));
 
                 if (GUILayout.Button("📝 Edit / 选择目标...", tabButtonActiveStyle, GUILayout.Width(130), GUILayout.Height(22))) {
                     OpenGMATParameterSelectDialog(i, "achieve", step.achieve_param);
@@ -2409,26 +2546,23 @@ namespace KSPGMAT.UI {
                     TriggerIntelliSense(newAchieve, "achieve", i);
                 }
 
-                GUILayout.Space(12);
+                GUILayout.Space(10);
                 GUILayout.Label("<color=#94a3b8>求解器:</color>", labelValueStyle, GUILayout.Width(45));
                 string parentDcAch = GetParentTargetDcName(i);
-                string currentAchDc = string.IsNullOrEmpty(step.dc_name) ? parentDcAch : step.dc_name;
+                string currentAchDc = string.IsNullOrEmpty(step.dc_name) ? (string.IsNullOrEmpty(parentDcAch) ? "DefaultDC" : parentDcAch) : step.dc_name;
 
-                List<string> activeSolversAch = GetActiveSolverNames();
-                for (int s = 0; s < activeSolversAch.Count; s++) {
-                    string sName = activeSolversAch[s];
-                    bool isSel = (currentAchDc == sName);
-                    if (GUILayout.Button(sName, isSel ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(18))) {
-                        step.dc_name = sName;
-                    }
-                }
-
-                string newAchDc = GUILayout.TextField(currentAchDc, GUILayout.Width(80), GUILayout.Height(18));
+                string newAchDc = GUILayout.TextField(currentAchDc, GUILayout.Width(85), GUILayout.Height(20));
                 if (newAchDc != currentAchDc) step.dc_name = newAchDc;
 
-                if (!string.IsNullOrEmpty(parentDcAch) && step.dc_name != parentDcAch) {
-                    if (GUILayout.Button($"↺ {parentDcAch}", secondaryButtonStyle, GUILayout.Height(18))) {
-                        step.dc_name = parentDcAch;
+                List<string> activeSolversAch = GetActiveSolverNames();
+                if (!activeSolversAch.Contains("DefaultDC")) activeSolversAch.Insert(0, "DefaultDC");
+                if (!string.IsNullOrEmpty(parentDcAch) && !activeSolversAch.Contains(parentDcAch)) activeSolversAch.Insert(0, parentDcAch);
+
+                if (activeSolversAch.Count > 1) {
+                    int curIdx = activeSolversAch.IndexOf(step.dc_name);
+                    if (curIdx < 0) curIdx = 0;
+                    if (GUILayout.Button("▾ 切换", secondaryButtonStyle, GUILayout.Width(50), GUILayout.Height(20))) {
+                        step.dc_name = activeSolversAch[(curIdx + 1) % activeSolversAch.Count];
                     }
                 }
 
@@ -2438,19 +2572,20 @@ namespace KSPGMAT.UI {
                 // Row 2: Desired Value + Tolerance + Inline Solved Result
                 GUILayout.Space(3);
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("期望值:", labelValueStyle, GUILayout.Width(45));
-                string sGVal = GUILayout.TextField(step.achieve_val.ToString("F3"), GUILayout.Width(85));
+                GUILayout.Label("<color=#94a3b8>期望目标值:</color>", gridLabelStyle, GUILayout.Width(75));
+                string sGVal = GUILayout.TextField(step.achieve_val.ToString("F3"), numericInputStyle, GUILayout.Width(85));
                 double.TryParse(sGVal, out step.achieve_val);
 
-                GUILayout.Label("容差: ±", labelValueStyle, GUILayout.Width(45));
-                string sGTol = GUILayout.TextField(step.achieve_tolerance.ToString("G4"), GUILayout.Width(55));
+                GUILayout.Space(8);
+                GUILayout.Label("<color=#94a3b8>容差: ±</color>", gridLabelStyle, GUILayout.Width(50));
+                string sGTol = GUILayout.TextField(step.achieve_tolerance.ToString("G4"), numericInputStyle, GUILayout.Width(65));
                 double.TryParse(sGTol, out step.achieve_tolerance);
 
                 // Inline Solved Result
                 if (latestResult != null && latestResult.success && latestResult.dc_summary != null && latestResult.dc_summary.achieved > 0) {
                     var dcs = latestResult.dc_summary;
-                    GUILayout.Space(10);
-                    GUILayout.Label($"<color=#34d399><b>➔ 🎯 打靶达成值: {dcs.achieved:F2}</b></color> <color=#94a3b8>(残差: {dcs.variance:F4} | {dcs.iterations} 次收敛)</color>", labelValueStyle);
+                    GUILayout.Space(12);
+                    GUILayout.Label($"<color=#34d399><b>➔ 🎯 打靶达成值: {dcs.achieved:F3}</b></color> <color=#94a3b8>(残差: {dcs.variance:F4} | {dcs.iterations} 次收敛)</color>", labelValueStyle);
                 }
 
                 GUILayout.FlexibleSpace();
@@ -2482,19 +2617,22 @@ namespace KSPGMAT.UI {
                 // Delta-V Components Row
                 GUILayout.Space(2);
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("切向 ΔV_V (m/s):", labelValueStyle, GUILayout.Width(95));
-                string sV = GUILayout.TextField(step.dv_v.ToString("F2"), GUILayout.Width(65));
+                GUILayout.Label("<color=#94a3b8>切向 ΔV_V (m/s):</color>", gridLabelStyle, GUILayout.Width(105));
+                string sV = GUILayout.TextField(step.dv_v.ToString("F2"), numericInputStyle, GUILayout.Width(70));
                 double.TryParse(sV, out step.dv_v);
 
-                GUILayout.Label("法向 ΔV_N:", labelValueStyle, GUILayout.Width(65));
-                string sN = GUILayout.TextField(step.dv_n.ToString("F2"), GUILayout.Width(60));
+                GUILayout.Space(8);
+                GUILayout.Label("<color=#94a3b8>法向 ΔV_N:</color>", gridLabelStyle, GUILayout.Width(70));
+                string sN = GUILayout.TextField(step.dv_n.ToString("F2"), numericInputStyle, GUILayout.Width(65));
                 double.TryParse(sN, out step.dv_n);
 
-                GUILayout.Label("径向 ΔV_B:", labelValueStyle, GUILayout.Width(65));
-                string sB = GUILayout.TextField(step.dv_b.ToString("F2"), GUILayout.Width(60));
+                GUILayout.Space(8);
+                GUILayout.Label("<color=#94a3b8>径向 ΔV_B:</color>", gridLabelStyle, GUILayout.Width(70));
+                string sB = GUILayout.TextField(step.dv_b.ToString("F2"), numericInputStyle, GUILayout.Width(65));
                 double.TryParse(sB, out step.dv_b);
 
                 double totalDv = Math.Sqrt(step.dv_v * step.dv_v + step.dv_n * step.dv_n + step.dv_b * step.dv_b);
+                GUILayout.Space(12);
                 GUILayout.Label($"<b>总 ΔV: <color=#34d399>{totalDv:F2} m/s</color></b>", labelValueStyle);
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
@@ -3115,10 +3253,16 @@ namespace KSPGMAT.UI {
                     var s = missionSequence[paramPickerTargetStepIndex];
                     if (paramPickerMode == "vary") {
                         s.vary_variable = psdPendingSelectedValue;
+                        pendingFocusControl = $"Field_Vary_{paramPickerTargetStepIndex}";
+                        GUI.FocusControl(pendingFocusControl);
                     } else if (paramPickerMode == "achieve") {
                         s.achieve_param = psdPendingSelectedValue;
+                        pendingFocusControl = $"Field_Achieve_{paramPickerTargetStepIndex}";
+                        GUI.FocusControl(pendingFocusControl);
                     } else if (paramPickerMode == "stop" || paramPickerMode == "prop_stop") {
                         s.stop_type = psdPendingSelectedValue;
+                        pendingFocusControl = $"Field_PropStop_{paramPickerTargetStepIndex}";
+                        GUI.FocusControl(pendingFocusControl);
                     }
                 }
                 showParamPickerModal = false;
@@ -3692,7 +3836,7 @@ namespace KSPGMAT.UI {
                             GUILayout.Space(2);
                             double pDvMag = pNode.deltaV.magnitude;
                             GUILayout.Label($"实机机动合 ΔV: <b>{pDvMag:F3} m/s</b>", labelValueStyle);
-                            GUILayout.Label($"分量: ({pNode.deltaV.x:F2}, {pNode.deltaV.y:F2}, {pNode.deltaV.z:F2}) m/s", labelValueStyle);
+                            GUILayout.Label($"Principia分量: 切向 {pNode.deltaV.x:F2} | 法向 {pNode.deltaV.y:F2} | 副法向(变倾角) {pNode.deltaV.z:F2} m/s", labelValueStyle);
                             GUILayout.Label($"实机点火持续时间: <color=#34d399><b>{pNode.duration:F2} s</b></color>", labelValueStyle);
                             GUILayout.Label($"节点初始总质量: <b>{pNode.initial_mass_tonnes:F3} t</b> (真实实时构型湿重)", labelValueStyle);
                             GUILayout.Label($"发动机实测推力: {pNode.thrust_kn:F1} kN | 实测比冲: {pNode.isp:F1} s", labelValueStyle);
@@ -4293,7 +4437,7 @@ namespace KSPGMAT.UI {
             double targetEpoch, centroidLead;
             double burnInitialTime = ComputeBurnInitialTime(vessel, b, solveUT, out targetEpoch, out centroidLead);
 
-            Vector3d dv = new Vector3d(b.dv_v, b.dv_n, b.dv_b);
+            Vector3d dv = new Vector3d(b.dv_v, b.dv_b, b.dv_n); // Principia Frenet: X=Tangent(dv_v), Y=Normal/Radial(dv_b), Z=Binormal/Out-of-Plane(dv_n)
             double thrust = b.thrust_kn > 0 ? b.thrust_kn : 50.0;
             double isp = b.isp > 0 ? b.isp : 310.0;
 
@@ -4322,7 +4466,7 @@ namespace KSPGMAT.UI {
                 double targetEpoch, centroidLead;
                 double burnInitialTime = ComputeBurnInitialTime(vessel, b, solveUT, out targetEpoch, out centroidLead);
 
-                Vector3d dv = new Vector3d(b.dv_v, b.dv_n, b.dv_b);
+                Vector3d dv = new Vector3d(b.dv_v, b.dv_b, b.dv_n); // Principia Frenet: X=Tangent(dv_v), Y=Normal/Radial(dv_b), Z=Binormal/Out-of-Plane(dv_n)
                 double thrust = b.thrust_kn > 0 ? b.thrust_kn : 50.0;
                 double isp = b.isp > 0 ? b.isp : 310.0;
 
@@ -4338,10 +4482,8 @@ namespace KSPGMAT.UI {
                 ScreenMessages.PostScreenMessage("⚠️ 机动写入被拒绝或 Principia 未就绪", 4.0f, ScreenMessageStyle.UPPER_CENTER);
             }
         }
-        private int achieveCategoryTab = 0; // 0: 天体, 1: 坐标系, 2: 航天器, 3: 传播子, 4: 求解器
-        private bool showAllBodiesPopup = false;
 
-        private void DrawPropStopAutocompleteBar(MissionStep step) {
+        private void DrawPropStopAutocompleteBar(int stepIndex, MissionStep step) {
             GUILayout.Space(2);
             Vessel v = FlightGlobals.ActiveVessel;
             List<string> allBodies = GMATParameterRegistry.GetAllBodies(v);
@@ -4379,6 +4521,8 @@ namespace KSPGMAT.UI {
                     GUI.backgroundColor = hasPrefix ? new Color(0.2f, 0.7f, 0.9f) : Color.white;
                     if (GUILayout.Button(icon + bName + ".", secondaryButtonStyle, GUILayout.Height(18))) {
                         ApplyPropStopPrefix(step, bName);
+                        pendingFocusControl = $"Field_PropStop_{stepIndex}";
+                        GUI.FocusControl(pendingFocusControl);
                     }
                     GUI.backgroundColor = Color.white;
                 }
@@ -4389,6 +4533,8 @@ namespace KSPGMAT.UI {
                     GUI.backgroundColor = hasPrefix ? new Color(0.2f, 0.7f, 0.9f) : Color.white;
                     if (GUILayout.Button("📐 " + cName + ".", secondaryButtonStyle, GUILayout.Height(18))) {
                         ApplyPropStopPrefix(step, cName);
+                        pendingFocusControl = $"Field_PropStop_{stepIndex}";
+                        GUI.FocusControl(pendingFocusControl);
                     }
                     GUI.backgroundColor = Color.white;
                 }
@@ -4399,6 +4545,8 @@ namespace KSPGMAT.UI {
                     GUI.backgroundColor = hasPrefix ? new Color(0.2f, 0.7f, 0.9f) : Color.white;
                     if (GUILayout.Button("🛰️ " + scName + ".", secondaryButtonStyle, GUILayout.Height(18))) {
                         ApplyPropStopPrefix(step, scName);
+                        pendingFocusControl = $"Field_PropStop_{stepIndex}";
+                        GUI.FocusControl(pendingFocusControl);
                     }
                     GUI.backgroundColor = Color.white;
                 }
@@ -4422,6 +4570,8 @@ namespace KSPGMAT.UI {
                             step.target_val = sug.RecommendedValue;
                             step.duration = sug.RecommendedValue;
                         }
+                        pendingFocusControl = $"Field_PropStop_{stepIndex}";
+                        GUI.FocusControl(pendingFocusControl);
                     }
                 }
                 GUILayout.FlexibleSpace();
@@ -4498,11 +4648,15 @@ namespace KSPGMAT.UI {
                         step.achieve_val = item.RecommendedValue;
                         step.achieve_tolerance = item.RecommendedTolerance;
                     }
+                    pendingFocusControl = $"Field_Achieve_{intelliSenseTargetStepIndex}";
+                    GUI.FocusControl(pendingFocusControl);
                 } else if (intelliSenseFieldName == "prop_stop") {
                     step.stop_type = item.InsertText;
                     if (item.RecommendedValue != 0) {
                         step.target_val = item.RecommendedValue;
                     }
+                    pendingFocusControl = $"Field_PropStop_{intelliSenseTargetStepIndex}";
+                    GUI.FocusControl(pendingFocusControl);
                 } else if (intelliSenseFieldName == "vary") {
                     step.vary_variable = item.InsertText;
                     if (item.RecommendedValue != 0) {
@@ -4510,19 +4664,20 @@ namespace KSPGMAT.UI {
                         step.vary_lower = 0.0;
                         step.vary_upper = item.RecommendedValue * 5.0;
                     }
+                    pendingFocusControl = $"Field_Vary_{intelliSenseTargetStepIndex}";
+                    GUI.FocusControl(pendingFocusControl);
                 }
             }
             intelliSenseOpen = false;
             intelliSenseDismissed = true;
             intelliSenseLastQuery = item.InsertText;
-            GUIUtility.keyboardControl = 0;
         }
 
         private void DrawFloatingIntelliSenseWindow() {
             if (!intelliSenseOpen || intelliSenseItems == null || intelliSenseItems.Count == 0) return;
             if (intelliSenseAnchorRect.width <= 0) return;
 
-            float popW = 410f;
+            float popW = 420f;
             float itemH = 26f;
             float listH = Mathf.Min(182f, intelliSenseItems.Count * itemH + 6f);
             float totalH = listH + 60f; // header + list + footer doc
@@ -4550,7 +4705,7 @@ namespace KSPGMAT.UI {
             // Header with Pagination Status & Quick Page Buttons
             GUILayout.BeginHorizontal();
             GUILayout.Label("<color=#38bdf8><b>⚡ GMAT IntelliSense</b></color>", labelValueStyle, GUILayout.Width(130));
-            GUILayout.Label($"<color=#38bdf8>[ {intelliSenseSelectedIndex + 1} / {intelliSenseItems.Count} ]</color> <color=#64748b>↑↓/PgUp/PgDn</color>", labelValueStyle);
+            GUILayout.Label($"<color=#38bdf8>[ {intelliSenseSelectedIndex + 1} / {intelliSenseItems.Count} ]</color> <color=#64748b>↑↓/PgUp/PgDn/Tab</color>", labelValueStyle);
             GUILayout.FlexibleSpace();
 
             if (GUILayout.Button("▲", secondaryButtonStyle, GUILayout.Width(22), GUILayout.Height(18))) {
@@ -4564,7 +4719,6 @@ namespace KSPGMAT.UI {
             if (GUILayout.Button("✕", secondaryButtonStyle, GUILayout.Width(20), GUILayout.Height(18))) {
                 intelliSenseOpen = false;
                 intelliSenseDismissed = true;
-                GUIUtility.keyboardControl = 0;
             }
             GUILayout.EndHorizontal();
 
