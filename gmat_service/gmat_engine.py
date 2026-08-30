@@ -1005,11 +1005,16 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
 
             init_val = float(step.get("vary_initial", 150.0))
             pert = float(step.get("vary_perturbation") or 0.0001)
-            lower = float(step.get("vary_lower") or 0.0)
+            lower = float(step["vary_lower"]) if ("vary_lower" in step and step["vary_lower"] is not None) else 0.0
             upper = float(step.get("vary_upper") or 1000.0)
             max_step = float(step.get("vary_max_step") or 2.0)
             add_scale = float(step.get("vary_additive_scale", 0.0))
             mul_scale = float(step.get("vary_multiplicative_scale", 1.0))
+
+            if "thrustdirection" in var_ref.lower():
+                if lower >= 0.0: lower = -1.0
+                if upper <= 0.0 or upper > 1.0: upper = 1.0
+                if max_step > 0.1: max_step = 0.05
 
             scale_opts = ""
             if add_scale != 0.0 or mul_scale != 1.0:

@@ -625,7 +625,11 @@ namespace KSPGMAT {
                         RedirectStandardError = true
                     };
 
+                    string cliStdOut = "";
+                    string cliStdErr = "";
                     using (var process = System.Diagnostics.Process.Start(psi)) {
+                        cliStdOut = process.StandardOutput.ReadToEnd();
+                        cliStdErr = process.StandardError.ReadToEnd();
                         process.WaitForExit(45000);
                     }
 
