@@ -344,12 +344,23 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
             th_bound_tank = th.get("bound_tank")
             if th_bound_tank and th_bound_tank not in created_tank_names:
                 san_th_tank = sanitize_gmat_identifier(th_bound_tank, "Tank")
+                matched = None
                 for ctk in created_tank_names:
                     if san_th_tank in ctk or ctk in san_th_tank:
-                        th_bound_tank = ctk
+                        matched = ctk
                         break
-            if not th_bound_tank:
-                th_bound_tank = created_tank_names[0] if created_tank_names else "MainTank"
+                th_bound_tank = matched
+
+            if not th_bound_tank or th_bound_tank not in created_tank_names:
+                # Auto-select the tank with the largest fuel mass
+                best_tk = created_tank_names[0] if created_tank_names else "MainTank"
+                best_fuel = -1.0
+                for tk_info, tk_nm in zip(craft_data.get("tanks", []), created_tank_names):
+                    fm = float(tk_info.get("fuel_mass", 0.0) or 0.0)
+                    if fm > best_fuel:
+                        best_fuel = fm
+                        best_tk = tk_nm
+                th_bound_tank = best_tk
 
             if thname not in created_thruster_names:
                 created_thruster_names.append(thname)
@@ -420,7 +431,15 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
                 created_thruster_names.append(th_for_fb)
                 eng_c1_newtons = thrust * 1000.0 if (thrust > 0 and thrust < 50000.0) else (thrust if thrust > 0 else 108100.0)
                 eng_k1_isp = isp if isp > 0 else 465.0
-                th_tk = created_tank_names[0] if created_tank_names else "MainTank"
+                # Auto-select the tank with largest fuel mass for FiniteBurn
+                best_tk = created_tank_names[0] if created_tank_names else "MainTank"
+                best_fuel = -1.0
+                for tk_info, tk_nm in zip(craft_data.get("tanks", []), created_tank_names):
+                    fm = float(tk_info.get("fuel_mass", 0.0) or 0.0)
+                    if fm > best_fuel:
+                        best_fuel = fm
+                        best_tk = tk_nm
+                th_tk = best_tk
                 lines.append(f"Create ChemicalThruster {th_for_fb};")
                 lines.append(f"{th_for_fb}.CoordinateSystem = Local;")
                 lines.append(f"{th_for_fb}.Origin = {central_body};")

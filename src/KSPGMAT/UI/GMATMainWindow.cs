@@ -1226,7 +1226,7 @@ namespace KSPGMAT.UI {
 
                 // 3. Target GEO (0° inclination removal + circularization)
                 missionSequence.Add(new MissionStep { type = "Target", label = "GEO 远地点圆化与 0° 倾角消除打靶", dc_name = "DC_GEO", dc_algorithm = "NewtonRaphson", dc_max_iter = 50 });
-                missionSequence.Add(new MissionStep { type = "Vary", vary_variable = "Sat.GEO_Burn_Thruster.ThrustDirection2", vary_initial = 0.44, vary_lower = 0.0, vary_upper = 1.0, vary_max_step = 0.05, dc_name = "DC_GEO", label = "Vary 法向偏转分量" });
+                missionSequence.Add(new MissionStep { type = "Vary", vary_variable = "Sat.GEO_Burn_Thruster.ThrustDirection2", vary_initial = -0.50, vary_lower = -1.0, vary_upper = 1.0, vary_max_step = 0.05, dc_name = "DC_GEO", label = "Vary 法向偏转分量" });
                 missionSequence.Add(new MissionStep { type = "Vary", vary_variable = "GEO_Duration", vary_initial = 70.0, vary_lower = 10.0, vary_upper = 200.0, vary_max_step = 10.0, dc_name = "DC_GEO", label = "Vary GEO 点火时长" });
                 missionSequence.Add(new MissionStep { type = "FiniteBurn", propagator = "LEOProp", burn_name = "GEO_Burn", burn_direction = "GEOSynthesis", thrust_dir1 = 0.632, thrust_dir2 = 0.775, thrust_dir3 = 0.0, burn_use_vary_var = true, burn_vary_var_name = "GEO_Duration", label = "远地点合成矢量点火 (0°倾角+圆化)" });
                 missionSequence.Add(new MissionStep { type = "Achieve", achieve_param = "Sat.EarthMJ2000Eq.VZ", achieve_val = 0.0, achieve_tolerance = 0.001, dc_name = "DC_GEO", label = "约束赤纬速度 VZ = 0 km/s (0°倾角)" });
@@ -2239,8 +2239,8 @@ namespace KSPGMAT.UI {
                 }
                 if (GUILayout.Button("🧭 ThrustDirection2 (法向偏转)", isThDir2 ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
                     step.vary_variable = $"Sat.{activeThName}.ThrustDirection2";
-                    step.vary_initial = 0.75;
-                    step.vary_lower = 0.0;
+                    step.vary_initial = -0.50;
+                    step.vary_lower = -1.0;
                     step.vary_upper = 1.0;
                     step.vary_max_step = 0.05;
                 }
