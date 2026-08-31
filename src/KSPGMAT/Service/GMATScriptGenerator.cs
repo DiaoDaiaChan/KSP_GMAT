@@ -291,16 +291,16 @@ namespace KSPGMAT.Service {
                     }
                     else if (stype == "Vary") {
                         string vDC = GMATParameterRegistry.SanitizeGmatIdentifier(st.dc_name ?? currentDC, "DC");
-                        string vVar = st.vary_variable ?? "burntime";
+                        string vVar = st.vary_variable ?? "";
                         if (vVar.Contains(".")) {
                             string stripped = GMATParameterRegistry.StripCraftPrefix(vVar);
                             vVar = $"{satName}.{stripped}";
                         }
-                        double guess = st.vary_initial > 0.0 ? st.vary_initial : 120.0;
+                        double guess = st.vary_initial;
                         double pert = st.vary_perturbation > 0.0 ? st.vary_perturbation : 0.0001;
                         double low = st.vary_lower;
-                        double up = st.vary_upper > 0.0 ? st.vary_upper : guess * 3.0;
-                        double maxStep = st.vary_max_step > 0.0 ? st.vary_max_step : 10.0;
+                        double up = st.vary_upper;
+                        double maxStep = st.vary_max_step;
                         sb.AppendLine($"   % Vary ({vVar})");
                         sb.AppendLine($"   Vary {vDC}({vVar} = {guess.ToString("G", CultureInfo.InvariantCulture)}, {{Perturbation = {pert.ToString("G", CultureInfo.InvariantCulture)}, Lower = {low.ToString("G", CultureInfo.InvariantCulture)}, Upper = {up.ToString("G", CultureInfo.InvariantCulture)}, MaxStep = {maxStep.ToString("G", CultureInfo.InvariantCulture)}}});");
                     }
@@ -308,8 +308,8 @@ namespace KSPGMAT.Service {
                         string fbName = GMATParameterRegistry.SanitizeGmatIdentifier(st.burn_name, $"Finite_{i + 1}");
                         string pName = !string.IsNullOrEmpty(st.propagator) ? st.propagator : "LEOProp";
                         string durExpr = st.burn_use_vary_var 
-                            ? (!string.IsNullOrEmpty(st.burn_vary_var_name) ? st.burn_vary_var_name : (!string.IsNullOrEmpty(st.duration_str) ? st.duration_str : "burntime")) 
-                            : (st.duration > 0 ? st.duration.ToString("F2", CultureInfo.InvariantCulture) : (!string.IsNullOrEmpty(st.duration_str) ? st.duration_str : "120.0"));
+                            ? (st.burn_vary_var_name ?? "") 
+                            : (!string.IsNullOrEmpty(st.duration_str) ? st.duration_str : st.duration.ToString("G", CultureInfo.InvariantCulture));
                         sb.AppendLine($"   % Finite Burn ({fbName})");
                         sb.AppendLine($"   BeginFiniteBurn {fbName}({satName});");
                         sb.AppendLine($"   Propagate {pName}({satName}) {{{satName}.ElapsedSecs = {durExpr}}};");
@@ -325,10 +325,7 @@ namespace KSPGMAT.Service {
                             sb.AppendLine($"   {satName}.{eng}.ThrustDirection1 = {st.thrust_dir1.ToString("G", CultureInfo.InvariantCulture)};");
                         }
                         if (st.vary_dir2_enabled && insideTarget) {
-                            double v2Low = st.vary_dir2_lower != 0 ? st.vary_dir2_lower : -3.0;
-                            double v2Up = st.vary_dir2_upper != 0 ? st.vary_dir2_upper : 3.0;
-                            double v2Step = st.vary_dir2_max_step > 0 ? st.vary_dir2_max_step : 0.5;
-                            sb.AppendLine($"   Vary {tvcDC}({satName}.{eng}.ThrustDirection2 = {st.thrust_dir2.ToString("G", CultureInfo.InvariantCulture)}, {{Perturbation = 0.0001, Lower = {v2Low.ToString("G", CultureInfo.InvariantCulture)}, Upper = {v2Up.ToString("G", CultureInfo.InvariantCulture)}, MaxStep = {v2Step.ToString("G", CultureInfo.InvariantCulture)}}});");
+                            sb.AppendLine($"   Vary {tvcDC}({satName}.{eng}.ThrustDirection2 = {st.thrust_dir2.ToString("G", CultureInfo.InvariantCulture)}, {{Perturbation = 0.0001, Lower = {st.vary_dir2_lower.ToString("G", CultureInfo.InvariantCulture)}, Upper = {st.vary_dir2_upper.ToString("G", CultureInfo.InvariantCulture)}, MaxStep = {st.vary_dir2_max_step.ToString("G", CultureInfo.InvariantCulture)}}});");
                         } else {
                             sb.AppendLine($"   {satName}.{eng}.ThrustDirection2 = {st.thrust_dir2.ToString("G", CultureInfo.InvariantCulture)};");
                         }
@@ -340,7 +337,7 @@ namespace KSPGMAT.Service {
                     }
                     else if (stype == "Achieve") {
                         string aDC = GMATParameterRegistry.SanitizeGmatIdentifier(st.dc_name ?? currentDC, "DC");
-                        string rawGoal = st.achieve_param ?? "Earth.RMAG";
+                        string rawGoal = st.achieve_param ?? "";
                         string goalParam = GMATParameterRegistry.StripCraftPrefix(rawGoal);
                         if (goalParam.Contains("=")) {
                             goalParam = GMATParameterRegistry.StripCraftPrefix(goalParam.Split('=')[0].Trim());
@@ -353,7 +350,7 @@ namespace KSPGMAT.Service {
                             }
                         }
                         double val = st.achieve_val;
-                        double tol = st.achieve_tolerance > 0 ? st.achieve_tolerance : 0.1;
+                        double tol = st.achieve_tolerance;
                         sb.AppendLine($"   % Achieve ({satName}.{goalParam})");
                         sb.AppendLine($"   Achieve {aDC}({satName}.{goalParam} = {val.ToString("G", CultureInfo.InvariantCulture)}, {{Tolerance = {tol.ToString("G", CultureInfo.InvariantCulture)}}});");
                     }
@@ -383,8 +380,6 @@ namespace KSPGMAT.Service {
                         }
                     }
                 }
-            } else {
-                sb.AppendLine($"Propagate LEOProp({satName}) {{{satName}.ElapsedSecs = 12000.0}};");
             }
 
             // Final Native Trajectory and Orbital Elements Report
@@ -395,8 +390,13 @@ namespace KSPGMAT.Service {
         }
 
         private static string FormatStopCondition(string satName, string centralBody, MissionStep st) {
-            string rawCond = st.stop_type ?? "Time";
+            string rawCond = st.stop_type ?? "";
             string cond = GMATParameterRegistry.StripCraftPrefix(rawCond).Trim();
+
+            if (string.IsNullOrEmpty(cond)) {
+                string dur = !string.IsNullOrEmpty(st.duration_str) ? st.duration_str : st.duration.ToString("G", CultureInfo.InvariantCulture);
+                return $"{satName}.ElapsedSecs = {dur}";
+            }
 
             // 1. If condition already contains an explicit '=', e.g. "Earth.Altitude = 200" or "ElapsedSecs = 3600"
             if (cond.Contains("=")) {
@@ -423,11 +423,11 @@ namespace KSPGMAT.Service {
 
             // 3. Elapsed Time Stop Conditions
             if (cond.Equals("Time", StringComparison.OrdinalIgnoreCase) || cond.Equals("ElapsedSecs", StringComparison.OrdinalIgnoreCase) || cond.EndsWith(".ElapsedSecs", StringComparison.OrdinalIgnoreCase)) {
-                string durVal = !string.IsNullOrEmpty(st.duration_str) ? st.duration_str : (st.duration > 0 ? st.duration.ToString("G", CultureInfo.InvariantCulture) : (!string.IsNullOrEmpty(st.target_val_str) ? st.target_val_str : (st.target_val > 0 ? st.target_val.ToString("G", CultureInfo.InvariantCulture) : "3600.0")));
+                string durVal = !string.IsNullOrEmpty(st.duration_str) ? st.duration_str : (st.duration > 0 ? st.duration.ToString("G", CultureInfo.InvariantCulture) : (!string.IsNullOrEmpty(st.target_val_str) ? st.target_val_str : st.target_val.ToString("G", CultureInfo.InvariantCulture)));
                 return $"{satName}.ElapsedSecs = {durVal}";
             }
             if (cond.Equals("Days", StringComparison.OrdinalIgnoreCase) || cond.Equals("ElapsedDays", StringComparison.OrdinalIgnoreCase) || cond.EndsWith(".ElapsedDays", StringComparison.OrdinalIgnoreCase)) {
-                string durStr = !string.IsNullOrEmpty(st.duration_str) ? st.duration_str : (st.duration > 0 ? (st.duration / 86400.0).ToString("G", CultureInfo.InvariantCulture) : (!string.IsNullOrEmpty(st.target_val_str) ? st.target_val_str : (st.target_val > 0 ? st.target_val.ToString("G", CultureInfo.InvariantCulture) : "1.0")));
+                string durStr = !string.IsNullOrEmpty(st.duration_str) ? st.duration_str : (st.duration > 0 ? (st.duration / 86400.0).ToString("G", CultureInfo.InvariantCulture) : (!string.IsNullOrEmpty(st.target_val_str) ? st.target_val_str : st.target_val.ToString("G", CultureInfo.InvariantCulture)));
                 return $"{satName}.ElapsedDays = {durStr}";
             }
 
