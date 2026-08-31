@@ -313,7 +313,7 @@ namespace KSPGMAT.Service {
                         sb.AppendLine($"   EndFiniteBurn {fbName}({satName});");
                     }
                     else if (stype == "ThrustVectorControl" || stype == "VaryThrustDirection") {
-                        string eng = !string.IsNullOrEmpty(st.bound_thruster) && thrusterNames.Contains(st.bound_thruster) ? st.bound_thruster : thrusterNames[0];
+                        string eng = !string.IsNullOrEmpty(st.bound_thruster) && thrusterNames.Contains(st.bound_thruster) ? st.bound_thruster : (thrusterNames.Count > 1 ? thrusterNames[1] : thrusterNames[0]);
                         string tvcDC = GMATParameterRegistry.SanitizeGmatIdentifier(st.dc_name ?? currentDC, "DC");
                         sb.AppendLine($"   % Thrust Vector Configuration: {eng} (VNB Axes)");
                         if (st.vary_dir1_enabled && insideTarget) {
@@ -322,7 +322,10 @@ namespace KSPGMAT.Service {
                             sb.AppendLine($"   {satName}.{eng}.ThrustDirection1 = {st.thrust_dir1.ToString("G", CultureInfo.InvariantCulture)};");
                         }
                         if (st.vary_dir2_enabled && insideTarget) {
-                            sb.AppendLine($"   Vary {tvcDC}({satName}.{eng}.ThrustDirection2 = {st.thrust_dir2.ToString("G", CultureInfo.InvariantCulture)}, {{Perturbation = 0.0001, Lower = {st.vary_dir2_lower.ToString("G", CultureInfo.InvariantCulture)}, Upper = {st.vary_dir2_upper.ToString("G", CultureInfo.InvariantCulture)}, MaxStep = {st.vary_dir2_max_step.ToString("G", CultureInfo.InvariantCulture)}}});");
+                            double v2Low = st.vary_dir2_lower != 0 ? st.vary_dir2_lower : -3.0;
+                            double v2Up = st.vary_dir2_upper != 0 ? st.vary_dir2_upper : 3.0;
+                            double v2Step = st.vary_dir2_max_step > 0 ? st.vary_dir2_max_step : 0.5;
+                            sb.AppendLine($"   Vary {tvcDC}({satName}.{eng}.ThrustDirection2 = {st.thrust_dir2.ToString("G", CultureInfo.InvariantCulture)}, {{Perturbation = 0.0001, Lower = {v2Low.ToString("G", CultureInfo.InvariantCulture)}, Upper = {v2Up.ToString("G", CultureInfo.InvariantCulture)}, MaxStep = {v2Step.ToString("G", CultureInfo.InvariantCulture)}}});");
                         } else {
                             sb.AppendLine($"   {satName}.{eng}.ThrustDirection2 = {st.thrust_dir2.ToString("G", CultureInfo.InvariantCulture)};");
                         }
@@ -369,31 +372,44 @@ namespace KSPGMAT.Service {
         }
 
         private static string FormatStopCondition(string satName, string centralBody, MissionStep st) {
-            string stype = st.stop_type ?? "Time";
-            if (stype == "Apoapsis" || stype == $"{centralBody}.Apoapsis") {
-                return $"{satName}.{centralBody}.Apoapsis";
+            string cond = st.stop_type ?? "Time";
+            
+            // Handle qualified / custom expression stop types (e.g. Sat.Earth.Latitude, Sat.Earth.Apoapsis, Earth.Latitude)
+            if (cond.Contains(".")) {
+                if (cond.Contains("=")) {
+                    return cond.StartsWith(satName + ".") ? cond : $"{satName}.{cond}";
+                }
+                string cleanCond = cond.StartsWith(satName + ".") ? cond.Substring(satName.Length + 1) : cond;
+                if (cleanCond.Equals("Apoapsis", StringComparison.OrdinalIgnoreCase) || cleanCond.Equals("Periapsis", StringComparison.OrdinalIgnoreCase)) {
+                    return $"{satName}.{centralBody}.{cleanCond}";
+                }
+                if (cleanCond.EndsWith(".Apoapsis", StringComparison.OrdinalIgnoreCase) || cleanCond.EndsWith(".Periapsis", StringComparison.OrdinalIgnoreCase)) {
+                    return $"{satName}.{cleanCond}";
+                }
+                if (cleanCond.Contains("Latitude") || cleanCond.Contains("Altitude") || cleanCond.Contains("RMAG") || cleanCond.Contains("TA")) {
+                    string rhs = !string.IsNullOrEmpty(st.target_val_str) ? st.target_val_str : st.target_val.ToString("G", CultureInfo.InvariantCulture);
+                    return $"{satName}.{cleanCond} = {rhs}";
+                }
+                if (cleanCond.Contains("ElapsedSecs") || cleanCond.Contains("ElapsedDays")) {
+                    string durStr = !string.IsNullOrEmpty(st.duration_str) ? st.duration_str : (st.duration > 0 ? st.duration.ToString("G", CultureInfo.InvariantCulture) : "3600.0");
+                    return $"{satName}.{cleanCond} = {durStr}";
+                }
+                return $"{satName}.{cleanCond}";
             }
-            if (stype == "Periapsis" || stype == $"{centralBody}.Periapsis") {
-                return $"{satName}.{centralBody}.Periapsis";
-            }
-            if (stype == "Latitude" || stype == $"{centralBody}.Latitude") {
-                return $"{satName}.{centralBody}.Latitude = {st.target_val.ToString("G", CultureInfo.InvariantCulture)}";
-            }
-            if (stype == "Altitude" || stype == $"{centralBody}.Altitude") {
-                return $"{satName}.{centralBody}.Altitude = {st.target_val.ToString("G", CultureInfo.InvariantCulture)}";
-            }
-            if (stype == "RMAG" || stype == $"{centralBody}.RMAG") {
-                return $"{satName}.{centralBody}.RMAG = {st.target_val.ToString("G", CultureInfo.InvariantCulture)}";
-            }
-            if (stype == "TA") {
-                return $"{satName}.TA = {st.target_val.ToString("G", CultureInfo.InvariantCulture)}";
-            }
-            if (stype == "Days" || stype == "ElapsedDays") {
+
+            if (cond.Equals("Apoapsis", StringComparison.OrdinalIgnoreCase)) return $"{satName}.{centralBody}.Apoapsis";
+            if (cond.Equals("Periapsis", StringComparison.OrdinalIgnoreCase)) return $"{satName}.{centralBody}.Periapsis";
+            if (cond.Equals("Latitude", StringComparison.OrdinalIgnoreCase)) return $"{satName}.{centralBody}.Latitude = {st.target_val.ToString("G", CultureInfo.InvariantCulture)}";
+            if (cond.Equals("Altitude", StringComparison.OrdinalIgnoreCase)) return $"{satName}.{centralBody}.Altitude = {st.target_val.ToString("G", CultureInfo.InvariantCulture)}";
+            if (cond.Equals("RMAG", StringComparison.OrdinalIgnoreCase)) return $"{satName}.{centralBody}.RMAG = {st.target_val.ToString("G", CultureInfo.InvariantCulture)}";
+            if (cond.Equals("TA", StringComparison.OrdinalIgnoreCase)) return $"{satName}.TA = {st.target_val.ToString("G", CultureInfo.InvariantCulture)}";
+            if (cond.Equals("Days", StringComparison.OrdinalIgnoreCase) || cond.Equals("ElapsedDays", StringComparison.OrdinalIgnoreCase)) {
                 return $"{satName}.ElapsedDays = {(st.duration / 86400.0).ToString("G", CultureInfo.InvariantCulture)}";
             }
+
             // Default ElapsedSecs
-            double dur = st.duration > 0 ? st.duration : 3600.0;
-            return $"{satName}.ElapsedSecs = {dur.ToString("G", CultureInfo.InvariantCulture)}";
+            string dVal = !string.IsNullOrEmpty(st.duration_str) ? st.duration_str : (st.duration > 0 ? st.duration.ToString("G", CultureInfo.InvariantCulture) : "3600.0");
+            return $"{satName}.ElapsedSecs = {dVal}";
         }
     }
 }

@@ -82,6 +82,8 @@ namespace KSPGMAT.UI {
             GUI.skin.textField.onHover.background = inputFocusBg;
             GUI.skin.textField.onActive.background = inputFocusBg;
             GUI.skin.textField.border = new RectOffset(2, 2, 2, 2);
+            GUI.skin.textField.padding = new RectOffset(6, 6, 2, 2);
+            GUI.skin.textField.fontSize = 11;
 
             Texture2D textAreaBg = MakeBoxTex(4, 4, new Color(0.028f, 0.038f, 0.058f, 0.98f), new Color(0.14f, 0.20f, 0.30f, 0.9f), 1);
             Texture2D textAreaFocusBg = MakeBoxTex(4, 4, new Color(0.032f, 0.044f, 0.068f, 0.98f), new Color(0.20f, 0.45f, 0.75f, 1.0f), 1);
@@ -348,20 +350,25 @@ namespace KSPGMAT.UI {
             numericInputStyle.normal.background = inputBg;
             numericInputStyle.focused.background = inputFocusBg;
             numericInputStyle.hover.background = inputFocusBg;
+            numericInputStyle.active.background = inputFocusBg;
             numericInputStyle.normal.textColor = Color.white;
+            numericInputStyle.focused.textColor = Color.white;
             numericInputStyle.fontSize = 11;
             numericInputStyle.alignment = TextAnchor.MiddleRight;
+            numericInputStyle.padding = new RectOffset(6, 6, 2, 2);
+            numericInputStyle.border = new RectOffset(2, 2, 2, 2);
 
             stepLabelInputStyle = new GUIStyle(GUI.skin.textField);
             stepLabelInputStyle.normal.background = inputBg;
             stepLabelInputStyle.focused.background = inputFocusBg;
             stepLabelInputStyle.hover.background = inputFocusBg;
+            stepLabelInputStyle.active.background = inputFocusBg;
             stepLabelInputStyle.normal.textColor = new Color(0.9f, 0.95f, 1f);
             stepLabelInputStyle.focused.textColor = Color.white;
             stepLabelInputStyle.fontSize = 11;
-            stepLabelInputStyle.fontStyle = FontStyle.Bold;
             stepLabelInputStyle.alignment = TextAnchor.MiddleLeft;
             stepLabelInputStyle.padding = new RectOffset(6, 6, 2, 2);
+            stepLabelInputStyle.border = new RectOffset(2, 2, 2, 2);
 
             // 9. Unified Clean Dark Slate Step Box Styles (No neon borders; cards share sleek cohesive look)
             stepBoxPropStyle = nestedCardBoxStyle;

@@ -126,6 +126,12 @@ namespace KSPGMAT.Service {
                                 else if (prop.Equals("SRPArea", StringComparison.OrdinalIgnoreCase) && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double srp)) result.craft_srp_area = srp;
                                 else if (prop.Equals("Epoch", StringComparison.OrdinalIgnoreCase)) result.craft_epoch = rhs;
                                 else if (prop.Equals("CoordinateSystem", StringComparison.OrdinalIgnoreCase)) result.craft_coord_system = rhs;
+                                else if (prop.Equals("X", StringComparison.OrdinalIgnoreCase) && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double x)) result.craft_x = x;
+                                else if (prop.Equals("Y", StringComparison.OrdinalIgnoreCase) && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double y)) result.craft_y = y;
+                                else if (prop.Equals("Z", StringComparison.OrdinalIgnoreCase) && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double z)) result.craft_z = z;
+                                else if (prop.Equals("VX", StringComparison.OrdinalIgnoreCase) && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double vx)) result.craft_vx = vx;
+                                else if (prop.Equals("VY", StringComparison.OrdinalIgnoreCase) && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double vy)) result.craft_vy = vy;
+                                else if (prop.Equals("VZ", StringComparison.OrdinalIgnoreCase) && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double vz)) result.craft_vz = vz;
                             }
 
                             // Tank properties
@@ -169,7 +175,58 @@ namespace KSPGMAT.Service {
                     }
                 } else {
                     // --- Mission Sequence Commands Parsing ---
-                    // 1. Propagate
+                    // 1. BeginFiniteBurn (coalesce with following Propagate & EndFiniteBurn)
+                    var bfbMatch = Regex.Match(rawLine, @"BeginFiniteBurn\s+([A-Za-z0-9_]+)", RegexOptions.IgnoreCase);
+                    if (bfbMatch.Success) {
+                        string fbName = bfbMatch.Groups[1].Value;
+                        string boundEng = finiteBurnsDict.ContainsKey(fbName) ? finiteBurnsDict[fbName] : "";
+                        string propName = "LEOProp";
+                        double dur = 120.0;
+                        string durVar = "";
+                        bool useVar = false;
+
+                        // Peek ahead in lines to find duration and EndFiniteBurn
+                        for (int look = i + 1; look < Math.Min(lines.Length, i + 6); look++) {
+                            string peek = lines[look].Trim();
+                            var pM = Regex.Match(peek, @"Propagate\s+([A-Za-z0-9_]+)\s*\(\s*([A-Za-z0-9_]+)\s*\)\s*\{\s*([^}]+)\s*\}", RegexOptions.IgnoreCase);
+                            if (pM.Success) {
+                                propName = pM.Groups[1].Value;
+                                string stopC = pM.Groups[3].Value.Trim();
+                                if (stopC.Contains("=")) {
+                                    string rVal = stopC.Split('=')[1].Trim();
+                                    if (double.TryParse(rVal, NumberStyles.Any, CultureInfo.InvariantCulture, out double dVal)) {
+                                        dur = dVal;
+                                    } else {
+                                        useVar = true;
+                                        durVar = rVal;
+                                    }
+                                }
+                            }
+                            if (Regex.IsMatch(peek, @"EndFiniteBurn\s+" + fbName, RegexOptions.IgnoreCase)) {
+                                i = look; // Advance main loop past EndFiniteBurn
+                                break;
+                            }
+                        }
+
+                        result.sequence.Add(new MissionStep {
+                            type = "FiniteBurn",
+                            burn_name = fbName,
+                            bound_thruster = boundEng,
+                            propagator = propName,
+                            duration = dur,
+                            burn_use_vary_var = useVar,
+                            burn_vary_var_name = durVar,
+                            duration_str = durVar,
+                            label = $"FiniteBurn ({fbName})"
+                        });
+                        continue;
+                    }
+
+                    if (rawLine.StartsWith("EndFiniteBurn", StringComparison.OrdinalIgnoreCase)) {
+                        continue; // Handled in BeginFiniteBurn coalesce
+                    }
+
+                    // 2. Propagate
                     var propMatch = Regex.Match(rawLine, @"Propagate\s+([A-Za-z0-9_]+)\s*\(\s*([A-Za-z0-9_]+)\s*\)\s*\{\s*([^}]+)\s*\}", RegexOptions.IgnoreCase);
                     if (propMatch.Success) {
                         string pName = propMatch.Groups[1].Value;
@@ -200,7 +257,7 @@ namespace KSPGMAT.Service {
                         result.sequence.Add(st);
                     }
 
-                    // 2. Target
+                    // 3. Target
                     var tgtMatch = Regex.Match(rawLine, @"Target\s+([A-Za-z0-9_]+)", RegexOptions.IgnoreCase);
                     if (tgtMatch.Success) {
                         currentDC = tgtMatch.Groups[1].Value;
@@ -211,7 +268,7 @@ namespace KSPGMAT.Service {
                         });
                     }
 
-                    // 3. Vary
+                    // 4. Vary
                     var varyMatch = Regex.Match(rawLine, @"Vary\s+([A-Za-z0-9_]+)\s*\(\s*([A-Za-z0-9_.]+)\s*=\s*([^,]+)(?:,\s*\{([^}]+)\})?\s*\)", RegexOptions.IgnoreCase);
                     if (varyMatch.Success) {
                         string dc = varyMatch.Groups[1].Value;
@@ -237,16 +294,28 @@ namespace KSPGMAT.Service {
                         if (varExpr.Contains("ThrustDirection")) {
                             // Thrust Vector Control
                             int dirIdx = varExpr.EndsWith("1") ? 1 : (varExpr.EndsWith("2") ? 2 : 3);
+                            string thrName = "";
+                            var thMatch = Regex.Match(varExpr, @"(?:[A-Za-z0-9_]+\.)?([A-Za-z0-9_]+)\.ThrustDirection");
+                            if (thMatch.Success) thrName = thMatch.Groups[1].Value;
+
                             var st = new MissionStep {
                                 type = "ThrustVectorControl",
                                 dc_name = dc,
+                                bound_thruster = thrName,
                                 label = $"TVC Direction{dirIdx}",
                                 thrust_dir1 = dirIdx == 1 ? initVal : 1.0,
                                 thrust_dir2 = dirIdx == 2 ? initVal : 0.0,
                                 thrust_dir3 = dirIdx == 3 ? initVal : 0.0,
                                 vary_dir1_enabled = dirIdx == 1,
                                 vary_dir2_enabled = dirIdx == 2,
-                                vary_dir3_enabled = dirIdx == 3
+                                vary_dir3_enabled = dirIdx == 3,
+                                vary_dir1_lower = dirIdx == 1 ? low : -1.0,
+                                vary_dir1_upper = dirIdx == 1 ? up : 1.0,
+                                vary_dir2_lower = dirIdx == 2 ? low : -3.0,
+                                vary_dir2_upper = dirIdx == 2 ? up : 3.0,
+                                vary_dir3_lower = dirIdx == 3 ? low : -1.0,
+                                vary_dir3_upper = dirIdx == 3 ? up : 1.0,
+                                vary_dir2_max_step = maxStep
                             };
                             result.sequence.Add(st);
                         } else {
@@ -262,20 +331,6 @@ namespace KSPGMAT.Service {
                                 label = $"Vary {varExpr}"
                             });
                         }
-                    }
-
-                    // 4. BeginFiniteBurn
-                    var bfbMatch = Regex.Match(rawLine, @"BeginFiniteBurn\s+([A-Za-z0-9_]+)", RegexOptions.IgnoreCase);
-                    if (bfbMatch.Success) {
-                        string fbName = bfbMatch.Groups[1].Value;
-                        string boundEng = finiteBurnsDict.ContainsKey(fbName) ? finiteBurnsDict[fbName] : "";
-                        result.sequence.Add(new MissionStep {
-                            type = "FiniteBurn",
-                            burn_name = fbName,
-                            bound_thruster = boundEng,
-                            duration = 120.0,
-                            label = $"FiniteBurn ({fbName})"
-                        });
                     }
 
                     // 5. Achieve

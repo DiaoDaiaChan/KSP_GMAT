@@ -55,6 +55,12 @@ namespace KSPGMAT {
         public double craft_srp_area = 15.0;
         public string craft_epoch = "";
         public string craft_coord_system = "EarthMJ2000Eq";
+        public double craft_x = 0.0;
+        public double craft_y = 0.0;
+        public double craft_z = 0.0;
+        public double craft_vx = 0.0;
+        public double craft_vy = 0.0;
+        public double craft_vz = 0.0;
     }
 
     [Serializable]

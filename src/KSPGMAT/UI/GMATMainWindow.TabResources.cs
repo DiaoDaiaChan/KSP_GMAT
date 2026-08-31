@@ -8,8 +8,12 @@ namespace KSPGMAT.UI {
     public partial class GMATMainWindow {
         private double DrawDoubleField(string label, double val, float labelW = 110, float fieldW = 90) {
             GUILayout.BeginHorizontal();
-            GUILayout.Label(label, labelValueStyle, GUILayout.Width(labelW));
-            string txt = GUILayout.TextField(val.ToString("G", System.Globalization.CultureInfo.InvariantCulture), numericInputStyle ?? GUI.skin.textField, GUILayout.Width(fieldW));
+            if (!string.IsNullOrEmpty(label)) GUILayout.Label(label, labelValueStyle, GUILayout.Width(labelW));
+            string formatted = (Math.Abs(val) >= 10000.0) ? val.ToString("F1", System.Globalization.CultureInfo.InvariantCulture) :
+                               (Math.Abs(val) >= 100.0) ? val.ToString("F2", System.Globalization.CultureInfo.InvariantCulture) :
+                               (Math.Abs(val) >= 1.0) ? val.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) :
+                               (val == 0.0) ? "0.0" : val.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
+            string txt = GUILayout.TextField(formatted, numericInputStyle ?? GUI.skin.textField, GUILayout.Width(fieldW));
             double res;
             if (double.TryParse(txt, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out res)) {
                 val = res;
@@ -1196,15 +1200,19 @@ namespace KSPGMAT.UI {
                 if (!string.IsNullOrEmpty(result.craft_epoch)) GMATStateManager.Current.Spacecraft.EpochUtc = result.craft_epoch;
                 if (!string.IsNullOrEmpty(result.craft_coord_system)) GMATStateManager.Current.Spacecraft.CoordinateSystem = result.craft_coord_system;
 
-                if (FlightGlobals.ActiveVessel != null) {
+                if (result.craft_x != 0 || result.craft_y != 0 || result.craft_z != 0) {
+                    GMATStateManager.Current.Spacecraft.PosKm = new Vector3d(result.craft_x, result.craft_y, result.craft_z);
+                    GMATStateManager.Current.Spacecraft.VelKms = new Vector3d(result.craft_vx, result.craft_vy, result.craft_vz);
+                }
+
+                if (result.tanks != null && result.tanks.Count > 0) {
+                    GMATStateManager.Current.Tanks = result.tanks;
+                } else if (FlightGlobals.ActiveVessel != null) {
                     GMATStateManager.Current.SyncFromVessel(FlightGlobals.ActiveVessel);
-                } else {
-                    if (result.tanks != null && result.tanks.Count > 0) {
-                        GMATStateManager.Current.Tanks = result.tanks;
-                    }
-                    if (result.thrusters != null && result.thrusters.Count > 0) {
-                        GMATStateManager.Current.Thrusters = result.thrusters;
-                    }
+                }
+
+                if (result.thrusters != null && result.thrusters.Count > 0) {
+                    GMATStateManager.Current.Thrusters = result.thrusters;
                 }
             }
         }

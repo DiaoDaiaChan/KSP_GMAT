@@ -143,7 +143,7 @@ namespace KSPGMAT.UI {
             string parentDc = GetParentTargetDcName(stepIndex);
             string currentDc = string.IsNullOrEmpty(step.dc_name) ? (string.IsNullOrEmpty(parentDc) ? "DefaultDC" : parentDc) : step.dc_name;
 
-            string newDc = GUILayout.TextField(currentDc, GUILayout.Width(75), GUILayout.Height(20));
+            string newDc = GUILayout.TextField(currentDc, stepLabelInputStyle ?? GUI.skin.textField, GUILayout.Width(75), GUILayout.Height(20));
             if (newDc != currentDc) step.dc_name = newDc;
 
             List<string> activeSolvers = GetAvailableSolverList();
@@ -242,7 +242,7 @@ namespace KSPGMAT.UI {
                 GUILayout.Space(4);
                 GUILayout.BeginHorizontal();
                 GUILayout.Label("📂 导入第三方脚本:", labelValueStyle, GUILayout.Width(110));
-                customScriptPath = GUILayout.TextField(customScriptPath);
+                customScriptPath = GUILayout.TextField(customScriptPath, stepLabelInputStyle ?? GUI.skin.textField, GUILayout.Height(20));
                 if (GUILayout.Button("解析导入", secondaryButtonStyle, GUILayout.Width(75), GUILayout.Height(20))) {
                     if (System.IO.File.Exists(customScriptPath)) {
                         GMATClient.ImportScript(customScriptPath, vessel, (ok, result, msg) => {
@@ -271,7 +271,7 @@ namespace KSPGMAT.UI {
 
                 GUILayout.BeginHorizontal();
                 GUILayout.Label("💾 导出为预设模板:", labelValueStyle, GUILayout.Width(110));
-                exportTemplateName = GUILayout.TextField(exportTemplateName);
+                exportTemplateName = GUILayout.TextField(exportTemplateName, stepLabelInputStyle ?? GUI.skin.textField, GUILayout.Height(20));
                 if (GUILayout.Button("导出模板", secondaryButtonStyle, GUILayout.Width(75), GUILayout.Height(20))) {
                     ExportScriptTemplate(exportTemplateName, vessel);
                 }
@@ -1408,9 +1408,9 @@ namespace KSPGMAT.UI {
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
 
-                // Smart TLI Window Calculator Helper
+                // Smart TLI Window Calculator Helper (Only for explicit Lunar Transfer / TLI steps)
                 Vessel activeV = FlightGlobals.ActiveVessel;
-                if (activeV != null && (step.label.Contains("TLI") || step.label.Contains("月") || (step.stop_type != null && (step.stop_type.Contains("Luna") || step.stop_type.Contains("Latitude") || step.stop_type.Contains("ElapsedSecs"))))) {
+                if (activeV != null && ((step.label != null && (step.label.IndexOf("TLI", StringComparison.OrdinalIgnoreCase) >= 0 || step.label.Contains("地月") || step.label.Contains("月球转移"))) || (step.stop_type != null && step.stop_type.IndexOf("Luna", StringComparison.OrdinalIgnoreCase) >= 0))) {
                     GUILayout.Space(2);
                     GUILayout.BeginHorizontal();
                     if (GUILayout.Button("🔍 一键解算最近的 TLI 地月转移窗口等待时间 (地月超前角 ~135°)", secondaryButtonStyle, GUILayout.Height(20))) {
@@ -1598,13 +1598,13 @@ namespace KSPGMAT.UI {
 
                 GUILayout.BeginHorizontal();
                 GUILayout.Label("<color=#38bdf8><b>脉冲机动配置 (Impulsive Maneuver):</b></color>", labelValueStyle, GUILayout.Width(170));
-                step.burn_name = GUILayout.TextField(string.IsNullOrEmpty(step.burn_name) ? "ImpulsiveBurn" : step.burn_name, GUILayout.Width(110), GUILayout.Height(20));
+                step.burn_name = GUILayout.TextField(string.IsNullOrEmpty(step.burn_name) ? "ImpulsiveBurn" : step.burn_name, stepLabelInputStyle ?? GUI.skin.textField, GUILayout.Width(110), GUILayout.Height(20));
 
                 GUILayout.Label("<color=#94a3b8>坐标轴:</color>", labelValueStyle, GUILayout.Width(45));
-                step.burn_axes = GUILayout.TextField(string.IsNullOrEmpty(step.burn_axes) ? "VNB" : step.burn_axes, GUILayout.Width(45), GUILayout.Height(20));
+                step.burn_axes = GUILayout.TextField(string.IsNullOrEmpty(step.burn_axes) ? "VNB" : step.burn_axes, stepLabelInputStyle ?? GUI.skin.textField, GUILayout.Width(45), GUILayout.Height(20));
 
                 GUILayout.Label("<color=#94a3b8>参考天体:</color>", labelValueStyle, GUILayout.Width(60));
-                step.burn_origin = GUILayout.TextField(string.IsNullOrEmpty(step.burn_origin) ? "Earth" : step.burn_origin, GUILayout.Width(65), GUILayout.Height(20));
+                step.burn_origin = GUILayout.TextField(string.IsNullOrEmpty(step.burn_origin) ? "Earth" : step.burn_origin, stepLabelInputStyle ?? GUI.skin.textField, GUILayout.Width(65), GUILayout.Height(20));
 
                 GUILayout.FlexibleSpace();
                 GUILayout.Label("<color=#34d399><size=11>● LIVE 硬件实时同步</size></color>", labelValueStyle);
@@ -1729,18 +1729,18 @@ namespace KSPGMAT.UI {
                 GUILayout.Label("<color=#f97316><b>🔥 有限推力点火配置:</b></color>", labelValueStyle, GUILayout.Width(135));
 
                 GUILayout.Label("<color=#94a3b8>对象名:</color>", gridLabelStyle, GUILayout.Width(45));
-                step.burn_name = GUILayout.TextField(string.IsNullOrEmpty(step.burn_name) ? $"Burn_{i + 1}" : step.burn_name, GUILayout.Width(85), GUILayout.Height(20));
+                step.burn_name = GUILayout.TextField(string.IsNullOrEmpty(step.burn_name) ? $"Burn_{i + 1}" : step.burn_name, stepLabelInputStyle ?? GUI.skin.textField, GUILayout.Width(85), GUILayout.Height(20));
 
                 GUILayout.Space(6);
                 GUILayout.Label("<color=#94a3b8>参考系:</color>", gridLabelStyle, GUILayout.Width(45));
-                step.burn_coordinate_system = GUILayout.TextField(string.IsNullOrEmpty(step.burn_coordinate_system) ? "Local" : step.burn_coordinate_system, GUILayout.Width(55), GUILayout.Height(20));
-                step.burn_axes = GUILayout.TextField(string.IsNullOrEmpty(step.burn_axes) ? "VNB" : step.burn_axes, GUILayout.Width(42), GUILayout.Height(20));
+                step.burn_coordinate_system = GUILayout.TextField(string.IsNullOrEmpty(step.burn_coordinate_system) ? "Local" : step.burn_coordinate_system, stepLabelInputStyle ?? GUI.skin.textField, GUILayout.Width(55), GUILayout.Height(20));
+                step.burn_axes = GUILayout.TextField(string.IsNullOrEmpty(step.burn_axes) ? "VNB" : step.burn_axes, stepLabelInputStyle ?? GUI.skin.textField, GUILayout.Width(42), GUILayout.Height(20));
 
                 GUILayout.Space(8);
                 step.burn_use_vary_var = GUILayout.Toggle(step.burn_use_vary_var, " 使用 Vary 变量控制时长", GUILayout.Width(160));
                 if (step.burn_use_vary_var) {
                     GUILayout.Label("<color=#94a3b8>变量名:</color>", gridLabelStyle, GUILayout.Width(45));
-                    step.burn_vary_var_name = GUILayout.TextField(string.IsNullOrEmpty(step.burn_vary_var_name) ? (!string.IsNullOrEmpty(step.duration_str) ? step.duration_str : "burntime") : step.burn_vary_var_name, GUILayout.MinWidth(85), GUILayout.Width(110), GUILayout.Height(20));
+                    step.burn_vary_var_name = GUILayout.TextField(string.IsNullOrEmpty(step.burn_vary_var_name) ? (!string.IsNullOrEmpty(step.duration_str) ? step.duration_str : "burntime") : step.burn_vary_var_name, stepLabelInputStyle ?? GUI.skin.textField, GUILayout.MinWidth(85), GUILayout.Width(110), GUILayout.Height(20));
                 } else {
                     GUILayout.Label("<color=#94a3b8>固定时长 (s):</color>", gridLabelStyle, GUILayout.Width(75));
                     string curDur = !string.IsNullOrEmpty(step.duration_str) ? step.duration_str : step.duration.ToString("F1");
@@ -1909,17 +1909,17 @@ namespace KSPGMAT.UI {
 
                 GUILayout.BeginHorizontal();
                 GUILayout.Label(I18n.T("vector_initial"), gridLabelStyle, GUILayout.Width(50));
-                string sV = GUILayout.TextField(step.thrust_dir1.ToString("F3"), numericInputStyle, GUILayout.Width(65), GUILayout.Height(18));
+                string sV = GUILayout.TextField(step.thrust_dir1.ToString("F3"), numericInputStyle, GUILayout.Width(65), GUILayout.Height(20));
                 double.TryParse(sV, out step.thrust_dir1);
                 if (step.is_vary_vector && step.vary_dir1_enabled) {
                     GUILayout.Label(I18n.T("vector_lower"), gridLabelStyle, GUILayout.Width(50));
-                    string sVLow = GUILayout.TextField(step.vary_dir1_lower.ToString("F2"), numericInputStyle, GUILayout.Width(55), GUILayout.Height(18));
+                    string sVLow = GUILayout.TextField(step.vary_dir1_lower.ToString("F2"), numericInputStyle, GUILayout.Width(55), GUILayout.Height(20));
                     double.TryParse(sVLow, out step.vary_dir1_lower);
                     GUILayout.Label(I18n.T("vector_upper"), gridLabelStyle, GUILayout.Width(50));
-                    string sVUp = GUILayout.TextField(step.vary_dir1_upper.ToString("F2"), numericInputStyle, GUILayout.Width(55), GUILayout.Height(18));
+                    string sVUp = GUILayout.TextField(step.vary_dir1_upper.ToString("F2"), numericInputStyle, GUILayout.Width(55), GUILayout.Height(20));
                     double.TryParse(sVUp, out step.vary_dir1_upper);
                     GUILayout.Label(I18n.T("vector_step"), gridLabelStyle, GUILayout.Width(50));
-                    string sVStep = GUILayout.TextField(step.vary_dir1_max_step.ToString("F2"), numericInputStyle, GUILayout.Width(55), GUILayout.Height(18));
+                    string sVStep = GUILayout.TextField(step.vary_dir1_max_step.ToString("F2"), numericInputStyle, GUILayout.Width(55), GUILayout.Height(20));
                     double.TryParse(sVStep, out step.vary_dir1_max_step);
                 } else {
                     GUILayout.Label("<color=#64748b><i>[固定值设定，不作为求解变量]</i></color>", labelValueStyle);
@@ -1939,17 +1939,17 @@ namespace KSPGMAT.UI {
 
                 GUILayout.BeginHorizontal();
                 GUILayout.Label(I18n.T("vector_initial"), gridLabelStyle, GUILayout.Width(50));
-                string sN = GUILayout.TextField(step.thrust_dir2.ToString("F3"), numericInputStyle, GUILayout.Width(65), GUILayout.Height(18));
+                string sN = GUILayout.TextField(step.thrust_dir2.ToString("F3"), numericInputStyle, GUILayout.Width(65), GUILayout.Height(20));
                 double.TryParse(sN, out step.thrust_dir2);
                 if (step.is_vary_vector && step.vary_dir2_enabled) {
                     GUILayout.Label(I18n.T("vector_lower"), gridLabelStyle, GUILayout.Width(50));
-                    string sNLow = GUILayout.TextField(step.vary_dir2_lower.ToString("F2"), numericInputStyle, GUILayout.Width(55), GUILayout.Height(18));
+                    string sNLow = GUILayout.TextField(step.vary_dir2_lower.ToString("F2"), numericInputStyle, GUILayout.Width(55), GUILayout.Height(20));
                     double.TryParse(sNLow, out step.vary_dir2_lower);
                     GUILayout.Label(I18n.T("vector_upper"), gridLabelStyle, GUILayout.Width(50));
-                    string sNUp = GUILayout.TextField(step.vary_dir2_upper.ToString("F2"), numericInputStyle, GUILayout.Width(55), GUILayout.Height(18));
+                    string sNUp = GUILayout.TextField(step.vary_dir2_upper.ToString("F2"), numericInputStyle, GUILayout.Width(55), GUILayout.Height(20));
                     double.TryParse(sNUp, out step.vary_dir2_upper);
                     GUILayout.Label(I18n.T("vector_step"), gridLabelStyle, GUILayout.Width(50));
-                    string sNStep = GUILayout.TextField(step.vary_dir2_max_step.ToString("F2"), numericInputStyle, GUILayout.Width(55), GUILayout.Height(18));
+                    string sNStep = GUILayout.TextField(step.vary_dir2_max_step.ToString("F2"), numericInputStyle, GUILayout.Width(55), GUILayout.Height(20));
                     double.TryParse(sNStep, out step.vary_dir2_max_step);
                 } else {
                     GUILayout.Label("<color=#64748b><i>[固定值设定，不作为求解变量]</i></color>", labelValueStyle);
@@ -1969,17 +1969,17 @@ namespace KSPGMAT.UI {
 
                 GUILayout.BeginHorizontal();
                 GUILayout.Label(I18n.T("vector_initial"), gridLabelStyle, GUILayout.Width(50));
-                string sB = GUILayout.TextField(step.thrust_dir3.ToString("F3"), numericInputStyle, GUILayout.Width(65), GUILayout.Height(18));
+                string sB = GUILayout.TextField(step.thrust_dir3.ToString("F3"), numericInputStyle, GUILayout.Width(65), GUILayout.Height(20));
                 double.TryParse(sB, out step.thrust_dir3);
                 if (step.is_vary_vector && step.vary_dir3_enabled) {
                     GUILayout.Label(I18n.T("vector_lower"), gridLabelStyle, GUILayout.Width(50));
-                    string sBLow = GUILayout.TextField(step.vary_dir3_lower.ToString("F2"), numericInputStyle, GUILayout.Width(55), GUILayout.Height(18));
+                    string sBLow = GUILayout.TextField(step.vary_dir3_lower.ToString("F2"), numericInputStyle, GUILayout.Width(55), GUILayout.Height(20));
                     double.TryParse(sBLow, out step.vary_dir3_lower);
                     GUILayout.Label(I18n.T("vector_upper"), gridLabelStyle, GUILayout.Width(50));
-                    string sBUp = GUILayout.TextField(step.vary_dir3_upper.ToString("F2"), numericInputStyle, GUILayout.Width(55), GUILayout.Height(18));
+                    string sBUp = GUILayout.TextField(step.vary_dir3_upper.ToString("F2"), numericInputStyle, GUILayout.Width(55), GUILayout.Height(20));
                     double.TryParse(sBUp, out step.vary_dir3_upper);
                     GUILayout.Label(I18n.T("vector_step"), gridLabelStyle, GUILayout.Width(50));
-                    string sBStep = GUILayout.TextField(step.vary_dir3_max_step.ToString("F2"), numericInputStyle, GUILayout.Width(55), GUILayout.Height(18));
+                    string sBStep = GUILayout.TextField(step.vary_dir3_max_step.ToString("F2"), numericInputStyle, GUILayout.Width(55), GUILayout.Height(20));
                     double.TryParse(sBStep, out step.vary_dir3_max_step);
                 } else {
                     GUILayout.Label("<color=#64748b><i>[固定值设定，不作为求解变量]</i></color>", labelValueStyle);
@@ -2048,11 +2048,11 @@ namespace KSPGMAT.UI {
                 GUILayout.Space(2);
                 GUILayout.BeginHorizontal();
                 GUILayout.Label("抛离级段干重 (kg):", labelValueStyle, GUILayout.Width(120));
-                string sDrop = GUILayout.TextField(step.separated_mass.ToString("F0"), GUILayout.Width(75));
+                string sDrop = GUILayout.TextField(step.separated_mass.ToString("F0"), numericInputStyle ?? GUI.skin.textField, GUILayout.Width(75), GUILayout.Height(20));
                 double.TryParse(sDrop, out step.separated_mass);
 
                 GUILayout.Label("分离后剩余飞船干重 (kg):", labelValueStyle, GUILayout.Width(160));
-                string sRem = GUILayout.TextField(step.remaining_dry_mass.ToString("F0"), GUILayout.Width(75));
+                string sRem = GUILayout.TextField(step.remaining_dry_mass.ToString("F0"), numericInputStyle ?? GUI.skin.textField, GUILayout.Width(75), GUILayout.Height(20));
                 double.TryParse(sRem, out step.remaining_dry_mass);
 
                 GUILayout.Label("<color=#94a3b8>(将在 GMAT 序列中输出 Sat.DryMass 动态扣减)</color>", labelValueStyle);
@@ -2067,9 +2067,9 @@ namespace KSPGMAT.UI {
             else if (step.type == "Equation") {
                 GUILayout.BeginHorizontal();
                 GUILayout.Label("赋值变量: Sat.", labelValueStyle, GUILayout.Width(95));
-                step.variable = GUILayout.TextField(step.variable ?? "", GUILayout.Width(130));
+                step.variable = GUILayout.TextField(step.variable ?? "", stepLabelInputStyle ?? GUI.skin.textField, GUILayout.Width(130), GUILayout.Height(20));
                 GUILayout.Label("=", labelValueStyle, GUILayout.Width(15));
-                step.expression = GUILayout.TextField(step.expression ?? "0.0", GUILayout.Width(80));
+                step.expression = GUILayout.TextField(step.expression ?? "0.0", numericInputStyle ?? GUI.skin.textField, GUILayout.Width(80), GUILayout.Height(20));
 
                 if (GUILayout.Button("📋 参数库...", secondaryButtonStyle, GUILayout.Width(80), GUILayout.Height(20))) {
                     OpenParamPicker(i, "variable");
