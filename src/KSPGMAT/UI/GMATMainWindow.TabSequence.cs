@@ -1244,19 +1244,22 @@ namespace KSPGMAT.UI {
                     GUILayout.Label($"<color=#f87171>⚠️ 燃料赤字: {latestResult.fuel_deficit:F1} kg</color>", labelValueStyle);
                 }
             } else if (latestResult != null && !latestResult.success) {
-                GUILayout.Label($"<color=#f87171><b>❌ GMAT 求解失败:</b> {latestResult.error}</color>", labelValueStyle);
+                string shortError = (latestResult.error ?? "求解未收敛").Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)[0].Trim();
+                GUILayout.Label($"<color=#f87171><b>❌ GMAT 求解失败:</b> {shortError}</color>", labelValueStyle);
                 
                 // Detailed Error Diagnostic Box
                 string errDetails = !string.IsNullOrEmpty(latestResult.error_details) ? latestResult.error_details : latestResult.error;
-                GUILayout.Space(2);
-                GUILayout.Label("<color=#94a3b8><b>📋 详细错误诊断与引擎日志:</b></color>", labelValueStyle);
-                GUILayout.BeginVertical(GUI.skin.box);
-                GUILayout.Label($"<color=#fca5a5><size=11>{errDetails}</size></color>", labelValueStyle);
-                GUILayout.EndVertical();
+                if (!string.IsNullOrEmpty(errDetails)) {
+                    GUILayout.Space(2);
+                    GUILayout.Label("<color=#94a3b8><b>📋 详细错误诊断与引擎日志:</b></color>", labelValueStyle);
+                    GUILayout.BeginVertical(GUI.skin.box);
+                    GUILayout.Label($"<color=#fca5a5><size=11>{errDetails}</size></color>", labelValueStyle);
+                    GUILayout.EndVertical();
 
-                if (GUILayout.Button("📋 复制完整报错日志", secondaryButtonStyle, GUILayout.Height(22))) {
-                    GUIUtility.systemCopyBuffer = $"[GMAT Error]\nSummary: {latestResult.error}\nDetails:\n{errDetails}\nScript: {latestResult.script_path}";
-                    ScreenMessages.PostScreenMessage("📋 完整报错日志已复制至系统剪贴板！", 2.5f, ScreenMessageStyle.UPPER_CENTER);
+                    if (GUILayout.Button("📋 复制完整报错日志", secondaryButtonStyle, GUILayout.Height(22))) {
+                        GUIUtility.systemCopyBuffer = $"[GMAT Error]\nSummary: {shortError}\nDetails:\n{errDetails}\nScript: {latestResult.script_path}";
+                        ScreenMessages.PostScreenMessage("📋 完整报错日志已复制至系统剪贴板！", 2.5f, ScreenMessageStyle.UPPER_CENTER);
+                    }
                 }
             } else {
                 GUILayout.Label("<color=#64748b>就绪。点击上方按钮启动高保真多体引力打靶计算。</color>", labelValueStyle);

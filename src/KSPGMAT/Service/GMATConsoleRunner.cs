@@ -320,17 +320,28 @@ namespace KSPGMAT.Service {
             result.success = (exitCode == 0 && !hasTargetFail && !hasScriptError && (result.trajectory.Count > 0 || hasCompletedMarker));
             if (!result.success) {
                 var sbErr = new StringBuilder();
+                string firstShortErr = null;
                 var outLines = stdout.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
                 foreach (var l in outLines) {
                     string tl = l.Trim();
                     if (tl.Contains("**** ERROR ****") || tl.Contains("Exception") || tl.Contains("Targeting failed") || tl.Contains("Rvector error") || tl.Contains("Could not read script") || tl.Contains("Execution Failed")) {
                         sbErr.AppendLine(tl);
+                        if (firstShortErr == null && (tl.Contains("ERROR") || tl.Contains("Exception") || tl.Contains("Targeting failed"))) {
+                            var m = Regex.Match(tl, @"(?:Exception:\s*|\*\*\*\*\s*)([^:]+)");
+                            firstShortErr = m.Success ? m.Groups[1].Value.Trim() : tl;
+                        }
                     }
                 }
                 if (!string.IsNullOrEmpty(stderr)) sbErr.AppendLine(stderr);
                 string extracted = sbErr.ToString().Trim();
 
-                result.error = !string.IsNullOrEmpty(extracted) ? extracted : (!string.IsNullOrEmpty(stderr) ? stderr : "GmatConsole 打靶未收敛");
+                if (hasScriptError) {
+                    result.error = !string.IsNullOrEmpty(firstShortErr) ? $"脚本语法/解释器异常: {firstShortErr}" : "脚本解析/执行异常";
+                } else if (hasTargetFail) {
+                    result.error = "GmatConsole 打靶未收敛 (Targeting Failed to Converge)";
+                } else {
+                    result.error = !string.IsNullOrEmpty(firstShortErr) ? firstShortErr : (!string.IsNullOrEmpty(stderr) ? stderr : "GmatConsole 打靶未收敛");
+                }
                 result.error_details = !string.IsNullOrEmpty(extracted) ? extracted : stdout;
             }
 
