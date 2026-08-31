@@ -10,7 +10,7 @@ namespace KSPGMAT.Service {
             var sb = new StringBuilder();
             var state = GMATStateManager.Current;
             var sc = state.Spacecraft;
-            string satName = GMATParameterRegistry.SanitizeGmatIdentifier(sc.Name, "Sat");
+            string satName = "Sat";
             string cBody = !string.IsNullOrEmpty(centralBodyOverride) ? centralBodyOverride : (!string.IsNullOrEmpty(sc.CentralBody) ? sc.CentralBody : "Earth");
 
             // Ephemeris & Spacecraft Header
@@ -409,16 +409,19 @@ namespace KSPGMAT.Service {
                 return $"{satName}.{lhs} = {rhs}";
             }
 
-            // 2. GMAT Built-in Extrema Events (No '=' sign required by GMAT syntax)
-            // e.g. Apoapsis, Periapsis, Node, AN, DN
-            string[] extremaKeywords = new string[] { "Apoapsis", "Periapsis", "Node", "AN", "DN" };
-            foreach (var kw in extremaKeywords) {
-                if (cond.Equals(kw, StringComparison.OrdinalIgnoreCase)) {
-                    return $"{satName}.{centralBody}.{kw}";
-                }
-                if (cond.EndsWith("." + kw, StringComparison.OrdinalIgnoreCase)) {
-                    return $"{satName}.{cond}";
-                }
+            // 2. GMAT Built-in Extrema Events
+            // Apoapsis and Periapsis in GMAT syntax are strictly: {Sat.Apoapsis}, {Sat.Periapsis} (no central body prefix)
+            if (cond.Equals("Apoapsis", StringComparison.OrdinalIgnoreCase) || cond.EndsWith(".Apoapsis", StringComparison.OrdinalIgnoreCase)) {
+                return $"{satName}.Apoapsis";
+            }
+            if (cond.Equals("Periapsis", StringComparison.OrdinalIgnoreCase) || cond.EndsWith(".Periapsis", StringComparison.OrdinalIgnoreCase)) {
+                return $"{satName}.Periapsis";
+            }
+
+            // Equatorial Nodes in GMAT syntax are strictly: {Sat.Earth.Latitude = 0.0}
+            if (cond.Equals("Node", StringComparison.OrdinalIgnoreCase) || cond.Equals("AN", StringComparison.OrdinalIgnoreCase) || cond.Equals("DN", StringComparison.OrdinalIgnoreCase) ||
+                cond.EndsWith(".Node", StringComparison.OrdinalIgnoreCase) || cond.EndsWith(".AN", StringComparison.OrdinalIgnoreCase) || cond.EndsWith(".DN", StringComparison.OrdinalIgnoreCase)) {
+                return $"{satName}.{centralBody}.Latitude = 0.0";
             }
 
             // 3. Elapsed Time Stop Conditions

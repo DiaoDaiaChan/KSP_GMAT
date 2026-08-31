@@ -181,8 +181,8 @@ namespace KSPGMAT.Model {
         public void SyncFromVessel(Vessel v) {
             if (v == null) return;
 
-            // 1. 同步航天器动力学状态
-            Spacecraft.Name = GMATParameterRegistry.SanitizeGmatIdentifier(v.vesselName, "Sat");
+            // 1. 同步航天器动力学状态 (统一约定变量名 Sat)
+            Spacecraft.Name = "Sat";
             string cbName = v.mainBody != null ? v.mainBody.bodyName : "Earth";
             if (cbName == "Kerbin") cbName = "Earth";
             else if (cbName == "Mun") cbName = "Luna";
