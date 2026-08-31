@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -219,6 +220,8 @@ namespace KSPGMAT.Service {
             // 4. Construct SolvedBurns for UI & Principia node execution
             if (originalSteps != null) {
                 double cumTime = 0;
+                double currentRunningMass = GMATStateManager.Current.Spacecraft.TotalMassKg > 0 ? GMATStateManager.Current.Spacecraft.TotalMassKg : 7822.0;
+
                 for (int i = 0; i < originalSteps.Count; i++) {
                     var st = originalSteps[i];
                     if (st.type == "Propagate") {
@@ -254,21 +257,35 @@ namespace KSPGMAT.Service {
                         double u2 = dirMag > 0.0001 ? (tDir2 / dirMag) : 0.0;
                         double u3 = dirMag > 0.0001 ? (tDir3 / dirMag) : 0.0;
 
-                        // Rocket parameters
+                        // Find the bound thruster accurately
                         double thrustKN = 108.1;
                         double ispVac = 464.8;
+                        GMATThrusterModel matchedThr = null;
                         if (GMATStateManager.Current.Thrusters != null && GMATStateManager.Current.Thrusters.Count > 0) {
-                            var thr = GMATStateManager.Current.Thrusters[0];
-                            if (thr.ThrustKN > 0) thrustKN = thr.ThrustKN;
-                            if (thr.IspVac > 0) ispVac = thr.IspVac;
+                            if (!string.IsNullOrEmpty(st.bound_thruster)) {
+                                matchedThr = GMATStateManager.Current.Thrusters.Find(t => t.Id.Equals(st.bound_thruster, StringComparison.OrdinalIgnoreCase));
+                            }
+                            if (matchedThr == null && GMATStateManager.Current.Burns != null) {
+                                var bDef = GMATStateManager.Current.Burns.Find(b => b.Name.Equals(st.burn_name, StringComparison.OrdinalIgnoreCase));
+                                if (bDef != null && !string.IsNullOrEmpty(bDef.BoundThruster)) {
+                                    matchedThr = GMATStateManager.Current.Thrusters.Find(t => t.Id.Equals(bDef.BoundThruster, StringComparison.OrdinalIgnoreCase));
+                                }
+                            }
+                            if (matchedThr == null) {
+                                matchedThr = GMATStateManager.Current.Thrusters.OrderByDescending(t => t.ThrustKN).FirstOrDefault();
+                            }
+                        }
+                        if (matchedThr != null) {
+                            if (matchedThr.ThrustKN > 0) thrustKN = matchedThr.ThrustKN;
+                            if (matchedThr.IspVac > 0) ispVac = matchedThr.IspVac;
                         }
 
-                        double m0 = GMATStateManager.Current.Spacecraft.TotalMassKg;
-                        if (m0 <= 0) m0 = 7760.0;
+                        double m0 = currentRunningMass;
                         double mFlow = (thrustKN * 1000.0) / (ispVac * 9.80665);
                         double fuelBurned = mFlow * dur;
-                        double mEnd = Math.Max(10.0, m0 - fuelBurned);
+                        double mEnd = Math.Max(50.0, m0 - fuelBurned);
                         double totalDv = (ispVac * 9.80665) * Math.Log(m0 / mEnd);
+                        currentRunningMass = mEnd;
 
                         double dvV = totalDv * u1;
                         double dvN = totalDv * u2;

@@ -388,7 +388,7 @@ namespace KSPGMAT.UI {
             double targetEpoch, centroidLead;
             double burnInitialTime = ComputeBurnInitialTime(vessel, b, solveUT, out targetEpoch, out centroidLead);
 
-            Vector3d dv = new Vector3d(b.dv_v, b.dv_b, b.dv_n); // Principia Frenet: X=Tangent(dv_v), Y=Normal/Radial(dv_b), Z=Binormal/Out-of-Plane(dv_n)
+            Vector3d dv = new Vector3d(b.dv_v, b.dv_n, b.dv_b); // Principia Frenet: X=Tangent(dv_v), Y=Normal/Radial(dv_n), Z=Binormal/Out-of-Plane(dv_b)
             double thrust = b.thrust_kn > 0 ? b.thrust_kn : 50.0;
             double isp = b.isp > 0 ? b.isp : 310.0;
 
@@ -417,7 +417,7 @@ namespace KSPGMAT.UI {
                 double targetEpoch, centroidLead;
                 double burnInitialTime = ComputeBurnInitialTime(vessel, b, solveUT, out targetEpoch, out centroidLead);
 
-                Vector3d dv = new Vector3d(b.dv_v, b.dv_b, b.dv_n); // Principia Frenet: X=Tangent(dv_v), Y=Normal/Radial(dv_b), Z=Binormal/Out-of-Plane(dv_n)
+                Vector3d dv = new Vector3d(b.dv_v, b.dv_n, b.dv_b); // Principia Frenet: X=Tangent(dv_v), Y=Normal/Radial(dv_n), Z=Binormal/Out-of-Plane(dv_b)
                 double thrust = b.thrust_kn > 0 ? b.thrust_kn : 50.0;
                 double isp = b.isp > 0 ? b.isp : 310.0;
 
