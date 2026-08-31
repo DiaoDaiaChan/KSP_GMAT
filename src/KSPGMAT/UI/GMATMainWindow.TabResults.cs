@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using UnityEngine;
+using KSPGMAT.Model;
 
 namespace KSPGMAT.UI {
     public partial class GMATMainWindow {
@@ -311,8 +312,36 @@ namespace KSPGMAT.UI {
                 }
             }
 
-            // 3. Universal Centroid Law: finite burn begins half-duration before the target impulsive centroid
-            centroidLead = (duration > 0.0) ? (duration * 0.5) : 0.0;
+            // 3. Exact Tsiolkovsky Variable-Mass Impulse Centroid (齐奥尔科夫斯基变质量冲量一阶矩质心定理)
+            // As propellant is expended, rocket mass m(t) decreases non-linearly, causing acceleration a(t) to increase.
+            // The true impulse centroid occurs past 50% duration:
+            // t_centroid = DeltaT * [ 1 / (1 - m_f/m_0) - 1 / ln(m_0/m_f) ]
+            centroidLead = 0.0;
+            if (duration > 0.0) {
+                double m0 = GMATStateManager.Current.Spacecraft.TotalMassKg > 0 
+                    ? GMATStateManager.Current.Spacecraft.TotalMassKg 
+                    : (vessel != null ? vessel.totalMass * 1000.0 : 1000.0);
+                double fuelBurned = burn.fuel_burned > 0 ? burn.fuel_burned : 0.0;
+                if (fuelBurned <= 0.0 && burn.thrust_kn > 0 && burn.isp > 0) {
+                    double mFlow = (burn.thrust_kn * 1000.0) / (burn.isp * 9.80665);
+                    fuelBurned = mFlow * duration;
+                }
+                double mf = Math.Max(1.0, m0 - fuelBurned);
+                double massRatio = mf / m0;
+
+                if (massRatio > 0.001 && massRatio < 0.9999) {
+                    double lnR = Math.Log(1.0 / massRatio); // ln(m0/mf)
+                    double frac = (1.0 / (1.0 - massRatio)) - (1.0 / lnR);
+                    // Clamped to physical range (0.5 to 0.75)
+                    if (frac >= 0.5 && frac <= 0.75) {
+                        centroidLead = duration * frac;
+                    } else {
+                        centroidLead = duration * 0.5;
+                    }
+                } else {
+                    centroidLead = duration * 0.5;
+                }
+            }
             double initialTime = targetEpoch - centroidLead;
 
             burn.computed_initial_time = initialTime;
