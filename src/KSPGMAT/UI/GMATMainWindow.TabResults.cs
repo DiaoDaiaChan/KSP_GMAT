@@ -292,70 +292,128 @@ namespace KSPGMAT.UI {
             GUILayout.EndScrollView();
         }
 
+        private static double GetTimeToTrueAnomaly(Orbit orbit, double targetTrueAnomalyDeg) {
+            if (orbit == null || orbit.period <= 0) return 0.0;
+            double e = Math.Max(0.0, Math.Min(0.9999, orbit.eccentricity));
+            double thetaRad = targetTrueAnomalyDeg * Math.PI / 180.0;
+            double sinHalfTheta = Math.Sin(thetaRad * 0.5);
+            double cosHalfTheta = Math.Cos(thetaRad * 0.5);
+            double E = 2.0 * Math.Atan2(Math.Sqrt(Math.Max(0.0, 1.0 - e)) * sinHalfTheta, Math.Sqrt(1.0 + e) * cosHalfTheta);
+            if (E < 0.0) E += 2.0 * Math.PI;
+
+            double M_target = E - e * Math.Sin(E);
+            double M_curr = orbit.meanAnomaly; // radians
+            while (M_curr < 0.0) M_curr += 2.0 * Math.PI;
+            while (M_curr >= 2.0 * Math.PI) M_curr -= 2.0 * Math.PI;
+
+            double deltaM = M_target - M_curr;
+            while (deltaM <= 0.0) deltaM += 2.0 * Math.PI;
+
+            return (deltaM / (2.0 * Math.PI)) * orbit.period;
+        }
+
+        private static double GetNextDNTime(Orbit orbit, double currentUT) {
+            if (orbit == null) return currentUT;
+            double omega = orbit.argumentOfPeriapsis;
+            double taDN = (180.0 - omega) % 360.0;
+            if (taDN < 0.0) taDN += 360.0;
+            return currentUT + GetTimeToTrueAnomaly(orbit, taDN);
+        }
+
+        private static double GetNextANTime(Orbit orbit, double currentUT) {
+            if (orbit == null) return currentUT;
+            double omega = orbit.argumentOfPeriapsis;
+            double taAN = (360.0 - omega) % 360.0;
+            if (taAN < 0.0) taAN += 360.0;
+            return currentUT + GetTimeToTrueAnomaly(orbit, taAN);
+        }
+
+        private static double GetNextApTime(Orbit orbit, double currentUT) {
+            if (orbit == null) return currentUT;
+            return currentUT + GetTimeToTrueAnomaly(orbit, 180.0);
+        }
+
+        private static double GetNextPeTime(Orbit orbit, double currentUT) {
+            if (orbit == null) return currentUT;
+            return currentUT + GetTimeToTrueAnomaly(orbit, 0.0);
+        }
+
         double ComputeBurnInitialTime(Vessel vessel, SolvedBurn burn, double solveUT, out double targetEpoch, out double centroidLead, double globalTimeShift = 0.0) {
             double currentUT = Planetarium.GetUniversalTime();
             double anchorUT = (solveUT > 0) ? solveUT : currentUT;
             centroidLead = 0.0;
 
-            // 1. Target Event Epoch from GMAT multi-body numerical integration
+            // 1. High-Precision Real-Time Fusion: Check if Burn targets a geometric landmark on the current active orbit
+            Orbit orb = (vessel != null) ? vessel.orbit : null;
+            bool snapped = false;
             targetEpoch = anchorUT + burn.epoch_offset + globalTimeShift;
+
+            if (orb != null && orb.period > 0 && latestResult != null && latestResult.solved_burns != null && latestResult.solved_burns.Count > 0 && burn == latestResult.solved_burns[0]) {
+                // Check leading propagate step in mission sequence for landmark stopping conditions
+                if (missionSequence != null && missionSequence.Count > 0) {
+                    for (int s = 0; s < missionSequence.Count; s++) {
+                        var step = missionSequence[s];
+                        if (step.type == "FiniteBurn" || step.type == "ImpulsiveBurn" || step.type == "Maneuver") break;
+                        if (step.type == "Propagate") {
+                            string cond = (step.stop_type ?? "").ToLower();
+                            if (cond.Contains("latitude") || cond.Contains("node") || cond.Contains("equator") || cond.Contains("dn")) {
+                                targetEpoch = GetNextDNTime(orb, currentUT);
+                                snapped = true;
+                                break;
+                            } else if (cond.Contains("an") || cond.Contains("ascending")) {
+                                targetEpoch = GetNextANTime(orb, currentUT);
+                                snapped = true;
+                                break;
+                            } else if (cond.Contains("apo") || cond.Contains("ap")) {
+                                targetEpoch = GetNextApTime(orb, currentUT);
+                                snapped = true;
+                                break;
+                            } else if (cond.Contains("peri") || cond.Contains("pe")) {
+                                targetEpoch = GetNextPeTime(orb, currentUT);
+                                snapped = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
 
             // 2. Exact Tsiolkovsky Rocket Equation for finite burn duration
             double duration = burn.duration;
-            if (duration <= 0.0 && burn.thrust_kn > 0 && vessel != null && burn.magnitude > 0) {
-                double massKg = vessel.totalMass * 1000.0;
-                double thrustN = burn.thrust_kn * 1000.0;
-                double isp = burn.isp > 0 ? burn.isp : 310.0;
-                double g0 = 9.80665;
-                if (thrustN > 0 && isp > 0) {
-                    duration = (massKg * g0 * isp / thrustN) * (1.0 - Math.Exp(-burn.magnitude / (g0 * isp)));
-                }
+            double m0 = GMATStateManager.Current.Spacecraft.TotalMassKg > 0 
+                ? GMATStateManager.Current.Spacecraft.TotalMassKg 
+                : (vessel != null ? vessel.totalMass * 1000.0 : 1000.0);
+            double thrustN = burn.thrust_kn * 1000.0;
+            double isp = burn.isp > 0 ? burn.isp : 310.0;
+            double g0 = 9.80665;
+            double ve = isp * g0;
+
+            if (duration <= 0.0 && thrustN > 0 && burn.magnitude > 0) {
+                duration = (m0 * ve / thrustN) * (1.0 - Math.Exp(-burn.magnitude / ve));
             }
 
-            // 3. Exact Tsiolkovsky Variable-Mass Impulse Centroid (齐奥尔科夫斯基变质量冲量一阶矩质心定理)
-            // As propellant is expended, rocket mass m(t) decreases non-linearly, causing acceleration a(t) to increase.
-            // The true impulse centroid occurs past 50% duration:
-            // t_centroid = DeltaT * [ 1 / (1 - m_f/m_0) - 1 / ln(m_0/m_f) ]
-            centroidLead = 0.0;
-            if (duration > 0.0) {
-                double m0 = GMATStateManager.Current.Spacecraft.TotalMassKg > 0 
-                    ? GMATStateManager.Current.Spacecraft.TotalMassKg 
-                    : (vessel != null ? vessel.totalMass * 1000.0 : 1000.0);
-                double fuelBurned = burn.fuel_burned > 0 ? burn.fuel_burned : 0.0;
-                if (fuelBurned <= 0.0 && burn.thrust_kn > 0 && burn.isp > 0) {
-                    double mFlow = (burn.thrust_kn * 1000.0) / (burn.isp * 9.80665);
-                    fuelBurned = mFlow * duration;
-                }
+            // 3. Bit-for-bit Principia C++ Native time_to_half_dv() Implementation
+            // Source: Principia/ksp_plugin/manoeuvre_body.hpp:
+            // Time Manœuvre::time_to_half_Δv() = specific_impulse * initial_mass * (1 - sqrt(final_mass / initial_mass)) / thrust;
+            if (duration > 0.0 && thrustN > 0 && ve > 0) {
+                double fuelBurned = burn.fuel_burned > 0 ? burn.fuel_burned : (thrustN / ve) * duration;
                 double mf = Math.Max(1.0, m0 - fuelBurned);
                 double massRatio = mf / m0;
 
-                if (massRatio > 0.001 && massRatio < 0.9999) {
-                    double lnR = Math.Log(1.0 / massRatio); // ln(m0/mf)
-                    double frac = (1.0 / (1.0 - massRatio)) - (1.0 / lnR);
-                    // Clamped to physical range (0.5 to 0.75)
-                    if (frac >= 0.5 && frac <= 0.75) {
-                        centroidLead = duration * frac;
-                    } else {
-                        centroidLead = duration * 0.5;
-                    }
-                } else {
-                    centroidLead = duration * 0.5;
-                }
+                // Exact native Principia time_to_half_dv
+                centroidLead = (ve * m0 * (1.0 - Math.Sqrt(massRatio))) / thrustN;
+            } else if (duration > 0.0) {
+                centroidLead = duration * 0.5;
+            }
 
-                // 4. Second-Order Orbital Curvature & Gravity Gradient Lag Correction (二阶轨道曲率与引力梯度滞后修正)
-                // Finite tangential burning rotates the thrust arc by n*DeltaT along the Frenet frame,
-                // shifting the effective line of apsides forward.
-                double meanMotion = 0.001185; // Standard LEO mean motion ~ 0.001185 rad/s
-                if (vessel != null && vessel.orbit != null && vessel.orbit.period > 0) {
-                    meanMotion = (2.0 * Math.PI) / vessel.orbit.period;
-                }
-                double nTau = meanMotion * duration;
-                if (nTau > 0.0 && nTau < 1.5) {
-                    double curvatureLead = duration * ((1.0 / 12.0) * nTau + 0.75 * nTau * (centroidLead / duration));
-                    centroidLead += curvatureLead;
+            // 4. Time wrap protection: if initial ignition has elapsed, cycle by orbit period
+            double initialTime = targetEpoch - centroidLead;
+            if (orb != null && orb.period > 0 && initialTime < currentUT + 5.0) {
+                while (initialTime < currentUT + 5.0) {
+                    initialTime += orb.period;
+                    targetEpoch += orb.period;
                 }
             }
-            double initialTime = targetEpoch - centroidLead;
 
             burn.computed_initial_time = initialTime;
             burn.centroid_lead_time = centroidLead;
