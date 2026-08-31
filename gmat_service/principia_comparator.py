@@ -165,7 +165,9 @@ def compare_gmat_with_principia(gmat_res, p_nodes, vessel_state=None):
     target_ap = None
     # Find targeted apoapsis in mission sequence
     for s in gmat_res.get("updated_sequence", []):
-        if s.get("type") in ("TargetApoapsis", "Targeter") and s.get("target_goal") in ("Apoapsis", "ApoapsisVZ0"):
+        if s.get("type") == "Achieve" and "altitude" in s.get("achieve_param", "").lower():
+            target_ap = float(s.get("achieve_val", 0.0))
+        elif s.get("type") in ("TargetApoapsis", "Targeter") and s.get("target_goal") in ("Apoapsis", "ApoapsisVZ0"):
             target_ap = float(s.get("target_alt", 0.0))
 
     final_sma = float(gmat_res.get("final_sma", 0.0))

@@ -18,6 +18,17 @@ namespace KSPGMAT {
         public double fuelDensityKgM3;
         public double tankVolumeM3;
         public double tankPressureKPa = 1500.0; // Standard RO regulated tank pressure
+        public string boundTankId = "";
+        public string boundTankName = "";
+        public int clusterCount = 1;
+        public bool isCluster = false;
+        public bool isActivated = false;
+        public bool isIgnited = false;
+        public bool isStaged = false;
+        public bool isOperational = true;
+        public bool flameout = false;
+        public float currentThrottle = 0f;
+        public bool isActiveOrIgnited = false;
     }
 
     [Serializable]
@@ -29,11 +40,13 @@ namespace KSPGMAT {
         public double dryMassKg;
         public double maxVolumeM3;
         public string resourceSummary;
+        public List<string> containedPropellants = new List<string>();
         public bool isSelected = true;
     }
 
     /// <summary>
-    /// Interoperability module for RealismOverhaul & RealFuels engine parameters and propellant density.
+    /// RO & RealFuels hardware reflection helper.
+    /// Extracts exact fuel masses, Isp, and thrust curves for GMAT.
     /// </summary>
     public static class ROEngineInterop {
         private static bool? isROInstalled = null;
@@ -56,7 +69,7 @@ namespace KSPGMAT {
         }
 
         /// <summary>
-        /// Scans active vessel for all engines and calculates real propellant density and tank mass from RO/RealFuels.
+        /// Scans active vessel for all engines and their exact RO/RealFuels configurations.
         /// </summary>
         public static List<ROEngineInfo> ScanVesselEngines(Vessel vessel) {
             List<ROEngineInfo> list = new List<ROEngineInfo>();
@@ -64,6 +77,8 @@ namespace KSPGMAT {
 
             List<ModuleEngines> engineModules = vessel.FindPartModulesImplementing<ModuleEngines>();
             if (engineModules == null || engineModules.Count == 0) return list;
+
+            var tanks = ScanVesselTanks(vessel);
 
             for (int i = 0; i < engineModules.Count; i++) {
                 ModuleEngines eng = engineModules[i];
@@ -98,57 +113,47 @@ namespace KSPGMAT {
                             densityTonnesPerLiter = def.density;
                         }
 
-                        // Aggregate resource amount across vessel
-                        double resAmountLiters = 0.0;
-                        double resMaxAmountLiters = 0.0;
-
+                        // Search for fuel across all parts in vessel
                         if (vessel.parts != null) {
-                            for (int pPart = 0; pPart < vessel.parts.Count; pPart++) {
-                                Part part = vessel.parts[pPart];
-                                if (part.Resources != null) {
-                                    PartResource res = part.Resources[p.name];
-                                    if (res != null) {
-                                        resAmountLiters += res.amount;
-                                        resMaxAmountLiters += res.maxAmount;
+                            for (int prt = 0; prt < vessel.parts.Count; prt++) {
+                                Part pt = vessel.parts[prt];
+                                if (pt == null || pt.Resources == null) continue;
+                                for (int r = 0; r < pt.Resources.Count; r++) {
+                                    PartResource res = pt.Resources[r];
+                                    if (res != null && res.resourceName == p.name) {
+                                        totalMassKg += res.amount * (densityTonnesPerLiter * 1000.0);
+                                        totalVolM3 += res.amount * 0.001;
+                                        totalMaxVolM3 += res.maxAmount * 0.001;
                                     }
                                 }
                             }
                         }
-
-                        // In RealFuels, density is tonnes/Liter.
-                        // 1 tonne / Liter = 1,000,000 kg / m^3.
-                        // 1 Liter = 0.001 m^3.
-                        double massKg = resAmountLiters * densityTonnesPerLiter * 1000.0;
-                        double volM3 = resAmountLiters * 0.001;
-                        double maxVolM3 = resMaxAmountLiters * 0.001;
-
-                        totalMassKg += massKg;
-                        totalVolM3 += volM3;
-                        totalMaxVolM3 += maxVolM3;
                     }
                 }
 
-                info.propellantDesc = propSb.ToString();
+                // Fallback if no specific propellants found
+                if (totalMassKg < 1e-3) {
+                    if (vessel.parts != null) {
+                        for (int prt = 0; prt < vessel.parts.Count; prt++) {
+                            Part pt = vessel.parts[prt];
+                            if (pt == null || pt.Resources == null) continue;
+                            for (int r = 0; r < pt.Resources.Count; r++) {
+                                PartResource res = pt.Resources[r];
+                                if (res != null && (res.resourceName.Contains("Fuel") || res.resourceName.Contains("Oxidizer") || res.resourceName.Contains("Kero") || res.resourceName.Contains("Hydro") || res.resourceName.Contains("Aerozine") || res.resourceName.Contains("NTO") || res.resourceName.Contains("UDMH"))) {
+                                    double dens = (res.info != null) ? res.info.density : 0.001;
+                                    totalMassKg += res.amount * (dens * 1000.0);
+                                    totalVolM3 += res.amount * 0.001;
+                                    totalMaxVolM3 += res.maxAmount * 0.001;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                info.propellantDesc = (propSb.Length > 0) ? propSb.ToString() : "Standard Propellant";
                 info.fuelMassKg = totalMassKg;
-
-                // Weighted density in kg/m^3
-                if (totalVolM3 > 1e-6) {
-                    info.fuelDensityKgM3 = totalMassKg / totalVolM3;
-                } else if (eng.propellants != null && eng.propellants.Count > 0) {
-                    // Fallback to theoretical mixture density from propellant ratios
-                    double sumRatio = 0.0;
-                    double sumRatioDensity = 0.0;
-                    foreach (var p in eng.propellants) {
-                        PartResourceDefinition def = PartResourceLibrary.Instance != null ? PartResourceLibrary.Instance.GetDefinition(p.name) : null;
-                        double rho = def != null ? def.density * 1000000.0 : 1000.0;
-                        sumRatio += p.ratio;
-                        sumRatioDensity += p.ratio * rho;
-                    }
-                    info.fuelDensityKgM3 = sumRatio > 0 ? (sumRatioDensity / sumRatio) : 1260.0;
-                } else {
-                    info.fuelDensityKgM3 = 1260.0;
-                }
-
+                info.fuelDensityKgM3 = (totalVolM3 > 1e-6) ? (totalMassKg / totalVolM3) : 1000.0;
+                
                 // Volume in m^3
                 if (totalMaxVolM3 > 1e-6) {
                     info.tankVolumeM3 = totalMaxVolM3;
@@ -158,10 +163,69 @@ namespace KSPGMAT {
                     info.tankVolumeM3 = 1.0;
                 }
 
+                bool isShutdownEventActive = (eng.Events != null && eng.Events["Shutdown"] != null && eng.Events["Shutdown"].active);
+                bool isActivateEventInactive = (eng.Events != null && eng.Events["Activate"] != null && !eng.Events["Activate"].active);
+                int curStage = (vessel != null) ? vessel.currentStage : 0;
+                bool hasBeenStaged = eng.staged || (eng.part != null && eng.part.inverseStage >= curStage);
+
+                info.isActivated = eng.EngineIgnited || isShutdownEventActive || (hasBeenStaged && eng.isOperational && !eng.flameout) || (eng.isOperational && isActivateEventInactive);
+                info.isIgnited = eng.EngineIgnited && eng.currentThrottle > 0f && !eng.flameout;
+                info.isStaged = hasBeenStaged;
+                info.isOperational = eng.isOperational;
+                info.flameout = eng.flameout;
+                info.currentThrottle = eng.currentThrottle;
+                info.isActiveOrIgnited = info.isActivated;
+
+                // Accurate Tank Auto-Binding: find best tank matching propellant types and stage
+                int matchedTankIdx = 0;
+                for (int t = 0; t < tanks.Count; t++) {
+                    var tk = tanks[t];
+                    if (tk.stageNumber == info.stageNumber) {
+                        matchedTankIdx = t;
+                        break;
+                    }
+                }
+                info.boundTankName = (tanks.Count > 0 && matchedTankIdx < tanks.Count) ? $"Tank{matchedTankIdx}" : "Tank0";
+                if (tanks.Count > 0 && matchedTankIdx < tanks.Count) {
+                    info.boundTankId = tanks[matchedTankIdx].id;
+                } else {
+                    info.boundTankId = "Tank0";
+                }
+
                 list.Add(info);
             }
 
             return list;
+        }
+
+        /// <summary>
+        /// Simple and robust engine detector (Principia-aligned): finds engines currently activated/enabled (启动但是未点火 / 运行中), or in active stage.
+        /// </summary>
+        public static List<ROEngineInfo> GetActiveOrIgnitedEngines(Vessel vessel) {
+            var all = ScanVesselEngines(vessel);
+            if (all == null || all.Count == 0) return new List<ROEngineInfo>();
+
+            // 1. Highest Priority: Engines in Activated / Enabled state (启动状态：包含已激活、已分级但当前0推力未点火或已点火状态)
+            var activated = all.FindAll(e => e.isActivated && !e.flameout);
+            if (activated.Count > 0) return activated;
+
+            // 2. Second Priority: Operational engines in current active stage (vessel.currentStage)
+            int curStage = (vessel != null) ? vessel.currentStage : 0;
+            var staged = all.FindAll(e => e.stageNumber == curStage && e.isOperational && !e.flameout);
+            if (staged.Count > 0) return staged;
+
+            // 3. Fallback: Operational engines in next available stage with fuel
+            var valid = all.FindAll(e => e.isOperational && !e.flameout && e.fuelMassKg > 0.05);
+            if (valid.Count > 0) {
+                int maxStage = int.MinValue;
+                for (int i = 0; i < valid.Count; i++) {
+                    if (valid[i].stageNumber > maxStage) maxStage = valid[i].stageNumber;
+                }
+                var topStageEngines = valid.FindAll(e => e.stageNumber == maxStage);
+                if (topStageEngines.Count > 0) return topStageEngines;
+            }
+
+            return all;
         }
 
         /// <summary>

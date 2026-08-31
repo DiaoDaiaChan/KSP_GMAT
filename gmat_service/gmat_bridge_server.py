@@ -123,6 +123,7 @@ class GMATBridgeHandler(BaseHTTPRequestHandler):
             craft = req_data.get("craft", {})
             sequence = req_data.get("sequence", [])
             propagator_configs = req_data.get("propagator_configs", {})
+            raw_script = req_data.get("raw_script")
 
             # Automatically compute epoch if UT is provided
             if "ut" in craft and "epoch_utc" not in craft:
@@ -133,7 +134,7 @@ class GMATBridgeHandler(BaseHTTPRequestHandler):
 
             try:
                 custom_coords = req_data.get("custom_coordinate_systems") or []
-                result = run_mission_sequence(craft, sequence, propagator_configs=propagator_configs, custom_coordinate_systems=custom_coords)
+                result = run_mission_sequence(craft, sequence, propagator_configs=propagator_configs, custom_coordinate_systems=custom_coords, raw_script=raw_script)
                 if result.get("success"):
                     try:
                         from principia_comparator import update_gmat_result

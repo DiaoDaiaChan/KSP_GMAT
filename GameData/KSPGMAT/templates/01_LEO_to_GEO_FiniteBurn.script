@@ -1,0 +1,121 @@
+%----------------------------------------------------------------------
+% GMAT Official Standard Template: LEO to GEO via Finite Burn Double-Targeting
+% 28.6° LEO -> GTO -> 0° Inclination GEO Circularization
+%----------------------------------------------------------------------
+
+%----------------------------------------------------------------------
+% Spacecraft & Hardware Resources
+%----------------------------------------------------------------------
+Create Spacecraft Sat;
+Sat.DateFormat = UTCGregorian;
+Sat.Epoch = '15 Jul 2026 00:00:00.000';
+Sat.CoordinateSystem = EarthMJ2000Eq;
+Sat.DisplayStateType = Keplerian;
+Sat.SMA = 6578.14;
+Sat.ECC = 0.001;
+Sat.INC = 28.6;
+Sat.RAAN = 0.0;
+Sat.AOP = 0.0;
+Sat.TA = 0.0;
+Sat.DryMass = 1000.0;
+
+Create ChemicalTank MainTank;
+MainTank.FuelMass = 3000.0;
+MainTank.FuelDensity = 1000.0;
+
+Create ChemicalThruster MainEngine;
+MainEngine.CoordinateSystem = Local;
+MainEngine.Origin = Earth;
+MainEngine.Axes = VNB;
+MainEngine.ThrustDirection1 = 1.0;
+MainEngine.ThrustDirection2 = 0.0;
+MainEngine.ThrustDirection3 = 0.0;
+MainEngine.DutyCycle = 1.0;
+MainEngine.Thrust = 10000.0;
+MainEngine.Isp = 320.0;
+MainEngine.Tank = {MainTank};
+
+Sat.Tanks = {MainTank};
+Sat.Thrusters = {MainEngine};
+
+%----------------------------------------------------------------------
+% Force Models & Propagators
+%----------------------------------------------------------------------
+Create ForceModel LEOProp_ForceModel;
+LEOProp_ForceModel.CentralBody = Earth;
+LEOProp_ForceModel.PointMasses = {Earth, Sun, Luna};
+LEOProp_ForceModel.Drag = None;
+LEOProp_ForceModel.SRP = Off;
+
+Create Propagator LEOProp;
+LEOProp.FM = LEOProp_ForceModel;
+LEOProp.Type = RungeKutta89;
+LEOProp.InitialStepSize = 60.0;
+LEOProp.Accuracy = 1e-11;
+LEOProp.MinStep = 0.001;
+LEOProp.MaxStep = 2700.0;
+
+%----------------------------------------------------------------------
+% Burns & Solvers
+%----------------------------------------------------------------------
+Create FiniteBurn GTO_Burn;
+GTO_Burn.Thrusters = {MainEngine};
+
+Create FiniteBurn GEO_Burn;
+GEO_Burn.Thrusters = {MainEngine};
+
+Create DifferentialCorrector DC_GTO;
+DC_GTO.ShowProgress = true;
+DC_GTO.DerivativeMethod = ForwardDifference;
+DC_GTO.Algorithm = NewtonRaphson;
+DC_GTO.MaximumIterations = 50;
+
+Create DifferentialCorrector DC_GEO;
+DC_GEO.ShowProgress = true;
+DC_GEO.DerivativeMethod = ForwardDifference;
+DC_GEO.Algorithm = NewtonRaphson;
+DC_GEO.MaximumIterations = 50;
+
+%----------------------------------------------------------------------
+% User Variables
+%----------------------------------------------------------------------
+Create Variable GTO_Duration GEO_Duration;
+GTO_Duration = 120.0;
+GEO_Duration = 70.0;
+
+Create ReportFile TrajReport;
+TrajReport.Filename = 'LEO_to_GEO_Traj.txt';
+TrajReport.WriteHeaders = false;
+
+%----------------------------------------------------------------------
+% Mission Sequence
+%----------------------------------------------------------------------
+BeginMissionSequence;
+
+% Step 1: Propagate to Equator Ascending Node (Latitude = 0.0 deg)
+Propagate LEOProp(Sat) {Sat.Earth.Latitude = 0.0};
+
+% Step 2: Target GTO Insertion (Apoapsis Altitude = 35786 km)
+Target DC_GTO {SolveMode = Solve, ExitMode = SaveAndContinue};
+  Vary DC_GTO(GTO_Duration = 120.0, {Perturbation = 0.0001, Lower = 10.0, Upper = 400.0, MaxStep = 10.0});
+  BeginFiniteBurn GTO_Burn(Sat);
+  Propagate LEOProp(Sat) {Sat.ElapsedSecs = GTO_Duration};
+  EndFiniteBurn GTO_Burn(Sat);
+  Propagate LEOProp(Sat) {Sat.Earth.Apoapsis};
+  Achieve DC_GTO(Sat.Earth.Altitude = 35786.0, {Tolerance = 0.5});
+EndTarget;
+
+% Step 3: Target GEO Circularization and 0° Inclination Removal
+Target DC_GEO {SolveMode = Solve, ExitMode = SaveAndContinue};
+  Vary DC_GEO(Sat.MainEngine.ThrustDirection2 = -0.50, {Perturbation = 0.0001, Lower = -1.0, Upper = 1.0, MaxStep = 0.05});
+  Vary DC_GEO(GEO_Duration = 70.0, {Perturbation = 0.0001, Lower = 10.0, Upper = 300.0, MaxStep = 10.0});
+  BeginFiniteBurn GEO_Burn(Sat);
+  Propagate LEOProp(Sat) {Sat.ElapsedSecs = GEO_Duration};
+  EndFiniteBurn GEO_Burn(Sat);
+  Achieve DC_GEO(Sat.EarthMJ2000Eq.VZ = 0.0, {Tolerance = 0.001});
+  Achieve DC_GEO(Sat.Earth.SMA = 42164.14, {Tolerance = 0.5});
+EndTarget;
+
+% Step 4: 24-Hour GEO Stationkeeping Cruise & Final Report
+Propagate LEOProp(Sat) {Sat.ElapsedSecs = 86164.0};
+Report TrajReport Sat.ElapsedSecs Sat.X Sat.Y Sat.Z Sat.VX Sat.VY Sat.VZ Sat.TotalMass;

@@ -1,7 +1,7 @@
+# -*- coding: utf-8 -*-
 """
 GMAT CLI One-Shot Runner for Direct KSP Invocation.
-Eliminates the background HTTP bridge server completely.
-Can be invoked directly by KSP C# via System.Diagnostics.Process.
+Matches bfc58e9 with export and run_raw_script support.
 """
 
 import sys
@@ -24,7 +24,7 @@ def main():
     parser = argparse.ArgumentParser(description="GMAT CLI One-Shot Runner")
     curr_dir = os.path.dirname(os.path.abspath(__file__))
     def_out_dir = os.path.abspath(os.path.join(curr_dir, "..", "..", "output"))
-    parser.add_argument("--action", default="solve", choices=["solve", "sync", "compare", "render", "import", "metadata", "prop_metadata", "solver_metadata"], help="Action to execute")
+    parser.add_argument("--action", default="solve", choices=["solve", "sync", "compare", "render", "import", "export", "run_raw_script", "metadata", "prop_metadata", "solver_metadata"], help="Action to execute")
     parser.add_argument("--input", default=os.path.join(def_out_dir, "mission_input.json"), help="Path to input JSON")
     parser.add_argument("--output", default=os.path.join(def_out_dir, "mission_result.json"), help="Path to output JSON")
     args = parser.parse_args()
@@ -82,6 +82,19 @@ def main():
                     pass
             res = parse_gmat_script(script_path, override_epoch_utc=epoch_utc, override_craft_name=vessel_name)
 
+        elif args.action == "export":
+            craft = req_data.get("craft_data", {}) or req_data.get("craft", {})
+            sequence = req_data.get("mission_sequence", []) or req_data.get("sequence", [])
+            propagator_configs = req_data.get("propagator_configs", {})
+            custom_coords = req_data.get("custom_coordinate_systems") or []
+            export_path = req_data.get("export_path")
+            solver_configs = req_data.get("solver_configs")
+            res = gmat_engine.export_mission_script(craft, sequence, export_path=export_path, propagator_configs=propagator_configs, custom_coordinate_systems=custom_coords, solver_configs=solver_configs)
+
+        elif args.action == "run_raw_script":
+            script_path = req_data.get("script_path", "")
+            res = gmat_engine.run_raw_script(script_path)
+
         elif args.action == "render":
             view_mode = req_data.get("view_mode", "dual")
             central_body = req_data.get("central_body", "Earth")
@@ -94,8 +107,8 @@ def main():
             res = {"success": ok, "image_path": img_file, "message": msg}
 
         else: # solve
-            craft = req_data.get("craft", {})
-            sequence = req_data.get("sequence", [])
+            craft = req_data.get("craft", {}) or req_data.get("craft_data", {})
+            sequence = req_data.get("sequence", []) or req_data.get("mission_sequence", [])
             propagator_configs = req_data.get("propagator_configs", {})
             if "ut" in craft and "epoch_utc" not in craft:
                 try:
@@ -106,8 +119,7 @@ def main():
                 except Exception as ex:
                     print(f"[GmatCLI] Ephemeris calibration warning: {ex}")
             custom_coords = req_data.get("custom_coordinate_systems") or []
-            solver_configs = req_data.get("solver_configs")
-            res = gmat_engine.run_mission_sequence(craft, sequence, propagator_configs=propagator_configs, custom_coordinate_systems=custom_coords, solver_configs=solver_configs)
+            res = gmat_engine.run_mission_sequence(craft, sequence, propagator_configs=propagator_configs, custom_coordinate_systems=custom_coords)
             if res.get("success"):
                 principia_comparator.update_gmat_result(res)
 

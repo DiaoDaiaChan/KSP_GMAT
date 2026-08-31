@@ -9,15 +9,54 @@ using UnityEngine;
 
 namespace KSPGMAT {
     [Serializable]
+    public class GMATUserVariable {
+        public string name = "Var1";
+        public double value = 0.0;
+        public string description = "";
+    }
+
+    [Serializable]
+    public class GMATUserArray {
+        public string name = "Arr1";
+        public int rows = 3;
+        public int cols = 3;
+        public List<double> values = new List<double>();
+        public string description = "";
+    }
+
+    [Serializable]
+    public class GMATUserString {
+        public string name = "Str1";
+        public string value = "";
+        public string description = "";
+    }
+
+    [Serializable]
+    public class GMATImportResult {
+        public bool success;
+        public string message;
+        public string script_name;
+        public string primary_craft_name;
+        public List<string> all_spacecraft_names = new List<string>();
+        public List<GMATUserVariable> user_variables = new List<GMATUserVariable>();
+        public List<GMATUserArray> user_arrays = new List<GMATUserArray>();
+        public List<GMATUserString> user_strings = new List<GMATUserString>();
+        public List<MissionStep> sequence = new List<MissionStep>();
+        public double craft_dry_mass = 1000.0;
+        public double craft_fuel_mass = 0.0;
+        public string craft_epoch = "";
+    }
+
+    [Serializable]
     public class MissionStep {
-        public string type = "Propagate"; // Propagate, Report, FiniteBurn, Targeter, Equation
+        public string type = "Propagate"; // 27 Native GMAT Commands: Propagate, Maneuver, BeginFiniteBurn, EndFiniteBurn, BeginFileThrust, EndFileThrust, Target, Vary, Achieve, EndTarget, Optimize, Minimize, NonlinearConstraint, EndOptimize, If, Else, EndIf, While, EndWhile, For, EndFor, Equation, ScriptEvent, Set, Global, CallGmatFunction, CallBuiltinGmatFunction, Report, Write, Toggle, ClearPlot, PenUp, PenDown, UpdateDynamicData, FindEvents, Stop, Breakpoint, CommandEcho, MarkPoint
         public string propagator = "LEOProp"; // GMAT Propagator object name
         public string stop_type = "Time"; // Time, Days, Apoapsis, Periapsis, Altitude, RMAG, TA, Node
         public double duration = 3600.0;
-        public double target_val = 200.0; // Altitude (km), RMAG (km), TrueAnomaly (deg)
-        public double target_alt = 35786.0; // km for TargetApoapsis
-        public string target_goal = "Apoapsis"; // Apoapsis, Periapsis, SMA, ECC, INC, RMAG, LunarPerilune
-        public string target_body = ""; // Body used by body-relative goals such as LunarPerilune
+        public double target_val = 200.0; // Stop condition parameter value (km, deg, etc.)
+        public double target_alt = 35786.0; // Legacy fallback
+        public string target_goal = "Apoapsis"; // Stop condition target goal
+        public string target_body = ""; // Celestial body for body-relative conditions
         public double dv_v = 0.0; // m/s
         public double dv_n = 0.0; // m/s
         public double dv_b = 0.0; // m/s
@@ -37,8 +76,8 @@ namespace KSPGMAT {
         public double vary_multiplicative_scale = 1.0;
         public string vary_solver = "DefaultDC";
         public double epoch_offset = 0.0;
-        public string variable = ""; // for Equation, e.g. "Sat.SMA" or "burntime"
-        public string expression = ""; // for Equation, e.g. "-173.0"
+        public string variable = ""; // for Equation / Set, e.g. "Sat.SMA" or "burntime"
+        public string expression = ""; // for Equation / Set, e.g. "-173.0"
         public double thrust_dir1 = 1.0; // V-axis component
         public double thrust_dir2 = 0.0; // N-axis component
         public double thrust_dir3 = 0.0; // B-axis component
@@ -66,9 +105,59 @@ namespace KSPGMAT {
         public string burn_name = "";
         public string bound_tank = "";
         public string bound_thruster = "";
+        public List<string> bound_thrusters = new List<string>(); // For multi-engine / heterogenous engine clusters
+        public double vary_dir1_lower = -1.0, vary_dir1_upper = 1.0, vary_dir1_max_step = 0.1;
+        public double vary_dir2_lower = -1.0, vary_dir2_upper = 1.0, vary_dir2_max_step = 0.1;
+        public double vary_dir3_lower = -1.0, vary_dir3_upper = 1.0, vary_dir3_max_step = 0.1;
+        public bool is_vary_vector = true;
+        public bool vary_dir1_enabled = true;
+        public bool vary_dir2_enabled = true;
+        public bool vary_dir3_enabled = false;
         public double separated_mass = 0.0;
         public double remaining_dry_mass = 0.0;
         public int separated_stage_index = 0; // GMAT Burn object name
+
+        // === EXTENDED FIELDS FOR FULL 27 COMMANDS ===
+        // 1. File Thrust (BeginFileThrust / EndFileThrust)
+        public string file_thrust_name = "ThrustHistory1";
+        public string file_thrust_path = "";
+
+        // 2. Optimization (Optimize / Minimize / NonlinearConstraint / EndOptimize)
+        public string optimizer_name = "SQP1"; // SQP1, VF13ad, SNOPT, Fmincon
+        public string minimize_variable = "Sat.FuelMassBurned";
+        public string constraint_lhs = "Sat.Luna.RMAG";
+        public string constraint_op = ">="; // >=, <=, ==
+        public double constraint_val = 1937.4;
+        public double constraint_tol = 0.1;
+
+        // 3. Control Logic (If / Else / EndIf / While / EndWhile / For / EndFor)
+        public string condition_expr = "Sat.Earth.RMAG < 7000.0";
+        public string for_var = "i";
+        public string for_range = "1:1:5"; // start:step:end
+
+        // 4. Script Event & Math (ScriptEvent / Set / Global)
+        public string script_content = "% Custom GMAT Script Block\n";
+        public string set_target = "Sat.Epoch";
+        public string set_expr = "'01 Jan 2026 12:00:00.000'";
+        public string global_objects = "Sat PropTank";
+
+        // 5. Function Calls (CallGmatFunction / CallBuiltinGmatFunction)
+        public string function_name = "MyCustomFunc";
+        public string func_inputs = "Sat.X, Sat.Y";
+        public string func_outputs = "out_x, out_y";
+
+        // 6. Output, Visualization & Draw Control (Write / Toggle / ClearPlot / PenUp / PenDown / UpdateDynamicData)
+        public string subscriber_name = "EarthInertialView";
+        public string action_state = "Off"; // On, Off
+        public string write_fields = "Sat.UTCGregorian Sat.X Sat.Y Sat.Z";
+        public bool write_msg_window = true;
+        public bool write_log_file = true;
+
+        // 7. Events & Debug (FindEvents / Breakpoint / CommandEcho / MarkPoint)
+        public string event_locator = "EclipseLocator1";
+        public bool append_events = true;
+        public string mark_label = "StageSeparation";
+        public string echo_state = "On"; // On, Off
     }
 
     [Serializable]
@@ -312,14 +401,14 @@ namespace KSPGMAT {
             });
         }
 
-        private static double KspUtToJd(double ut) {
+        public static double KspUtToJd(double ut) {
             double gameEpochJd = 2433647.5; // Sol-Configs / RSS default: 1951-01-01
             double jd = gameEpochJd + (ut / 86400.0);
             if (jd < 2436116.5) jd = 2437000.0 + (ut / 86400.0);
             return jd;
         }
 
-        private static double JdToGmatMjd(double jd) {
+        public static double JdToGmatMjd(double jd) {
             return jd - 2430000.0;
         }
 
@@ -351,6 +440,14 @@ namespace KSPGMAT {
         }
 
         public static void PropagateMission(Vessel vessel, List<StageData> selectedStages, ROEngineInfo engine, List<MissionStep> steps, Dictionary<string, PropagatorConfig> propagatorConfigs, Action<bool, MissionResult> callback) {
+            PropagateMission(vessel, selectedStages, engine, steps, propagatorConfigs, null, callback);
+        }
+
+        public static void PropagateMissionWithRawScript(Vessel vessel, List<StageData> selectedStages, ROEngineInfo engine, List<MissionStep> steps, Dictionary<string, PropagatorConfig> propagatorConfigs, string rawScript, Action<bool, MissionResult> callback) {
+            PropagateMission(vessel, selectedStages, engine, steps, propagatorConfigs, rawScript, callback);
+        }
+
+        public static void PropagateMission(Vessel vessel, List<StageData> selectedStages, ROEngineInfo engine, List<MissionStep> steps, Dictionary<string, PropagatorConfig> propagatorConfigs, string rawScript, Action<bool, MissionResult> callback) {
             ThreadPool.QueueUserWorkItem(_ => {
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 try {
@@ -442,7 +539,6 @@ namespace KSPGMAT {
                     sb.Append($"\"central_body\": \"{vessel.mainBody.name}\",");
                     sb.Append($"\"ut\": {ut.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)},");
                     double jdVal = 2433647.5 + (ut / 86400.0);
-                    if (jdVal < 2436116.5) jdVal = 2437000.0 + (ut / 86400.0);
                     string epochUtcVal = JdToUtcGregorian(jdVal);
                     sb.Append($"\"epoch_utc\": \"{epochUtcVal}\",");
                     sb.Append($"\"x\": {pos_km.x.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)},");
@@ -602,6 +698,10 @@ namespace KSPGMAT {
                         sb.Append("]");
                     }
 
+                    if (!string.IsNullOrEmpty(rawScript)) {
+                        sb.Append($",\"raw_script\": \"{EscapeJson(rawScript)}\"");
+                    }
+
                     sb.Append("}");
 
                     string responseJson = "";
@@ -702,7 +802,144 @@ namespace KSPGMAT {
             });
         }
 
-        public static void ImportScript(string scriptPath, Vessel vessel, Action<bool, List<MissionStep>, string> callback) {
+        /// <summary>
+        /// Compiles the full in-game mission state and exports it as a standalone GMAT .script file.
+        /// </summary>
+        public static void ExportScript(string targetPath, Vessel vessel, List<MissionStep> sequence, List<GMATUserVariable> userVars, List<GMATUserArray> userArrays, List<GMATUserString> userStrings, Action<bool, string> callback) {
+            ThreadPool.QueueUserWorkItem(_ => {
+                try {
+                    Vector3d pos_km, vel_kms;
+                    PrincipiaInterop.GetVesselStateICRF(vessel, out pos_km, out vel_kms);
+                    double ut = Planetarium.GetUniversalTime();
+                    double totalMass = vessel != null ? vessel.totalMass * 1000.0 : 1000.0;
+                    double dryMass = totalMass * 0.5;
+                    double fuelMass = totalMass * 0.5;
+
+                    StringBuilder sb = new StringBuilder();
+                    sb.Append("{");
+                    sb.Append($"\"export_path\": \"{targetPath.Replace("\\", "\\\\")}\",");
+                    sb.Append("\"craft\": {");
+                    sb.Append($"\"vessel_name\": \"{Sanitize(vessel != null ? vessel.vesselName : "Sat")}\",");
+                    sb.Append($"\"central_body\": \"{(vessel != null ? vessel.mainBody.bodyName : "Earth")}\",");
+                    sb.Append($"\"ut\": {ut.ToString("F3", CultureInfo.InvariantCulture)},");
+                    sb.Append($"\"x\": {pos_km.x.ToString("F6", CultureInfo.InvariantCulture)},");
+                    sb.Append($"\"y\": {pos_km.y.ToString("F6", CultureInfo.InvariantCulture)},");
+                    sb.Append($"\"z\": {pos_km.z.ToString("F6", CultureInfo.InvariantCulture)},");
+                    sb.Append($"\"vx\": {vel_kms.x.ToString("F8", CultureInfo.InvariantCulture)},");
+                    sb.Append($"\"vy\": {vel_kms.y.ToString("F8", CultureInfo.InvariantCulture)},");
+                    sb.Append($"\"vz\": {vel_kms.z.ToString("F8", CultureInfo.InvariantCulture)},");
+                    sb.Append($"\"dry_mass\": {dryMass.ToString("F2", CultureInfo.InvariantCulture)},");
+                    sb.Append($"\"fuel_mass\": {fuelMass.ToString("F2", CultureInfo.InvariantCulture)},");
+
+                    // User variables
+                    sb.Append("\"user_variables\": [");
+                    for (int v = 0; v < (userVars != null ? userVars.Count : 0); v++) {
+                        if (v > 0) sb.Append(",");
+                        sb.Append($"{{\"name\": \"{Sanitize(userVars[v].name)}\", \"value\": {userVars[v].value.ToString("G6", CultureInfo.InvariantCulture)}, \"description\": \"{Sanitize(userVars[v].description)}\"}}");
+                    }
+                    sb.Append("],");
+
+                    // User arrays
+                    sb.Append("\"user_arrays\": [");
+                    for (int a = 0; a < (userArrays != null ? userArrays.Count : 0); a++) {
+                        if (a > 0) sb.Append(",");
+                        sb.Append($"{{\"name\": \"{Sanitize(userArrays[a].name)}\", \"rows\": {userArrays[a].rows}, \"cols\": {userArrays[a].cols}, \"description\": \"{Sanitize(userArrays[a].description)}\"}}");
+                    }
+                    sb.Append("],");
+
+                    // User strings
+                    sb.Append("\"user_strings\": [");
+                    for (int s = 0; s < (userStrings != null ? userStrings.Count : 0); s++) {
+                        if (s > 0) sb.Append(",");
+                        sb.Append($"{{\"name\": \"{Sanitize(userStrings[s].name)}\", \"value\": \"{Sanitize(userStrings[s].value)}\", \"description\": \"{Sanitize(userStrings[s].description)}\"}}");
+                    }
+                    sb.Append("]");
+                    sb.Append("},");
+
+                    // Sequence steps
+                    sb.Append("\"sequence\": [");
+                    for (int i = 0; i < (sequence != null ? sequence.Count : 0); i++) {
+                        if (i > 0) sb.Append(",");
+                        var st = sequence[i];
+                        sb.Append("{");
+                        sb.Append($"\"type\": \"{st.type}\",");
+                        sb.Append($"\"propagator\": \"{st.propagator}\",");
+                        sb.Append($"\"stop_type\": \"{st.stop_type}\",");
+                        sb.Append($"\"duration\": {st.duration.ToString("F3", CultureInfo.InvariantCulture)},");
+                        sb.Append($"\"target_val\": {st.target_val.ToString("F3", CultureInfo.InvariantCulture)},");
+                        sb.Append($"\"burn_name\": \"{st.burn_name}\",");
+                        sb.Append($"\"burn_direction\": \"{st.burn_direction}\",");
+                        sb.Append($"\"burn_use_vary_var\": {(st.burn_use_vary_var ? "true" : "false")},");
+                        sb.Append($"\"burn_vary_var_name\": \"{st.burn_vary_var_name}\",");
+                        sb.Append($"\"optimizer_name\": \"{st.optimizer_name}\",");
+                        sb.Append($"\"minimize_variable\": \"{st.minimize_variable}\",");
+                        sb.Append($"\"constraint_lhs\": \"{st.constraint_lhs}\",");
+                        sb.Append($"\"constraint_op\": \"{st.constraint_op}\",");
+                        sb.Append($"\"constraint_val\": {st.constraint_val.ToString("F3", CultureInfo.InvariantCulture)},");
+                        sb.Append($"\"condition_expr\": \"{st.condition_expr}\",");
+                        sb.Append($"\"for_var\": \"{st.for_var}\",");
+                        sb.Append($"\"for_range\": \"{st.for_range}\",");
+                        sb.Append($"\"script_content\": \"{(st.script_content ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n")}\",");
+                        sb.Append($"\"set_target\": \"{st.set_target}\",");
+                        sb.Append($"\"set_expr\": \"{st.set_expr}\",");
+                        sb.Append($"\"global_objects\": \"{st.global_objects}\",");
+                        sb.Append($"\"function_name\": \"{st.function_name}\",");
+                        sb.Append($"\"func_inputs\": \"{st.func_inputs}\",");
+                        sb.Append($"\"func_outputs\": \"{st.func_outputs}\",");
+                        sb.Append($"\"subscriber_name\": \"{st.subscriber_name}\",");
+                        sb.Append($"\"action_state\": \"{st.action_state}\",");
+                        sb.Append($"\"event_locator\": \"{st.event_locator}\",");
+                        sb.Append($"\"mark_label\": \"{st.mark_label}\",");
+                        sb.Append($"\"echo_state\": \"{st.echo_state}\",");
+                        sb.Append($"\"dc_name\": \"{st.dc_name}\",");
+                        sb.Append($"\"vary_variable\": \"{st.vary_variable}\",");
+                        sb.Append($"\"vary_initial\": {st.vary_initial.ToString("F3", CultureInfo.InvariantCulture)},");
+                        sb.Append($"\"vary_lower\": {st.vary_lower.ToString("F3", CultureInfo.InvariantCulture)},");
+                        sb.Append($"\"vary_upper\": {st.vary_upper.ToString("F3", CultureInfo.InvariantCulture)},");
+                        sb.Append($"\"vary_max_step\": {st.vary_max_step.ToString("F3", CultureInfo.InvariantCulture)},");
+                        sb.Append($"\"achieve_param\": \"{st.achieve_param}\",");
+                        sb.Append($"\"achieve_val\": {st.achieve_val.ToString("F3", CultureInfo.InvariantCulture)},");
+                        sb.Append($"\"achieve_tolerance\": {st.achieve_tolerance.ToString("F4", CultureInfo.InvariantCulture)},");
+                        sb.Append($"\"solve_mode\": \"{st.solve_mode}\",");
+                        sb.Append($"\"label\": \"{st.label}\"");
+                        sb.Append("}");
+                    }
+                    sb.Append("]");
+                    sb.Append("}");
+
+                    string cliScript = FindCliScript();
+                    string outputDir = GetOutputDir();
+                    string inputFile = Path.Combine(outputDir, "export_input.json");
+                    string outputFile = Path.Combine(outputDir, "export_result.json");
+                    if (File.Exists(outputFile)) {
+                        try { File.Delete(outputFile); } catch {}
+                    }
+                    File.WriteAllText(inputFile, sb.ToString(), Utf8NoBom);
+
+                    System.Diagnostics.ProcessStartInfo psi = new System.Diagnostics.ProcessStartInfo {
+                        FileName = FindPythonExe(),
+                        Arguments = $"\"{cliScript}\" --action export --input \"{inputFile}\" --output \"{outputFile}\"",
+                        WorkingDirectory = GmatBinPath,
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true
+                    };
+                    using (var process = System.Diagnostics.Process.Start(psi)) {
+                        process.WaitForExit(15000);
+                    }
+
+                    string json = File.Exists(outputFile) ? File.ReadAllText(outputFile, Encoding.UTF8) : "{}";
+                    bool ok = json.Contains("\"success\": true");
+                    string msg = ok ? $"✅ 成功导出高保真 GMAT 脚本至: {targetPath}" : "❌ 导出失败: " + ExtractString(json, "error");
+                    KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(ok, msg));
+                } catch (Exception ex) {
+                    KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(false, "导出异常: " + ex.Message));
+                }
+            });
+        }
+
+        public static void ImportScript(string scriptPath, Vessel vessel, Action<bool, GMATImportResult, string> callback) {
             ThreadPool.QueueUserWorkItem(_ => {
                 try {
                     double ut = Planetarium.GetUniversalTime();
@@ -711,7 +948,7 @@ namespace KSPGMAT {
                     StringBuilder sb = new StringBuilder();
                     sb.Append("{");
                     sb.Append($"\"script_path\": \"{scriptPath.Replace("\\", "\\\\")}\",");
-                    sb.Append($"\"ut\": {ut.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)},");
+                    sb.Append($"\"ut\": {ut.ToString("F3", CultureInfo.InvariantCulture)},");
                     sb.Append($"\"vessel_name\": \"{vName}\"");
                     sb.Append("}");
 
@@ -739,7 +976,67 @@ namespace KSPGMAT {
 
                     string json = File.Exists(outputFile) ? File.ReadAllText(outputFile, Encoding.UTF8) : "{}";
                     if (json.Contains("\"success\": true")) {
-                        List<MissionStep> steps = new List<MissionStep>();
+                        GMATImportResult result = new GMATImportResult();
+                        result.success = true;
+                        result.script_name = ExtractString(json, "script_name") ?? Path.GetFileName(scriptPath);
+                        result.primary_craft_name = ExtractString(json, "primary_craft_name") ?? "Sat";
+
+                        // Parse user variables
+                        int varIdx = json.IndexOf("\"user_variables\":");
+                        if (varIdx >= 0) {
+                            int endVar = json.IndexOf("]", varIdx);
+                            if (endVar > varIdx) {
+                                string varSec = json.Substring(varIdx, endVar - varIdx + 1);
+                                string[] vItems = varSec.Split(new string[] { "{" }, StringSplitOptions.RemoveEmptyEntries);
+                                foreach (string vi in vItems) {
+                                    if (vi.Contains("\"name\":")) {
+                                        string vn = ExtractString("{" + vi, "name");
+                                        double vv = ExtractDouble("{" + vi, "value");
+                                        string vd = ExtractString("{" + vi, "description") ?? "";
+                                        result.user_variables.Add(new GMATUserVariable { name = vn, value = vv, description = vd });
+                                    }
+                                }
+                            }
+                        }
+
+                        // Parse user arrays
+                        int arrIdx = json.IndexOf("\"user_arrays\":");
+                        if (arrIdx >= 0) {
+                            int endArr = json.IndexOf("]", arrIdx);
+                            if (endArr > arrIdx) {
+                                string arrSec = json.Substring(arrIdx, endArr - arrIdx + 1);
+                                string[] aItems = arrSec.Split(new string[] { "{" }, StringSplitOptions.RemoveEmptyEntries);
+                                foreach (string ai in aItems) {
+                                    if (ai.Contains("\"name\":")) {
+                                        string an = ExtractString("{" + ai, "name");
+                                        int ar = (int)ExtractDouble("{" + ai, "rows");
+                                        int ac = (int)ExtractDouble("{" + ai, "cols");
+                                        string ad = ExtractString("{" + ai, "description") ?? "";
+                                        result.user_arrays.Add(new GMATUserArray { name = an, rows = ar <= 0 ? 3 : ar, cols = ac <= 0 ? 3 : ac, description = ad });
+                                    }
+                                }
+                            }
+                        }
+
+                        // Parse user strings
+                        int strIdx = json.IndexOf("\"user_strings\":");
+                        if (strIdx >= 0) {
+                            int endStr = json.IndexOf("]", strIdx);
+                            if (endStr > strIdx) {
+                                string strSec = json.Substring(strIdx, endStr - strIdx + 1);
+                                string[] sItems = strSec.Split(new string[] { "{" }, StringSplitOptions.RemoveEmptyEntries);
+                                foreach (string si in sItems) {
+                                    if (si.Contains("\"name\":")) {
+                                        string sn = ExtractString("{" + si, "name");
+                                        string sv = ExtractString("{" + si, "value") ?? "";
+                                        string sd = ExtractString("{" + si, "description") ?? "";
+                                        result.user_strings.Add(new GMATUserString { name = sn, value = sv, description = sd });
+                                    }
+                                }
+                            }
+                        }
+
+                        // Parse Mission Sequence steps
                         int seqIdx = json.IndexOf("\"sequence\":");
                         if (seqIdx >= 0) {
                             int endIdx = json.LastIndexOf("]");
@@ -762,12 +1059,13 @@ namespace KSPGMAT {
                                     st.dv_v = ExtractDouble("{" + item, "dv_v");
                                     st.dv_n = ExtractDouble("{" + item, "dv_n");
                                     st.dv_b = ExtractDouble("{" + item, "dv_b");
-                                    st.burn_name = ExtractString("{" + item, "name");
-                                    st.burn_origin = ExtractString("{" + item, "origin");
-                                    st.burn_axes = ExtractString("{" + item, "axes");
-                                    st.burn_coordinate_system = ExtractString("{" + item, "coordinate_system");
-                                    st.burn_isp = ExtractDouble("{" + item, "isp");
-                                    st.burn_decrement_mass = ExtractBool("{" + item, "decrement_mass");
+                                    st.burn_name = ExtractString("{" + item, "burn_name") ?? ExtractString("{" + item, "name");
+                                    st.burn_origin = ExtractString("{" + item, "burn_origin") ?? ExtractString("{" + item, "origin");
+                                    st.burn_axes = ExtractString("{" + item, "burn_axes") ?? ExtractString("{" + item, "axes");
+                                    st.burn_coordinate_system = ExtractString("{" + item, "burn_coordinate_system") ?? ExtractString("{" + item, "coordinate_system");
+                                    st.burn_isp = ExtractDouble("{" + item, "burn_isp");
+                                    if (st.burn_isp <= 0) st.burn_isp = ExtractDouble("{" + item, "isp");
+                                    st.burn_decrement_mass = ExtractBool("{" + item, "burn_decrement_mass") || ExtractBool("{" + item, "decrement_mass");
                                     st.variable = ExtractString("{" + item, "variable");
                                     st.expression = ExtractString("{" + item, "expression");
                                     st.label = ExtractString("{" + item, "label");
@@ -782,16 +1080,31 @@ namespace KSPGMAT {
                                     st.achieve_tolerance = ExtractDouble("{" + item, "achieve_tolerance");
                                     st.solve_mode = ExtractString("{" + item, "solve_mode");
                                     st.exit_mode = ExtractString("{" + item, "exit_mode");
-                                    st.target_goal = ExtractString("{" + item, "target_goal");
-                                    if (string.IsNullOrEmpty(st.target_goal)) st.target_goal = "Apoapsis";
+                                    st.optimizer_name = ExtractString("{" + item, "optimizer_name");
+                                    st.minimize_variable = ExtractString("{" + item, "minimize_variable");
+                                    st.constraint_lhs = ExtractString("{" + item, "constraint_lhs");
+                                    st.constraint_op = ExtractString("{" + item, "constraint_op");
+                                    st.constraint_val = ExtractDouble("{" + item, "constraint_val");
+                                    st.condition_expr = ExtractString("{" + item, "condition_expr");
+                                    st.for_var = ExtractString("{" + item, "for_var");
+                                    st.for_range = ExtractString("{" + item, "for_range");
+                                    st.script_content = ExtractString("{" + item, "script_content");
+                                    st.set_target = ExtractString("{" + item, "set_target");
+                                    st.set_expr = ExtractString("{" + item, "set_expr");
+                                    st.global_objects = ExtractString("{" + item, "global_objects");
+                                    st.subscriber_name = ExtractString("{" + item, "subscriber_name");
+                                    st.action_state = ExtractString("{" + item, "action_state");
+                                    st.event_locator = ExtractString("{" + item, "event_locator");
+                                    st.mark_label = ExtractString("{" + item, "mark_label");
+                                    st.echo_state = ExtractString("{" + item, "echo_state");
 
                                     if (string.IsNullOrEmpty(st.stop_type)) st.stop_type = "Time";
                                     if (string.IsNullOrEmpty(st.propagator)) st.propagator = "LEOProp";
-                                    steps.Add(st);
+                                    result.sequence.Add(st);
                                 }
                             }
                         }
-                        KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(true, steps, "成功"));
+                        KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(true, result, "成功"));
                     } else {
                         string err = ExtractString(json, "error");
                         KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(false, null, err ?? "失败"));
@@ -799,6 +1112,12 @@ namespace KSPGMAT {
                 } catch (Exception ex) {
                     KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(false, null, ex.Message));
                 }
+            });
+        }
+
+        public static void ImportScript(string scriptPath, Vessel vessel, Action<bool, List<MissionStep>, string> callback) {
+            ImportScript(scriptPath, vessel, (ok, res, msg) => {
+                callback?.Invoke(ok, res != null ? res.sequence : null, msg);
             });
         }
 
@@ -886,21 +1205,7 @@ namespace KSPGMAT {
         }
 
         public static string Sanitize(string rawName, string fallback = "Sat") {
-            if (string.IsNullOrEmpty(rawName)) return fallback;
-            StringBuilder sb = new StringBuilder();
-            foreach (char c in rawName) {
-                if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
-                    sb.Append(c);
-                }
-            }
-            string cleaned = sb.ToString();
-            if (string.IsNullOrEmpty(cleaned)) {
-                return fallback;
-            }
-            if (cleaned[0] >= '0' && cleaned[0] <= '9') {
-                cleaned = fallback + "_" + cleaned;
-            }
-            return cleaned;
+            return GMATParameterRegistry.SanitizeGmatIdentifier(rawName, fallback);
         }
 
         private static MissionResult ParseMissionResult(string json) {
@@ -1118,6 +1423,15 @@ namespace KSPGMAT {
             idx += pattern.Length;
             while (idx < json.Length && char.IsWhiteSpace(json[idx])) idx++;
             return json.IndexOf("true", idx, StringComparison.OrdinalIgnoreCase) == idx;
+        }
+    
+        public static string EscapeJson(string s) {
+            if (string.IsNullOrEmpty(s)) return "";
+            return s.Replace("\\", "\\\\")
+                    .Replace("\"", "\\\"")
+                    .Replace("\r", "")
+                    .Replace("\n", "\\n")
+                    .Replace("\t", "\\t");
         }
     }
 }

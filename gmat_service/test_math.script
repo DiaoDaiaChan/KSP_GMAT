@@ -1,0 +1,8 @@
+Create Spacecraft Sat;
+Sat.DateFormat = UTCGregorian; Sat.Epoch = '08 Mar 1960 20:16:20.396'; Sat.CoordinateSystem = EarthMJ2000Eq;
+Sat.DisplayStateType = Cartesian; Sat.X = -3271.22; Sat.Y = 4789.28; Sat.Z = 3088.00;
+Sat.VX = -6.60; Sat.VY = -4.07; Sat.VZ = -0.66; Sat.DryMass = 1500;
+Create Variable dv;
+BeginMissionSequence;
+dv = log(2.0);
+Write dv;

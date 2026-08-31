@@ -1,0 +1,278 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using UnityEngine;
+
+namespace KSPGMAT.Model {
+    /// <summary>
+    /// 标准化储罐数据模型 (Single Source of Truth)
+    /// </summary>
+    [Serializable]
+    public class GMATTankModel {
+        public string Id { get; set; } = "Tank0";
+        public int StageNumber { get; set; } = 0;
+        public double FuelMassKg { get; set; } = 0.0;
+        public double DryMassKg { get; set; } = 0.0;
+        public double VolumeM3 { get; set; } = 1.0;
+        public double FuelDensityKgM3 { get; set; } = 1000.0;
+        public string PressureModel { get; set; } = "PressureRegulated";
+        public bool AllowNegativeFuelMass { get; set; } = true;
+        public string PropellantType { get; set; } = "LiquidFuel";
+    }
+
+    /// <summary>
+    /// 标准化推力器与发动机数据模型 (Single Source of Truth)
+    /// </summary>
+    [Serializable]
+    public class GMATThrusterModel {
+        public string Id { get; set; } = "MainEngine";
+        public string RawTitle { get; set; } = "Main Engine";
+        public int StageNumber { get; set; } = 0;
+        public double ThrustKN { get; set; } = 100.0;
+        public double IspVac { get; set; } = 300.0;
+        public string BoundTankId { get; set; } = "Tank0"; // 唯一标准映射 (Tank0, Tank1...)
+        public double ThrustDirection1 { get; set; } = 1.0; // V / 切向
+        public double ThrustDirection2 { get; set; } = 0.0; // N / 副法向
+        public double ThrustDirection3 { get; set; } = 0.0; // B / 径向
+        public bool DecrementMass { get; set; } = true;
+        public bool IsActiveOrIgnited { get; set; } = false;
+        public string PropellantDesc { get; set; } = "LiquidFuel+Oxidizer";
+        public double FuelDensityKgM3 { get; set; } = 1000.0;
+    }
+
+    /// <summary>
+    /// 标准化航天器状态数据模型 (Single Source of Truth)
+    /// </summary>
+    [Serializable]
+    public class GMATSpacecraftModel {
+        public string Name { get; set; } = "Sat";
+        public string EpochUtc { get; set; } = "01 Jan 1951 12:00:00.000";
+        public double UniversalTime { get; set; } = 0.0;
+        public string CoordinateSystem { get; set; } = "EarthMJ2000Eq";
+        public string DisplayStateType { get; set; } = "Cartesian";
+        public double DryMassKg { get; set; } = 1000.0;
+        public double TotalMassKg { get; set; } = 5000.0;
+        public double DragArea { get; set; } = 15.0;
+        public double Cd { get; set; } = 2.2;
+        public double Cr { get; set; } = 1.8;
+        public double SRPArea { get; set; } = 15.0;
+        public Vector3d PosKm { get; set; } = Vector3d.zero;
+        public Vector3d VelKms { get; set; } = Vector3d.zero;
+        public string CentralBody { get; set; } = "Earth";
+    }
+
+    /// <summary>
+    /// 标准化多级火箭推进与质量预算快照
+    /// </summary>
+    public class GMATStageBudget {
+        public int StageNumber { get; set; } = 0;
+        public string EngineTitle { get; set; } = "";
+        public double DeltaV { get; set; } = 0.0;
+        public double WetMassTonnes { get; set; } = 0.0;
+        public double DryMassTonnes { get; set; } = 0.0;
+        public double FuelMassTonnes { get; set; } = 0.0;
+        public double ThrustKN { get; set; } = 0.0;
+        public double IspVac { get; set; } = 0.0;
+        public string PropellantDesc { get; set; } = "";
+        public double FuelDensityKgM3 { get; set; } = 1000.0;
+    }
+
+    /// <summary>
+    /// 全局底层状态管理核心引擎 (Single Source of Truth)
+    /// </summary>
+    public class GMATStateManager {
+        private static GMATStateManager _instance;
+        public static GMATStateManager Current => _instance ?? (_instance = new GMATStateManager());
+
+        public GMATSpacecraftModel Spacecraft { get; private set; } = new GMATSpacecraftModel();
+        public List<GMATTankModel> Tanks { get; private set; } = new List<GMATTankModel>();
+        public List<GMATThrusterModel> Thrusters { get; private set; } = new List<GMATThrusterModel>();
+        public List<StageData> Stages { get; private set; } = new List<StageData>();
+        public int SelectedEngineIndex { get; set; } = 0;
+        public List<int> SelectedStageIndices { get; set; } = new List<int>();
+
+        private GMATStateManager() {}
+
+        /// <summary>
+        /// 从 KSP 当前飞船同步全船硬件、动力学与分级数据 (单一同步入口)
+        /// </summary>
+        public void SyncFromVessel(Vessel v) {
+            if (v == null) return;
+
+            // 1. 同步航天器动力学状态
+            Spacecraft.Name = GMATParameterRegistry.SanitizeGmatIdentifier(v.vesselName, "Sat");
+            string cbName = v.mainBody != null ? v.mainBody.bodyName : "Earth";
+            if (cbName == "Kerbin") cbName = "Earth";
+            else if (cbName == "Mun") cbName = "Luna";
+            else if (cbName == "Minmus") cbName = "Minmus";
+            Spacecraft.CentralBody = cbName;
+            Spacecraft.CoordinateSystem = $"{cbName}MJ2000Eq";
+            Spacecraft.UniversalTime = Planetarium.GetUniversalTime();
+
+            // 精确计算 1951 年起算历元 (消除 1960 年截断)
+            double jdVal = 2433647.5 + (Spacecraft.UniversalTime / 86400.0);
+            Spacecraft.EpochUtc = GMATClient.JdToUtcGregorian(jdVal);
+
+            // 获取 ICRF 6 状态矢量
+            Vector3d pKm = Vector3d.zero;
+            Vector3d vKms = Vector3d.zero;
+            PrincipiaInterop.GetVesselStateICRF(v, out pKm, out vKms);
+            Spacecraft.PosKm = pKm;
+            Spacecraft.VelKms = vKms;
+            Spacecraft.TotalMassKg = v.GetTotalMass() * 1000.0;
+
+            // 2. 扫描整船储罐并规范化命名 (Tank0, Tank1, ...)
+            Tanks.Clear();
+            var rawTanks = ROEngineInterop.ScanVesselTanks(v);
+            if (rawTanks != null && rawTanks.Count > 0) {
+                for (int i = 0; i < rawTanks.Count; i++) {
+                    var rt = rawTanks[i];
+                    Tanks.Add(new GMATTankModel {
+                        Id = $"Tank{i}",
+                        StageNumber = rt.stageNumber,
+                        FuelMassKg = rt.fuelMassKg,
+                        DryMassKg = rt.dryMassKg,
+                        VolumeM3 = rt.maxVolumeM3 > 0.001 ? rt.maxVolumeM3 : 1.0,
+                        FuelDensityKgM3 = 1000.0,
+                        PropellantType = !string.IsNullOrEmpty(rt.resourceSummary) ? rt.resourceSummary : "ChemicalFuel"
+                    });
+                }
+            } else {
+                // 回退默认储罐
+                Tanks.Add(new GMATTankModel {
+                    Id = "Tank0",
+                    StageNumber = 0,
+                    FuelMassKg = 1000.0,
+                    DryMassKg = 200.0,
+                    VolumeM3 = 1.0
+                });
+            }
+
+            // 计算航天器总干重
+            double totalFuelKg = 0;
+            foreach (var tk in Tanks) totalFuelKg += tk.FuelMassKg;
+            Spacecraft.DryMassKg = Math.Max(50.0, Spacecraft.TotalMassKg - totalFuelKg);
+
+            // 3. 扫描整船发动机并智能匹配供油储罐
+            Thrusters.Clear();
+            var rawEngines = ROEngineInterop.ScanVesselEngines(v);
+            var activeEngines = ROEngineInterop.GetActiveOrIgnitedEngines(v);
+            HashSet<string> activeTitles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (activeEngines != null) {
+                foreach (var ae in activeEngines) activeTitles.Add(ae.title);
+            }
+
+            int bestEngineIndex = 0;
+            if (rawEngines != null && rawEngines.Count > 0) {
+                for (int e = 0; e < rawEngines.Count; e++) {
+                    var re = rawEngines[e];
+                    string engId = GMATParameterRegistry.SanitizeGmatIdentifier(re.title, "Engine");
+
+                    // 智能供油匹配：匹配相同分级或容量最大的对应储罐
+                    string boundTkId = "Tank0";
+                    for (int t = 0; t < Tanks.Count; t++) {
+                        if (Tanks[t].StageNumber == re.stageNumber) {
+                            boundTkId = Tanks[t].Id;
+                            break;
+                        }
+                    }
+                    if (boundTkId == "Tank0" && Tanks.Count > 1) {
+                        // 若同分级未明确匹配，则将高推力主发匹配到较大容量储罐
+                        if (re.thrustKN > 10.0) {
+                            int maxTkIdx = 0;
+                            double maxFuel = 0;
+                            for (int t = 0; t < Tanks.Count; t++) {
+                                if (Tanks[t].FuelMassKg > maxFuel) {
+                                    maxFuel = Tanks[t].FuelMassKg;
+                                    maxTkIdx = t;
+                                }
+                            }
+                            boundTkId = Tanks[maxTkIdx].Id;
+                        }
+                    }
+
+                    bool isAct = activeTitles.Contains(re.title);
+                    if (isAct && bestEngineIndex == 0 && e > 0) {
+                        bestEngineIndex = e;
+                    }
+
+                    Thrusters.Add(new GMATThrusterModel {
+                        Id = engId,
+                        RawTitle = re.title,
+                        StageNumber = re.stageNumber,
+                        ThrustKN = re.thrustKN,
+                        IspVac = re.ispVac,
+                        BoundTankId = boundTkId,
+                        IsActiveOrIgnited = isAct,
+                        PropellantDesc = re.propellantDesc,
+                        FuelDensityKgM3 = re.fuelDensityKgM3
+                    });
+                }
+            } else {
+                Thrusters.Add(new GMATThrusterModel {
+                    Id = "MainEngine",
+                    RawTitle = "Main Engine",
+                    StageNumber = 0,
+                    ThrustKN = 100.0,
+                    IspVac = 300.0,
+                    BoundTankId = "Tank0"
+                });
+            }
+
+            // 4. 优先选择激活/主发动机
+            if (SelectedEngineIndex < 0 || SelectedEngineIndex >= Thrusters.Count) {
+                SelectedEngineIndex = bestEngineIndex;
+            }
+
+            // 5. 扫描分级
+            Stages = MechJebInterop.GetStages(v);
+        }
+
+        /// <summary>
+        /// 获取当前激活/选定发动机对应的多级火箭推进与质量预算快照 (用于右侧看板与各卡片)
+        /// </summary>
+        public GMATStageBudget GetActiveStageBudget() {
+            var curEng = GetSelectedThruster();
+            var budget = new GMATStageBudget();
+            if (curEng == null) return budget;
+
+            budget.StageNumber = curEng.StageNumber;
+            budget.EngineTitle = curEng.RawTitle;
+            budget.ThrustKN = curEng.ThrustKN;
+            budget.IspVac = curEng.IspVac;
+            budget.PropellantDesc = curEng.PropellantDesc;
+            budget.FuelDensityKgM3 = curEng.FuelDensityKgM3;
+
+            // 找到绑定的储罐获取精确燃料量
+            var tk = GetTank(curEng.BoundTankId);
+            budget.FuelMassTonnes = (tk != null) ? tk.FuelMassKg / 1000.0 : 0.0;
+            budget.WetMassTonnes = Spacecraft.TotalMassKg / 1000.0;
+            budget.DryMassTonnes = Math.Max(0.01, budget.WetMassTonnes - budget.FuelMassTonnes);
+
+            double isp = curEng.IspVac > 1.0 ? curEng.IspVac : 300.0;
+            if (budget.DryMassTonnes > 0 && budget.WetMassTonnes > budget.DryMassTonnes) {
+                budget.DeltaV = 9.80665 * isp * Math.Log(budget.WetMassTonnes / budget.DryMassTonnes);
+            }
+
+            return budget;
+        }
+
+        public GMATThrusterModel GetSelectedThruster() {
+            if (Thrusters.Count == 0) return null;
+            if (SelectedEngineIndex >= 0 && SelectedEngineIndex < Thrusters.Count) {
+                return Thrusters[SelectedEngineIndex];
+            }
+            return Thrusters[0];
+        }
+
+        public GMATTankModel GetTank(string tankId) {
+            if (string.IsNullOrEmpty(tankId)) return Tanks.Count > 0 ? Tanks[0] : null;
+            return Tanks.Find(t => t.Id.Equals(tankId, StringComparison.OrdinalIgnoreCase)) ?? (Tanks.Count > 0 ? Tanks[0] : null);
+        }
+
+        public GMATThrusterModel GetThruster(string thrusterId) {
+            if (string.IsNullOrEmpty(thrusterId)) return Thrusters.Count > 0 ? Thrusters[0] : null;
+            return Thrusters.Find(th => th.Id.Equals(thrusterId, StringComparison.OrdinalIgnoreCase)) ?? (Thrusters.Count > 0 ? Thrusters[0] : null);
+        }
+    }
+}

@@ -721,13 +721,13 @@ namespace KSPGMAT {
             { "element_1", "切向速度增量 ΔV_V (km/s)" },
             { "element_2", "法向变轨增量 ΔV_N (km/s)" },
             { "element_3", "副法向/径向增量 ΔV_B (km/s)" },
-            // Thruster Directional Cosines / Vector Steering
-            { "thrustdirection1", "发动机切向推力偏转分量 (0~1)" },
-            { "thrustdirection2", "发动机法向推力偏转分量 (0~1)" },
-            { "thrustdirection3", "发动机径向推力偏转分量 (0~1)" },
-            { "thrust_direction1", "发动机切向推力偏转分量 (0~1)" },
-            { "thrust_direction2", "发动机法向推力偏转分量 (0~1)" },
-            { "thrust_direction3", "发动机径向推力偏转分量 (0~1)" },
+            // Thruster Directional Cosines / Vector Steering (Aligned with Principia & VNB System)
+            { "thrustdirection1", "切向推力分量 (V: 顺行/逆行)" },
+            { "thrustdirection2", "副法向推力分量 (N: 变倾角/面外)" },
+            { "thrustdirection3", "法向/径向推力分量 (B: 径向高度微调)" },
+            { "thrust_direction1", "切向推力分量 (V: 顺行/逆行)" },
+            { "thrust_direction2", "副法向推力分量 (N: 变倾角/面外)" },
+            { "thrust_direction3", "法向/径向推力分量 (B: 径向高度微调)" },
             { "burntime", "主发动机点火持续时长 (s)" },
             { "duration", "机动点火时长 (s)" },
 
@@ -1011,42 +1011,8 @@ namespace KSPGMAT {
         }
 
         public static List<string> GetAllSpacecraft(Vessel vessel = null) {
-            List<string> list = new List<string>();
-            HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            // 1. Active vessel
-            string curName = "Sat_3";
-            if (vessel != null && !string.IsNullOrEmpty(vessel.vesselName)) {
-                curName = SanitizeGmatIdentifier(vessel.vesselName, "Sat");
-            }
-            list.Add(curName);
-            seen.Add(curName);
-
-            // 2. Real-time User Spacecraft
-            foreach (var sc in RealtimeUserSpacecraft) {
-                if (!seen.Contains(sc)) { list.Add(sc); seen.Add(sc); }
-            }
-
-            // 3. Nearby vessels in FlightGlobals
-            try {
-                if (FlightGlobals.Vessels != null) {
-                    for (int i = 0; i < FlightGlobals.Vessels.Count && list.Count < 6; i++) {
-                        var v = FlightGlobals.Vessels[i];
-                        if (v != null && v != vessel && !string.IsNullOrEmpty(v.vesselName)) {
-                            string sName = SanitizeGmatIdentifier(v.vesselName, "Sat");
-                            if (!seen.Contains(sName)) { list.Add(sName); seen.Add(sName); }
-                        }
-                    }
-                }
-            } catch {}
-
-            // 4. Cached default spacecraft from GMAT
-            for (int i = 0; i < AvailableDefaultSpacecraft.Count; i++) {
-                string sc = AvailableDefaultSpacecraft[i];
-                if (!seen.Contains(sc)) { list.Add(sc); seen.Add(sc); }
-            }
-
-            return list;
+            // Mod-wide uniform spacecraft identifier
+            return new List<string> { "Sat" };
         }
 
         public static List<string> GetAllCoordinateSystems() {
@@ -1141,17 +1107,24 @@ namespace KSPGMAT {
         public static string SanitizeGmatIdentifier(string raw, string prefix = "Sat") {
             if (string.IsNullOrEmpty(raw)) return prefix;
             System.Text.StringBuilder sb = new System.Text.StringBuilder();
+            bool capitalizeNext = false;
             for (int i = 0; i < raw.Length; i++) {
                 char c = raw[i];
-                if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
-                    sb.Append(c);
-                } else if (c == ' ' || c == '-' || c == '.') {
-                    sb.Append('_');
+                if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
+                    if (capitalizeNext && c >= 'a' && c <= 'z') {
+                        sb.Append(char.ToUpperInvariant(c));
+                    } else {
+                        sb.Append(c);
+                    }
+                    capitalizeNext = false;
+                } else {
+                    capitalizeNext = true;
                 }
             }
-            string res = sb.ToString().Trim('_');
-            if (string.IsNullOrEmpty(res) || char.IsDigit(res[0])) {
-                res = prefix + "_" + res;
+            string res = sb.ToString();
+            if (string.IsNullOrEmpty(res)) return prefix;
+            if (char.IsDigit(res[0])) {
+                res = prefix + res;
             }
             return res;
         }
@@ -1343,11 +1316,11 @@ namespace KSPGMAT {
                         string thName = thNames[th];
                         string thLower = thName.ToLowerInvariant();
                         if (string.IsNullOrEmpty(rhsSingle) || thLower.StartsWith(rhsSingle) || thLower.Contains(rhsSingle)) {
-                            // Direct full steering vector paths
-                            items.Add(new IntelliSenseItem($"{cr}.{thName}.ThrustDirection2", $"{thName}.ThrustDirection2", "[-1~1]", $"{thName}: 发动机法向推力偏转分量 (消除倾角打靶变量)", IntelliSenseKind.Parameter, -0.50, 0.05));
-                            items.Add(new IntelliSenseItem($"{cr}.{thName}.ThrustDirection1", $"{thName}.ThrustDirection1", "[0~1]", $"{thName}: 发动机切向推力偏转分量 (顺行加速)", IntelliSenseKind.Parameter, 0.65, 0.05));
-                            items.Add(new IntelliSenseItem($"{cr}.{thName}.ThrustDirection3", $"{thName}.ThrustDirection3", "[-1~1]", $"{thName}: 发动机径向推力偏转分量 (高度微调)", IntelliSenseKind.Parameter, 0.0, 0.05));
-                            items.Add(new IntelliSenseItem($"{cr}.{thName}.", $"{thName}...", "[Thruster]", $"{thName} 硬件推力器对象", IntelliSenseKind.Spacecraft));
+                            // Direct full steering vector paths (Standard VNB: 1=Tangential V, 2=Normal N, 3=Binormal B)
+                            items.Add(new IntelliSenseItem($"{cr}.{thName}.ThrustDirection1", $"{thName}.ThrustDirection1 [切向 V]", "[切向 +V/-V]", $"{thName}: 切向推力矢量分量 (V: 顺行/逆行主推进，范围 [-1 ~ 1])", IntelliSenseKind.Parameter, 1.0, 0.05));
+                            items.Add(new IntelliSenseItem($"{cr}.{thName}.ThrustDirection2", $"{thName}.ThrustDirection2 [副法向 N]", "[副法向/变倾角 +N/-N]", $"{thName}: 副法向推力偏转分量 (N: 消除/改变轨道倾角打靶变量，范围 [-1 ~ 1])", IntelliSenseKind.Parameter, 0.0, 0.05));
+                            items.Add(new IntelliSenseItem($"{cr}.{thName}.ThrustDirection3", $"{thName}.ThrustDirection3 [法向/径向 B]", "[法向/径向 +B/-B]", $"{thName}: 法向/径向推力偏转分量 (B: 径向高度与离心率微调，范围 [-1 ~ 1])", IntelliSenseKind.Parameter, 0.0, 0.05));
+                            items.Add(new IntelliSenseItem($"{cr}.{thName}.", $"{thName}...", "[推力器硬件]", $"{thName} 硬件推力器对象", IntelliSenseKind.Spacecraft));
                         }
                     }
 
@@ -1581,6 +1554,111 @@ namespace KSPGMAT {
             }
             return false;
         }
+        // =========================================================================
+        // Native GMAT 27 Commands Registry & Categorization
+        // =========================================================================
+        private static readonly List<GMATCommandDef> registeredCommands = new List<GMATCommandDef>();
 
+        public static void InitCommandRegistry() {
+            if (registeredCommands.Count > 0) return;
+
+            // 1. Burns & Thrust
+            registeredCommands.Add(new GMATCommandDef("Maneuver", "cat_burns", "💥", "脉冲机动 (Maneuver)", "Maneuver", "执行瞬间脉冲速度增量 ΔV 机动", "Executes an impulsive velocity increment maneuver"));
+            registeredCommands.Add(new GMATCommandDef("BeginFiniteBurn", "cat_burns", "🔥", "开启有限点火 (BeginFiniteBurn)", "Begin Finite Burn", "开启化学/电推进有限时长发动机推力", "Starts a finite burn engine with mass depletion"));
+            registeredCommands.Add(new GMATCommandDef("EndFiniteBurn", "cat_burns", "🛑", "关闭有限点火 (EndFiniteBurn)", "End Finite Burn", "关闭有限时长发动机推力", "Stops an active finite burn engine"));
+            registeredCommands.Add(new GMATCommandDef("BeginFileThrust", "cat_burns", "📂", "开启文件推力 (BeginFileThrust)", "Begin File Thrust", "基于推力历史数据文件执行连续推力插值", "Applies thrust interpolated from an external thrust history file"));
+            registeredCommands.Add(new GMATCommandDef("EndFileThrust", "cat_burns", "🛑", "结束文件推力 (EndFileThrust)", "End File Thrust", "结束文件推力历史插值", "Ends external file thrust interpolation"));
+
+            // 2. Propagation
+            registeredCommands.Add(new GMATCommandDef("Propagate", "cat_prop", "🌐", "轨道积分 (Propagate)", "Propagate", "数值外推轨道状态至指定动力学终止条件", "Numerically propagates orbit state to dynamic stop conditions"));
+            registeredCommands.Add(new GMATCommandDef("Stop", "cat_prop", "⛔", "终止仿真 (Stop)", "Stop", "提前强制中止任务序列执行", "Stops mission sequence execution immediately"));
+
+            // 3. Targeting & Optimization
+            registeredCommands.Add(new GMATCommandDef("Target", "cat_target", "🎯", "Target 求解组 (Target)", "Target Group", "开启微分修正打靶求解器循环 (Differential Corrector)", "Opens a Differential Corrector targeter loop"));
+            registeredCommands.Add(new GMATCommandDef("Vary", "cat_target", "✏️", "待解变量 (Vary)", "Vary", "声明由求解器/优化器调整的控制变量", "Defines an independent variable for solvers/optimizers"));
+            registeredCommands.Add(new GMATCommandDef("Achieve", "cat_target", "🎯", "达成目标 (Achieve)", "Achieve Goal", "设置打靶求解的目标动力学等式约束", "Defines an equality goal constraint for Differential Corrector"));
+            registeredCommands.Add(new GMATCommandDef("EndTarget", "cat_target", "↵", "结束打靶 (EndTarget)", "End Target", "闭合微分修正器打靶循环", "Closes Differential Corrector loop"));
+            registeredCommands.Add(new GMATCommandDef("Optimize", "cat_optimize", "⚡", "Optimize 优化器 (Optimize)", "Optimize Group", "开启非线性规划优化器循环 (SQP/VF13ad/SNOPT/Fmincon)", "Opens a nonlinear optimization loop (SQP, VF13ad, SNOPT)"));
+            registeredCommands.Add(new GMATCommandDef("Minimize", "cat_optimize", "📉", "目标函数最小化 (Minimize)", "Minimize Cost", "指定优化器寻求最小化的代价函数 (如燃料消耗)", "Defines cost function to minimize (e.g. Fuel Mass Burned)"));
+            registeredCommands.Add(new GMATCommandDef("NonlinearConstraint", "cat_optimize", "⚖️", "非线性约束 (NonlinearConstraint)", "Nonlinear Constraint", "设置优化器的等式/不等式动力学约束条件", "Defines equality or inequality constraints for optimizer"));
+            registeredCommands.Add(new GMATCommandDef("EndOptimize", "cat_optimize", "↵", "结束优化 (EndOptimize)", "End Optimize", "闭合非线性规划优化循环", "Closes nonlinear optimization loop"));
+
+            // 4. Control Logic
+            registeredCommands.Add(new GMATCommandDef("If", "cat_control", "🔀", "If 条件分支 (If)", "If Branch", "条件分支判断 (根据动力学条件选择执行路径)", "Executes commands conditionally based on logical expression"));
+            registeredCommands.Add(new GMATCommandDef("Else", "cat_control", "🔀", "Else 分支 (Else)", "Else Branch", "条件分支可选路径", "Alternate branch for If statement"));
+            registeredCommands.Add(new GMATCommandDef("EndIf", "cat_control", "↵", "EndIf (EndIf)", "End If", "闭合条件分支结构", "Closes If/Else block"));
+            registeredCommands.Add(new GMATCommandDef("While", "cat_control", "🔁", "While 循环 (While)", "While Loop", "条件循环 (如自主周期性轨道维持)", "Repeats commands while condition remains true"));
+            registeredCommands.Add(new GMATCommandDef("EndWhile", "cat_control", "↵", "EndWhile (EndWhile)", "End While", "闭合 While 循环结构", "Closes While loop"));
+            registeredCommands.Add(new GMATCommandDef("For", "cat_control", "🔢", "For 计数循环 (For)", "For Loop", "定次计数循环 (如多圈变轨与离散网格点)", "Loops over a specified index range"));
+            registeredCommands.Add(new GMATCommandDef("EndFor", "cat_control", "↵", "EndFor (EndFor)", "End For", "闭合 For 循环结构", "Closes For loop"));
+
+            // 5. Math & Data
+            registeredCommands.Add(new GMATCommandDef("Equation", "cat_math", "📐", "代数赋值 (Equation)", "Equation", "单行代数表达式计算与变量赋值", "Single-line algebraic equation calculation & assignment"));
+            registeredCommands.Add(new GMATCommandDef("ScriptEvent", "cat_math", "📜", "脚本事件块 (ScriptEvent)", "Script Event", "多行原生 GMAT 脚本计算与坐标重对齐块", "Multi-line native GMAT script calculation block"));
+            registeredCommands.Add(new GMATCommandDef("Set", "cat_math", "⚙️", "Set 属性设置 (Set)", "Set Property", "显式重置对象内部属性或历元", "Explicitly sets property or state on an object"));
+            registeredCommands.Add(new GMATCommandDef("Global", "cat_math", "🌍", "Global 全局声明 (Global)", "Global", "声明跨函数/跨作用域共享的全局对象", "Declares globally shared objects across scopes/functions"));
+
+            // 6. Functions
+            registeredCommands.Add(new GMATCommandDef("CallGmatFunction", "cat_func", "📦", "调用用户函数 (CallGmatFunction)", "Call GMAT Function", "调用自定义模块化 GMAT 算法函数", "Calls a user-defined custom GMAT function script"));
+            registeredCommands.Add(new GMATCommandDef("CallBuiltinGmatFunction", "cat_func", "⚙️", "调用内置函数 (CallBuiltinGmatFunction)", "Call Builtin Function", "调用 GMAT 内置 C++ 高性能坐标/状态转换算法", "Calls native GMAT built-in C++ conversion function"));
+
+            // 7. Subscribers & Drawing
+            registeredCommands.Add(new GMATCommandDef("Report", "cat_report", "🧾", "状态报告 (Report)", "Report", "向 ReportFile 追加输出关键事件点动力学遥测", "Appends telemetry parameters to a designated ReportFile"));
+            registeredCommands.Add(new GMATCommandDef("Write", "cat_report", "📝", "消息写入 (Write)", "Write", "向消息窗口或日志写入格式化调试文本", "Writes formatted telemetry string to message window or log"));
+            registeredCommands.Add(new GMATCommandDef("Toggle", "cat_report", "👁️", "视窗开关 (Toggle)", "Toggle View", "动态开启/关闭指定 3D 视窗或报告数据流", "Dynamically toggles subscriber views On/Off"));
+            registeredCommands.Add(new GMATCommandDef("ClearPlot", "cat_report", "🧹", "清空绘图 (ClearPlot)", "Clear Plot", "清空指定绘图窗口的历史轨迹连线", "Clears plotted history from specified view"));
+            registeredCommands.Add(new GMATCommandDef("PenUp", "cat_report", "✏️", "抬起画笔 (PenUp)", "Pen Up", "暂停绘制轨迹 (隐藏无用滑行段)", "Pauses trajectory line drawing on specified view"));
+            registeredCommands.Add(new GMATCommandDef("PenDown", "cat_report", "🖊️", "落下画笔 (PenDown)", "Pen Down", "恢复绘制轨迹 (高亮显示关键机动段)", "Resumes trajectory line drawing on specified view"));
+            registeredCommands.Add(new GMATCommandDef("UpdateDynamicData", "cat_report", "🔄", "刷新动态数据 (UpdateDynamicData)", "Update Dynamic Data", "强制刷新绘图与动态数据缓冲区", "Forces update of dynamic plot subscribers"));
+
+            // 8. Events & Debug
+            registeredCommands.Add(new GMATCommandDef("FindEvents", "cat_events", "🔭", "空间事件查找 (FindEvents)", "Find Events", "触发高精度星蚀 EclipseLocator 或地面站 ContactLocator 查找", "Calculates eclipse shadows and ground station contact events"));
+            registeredCommands.Add(new GMATCommandDef("Breakpoint", "cat_events", "🛑", "调试断点 (Breakpoint)", "Breakpoint", "在任务序列中设置断点供交互式单步调试", "Sets an interactive breakpoint for mission debugging"));
+            registeredCommands.Add(new GMATCommandDef("CommandEcho", "cat_events", "📢", "命令回显 (CommandEcho)", "Command Echo", "控制命令行与日志逐行回显开关", "Controls command echo output to log and console"));
+            registeredCommands.Add(new GMATCommandDef("MarkPoint", "cat_events", "📍", "轨迹标记点 (MarkPoint)", "Mark Point", "在 3D 轨迹中标注特征离散点 (如星箭分离点)", "Marks a point in 3D orbit plots for significant events"));
+        }
+
+        public static List<GMATCommandDef> GetAllCommands() {
+            InitCommandRegistry();
+            return registeredCommands;
+        }
+
+        public static List<GMATCommandDef> GetCommandsByCategory(string categoryKey) {
+            InitCommandRegistry();
+            List<GMATCommandDef> res = new List<GMATCommandDef>();
+            foreach (var cmd in registeredCommands) {
+                if (cmd.CategoryKey == categoryKey) res.Add(cmd);
+            }
+            return res;
+        }
+    }
+
+    [Serializable]
+    public struct GMATCommandDef {
+        public string Type;
+        public string CategoryKey;
+        public string Icon;
+        public string DefaultLabelZh;
+        public string DefaultLabelEn;
+        public string TooltipZh;
+        public string TooltipEn;
+
+        public GMATCommandDef(string type, string cat, string icon, string lblZh, string lblEn, string tipZh, string tipEn) {
+            Type = type;
+            CategoryKey = cat;
+            Icon = icon;
+            DefaultLabelZh = lblZh;
+            DefaultLabelEn = lblEn;
+            TooltipZh = tipZh;
+            TooltipEn = tipEn;
+        }
+
+        public string GetLocalizedLabel() {
+            return I18n.Current == I18n.Lang.EN ? DefaultLabelEn : DefaultLabelZh;
+        }
+
+        public string GetLocalizedTooltip() {
+            return I18n.Current == I18n.Lang.EN ? TooltipEn : TooltipZh;
+        }
     }
 }

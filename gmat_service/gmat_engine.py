@@ -52,12 +52,26 @@ def get_coord_system_for_body(body_name):
         return f"{body}MJ2000Eq"
 
 def sanitize_gmat_identifier(raw_name, prefix="Sat"):
-    """Sanitizes any vessel/engine name into a strict, valid GMAT ASCII identifier [A-Za-z][A-Za-z0-9_]*."""
-    import re
-    clean = re.sub(r'[^a-zA-Z0-9_]', '_', str(raw_name or ""))
-    clean = re.sub(r'_+', '_', clean).strip('_')
-    if not clean or not clean[0].isalpha():
-        return f"{prefix}_{clean or '1'}"
+    """Sanitizes any vessel/engine/burn name into clean PascalCase alphanumeric ASCII [A-Za-z][A-Za-z0-9]*."""
+    if not raw_name:
+        return prefix
+    raw_str = str(raw_name)
+    sb = []
+    capitalize_next = False
+    for c in raw_str:
+        if c.isalnum():
+            if capitalize_next and c.islower():
+                sb.append(c.upper())
+            else:
+                sb.append(c)
+            capitalize_next = False
+        else:
+            capitalize_next = True
+    clean = "".join(sb)
+    if not clean:
+        return prefix
+    if not clean[0].isalpha():
+        return f"{prefix}{clean}"
     return clean
 
 def sanitize_gmat_label(raw_label, fallback="Step"):
@@ -251,14 +265,18 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
 
     dry_mass = required_number(craft_data, "dry_mass")
     fuel_mass = float(craft_data.get("fuel_mass", 0.0))
-    fuel_density = float(craft_data.get("fuel_density", 312.5) or 312.5)
-    if fuel_density <= 0.0: fuel_density = 312.5
-    tank_pressure = float(craft_data.get("tank_pressure", 1500.0) or 1500.0)
-    calc_v = (fuel_mass / fuel_density) if (fuel_mass > 0 and fuel_density > 0) else 1.0
-    tank_volume = float(craft_data.get("tank_volume", 0.0) or (calc_v * 1.15 + 0.5))
-    if tank_volume <= calc_v: tank_volume = calc_v * 1.15 + 0.5
-    thrust = float(craft_data.get("thrust", 0.0) or craft_data.get("thrust_n", 0.0) or 108100.0)
-    isp = float(craft_data.get("isp", 0.0) or craft_data.get("isp_s", 0.0) or 465.0)
+    fuel_density = float(craft_data.get("fuel_density", 0.0))
+    tank_pressure = float(craft_data.get("tank_pressure", 0.0))
+    tank_volume = float(craft_data.get("tank_volume", 0.0))
+    thrust = float(craft_data.get("thrust", 0.0))
+    isp = float(craft_data.get("isp", 0.0))
+    # KSP telemetry can round tank volume more aggressively than mass and
+    # density.  Keep the live values authoritative while ensuring GMAT does
+    # not reject a mathematically equivalent rounded input.
+    if fuel_mass > 0.0 and fuel_density > 0.0:
+        required_volume = fuel_mass / fuel_density
+        if tank_volume < required_volume:
+            tank_volume = math.nextafter(required_volume, math.inf)
     raw_engine_name = craft_data.get("engine_name")
     ascii_eng = "".join(c for c in raw_engine_name if c.isascii() and (c.isalnum() or c == '_')) if raw_engine_name else ""
     if not ascii_eng:
@@ -318,10 +336,9 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
                 lines.append(f"{tname}.PressureModel = 'PressureRegulated';")
     else:
         # Fallback single tank
-        has_hardware = (fuel_mass > 0.0 or thrust > 0.0)
+        has_hardware = bool(engine_name) and fuel_density > 0.0 and tank_volume > 0.0 and thrust > 0.0 and isp > 0.0
         if has_hardware:
-            if "MainTank" not in created_tank_names:
-                created_tank_names.append("MainTank")
+            created_tank_names.append("MainTank")
             lines.append("Create ChemicalTank MainTank;")
             lines.append("MainTank.AllowNegativeFuelMass = true;")
             lines.append(f"MainTank.FuelMass = {fuel_mass:.2f};")
@@ -335,23 +352,26 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
             lines.append("MainTank.PressureModel = 'PressureRegulated';")
 
     # 2. Chemical Thrusters
-    # 1. Base thrusters from thrusters_data
     if thrusters_data:
         for th in thrusters_data:
             thname = sanitize_gmat_identifier(th.get("name"), "MainEngine")
-            th_thrust = float(th.get("thrust") or thrust or 108100.0)
-            th_isp = float(th.get("isp") or isp or 465.0)
+            th_thrust = float(th.get("thrust") or thrust or 3000.0)
+            th_isp = float(th.get("isp") or isp or 316.0)
             th_bound_tank = th.get("bound_tank")
             if th_bound_tank and th_bound_tank not in created_tank_names:
+                # Try matching by sanitized id or substring
                 san_th_tank = sanitize_gmat_identifier(th_bound_tank, "Tank")
                 matched = None
                 for ctk in created_tank_names:
                     if san_th_tank in ctk or ctk in san_th_tank:
                         matched = ctk
                         break
-                th_bound_tank = matched
+                if matched:
+                    th_bound_tank = matched
+                else:
+                    th_bound_tank = None
 
-            if not th_bound_tank or th_bound_tank not in created_tank_names:
+            if not th_bound_tank:
                 # Auto-select the tank with the largest fuel mass
                 best_tk = created_tank_names[0] if created_tank_names else "MainTank"
                 best_fuel = -1.0
@@ -361,107 +381,52 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
                         best_fuel = fm
                         best_tk = tk_nm
                 th_bound_tank = best_tk
-
+            
             if thname not in created_thruster_names:
                 created_thruster_names.append(thname)
                 lines.append(f"Create ChemicalThruster {thname};")
                 lines.append(f"{thname}.CoordinateSystem = Local;")
                 lines.append(f"{thname}.Origin = {central_body};")
                 lines.append(f"{thname}.Axes = VNB;")
-                lines.append(f"{thname}.ThrustDirection1 = 1.0;")
-                lines.append(f"{thname}.ThrustDirection2 = 0.0;")
-                lines.append(f"{thname}.ThrustDirection3 = 0.0;")
+                lines.append(f"{thname}.ThrustDirection1 = 1;")
+                lines.append(f"{thname}.ThrustDirection2 = 0;")
+                lines.append(f"{thname}.ThrustDirection3 = 0;")
                 lines.append(f"{thname}.DutyCycle = 1.0;")
                 lines.append(f"{thname}.ThrustScaleFactor = 1.0;")
                 lines.append(f"{thname}.DecrementMass = true;")
                 lines.append(f"{thname}.Tank = {{{th_bound_tank}}};")
                 lines.append(f"{thname}.GravitationalAccel = 9.81;")
-                lines.append(f"{thname}.C1 = {th_thrust:.2f};")
+                # Thrust in craft_data["thrusters"] is in Newtons (N)
+                th_c1_newtons = float(th_thrust)
+                lines.append(f"{thname}.C1 = {th_c1_newtons:.2f};")
                 lines.append(f"{thname}.K1 = {th_isp:.2f};")
-    elif created_tank_names:
-        eng_id = sanitize_gmat_identifier(engine_name or "MainEngine", "MainEngine")
+    elif created_tank_names and bool(engine_name):
+        eng_id = sanitize_gmat_identifier(engine_name, "MainEngine")
         created_thruster_names.append(eng_id)
-        eng_c1_newtons = thrust * 1000.0 if (thrust > 0 and thrust < 50000.0) else (thrust if thrust > 0 else 108100.0)
-        eng_k1_isp = isp if isp > 0 else 465.0
         lines.append(f"Create ChemicalThruster {eng_id};")
         lines.append(f"{eng_id}.CoordinateSystem = Local;")
         lines.append(f"{eng_id}.Origin = {central_body};")
         lines.append(f"{eng_id}.Axes = VNB;")
-        lines.append(f"{eng_id}.ThrustDirection1 = 1.0;")
-        lines.append(f"{eng_id}.ThrustDirection2 = 0.0;")
-        lines.append(f"{eng_id}.ThrustDirection3 = 0.0;")
+        lines.append(f"{eng_id}.ThrustDirection1 = 1;")
+        lines.append(f"{eng_id}.ThrustDirection2 = 0;")
+        lines.append(f"{eng_id}.ThrustDirection3 = 0;")
         lines.append(f"{eng_id}.DutyCycle = 1.0;")
         lines.append(f"{eng_id}.ThrustScaleFactor = 1.0;")
         lines.append(f"{eng_id}.DecrementMass = true;")
         lines.append(f"{eng_id}.Tank = {{{created_tank_names[0]}}};")
         lines.append(f"{eng_id}.GravitationalAccel = 9.81;")
+        eng_c1_newtons = thrust * 1000.0 if thrust < 50000.0 else thrust
         lines.append(f"{eng_id}.C1 = {eng_c1_newtons:.2f};")
-        lines.append(f"{eng_id}.K1 = {eng_k1_isp:.2f};")
-
-    # 2. For each FiniteBurn step in sequence, ensure a dedicated ChemicalThruster with exact 3D direction
-    fb_seq_idx = 1
-    for st in mission_sequence:
-        if st.get("type") == "FiniteBurn":
-            b_dir = (st.get("burn_direction") or "Prograde").strip()
-            t_dir1, t_dir2, t_dir3 = 1.0, 0.0, 0.0
-            if b_dir.lower() == "custom":
-                t_dir1 = float(st.get("thrust_dir1", 1.0))
-                t_dir2 = float(st.get("thrust_dir2", 0.0))
-                t_dir3 = float(st.get("thrust_dir3", 0.0))
-            elif b_dir.lower() in ("retrograde", "-v"):
-                t_dir1, t_dir2, t_dir3 = -1.0, 0.0, 0.0
-            elif b_dir.lower() in ("normal", "+n"):
-                t_dir1, t_dir2, t_dir3 = 0.0, 1.0, 0.0
-            elif b_dir.lower() in ("antinormal", "-n"):
-                t_dir1, t_dir2, t_dir3 = 0.0, -1.0, 0.0
-            elif b_dir.lower() in ("radialout", "+b"):
-                t_dir1, t_dir2, t_dir3 = 0.0, 0.0, 1.0
-            elif b_dir.lower() in ("radialin", "-b"):
-                t_dir1, t_dir2, t_dir3 = 0.0, 0.0, -1.0
-
-            mag_th = (t_dir1**2 + t_dir2**2 + t_dir3**2) ** 0.5
-            if mag_th > 1e-8:
-                t_dir1, t_dir2, t_dir3 = t_dir1/mag_th, t_dir2/mag_th, t_dir3/mag_th
-
-            step_fb_name = sanitize_gmat_identifier(st.get("burn_name") or f"Finite_{fb_seq_idx}", "FiniteBurn")
-            th_for_fb = f"{step_fb_name}_Thruster"
-            st["_bound_thruster_name"] = th_for_fb
-
-            if th_for_fb not in created_thruster_names:
-                created_thruster_names.append(th_for_fb)
-                eng_c1_newtons = thrust * 1000.0 if (thrust > 0 and thrust < 50000.0) else (thrust if thrust > 0 else 108100.0)
-                eng_k1_isp = isp if isp > 0 else 465.0
-                # Auto-select the tank with largest fuel mass for FiniteBurn
-                best_tk = created_tank_names[0] if created_tank_names else "MainTank"
-                best_fuel = -1.0
-                for tk_info, tk_nm in zip(craft_data.get("tanks", []), created_tank_names):
-                    fm = float(tk_info.get("fuel_mass", 0.0) or 0.0)
-                    if fm > best_fuel:
-                        best_fuel = fm
-                        best_tk = tk_nm
-                th_tk = best_tk
-                lines.append(f"Create ChemicalThruster {th_for_fb};")
-                lines.append(f"{th_for_fb}.CoordinateSystem = Local;")
-                lines.append(f"{th_for_fb}.Origin = {central_body};")
-                lines.append(f"{th_for_fb}.Axes = VNB;")
-                lines.append(f"{th_for_fb}.ThrustDirection1 = {t_dir1:.8g};")
-                lines.append(f"{th_for_fb}.ThrustDirection2 = {t_dir2:.8g};")
-                lines.append(f"{th_for_fb}.ThrustDirection3 = {t_dir3:.8g};")
-                lines.append(f"{th_for_fb}.DutyCycle = 1.0;")
-                lines.append(f"{th_for_fb}.ThrustScaleFactor = 1.0;")
-                lines.append(f"{th_for_fb}.DecrementMass = true;")
-                lines.append(f"{th_for_fb}.Tank = {{{th_tk}}};")
-                lines.append(f"{th_for_fb}.GravitationalAccel = 9.81;")
-                lines.append(f"{th_for_fb}.C1 = {eng_c1_newtons:.2f};")
-                lines.append(f"{th_for_fb}.K1 = {eng_k1_isp:.2f};")
-            fb_seq_idx += 1
+        lines.append(f"{eng_id}.K1 = {isp:.2f};")
 
     # Attach all hardware to Spacecraft
     if created_tank_names:
         lines.append(f"{sat_name}.Tanks = {{{', '.join(created_tank_names)}}};")
     if created_thruster_names:
         lines.append(f"{sat_name}.Thrusters = {{{', '.join(created_thruster_names)}}};")
+    lines.append("")
 
+    # Coordinate Systems (Custom User-Defined + Built-in Systems)
     custom_coords = custom_coordinate_systems or []
     created_cs_names = set()
 
@@ -672,26 +637,6 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
     created_burn_names = set()
     created_finite_names = set()
 
-    # Pre-scan Vary steps to automatically instantiate referenced ImpulsiveBurns (e.g. GEO_Burn.Element1)
-    for st in mission_sequence:
-        if st.get("type") == "Vary":
-            v_var = (st.get("vary_variable") or st.get("variable") or "").strip()
-            if "." in v_var:
-                p_obj, p_elem = v_var.split(".", 1)
-                if p_elem.lower() in ("element1", "element2", "element3") and p_obj.lower() not in ("sat", "vessel"):
-                    clean_bname = sanitize_gmat_identifier(p_obj, "Burn_1")
-                    if clean_bname not in created_burn_names:
-                        created_burn_names.add(clean_bname)
-                        burn_defs.append(f"Create ImpulsiveBurn {clean_bname};")
-                        burn_defs.append(f"{clean_bname}.CoordinateSystem = Local;")
-                        burn_defs.append(f"{clean_bname}.Origin = {central_body};")
-                        burn_defs.append(f"{clean_bname}.Axes = VNB;")
-                        burn_defs.append(f"{clean_bname}.Element1 = 1.10;")
-                        burn_defs.append(f"{clean_bname}.Element2 = 1.50;")
-                        burn_defs.append(f"{clean_bname}.Element3 = 0.0;")
-                        burn_defs.append(f"{clean_bname}.DecrementMass = false;")
-                        burn_defs.append(f"{clean_bname}.Isp = 320.0;")
-
     for step_index, step in enumerate(mission_sequence):
         step_type = step.get("type")
         if step_type in ("ImpulsiveBurn", "Maneuver"):
@@ -745,8 +690,7 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
             if fbname not in created_finite_names:
                 created_finite_names.add(fbname)
                 burn_defs.append(f"Create FiniteBurn {fbname};")
-            th_name_to_bind = step.get("_bound_thruster_name") or bound_thruster
-            burn_defs.append(f"{fbname}.Thrusters = {{{th_name_to_bind}}};")
+                burn_defs.append(f"{fbname}.Thrusters = {{{bound_thruster}}};")
             finite_idx += 1
         elif step_type in ("TargetApoapsis", "Targeter", "Target", "Vary", "Achieve", "DifferentialCorrector"):
             dc_needed = True
@@ -805,7 +749,33 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
             all_declared_vars.append(uv)
 
     if all_declared_vars:
-        lines.append(f"Create Variable {' '.join(all_declared_vars)};\n")
+        lines.append(f"Create Variable {' '.join(all_declared_vars)};")
+
+    user_arrays = craft_data.get("user_arrays", [])
+    if user_arrays:
+        arr_decls = []
+        for arr in user_arrays:
+            if isinstance(arr, dict):
+                aname = sanitize_gmat_identifier(arr.get("name"), "Arr")
+                rows = int(arr.get("rows", 3))
+                cols = int(arr.get("cols", 3))
+                arr_decls.append(f"{aname}[{rows},{cols}]")
+            else:
+                arr_decls.append(f"{sanitize_gmat_identifier(str(arr), 'Arr')}[3,3]")
+        if arr_decls:
+            lines.append(f"Create Array {' '.join(arr_decls)};")
+
+    user_strings = craft_data.get("user_strings", [])
+    if user_strings:
+        str_decls = []
+        for s in user_strings:
+            sname = sanitize_gmat_identifier(s.get("name"), "Str") if isinstance(s, dict) else sanitize_gmat_identifier(str(s), "Str")
+            if sname and sname not in str_decls:
+                str_decls.append(sname)
+        if str_decls:
+            lines.append(f"Create String {' '.join(str_decls)};")
+
+    lines.append("")
 
     if dc_needed:
         active_solvers = {}
@@ -975,46 +945,40 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
             vary_dc_name = sanitize_gmat_identifier(step.get("dc_name") or step.get("vary_solver") or current_active_dc_name, "DC")
             var = (step.get("vary_variable") or step.get("variable") or "burntime").strip()
 
-            # Resolve Spacecraft parameter, Thruster Direction, or custom variable
-            if var.startswith(f"{sat_name}."):
+            # Clean craft prefix and resolve thruster properties
+            if "ThrustDirection" in var or "DutyCycle" in var or "ThrustScaleFactor" in var:
+                parts = var.split(".")
+                param = parts[-1]
+                th_part = parts[-2] if len(parts) >= 2 else ""
+                matched_th = None
+                for ct in created_thruster_names:
+                    if ct == th_part or ct.lower().replace("_", "") == th_part.lower().replace("_", ""):
+                        matched_th = ct
+                        break
+                if not matched_th and created_thruster_names:
+                    matched_th = created_thruster_names[0]
+                var_ref = f"{sat_name}.{matched_th}.{param}" if matched_th else var
+            elif var.startswith(f"{sat_name}."):
                 var_ref = var
             elif "." in var:
+                # e.g. LOI.Element1, Change6.AOP, EarthMoonRot.Z
                 parts = var.split(".", 1)
-                p_first = parts[0].lower()
-                p_second = parts[1]
-                if p_first in ("sat", "vessel", "spacecraft", "sc"):
-                    var_ref = f"{sat_name}.{p_second}"
-                elif "thrustdirection" in p_second.lower():
-                    # e.g. GEO_Finite_Thruster.ThrustDirection2 -> Sat.GEO_Finite_Thruster.ThrustDirection2
-                    clean_th = sanitize_gmat_identifier(parts[0], "MainEngine")
-                    var_ref = f"{sat_name}.{clean_th}.{p_second}"
+                if parts[0].lower() in ("sat", "vessel", "spacecraft", "sc"):
+                    var_ref = f"{sat_name}.{parts[1]}"
                 elif parts[0] in ("AOP", "RAAN", "SMA", "ECC", "INC", "TA", "Altitude", "RMAG"):
                     var_ref = f"{sat_name}.{var}"
                 else:
                     var_ref = var
-            elif "thrustdirection" in var.lower():
-                # Direct reference to active finite burn thruster
-                active_th = "Finite_1_Thruster"
-                for st in mission_sequence:
-                    if st.get("type") == "FiniteBurn" and st.get("_bound_thruster_name"):
-                        active_th = st["_bound_thruster_name"]
-                        break
-                var_ref = f"{sat_name}.{active_th}.{var}"
             else:
                 var_ref = var
 
             init_val = float(step.get("vary_initial", 150.0))
             pert = float(step.get("vary_perturbation") or 0.0001)
-            lower = float(step["vary_lower"]) if ("vary_lower" in step and step["vary_lower"] is not None) else 0.0
+            lower = float(step.get("vary_lower") or 0.0)
             upper = float(step.get("vary_upper") or 1000.0)
             max_step = float(step.get("vary_max_step") or 2.0)
             add_scale = float(step.get("vary_additive_scale", 0.0))
             mul_scale = float(step.get("vary_multiplicative_scale", 1.0))
-
-            if "thrustdirection" in var_ref.lower():
-                if lower >= 0.0: lower = -1.0
-                if upper <= 0.0 or upper > 1.0: upper = 1.0
-                if max_step > 0.1: max_step = 0.05
 
             scale_opts = ""
             if add_scale != 0.0 or mul_scale != 1.0:
@@ -1096,11 +1060,10 @@ def build_gmat_script(craft_data, mission_sequence, report_path, propagator_conf
             lines.append(f"{fbname}_EndVY = {sat_name}.VY;")
             lines.append(f"{fbname}_EndVZ = {sat_name}.VZ;")
             lines.append(f"{fbname}_FuelBurned = {fbname}_StartMass - {fbname}_EndMass;")
-            th_id = f"{fbname}_Thruster"
             lines.append(f"{fbname}_DeltaV = {isp:.6f} * 9.80665 * log({fbname}_StartMass / {fbname}_EndMass);")
-            lines.append(f"{fbname}_DeltaV_V = {fbname}_DeltaV * {sat_name}.{th_id}.ThrustDirection1;")
-            lines.append(f"{fbname}_DeltaV_N = {fbname}_DeltaV * {sat_name}.{th_id}.ThrustDirection2;")
-            lines.append(f"{fbname}_DeltaV_B = {fbname}_DeltaV * {sat_name}.{th_id}.ThrustDirection3;")
+            lines.append(f"{fbname}_DeltaV_V = {fbname}_DeltaV * {dir_v:.6f};")
+            lines.append(f"{fbname}_DeltaV_N = {fbname}_DeltaV * {dir_n:.6f};")
+            lines.append(f"{fbname}_DeltaV_B = {fbname}_DeltaV * {dir_b:.6f};")
             lines.append(f"{fbname}_OrbitalDeltaV = sqrt(({fbname}_EndVX - {fbname}_StartVX)*({fbname}_EndVX - {fbname}_StartVX) + ({fbname}_EndVY - {fbname}_StartVY)*({fbname}_EndVY - {fbname}_StartVY) + ({fbname}_EndVZ - {fbname}_StartVZ)*({fbname}_EndVZ - {fbname}_StartVZ)) * 1000.0;")
             lines.append(f"{fbname}_GravityLoss = {fbname}_DeltaV - {fbname}_OrbitalDeltaV;")
             lines.append(f"Report FiniteBurnReport {fbname}_Time {fbname}_Duration {fbname}_DeltaV {fbname}_DeltaV_V {fbname}_DeltaV_N {fbname}_DeltaV_B {fbname}_FuelBurned {fbname}_OrbitalDeltaV {fbname}_GravityLoss {fbname}_StartMass {fbname}_EndMass {sat_name}.X {sat_name}.Y {sat_name}.Z {sat_name}.VX {sat_name}.VY {sat_name}.VZ;")
@@ -1678,7 +1641,7 @@ def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None, 
                 except Exception as ex:
                     print(f"[gmat_engine] Runtime object access for {fbname}: {ex}")
 
-            # 2. FALLBACK: If runtime object not available, read final row of finite report
+            # 2. FALLBACK: If runtime object not available, read finite report by finite_number index
             if not got_runtime:
                 finite_rows = []
                 if os.path.exists(report_file + ".finite.txt"):
@@ -1691,40 +1654,35 @@ def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None, 
                                 except ValueError:
                                     continue
                 if finite_rows:
-                    cur_burn_row = finite_rows[finite_number] if finite_number < len(finite_rows) else finite_rows[-1]
-                    gm_start_time = cur_burn_row[0]
-                    dur = cur_burn_row[1]
-                    dv_thrust = cur_burn_row[2]
-                    dv_v = cur_burn_row[3]
-                    dv_n = cur_burn_row[4]
-                    dv_b = cur_burn_row[5]
-                    fuel_burned = cur_burn_row[6]
-                    orb_dv_mag = cur_burn_row[7]
-                    gravity_loss = cur_burn_row[8]
-                    gm_start_mass = cur_burn_row[9]
-                    gm_finish_mass = cur_burn_row[10]
+                    row_idx = min(finite_number, len(finite_rows) - 1)
+                    chosen_row = finite_rows[row_idx]
+                    gm_start_time = chosen_row[0]
+                    dur = chosen_row[1]
+                    dv_thrust = chosen_row[2]
+                    dv_v = chosen_row[3]
+                    dv_n = chosen_row[4]
+                    dv_b = chosen_row[5]
+                    fuel_burned = chosen_row[6]
+                    orb_dv_mag = chosen_row[7]
+                    gravity_loss = chosen_row[8]
+                    gm_start_mass = chosen_row[9]
+                    gm_finish_mass = chosen_row[10]
+                    burn_x = chosen_row[11] if len(chosen_row) > 11 else 0.0
+                    burn_y = chosen_row[12] if len(chosen_row) > 12 else 0.0
+                    burn_z = chosen_row[13] if len(chosen_row) > 13 else 0.0
+                    burn_vx = chosen_row[14] if len(chosen_row) > 14 else 0.0
+                    burn_vy = chosen_row[15] if len(chosen_row) > 15 else 0.0
+                    burn_vz = chosen_row[16] if len(chosen_row) > 16 else 0.0
 
-            # 3. Extract trajectory position and velocity at the true burn ignition epoch
-            state = state_at_or_before(gm_start_time)
-            if state:
-                burn_x = state.get("burn_x", 0.0)
-                burn_y = state.get("burn_y", 0.0)
-                burn_z = state.get("burn_z", 0.0)
-                burn_vx = state.get("burn_vx", 0.0)
-                burn_vy = state.get("burn_vy", 0.0)
-                burn_vz = state.get("burn_vz", 0.0)
+            thrust_val = craft_data.get("thrust")
+            if thrust_val is None and craft_data.get("thrusters"):
+                thrust_val = craft_data["thrusters"][0].get("thrust", 0.0)
+            thrust_kn = (float(thrust_val or 0.0)) / 1000.0 if float(thrust_val or 0.0) > 50.0 else float(thrust_val or 0.0)
 
-            # Ensure exact vector normalization to total DeltaV magnitude
-            dv_dir_norm = math.sqrt(dv_v**2 + dv_n**2 + dv_b**2)
-            if dv_dir_norm > 1e-5 and dv_thrust > 1e-5:
-                dv_v = (dv_v / dv_dir_norm) * dv_thrust
-                dv_n = (dv_n / dv_dir_norm) * dv_thrust
-                dv_b = (dv_b / dv_dir_norm) * dv_thrust
-            elif dv_thrust > 1e-5 and dv_v == 0 and dv_n == 0 and dv_b == 0:
-                dv_v = dv_thrust
-
-            thrust_kn = float(craft_data.get("thrust") or craft_data.get("thrust_n") or 108100.0) / 1000.0
-            isp = float(craft_data.get("isp") or craft_data.get("isp_s") or 465.0)
+            isp_val = craft_data.get("isp")
+            if isp_val is None and craft_data.get("thrusters"):
+                isp_val = craft_data["thrusters"][0].get("isp", 300.0)
+            isp = float(isp_val or 300.0)
             origin = map_body_name(step.get("origin") or central_body)
             solved = {
                 "type": "Finite",
@@ -1874,28 +1832,6 @@ def run_mission_sequence(craft_data, mission_sequence, propagator_configs=None, 
 
             step_reports.append(rep_data)
 
-    # Check if targeters converged
-    has_target = any(s.get("type") in ("Target", "Targeter", "TargetApoapsis") for s in mission_sequence)
-    if has_target and dc_info and dc_info.get("converged") is False:
-        n_vars = sum(1 for s in mission_sequence if s.get("type") == "Vary")
-        n_goals = sum(1 for s in mission_sequence if s.get("type") == "Achieve")
-        v_str = f"{dc_info.get('variance')}" if dc_info.get('variance') is not None else "超差"
-        d_str = f"{dc_info.get('desired')}" if dc_info.get('desired') is not None else "未知"
-        diag_msg = f"打靶未收敛 (目标期望: {d_str}, 最终残差: {v_str})"
-        if n_goals > n_vars:
-            diag_msg += f"\n⚠️ 物理自由度不足: 当前打靶包含 {n_goals} 个 Achieve 目标约束 (如 垂向速度 VZ 和 目标半长轴 SMA)，但仅配置了 {n_vars} 个 Vary 变量 (burntime)。\n单一标量点火时长无法同时满足轨道面内提升与面外倾角消除。请添加法向变轨变量 (如 GEO_Burn.Element2)！"
-        return {
-            "success": False,
-            "error": "GMAT 差分修正器未收敛 (达到最大迭代上限)",
-            "error_details": diag_msg,
-            "script_path": script_file,
-            "dc_summary": dc_info,
-            "final_state": final_state,
-            "solved_burns": solved_burns,
-            "updated_sequence": mission_sequence,
-            "calculation_authority": "GMAT_NATIVE_ONLY"
-        }
-
     return {
         "success": True,
         "step_reports": step_reports,
@@ -2034,4 +1970,29 @@ def get_solver_api_metadata():
         "solve_modes": solve_modes,
         "exit_modes": exit_modes,
         "parameters": solver_params
+    }
+
+
+def export_mission_script(craft_data, mission_sequence, export_path=None, propagator_configs=None, custom_coordinate_systems=None, solver_configs=None):
+    if not export_path:
+        export_path = os.path.join(output_dir, "exported_mission.script")
+    script_str = build_gmat_script(craft_data, mission_sequence, export_path, propagator_configs=propagator_configs, custom_coordinate_systems=custom_coordinate_systems, solver_configs=solver_configs)
+    os.makedirs(os.path.dirname(os.path.abspath(export_path)), exist_ok=True)
+    with open(export_path, "w", encoding="utf-8") as f:
+        f.write(script_str)
+    return {
+        "success": True,
+        "export_path": export_path,
+        "script_content": script_str
+    }
+
+
+def run_raw_script(script_path):
+    init_gmat()
+    global gmat
+    gmat.LoadScript(script_path)
+    status = gmat.RunScript()
+    return {
+        "success": bool(status),
+        "script_path": script_path
     }
