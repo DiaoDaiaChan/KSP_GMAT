@@ -1229,17 +1229,74 @@ namespace KSPGMAT.UI {
             GUILayout.Space(6);
 
             // =========================================================================
-            // CARD 2: Pinned Live Solution Summary Box & Detailed Error Diagnostic
+            // CARD 2: Pinned Live Solution Summary Box & Differential Corrector Matrix
             // =========================================================================
             GUILayout.BeginVertical(cardBoxStyle);
-            GUILayout.Label("<b>📊 轨道求解诊断与结果 (Results)</b>", headerStyle);
+            GUILayout.Label("<b>📊 GMAT 官方原生打靶求解看板 (Results & Targeters)</b>", headerStyle);
             GUILayout.Space(2);
 
             if (latestResult != null && latestResult.success) {
-                GUILayout.Label($"最终半长轴 (SMA): <color=#38bdf8><b>{latestResult.final_sma:F1} km</b></color>", labelValueStyle);
-                GUILayout.Label($"最终离心率 (ECC): <color=#38bdf8><b>{latestResult.final_ecc:F4}</b></color>", labelValueStyle);
-                GUILayout.Label($"最终倾角 (INC): <color=#38bdf8><b>{latestResult.final_inc:F2}°</b></color>", labelValueStyle);
-                GUILayout.Label($"生成机动点火: <color=#34d399><b>{latestResult.solved_burns.Count} 个</b></color>", labelValueStyle);
+                GUILayout.BeginHorizontal();
+                GUILayout.Label($"最终半长轴: <color=#38bdf8><b>{latestResult.final_sma:F1} km</b></color>", labelValueStyle);
+                GUILayout.Label($"离心率: <color=#38bdf8><b>{latestResult.final_ecc:F4}</b></color>", labelValueStyle);
+                GUILayout.Label($"倾角: <color=#38bdf8><b>{latestResult.final_inc:F2}°</b></color>", labelValueStyle);
+                GUILayout.EndHorizontal();
+
+                // 1. 打靶器收敛状态矩阵 (Per-DC Matrix)
+                if (latestResult.dc_summaries != null && latestResult.dc_summaries.Count > 0) {
+                    GUILayout.Space(3);
+                    GUILayout.Label("<color=#38bdf8><b>🎯 微分修正器打靶矩阵 (Differential Corrector Status):</b></color>", labelValueStyle);
+                    
+                    foreach (var dcp in latestResult.dc_summaries) {
+                        string dcName = dcp.Key;
+                        var dcs = dcp.Value;
+                        string statusTag = dcs.converged ? $"<color=#34d399>✅ 已收敛 ({dcs.iterations} 次迭代)</color>" : "<color=#f87171>❌ 未收敛</color>";
+
+                        GUILayout.BeginVertical(nestedCardBoxStyle);
+                        GUILayout.BeginHorizontal();
+                        GUILayout.Label($"<b>打靶器: {dcName}</b>", labelValueStyle);
+                        GUILayout.FlexibleSpace();
+                        GUILayout.Label(statusTag, labelValueStyle);
+                        GUILayout.EndHorizontal();
+
+                        // 显示解算变量
+                        if (dcs.final_variables != null && dcs.final_variables.Count > 0) {
+                            GUILayout.Space(1);
+                            var varStrs = new List<string>();
+                            foreach (var v in dcs.final_variables) {
+                                if (!v.Key.Contains(".")) { // 只显示主变量名
+                                    varStrs.Add($"{v.Key} = <b><color=#38bdf8>{v.Value:F2}</color></b>");
+                                }
+                            }
+                            if (varStrs.Count > 0) {
+                                GUILayout.Label($" • 变量解: {string.Join(" | ", varStrs.ToArray())}", labelValueStyle);
+                            }
+                        }
+
+                        // 显示达成目标
+                        if (dcs.goals_summary != null && dcs.goals_summary.Count > 0) {
+                            var goalStrs = new List<string>();
+                            foreach (var g in dcs.goals_summary) {
+                                goalStrs.Add($"{g.GoalName}: 达成 <b><color=#34d399>{g.Achieved:F2}</color></b> (目标 {g.Desired:F2})");
+                            }
+                            GUILayout.Label($" • 目标达成: {string.Join(" | ", goalStrs.ToArray())}", labelValueStyle);
+                        }
+
+                        GUILayout.EndVertical();
+                        GUILayout.Space(2);
+                    }
+                }
+
+                // 2. 解算机动列表 (Solved Burns)
+                if (latestResult.solved_burns != null && latestResult.solved_burns.Count > 0) {
+                    GUILayout.Space(2);
+                    GUILayout.Label($"<color=#34d399><b>🚀 解算机动点火 ({latestResult.solved_burns.Count} 个):</b></color>", labelValueStyle);
+                    for (int bIdx = 0; bIdx < latestResult.solved_burns.Count; bIdx++) {
+                        var sb = latestResult.solved_burns[bIdx];
+                        GUILayout.Label($" • <b>#{bIdx + 1} {sb.name}</b> ({sb.type}): <color=#38bdf8>ΔV = {sb.magnitude:F2} m/s</color> (切向 {sb.dv_v:F1}, 径向 {sb.dv_b:F1}, 变倾角 {sb.dv_n:F1}) | 时长: <b>{sb.duration:F1}s</b> | 推力: {sb.thrust_kn:F1}kN (Isp {sb.isp:F0}s)", labelValueStyle);
+                    }
+                }
+
                 if (latestResult.has_fuel_deficit) {
                     GUILayout.Label($"<color=#f87171>⚠️ 燃料赤字: {latestResult.fuel_deficit:F1} kg</color>", labelValueStyle);
                 }

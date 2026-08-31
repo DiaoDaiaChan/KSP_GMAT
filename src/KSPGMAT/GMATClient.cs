@@ -240,6 +240,14 @@ namespace KSPGMAT {
     }
 
     [Serializable]
+    public class DCGoalEntry {
+        public string GoalName;
+        public double Desired;
+        public double Achieved;
+        public double Tolerance;
+    }
+
+    [Serializable]
     public class DCSummary {
         public bool converged;
         public int iterations;
@@ -247,6 +255,7 @@ namespace KSPGMAT {
         public double achieved;
         public double variance;
         public Dictionary<string, double> final_variables = new Dictionary<string, double>();
+        public List<DCGoalEntry> goals_summary = new List<DCGoalEntry>();
     }
 
     [Serializable]
@@ -302,6 +311,7 @@ namespace KSPGMAT {
         public List<MissionStep> updated_sequence = new List<MissionStep>();
         public string render_image_path;
         public DCSummary dc_summary;
+        public Dictionary<string, DCSummary> dc_summaries = new Dictionary<string, DCSummary>();
         public bool all_solvers_converged = true;
         public List<string> unconverged_solvers = new List<string>();
         public List<StepReportData> step_reports = new List<StepReportData>();
