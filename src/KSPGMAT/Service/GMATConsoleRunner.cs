@@ -222,35 +222,66 @@ namespace KSPGMAT.Service {
                 double cumTime = 0;
                 double currentRunningMass = GMATStateManager.Current.Spacecraft.TotalMassKg > 0 ? GMATStateManager.Current.Spacecraft.TotalMassKg : 7822.0;
 
+                double groupDir1 = 1.0, groupDir2 = 0.0, groupDir3 = 0.0;
+                bool groupHasTVC = false;
+                double groupDuration = 0;
+
                 for (int i = 0; i < originalSteps.Count; i++) {
                     var st = originalSteps[i];
-                    if (st.type == "Propagate") {
+                    if (st.type == "Target") {
+                        groupDir1 = 1.0; groupDir2 = 0.0; groupDir3 = 0.0;
+                        groupHasTVC = false;
+                        groupDuration = 0;
+                    }
+                    else if (st.type == "Vary") {
+                        string vVar = st.vary_variable ?? "";
+                        if (!string.IsNullOrEmpty(vVar) && solvedVars.ContainsKey(vVar)) {
+                            double sVal = solvedVars[vVar];
+                            if (vVar.IndexOf("Duration", StringComparison.OrdinalIgnoreCase) >= 0 || vVar.IndexOf("time", StringComparison.OrdinalIgnoreCase) >= 0) {
+                                groupDuration = sVal;
+                            }
+                        }
+                    }
+                    else if (st.type == "ThrustVectorControl") {
+                        groupHasTVC = true;
+                        groupDir1 = st.thrust_dir1;
+                        groupDir2 = st.thrust_dir2;
+                        groupDir3 = st.thrust_dir3;
+                        string thrKey = st.bound_thruster ?? "";
+
+                        foreach (var kv in solvedVars) {
+                            if (string.IsNullOrEmpty(thrKey) || kv.Key.IndexOf(thrKey, StringComparison.OrdinalIgnoreCase) >= 0) {
+                                if (kv.Key.EndsWith("ThrustDirection1", StringComparison.OrdinalIgnoreCase)) groupDir1 = kv.Value;
+                                else if (kv.Key.EndsWith("ThrustDirection2", StringComparison.OrdinalIgnoreCase)) groupDir2 = kv.Value;
+                                else if (kv.Key.EndsWith("ThrustDirection3", StringComparison.OrdinalIgnoreCase)) groupDir3 = kv.Value;
+                            }
+                        }
+                    }
+                    else if (st.type == "Propagate") {
                         if (st.stop_type == "Time" || st.stop_type == "ElapsedSecs") cumTime += st.duration;
                         else if (st.stop_type == "Days" || st.stop_type == "ElapsedDays") cumTime += st.duration * 86400.0;
                     }
                     else if (st.type == "FiniteBurn") {
                         double dur = st.duration;
-                        string vName = st.burn_use_vary_var ? st.burn_vary_var_name : st.duration_str;
-                        if (!string.IsNullOrEmpty(vName) && solvedVars.ContainsKey(vName)) {
-                            dur = solvedVars[vName];
-                        }
-                        if (dur <= 0 && solvedVars.Count > 0) {
-                            foreach (var kv in solvedVars) {
-                                if (kv.Key.IndexOf("Duration", StringComparison.OrdinalIgnoreCase) >= 0) {
-                                    dur = kv.Value; break;
+                        if (groupDuration > 0) {
+                            dur = groupDuration;
+                        } else {
+                            string vName = st.burn_use_vary_var ? st.burn_vary_var_name : st.duration_str;
+                            if (!string.IsNullOrEmpty(vName) && solvedVars.ContainsKey(vName)) {
+                                dur = solvedVars[vName];
+                            } else {
+                                foreach (var kv in solvedVars) {
+                                    if (!string.IsNullOrEmpty(st.burn_name) && kv.Key.IndexOf(st.burn_name.Replace("_Burn", ""), StringComparison.OrdinalIgnoreCase) >= 0) {
+                                        dur = kv.Value; break;
+                                    }
                                 }
                             }
                         }
 
-                        // Retrieve active thrust direction
-                        double tDir1 = st.thrust_dir1;
-                        double tDir2 = st.thrust_dir2;
-                        double tDir3 = st.thrust_dir3;
-                        foreach (var kv in solvedVars) {
-                            if (kv.Key.IndexOf("ThrustDirection1", StringComparison.OrdinalIgnoreCase) >= 0) tDir1 = kv.Value;
-                            if (kv.Key.IndexOf("ThrustDirection2", StringComparison.OrdinalIgnoreCase) >= 0) tDir2 = kv.Value;
-                            if (kv.Key.IndexOf("ThrustDirection3", StringComparison.OrdinalIgnoreCase) >= 0) tDir3 = kv.Value;
-                        }
+                        // Retrieve active thrust direction for THIS burn
+                        double tDir1 = groupHasTVC ? groupDir1 : (st.thrust_dir1 != 0 || st.thrust_dir2 != 0 || st.thrust_dir3 != 0 ? st.thrust_dir1 : 1.0);
+                        double tDir2 = groupHasTVC ? groupDir2 : st.thrust_dir2;
+                        double tDir3 = groupHasTVC ? groupDir3 : st.thrust_dir3;
 
                         double dirMag = Math.Sqrt(tDir1 * tDir1 + tDir2 * tDir2 + tDir3 * tDir3);
                         double u1 = dirMag > 0.0001 ? (tDir1 / dirMag) : 1.0;

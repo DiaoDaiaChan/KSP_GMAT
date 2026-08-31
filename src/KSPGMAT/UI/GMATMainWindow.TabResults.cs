@@ -113,7 +113,7 @@ namespace KSPGMAT.UI {
                         GUILayout.Label("<color=#38bdf8><b>🛰️ NASA GMAT 理论求解</b></color>", labelValueStyle);
                         GUILayout.Space(2);
                         GUILayout.Label($"合速度增量 (ΔV): <b>{b.magnitude:F3} m/s</b>", labelValueStyle);
-                        GUILayout.Label($"分量: 顺行 {b.dv_v:F2} | 法向 {b.dv_n:F2} | 径向 {b.dv_b:F2} m/s", labelValueStyle);
+                        GUILayout.Label($"分量: 切向(顺行) {b.dv_v:F2} | 径向(向心) {b.dv_n:F2} | 副法向(变倾角) {b.dv_b:F2} m/s", labelValueStyle);
                         GUILayout.Label($"点火时长 (Duration): <color=#38bdf8><b>{b.duration:F2} s</b></color>", labelValueStyle);
                         GUILayout.Label($"预计消耗推进剂: <b>{b.fuel_burned:F2} kg</b>", labelValueStyle);
                         GUILayout.Label($"动力学模型推力: {b.thrust_kn:F1} kN | 比冲: {b.isp:F1} s", labelValueStyle);
@@ -131,7 +131,7 @@ namespace KSPGMAT.UI {
                             GUILayout.Space(2);
                             double pDvMag = pNode.deltaV.magnitude;
                             GUILayout.Label($"实机机动合 ΔV: <b>{pDvMag:F3} m/s</b>", labelValueStyle);
-                            GUILayout.Label($"Principia分量: 切向 {pNode.deltaV.x:F2} | 法向 {pNode.deltaV.y:F2} | 副法向(变倾角) {pNode.deltaV.z:F2} m/s", labelValueStyle);
+                            GUILayout.Label($"Principia分量: 切向 {pNode.deltaV.x:F2} | 径向 {pNode.deltaV.y:F2} | 副法向(变倾角) {pNode.deltaV.z:F2} m/s", labelValueStyle);
                             GUILayout.Label($"实机点火持续时间: <color=#34d399><b>{pNode.duration:F2} s</b></color>", labelValueStyle);
                             GUILayout.Label($"节点初始总质量: <b>{pNode.initial_mass_tonnes:F3} t</b> (真实实时构型湿重)", labelValueStyle);
                             GUILayout.Label($"发动机实测推力: {pNode.thrust_kn:F1} kN | 实测比冲: {pNode.isp:F1} s", labelValueStyle);
