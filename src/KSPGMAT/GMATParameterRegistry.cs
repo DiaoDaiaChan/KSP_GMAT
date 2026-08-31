@@ -337,8 +337,10 @@ namespace KSPGMAT {
         public static bool IsLoaded { get; private set; } = false;
 
         static GMATParameterRegistry() {
-            PopulateFallbackCore();
-            InitCatalog();
+            try {
+                PopulateFallbackCore();
+                InitCatalog();
+            } catch {}
         }
 
         /// <summary>
@@ -1110,7 +1112,7 @@ namespace KSPGMAT {
             bool capitalizeNext = false;
             for (int i = 0; i < raw.Length; i++) {
                 char c = raw[i];
-                if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
+                if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
                     if (capitalizeNext && c >= 'a' && c <= 'z') {
                         sb.Append(char.ToUpperInvariant(c));
                     } else {

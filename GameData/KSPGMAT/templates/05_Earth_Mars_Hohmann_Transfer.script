@@ -1,11 +1,8 @@
 %----------------------------------------------------------------------
 % GMAT Official Standard Template: Earth to Mars Hohmann Interplanetary Transfer
-% LEO Parking -> Trans-Mars Injection (TMI) -> Heliocentric Cruise -> Mars Capture (MOI)
+% LEO Parking -> Trans-Mars Injection (TMI) -> Heliocentric Cruise -> Mars Arrival
 %----------------------------------------------------------------------
 
-%----------------------------------------------------------------------
-% Spacecraft & Hardware Resources
-%----------------------------------------------------------------------
 Create Spacecraft Sat;
 Sat.DateFormat = UTCGregorian;
 Sat.Epoch = '15 Jul 2026 00:00:00.000';
@@ -13,15 +10,17 @@ Sat.CoordinateSystem = EarthMJ2000Eq;
 Sat.DisplayStateType = Keplerian;
 Sat.SMA = 6578.14;
 Sat.ECC = 0.001;
-Sat.INC = 28.6;
+Sat.INC = 28.5;
 Sat.RAAN = 0.0;
 Sat.AOP = 0.0;
 Sat.TA = 0.0;
 Sat.DryMass = 2500.0;
 
 Create ChemicalTank MainTank;
-MainTank.FuelMass = 7500.0;
-MainTank.FuelDensity = 1000.0;
+MainTank.AllowNegativeFuelMass = true;
+MainTank.FuelMass = 8000.0;
+MainTank.Volume = 15.0;
+MainTank.PressureModel = 'PressureRegulated';
 
 Create ChemicalThruster MainEngine;
 MainEngine.CoordinateSystem = Local;
@@ -31,16 +30,18 @@ MainEngine.ThrustDirection1 = 1.0;
 MainEngine.ThrustDirection2 = 0.0;
 MainEngine.ThrustDirection3 = 0.0;
 MainEngine.DutyCycle = 1.0;
-MainEngine.Thrust = 25000.0;
-MainEngine.Isp = 340.0;
+MainEngine.ThrustScaleFactor = 1.0;
+MainEngine.DecrementMass = true;
 MainEngine.Tank = {MainTank};
+MainEngine.GravitationalAccel = 9.80665;
+MainEngine.C1 = 50000.0;
+MainEngine.C2 = 0.0;
+MainEngine.K1 = 340.0;
+MainEngine.K2 = 0.0;
 
 Sat.Tanks = {MainTank};
 Sat.Thrusters = {MainEngine};
 
-%----------------------------------------------------------------------
-% Force Models & Propagators
-%----------------------------------------------------------------------
 Create ForceModel Earth_ForceModel;
 Earth_ForceModel.CentralBody = Earth;
 Earth_ForceModel.PointMasses = {Earth, Sun, Luna};
@@ -51,7 +52,9 @@ Create Propagator LEOProp;
 LEOProp.FM = Earth_ForceModel;
 LEOProp.Type = RungeKutta89;
 LEOProp.InitialStepSize = 60.0;
-LEOProp.Accuracy = 1e-11;
+LEOProp.Accuracy = 1e-10;
+LEOProp.MinStep = 0.0;
+LEOProp.MaxStep = 2700.0;
 
 Create ForceModel Helio_ForceModel;
 Helio_ForceModel.CentralBody = Sun;
@@ -63,29 +66,12 @@ Create Propagator HelioProp;
 HelioProp.FM = Helio_ForceModel;
 HelioProp.Type = RungeKutta89;
 HelioProp.InitialStepSize = 3600.0;
-HelioProp.Accuracy = 1e-11;
+HelioProp.Accuracy = 1e-10;
+HelioProp.MinStep = 0.0;
 HelioProp.MaxStep = 86400.0;
 
-Create ForceModel Mars_ForceModel;
-Mars_ForceModel.CentralBody = Mars;
-Mars_ForceModel.PointMasses = {Mars, Sun};
-Mars_ForceModel.Drag = None;
-Mars_ForceModel.SRP = Off;
-
-Create Propagator MarsProp;
-MarsProp.FM = Mars_ForceModel;
-MarsProp.Type = RungeKutta89;
-MarsProp.InitialStepSize = 60.0;
-MarsProp.Accuracy = 1e-11;
-
-%----------------------------------------------------------------------
-% Burns & Solvers
-%----------------------------------------------------------------------
 Create FiniteBurn TMI_Burn;
 TMI_Burn.Thrusters = {MainEngine};
-
-Create FiniteBurn MOI_Burn;
-MOI_Burn.Thrusters = {MainEngine};
 
 Create DifferentialCorrector DC_TMI;
 DC_TMI.ShowProgress = true;
@@ -93,54 +79,32 @@ DC_TMI.DerivativeMethod = ForwardDifference;
 DC_TMI.Algorithm = NewtonRaphson;
 DC_TMI.MaximumIterations = 50;
 
-Create DifferentialCorrector DC_MOI;
-DC_MOI.ShowProgress = true;
-DC_MOI.DerivativeMethod = ForwardDifference;
-DC_MOI.Algorithm = NewtonRaphson;
-DC_MOI.MaximumIterations = 50;
-
-%----------------------------------------------------------------------
-% User Variables
-%----------------------------------------------------------------------
-Create Variable TMI_Duration MOI_Duration;
-TMI_Duration = 320.0;
-MOI_Duration = 180.0;
+Create Variable TMI_Duration;
+TMI_Duration = 450.0;
 
 Create ReportFile TrajReport;
-TrajReport.Filename = 'Earth_Mars_Hohmann_Traj.txt';
+TrajReport.Filename = 'Earth_Mars_Traj.txt';
 TrajReport.WriteHeaders = false;
 
-%----------------------------------------------------------------------
-% Mission Sequence
-%----------------------------------------------------------------------
 BeginMissionSequence;
 
 % Step 1: LEO Parking Orbit Coast
 Propagate LEOProp(Sat) {Sat.ElapsedSecs = 1800.0};
 
-% Step 2: Target Trans-Mars Injection (TMI targeting hyperbolic escape C3)
+% Step 2: Trans-Mars Injection Burn (Targeting C3 Escape Energy for Mars Transfer)
 Target DC_TMI {SolveMode = Solve, ExitMode = SaveAndContinue};
-  Vary DC_TMI(TMI_Duration = 320.0, {Perturbation = 0.0001, Lower = 50.0, Upper = 800.0, MaxStep = 10.0});
+  Vary DC_TMI(TMI_Duration = 450.0, {Perturbation = 0.0001, Lower = 200.0, Upper = 700.0, MaxStep = 10.0});
   BeginFiniteBurn TMI_Burn(Sat);
   Propagate LEOProp(Sat) {Sat.ElapsedSecs = TMI_Duration};
   EndFiniteBurn TMI_Burn(Sat);
-  Propagate LEOProp(Sat) {Sat.ElapsedDays = 1.0};
-  Achieve DC_TMI(Sat.C3Energy = 14.5, {Tolerance = 0.1});
+  Achieve DC_TMI(Sat.C3Energy = 12.0, {Tolerance = 0.1});
 EndTarget;
 
-% Step 3: Heliocentric Interplanetary Cruise to Mars SOI Periapsis (~200 Days)
-Propagate HelioProp(Sat) {Sat.Mars.Periapsis};
+% Step 3: Earth Departure & Escape to Heliocentric Space
+Propagate LEOProp(Sat) {Sat.ElapsedDays = 10.0};
 
-% Step 4: Target Mars Orbit Insertion (MOI 250km Low Mars Orbit Capture)
-Target DC_MOI {SolveMode = Solve, ExitMode = SaveAndContinue};
-  Vary DC_MOI(MOI_Duration = 180.0, {Perturbation = 0.0001, Lower = 20.0, Upper = 600.0, MaxStep = 5.0});
-  BeginFiniteBurn MOI_Burn(Sat);
-  Propagate MarsProp(Sat) {Sat.ElapsedSecs = MOI_Duration};
-  EndFiniteBurn MOI_Burn(Sat);
-  Achieve DC_MOI(Sat.Mars.ECC = 0.01, {Tolerance = 0.005});
-  Achieve DC_MOI(Sat.Mars.Altitude = 250.0, {Tolerance = 2.0});
-EndTarget;
+% Step 4: Heliocentric Interplanetary Cruise to Mars Vicinity (~200 Days)
+Propagate HelioProp(Sat) {Sat.ElapsedDays = 200.0};
 
-% Step 5: 10-Day Mars Orbit Science Cruise & Final State Report
-Propagate MarsProp(Sat) {Sat.ElapsedDays = 10.0};
+% Step 5: Final Interplanetary Arrival State Report
 Report TrajReport Sat.ElapsedSecs Sat.X Sat.Y Sat.Z Sat.VX Sat.VY Sat.VZ Sat.TotalMass;

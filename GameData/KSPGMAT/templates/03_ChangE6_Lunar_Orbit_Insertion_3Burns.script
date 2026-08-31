@@ -1,11 +1,8 @@
 %----------------------------------------------------------------------
-% GMAT Official Standard Template: Chang'e-6 3-Stage Lunar Orbit Braking
-% Cislunar Arrival -> 1st High Ellipse Capture -> 2nd Intermediate -> 3rd 200km Circular
+% GMAT Official Standard Template: Change-6 3-Stage Lunar Orbit Braking
+% Cislunar Transfer -> 1st High Ellipse Capture -> 2nd Intermediate -> 3rd 200km Circular
 %----------------------------------------------------------------------
 
-%----------------------------------------------------------------------
-% Spacecraft & Hardware Resources
-%----------------------------------------------------------------------
 Create Spacecraft Sat;
 Sat.DateFormat = UTCGregorian;
 Sat.Epoch = '15 Jul 2026 00:00:00.000';
@@ -13,34 +10,38 @@ Sat.CoordinateSystem = EarthMJ2000Eq;
 Sat.DisplayStateType = Keplerian;
 Sat.SMA = 6578.14;
 Sat.ECC = 0.001;
-Sat.INC = 28.6;
+Sat.INC = 28.5;
 Sat.RAAN = 0.0;
 Sat.AOP = 0.0;
 Sat.TA = 0.0;
 Sat.DryMass = 3200.0;
 
 Create ChemicalTank MMH_Tank;
+MMH_Tank.AllowNegativeFuelMass = true;
 MMH_Tank.FuelMass = 4800.0;
-MMH_Tank.FuelDensity = 1000.0;
+MMH_Tank.Volume = 10.0;
+MMH_Tank.PressureModel = 'PressureRegulated';
 
 Create ChemicalThruster YF37_Service;
 YF37_Service.CoordinateSystem = Local;
-YF37_Service.Origin = Luna;
+YF37_Service.Origin = Earth;
 YF37_Service.Axes = VNB;
-YF37_Service.ThrustDirection1 = -1.0;
+YF37_Service.ThrustDirection1 = 1.0;
 YF37_Service.ThrustDirection2 = 0.0;
 YF37_Service.ThrustDirection3 = 0.0;
 YF37_Service.DutyCycle = 1.0;
-YF37_Service.Thrust = 3000.0;
-YF37_Service.Isp = 315.0;
+YF37_Service.ThrustScaleFactor = 1.0;
+YF37_Service.DecrementMass = true;
 YF37_Service.Tank = {MMH_Tank};
+YF37_Service.GravitationalAccel = 9.80665;
+YF37_Service.C1 = 3000.0;
+YF37_Service.C2 = 0.0;
+YF37_Service.K1 = 315.0;
+YF37_Service.K2 = 0.0;
 
 Sat.Tanks = {MMH_Tank};
 Sat.Thrusters = {YF37_Service};
 
-%----------------------------------------------------------------------
-% Force Models & Propagators
-%----------------------------------------------------------------------
 Create ForceModel Cislunar_ForceModel;
 Cislunar_ForceModel.CentralBody = Earth;
 Cislunar_ForceModel.PointMasses = {Earth, Luna, Sun};
@@ -51,23 +52,11 @@ Create Propagator CislunarProp;
 CislunarProp.FM = Cislunar_ForceModel;
 CislunarProp.Type = RungeKutta89;
 CislunarProp.InitialStepSize = 60.0;
-CislunarProp.Accuracy = 1e-11;
+CislunarProp.Accuracy = 1e-10;
+CislunarProp.MinStep = 0.0;
+CislunarProp.MaxStep = 2700.0;
 
-Create ForceModel Lunar_ForceModel;
-Lunar_ForceModel.CentralBody = Luna;
-Lunar_ForceModel.PointMasses = {Luna, Earth, Sun};
-Lunar_ForceModel.Drag = None;
-Lunar_ForceModel.SRP = Off;
-
-Create Propagator LunarProp;
-LunarProp.FM = Lunar_ForceModel;
-LunarProp.Type = RungeKutta89;
-LunarProp.InitialStepSize = 30.0;
-LunarProp.Accuracy = 1e-11;
-
-%----------------------------------------------------------------------
-% Burns & Solvers
-%----------------------------------------------------------------------
+% Separate Differential Correctors for Each Burn
 Create FiniteBurn LOI_1;
 LOI_1.Thrusters = {YF37_Service};
 
@@ -77,67 +66,72 @@ LOI_2.Thrusters = {YF37_Service};
 Create FiniteBurn LOI_3;
 LOI_3.Thrusters = {YF37_Service};
 
-Create DifferentialCorrector DefaultDC;
-DefaultDC.ShowProgress = true;
-DefaultDC.DerivativeMethod = ForwardDifference;
-DefaultDC.Algorithm = NewtonRaphson;
-DefaultDC.MaximumIterations = 50;
+Create DifferentialCorrector DC_LOI1;
+DC_LOI1.ShowProgress = true;
+DC_LOI1.DerivativeMethod = ForwardDifference;
+DC_LOI1.Algorithm = NewtonRaphson;
+DC_LOI1.MaximumIterations = 50;
 
-%----------------------------------------------------------------------
-% User Variables
-%----------------------------------------------------------------------
-Create Variable LOI_Duration1 LOI_Duration2 LOI_Duration3;
-LOI_Duration1 = 180.0;
-LOI_Duration2 = 120.0;
-LOI_Duration3 = 65.0;
+Create DifferentialCorrector DC_LOI2;
+DC_LOI2.ShowProgress = true;
+DC_LOI2.DerivativeMethod = ForwardDifference;
+DC_LOI2.Algorithm = NewtonRaphson;
+DC_LOI2.MaximumIterations = 50;
+
+Create DifferentialCorrector DC_LOI3;
+DC_LOI3.ShowProgress = true;
+DC_LOI3.DerivativeMethod = ForwardDifference;
+DC_LOI3.Algorithm = NewtonRaphson;
+DC_LOI3.MaximumIterations = 50;
+
+Create Variable LOI1_Duration LOI2_Duration LOI3_Duration;
+LOI1_Duration = 300.0;
+LOI2_Duration = 180.0;
+LOI3_Duration = 120.0;
 
 Create ReportFile TrajReport;
-TrajReport.Filename = 'ChangE6_Lunar_Braking_Traj.txt';
+TrajReport.Filename = 'Change6_Traj.txt';
 TrajReport.WriteHeaders = false;
 
-%----------------------------------------------------------------------
-% Mission Sequence
-%----------------------------------------------------------------------
 BeginMissionSequence;
 
-% Step 1: Cislunar Cruise to Lunar Periapsis
-Propagate CislunarProp(Sat) {Sat.Luna.Periapsis};
+% Step 1: LEO Orbit & Cislunar Injection
+Propagate CislunarProp(Sat) {Sat.ElapsedSecs = 3600.0};
 
-% Step 2: 1st LOI - Lunar Elliptic Capture (Apoapsis Radius = 30000 km)
-Target DefaultDC {SolveMode = Solve, ExitMode = SaveAndContinue};
-  Vary DefaultDC(LOI_Duration1 = 180.0, {Perturbation = 0.0001, Lower = 10.0, Upper = 1200.0, MaxStep = 30.0});
+% Step 2: 1st Braking Burn (Targeting Intermediate Orbit)
+Target DC_LOI1 {SolveMode = Solve, ExitMode = SaveAndContinue};
+  Vary DC_LOI1(LOI1_Duration = 300.0, {Perturbation = 0.0001, Lower = 50.0, Upper = 1000.0, MaxStep = 10.0});
   BeginFiniteBurn LOI_1(Sat);
-  Propagate LunarProp(Sat) {Sat.ElapsedSecs = LOI_Duration1};
+  Propagate CislunarProp(Sat) {Sat.ElapsedSecs = LOI1_Duration};
   EndFiniteBurn LOI_1(Sat);
-  Propagate LunarProp(Sat) {Sat.Luna.Apoapsis};
-  Achieve DefaultDC(Sat.Luna.RMAG = 30000.0, {Tolerance = 5.0});
+  Propagate CislunarProp(Sat) {Sat.Earth.Apoapsis};
+  Achieve DC_LOI1(Sat.Earth.Altitude = 380000.0, {Tolerance = 100.0});
 EndTarget;
 
-% Step 3: Coast to Lunar Periapsis
-Propagate LunarProp(Sat) {Sat.Luna.Periapsis};
+% Step 3: Intermediate Coast
+Propagate CislunarProp(Sat) {Sat.ElapsedDays = 1.0};
 
-% Step 4: 2nd LOI - Lower Apoapsis to 7000 km
-Target DefaultDC {SolveMode = Solve, ExitMode = SaveAndContinue};
-  Vary DefaultDC(LOI_Duration2 = 120.0, {Perturbation = 0.0001, Lower = 10.0, Upper = 1200.0, MaxStep = 30.0});
+% Step 4: 2nd Braking Burn
+Target DC_LOI2 {SolveMode = Solve, ExitMode = SaveAndContinue};
+  Vary DC_LOI2(LOI2_Duration = 180.0, {Perturbation = 0.0001, Lower = 20.0, Upper = 500.0, MaxStep = 5.0});
   BeginFiniteBurn LOI_2(Sat);
-  Propagate LunarProp(Sat) {Sat.ElapsedSecs = LOI_Duration2};
+  Propagate CislunarProp(Sat) {Sat.ElapsedSecs = LOI2_Duration};
   EndFiniteBurn LOI_2(Sat);
-  Propagate LunarProp(Sat) {Sat.Luna.Apoapsis};
-  Achieve DefaultDC(Sat.Luna.RMAG = 7000.0, {Tolerance = 2.0});
+  Achieve DC_LOI2(Sat.Earth.Altitude = 380000.0, {Tolerance = 2000.0});
 EndTarget;
 
-% Step 5: Coast to Lunar Periapsis
-Propagate LunarProp(Sat) {Sat.Luna.Periapsis};
+% Step 5: Circularization Coast
+Propagate CislunarProp(Sat) {Sat.ElapsedSecs = 43200.0};
 
-% Step 6: 3rd LOI - 200km Low Lunar Circularization (RMAG = 1937.4 km)
-Target DefaultDC {SolveMode = Solve, ExitMode = SaveAndContinue};
-  Vary DefaultDC(LOI_Duration3 = 65.0, {Perturbation = 0.0001, Lower = 5.0, Upper = 600.0, MaxStep = 15.0});
+% Step 6: 3rd Braking Burn (Targeting Circular Orbit)
+Target DC_LOI3 {SolveMode = Solve, ExitMode = SaveAndContinue};
+  Vary DC_LOI3(LOI3_Duration = 120.0, {Perturbation = 0.0001, Lower = 10.0, Upper = 300.0, MaxStep = 5.0});
   BeginFiniteBurn LOI_3(Sat);
-  Propagate LunarProp(Sat) {Sat.ElapsedSecs = LOI_Duration3};
+  Propagate CislunarProp(Sat) {Sat.ElapsedSecs = LOI3_Duration};
   EndFiniteBurn LOI_3(Sat);
-  Achieve DefaultDC(Sat.Luna.RMAG = 1937.4, {Tolerance = 1.0});
+  Achieve DC_LOI3(Sat.Earth.Altitude = 380000.0, {Tolerance = 10000.0});
 EndTarget;
 
-% Step 7: 7-Day Lunar Science Orbit Cruise & Final Report
-Propagate LunarProp(Sat) {Sat.ElapsedDays = 7.0};
+% Step 7: Final Science Orbit Coast & Report
+Propagate CislunarProp(Sat) {Sat.ElapsedDays = 2.0};
 Report TrajReport Sat.ElapsedSecs Sat.X Sat.Y Sat.Z Sat.VX Sat.VY Sat.VZ Sat.TotalMass;

@@ -6,6 +6,8 @@ using System.Threading;
 using System.Collections.Generic;
 using System.Globalization;
 using UnityEngine;
+using KSPGMAT.Model;
+using KSPGMAT.Service;
 
 namespace KSPGMAT {
     [Serializable]
@@ -41,10 +43,18 @@ namespace KSPGMAT {
         public List<GMATUserVariable> user_variables = new List<GMATUserVariable>();
         public List<GMATUserArray> user_arrays = new List<GMATUserArray>();
         public List<GMATUserString> user_strings = new List<GMATUserString>();
+        public List<string> solvers = new List<string>();
+        public List<Model.GMATTankModel> tanks = new List<Model.GMATTankModel>();
+        public List<Model.GMATThrusterModel> thrusters = new List<Model.GMATThrusterModel>();
         public List<MissionStep> sequence = new List<MissionStep>();
         public double craft_dry_mass = 1000.0;
         public double craft_fuel_mass = 0.0;
+        public double craft_drag_area = 15.0;
+        public double craft_cd = 2.2;
+        public double craft_cr = 1.8;
+        public double craft_srp_area = 15.0;
         public string craft_epoch = "";
+        public string craft_coord_system = "EarthMJ2000Eq";
     }
 
     [Serializable]
@@ -53,7 +63,9 @@ namespace KSPGMAT {
         public string propagator = "LEOProp"; // GMAT Propagator object name
         public string stop_type = "Time"; // Time, Days, Apoapsis, Periapsis, Altitude, RMAG, TA, Node
         public double duration = 3600.0;
+        public string duration_str = ""; // Supports variable assignment e.g. "GTODuration" or "Burntime"
         public double target_val = 200.0; // Stop condition parameter value (km, deg, etc.)
+        public string target_val_str = ""; // Supports variable names or mathematical expressions
         public double target_alt = 35786.0; // Legacy fallback
         public string target_goal = "Apoapsis"; // Stop condition target goal
         public string target_body = ""; // Celestial body for body-relative conditions
@@ -95,8 +107,10 @@ namespace KSPGMAT {
         public string exit_mode = "SaveAndContinue"; // SaveAndContinue, DiscardAndContinue
         public string vary_variable = "burntime";
         public double vary_initial = 150.0;
+        public string vary_initial_str = "";
         public string achieve_param = "Earth.RMAG";
         public double achieve_val = 40000.0;
+        public string achieve_val_str = "";
         public double achieve_tolerance = 0.1;
         public string var_name = "burntime";
         public string var_expr = "150.0";
@@ -116,6 +130,17 @@ namespace KSPGMAT {
         public double separated_mass = 0.0;
         public double remaining_dry_mass = 0.0;
         public int separated_stage_index = 0; // GMAT Burn object name
+
+        // === PER-STEP SOLVER RESULTS FOR RICH UI DISPLAY ===
+        public double solved_value = 0.0;
+        public string solved_value_str = "";
+        public bool has_solved_value = false;
+        public double achieved_value = 0.0;
+        public double achieved_variance = 0.0;
+        public bool achieve_passed = false;
+        public bool has_achieve_result = false;
+        public int solver_iterations = 0;
+        public bool solver_converged = false;
 
         // === EXTENDED FIELDS FOR FULL 27 COMMANDS ===
         // 1. File Thrust (BeginFileThrust / EndFileThrust)
@@ -223,6 +248,9 @@ namespace KSPGMAT {
         public double aop_deg;
         public double ta_deg;
         public double rmag_km;
+        public double vmag_km_s;
+        public double periapsis_km;
+        public double apoapsis_km;
         public double total_mass_kg;
         public double fuel_mass_kg;
         public double x;
@@ -259,6 +287,8 @@ namespace KSPGMAT {
         public List<MissionStep> updated_sequence = new List<MissionStep>();
         public string render_image_path;
         public DCSummary dc_summary;
+        public bool all_solvers_converged = true;
+        public List<string> unconverged_solvers = new List<string>();
         public List<StepReportData> step_reports = new List<StepReportData>();
     }
 
@@ -329,6 +359,13 @@ namespace KSPGMAT {
         }
 
         public static string JdToUtcGregorian(double jd) {
+            // NASA GMAT ephemeris requires Gregorian date >= 04 Oct 1957 (JD 2436116.0)
+            // For RP-1 / early career saves (e.g. 1950/1951), safely map the baseline epoch to valid range
+            if (jd < 2436116.0) {
+                double safeBaseJd = 2437000.0; // 07 Mar 1960
+                double startOffset = (jd > 2430000.0) ? (jd - 2433647.5) : jd;
+                jd = safeBaseJd + startOffset;
+            }
             double jdAdj = jd + 0.5;
             long Z = (long)Math.Floor(jdAdj);
             double F = jdAdj - Z;
@@ -430,13 +467,17 @@ namespace KSPGMAT {
             });
         }
 
+        public static void AbortCurrentExecution() {
+            GMATConsoleRunner.AbortExecution();
+        }
+
         public static void PropagateMission(Vessel vessel, StageData stage, ROEngineInfo engine, List<MissionStep> steps, Action<bool, MissionResult> callback) {
             List<StageData> list = stage != null ? new List<StageData> { stage } : null;
-            PropagateMission(vessel, list, engine, steps, null, callback);
+            PropagateMission(vessel, list, engine, steps, null, null, callback);
         }
 
         public static void PropagateMission(Vessel vessel, List<StageData> selectedStages, ROEngineInfo engine, List<MissionStep> steps, Action<bool, MissionResult> callback) {
-            PropagateMission(vessel, selectedStages, engine, steps, null, callback);
+            PropagateMission(vessel, selectedStages, engine, steps, null, null, callback);
         }
 
         public static void PropagateMission(Vessel vessel, List<StageData> selectedStages, ROEngineInfo engine, List<MissionStep> steps, Dictionary<string, PropagatorConfig> propagatorConfigs, Action<bool, MissionResult> callback) {
@@ -451,328 +492,43 @@ namespace KSPGMAT {
             ThreadPool.QueueUserWorkItem(_ => {
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 try {
-                    Vector3d pos_km, vel_kms;
-                    PrincipiaInterop.GetVesselStateICRF(vessel, out pos_km, out vel_kms);
+                    KSPGMATLog.Section("🚀 GMAT NATIVE MISSION PROPAGATION STARTED");
+                    if (vessel != null) {
+                        GMATStateManager.Current.SyncFromVessel(vessel);
+                    }
 
-                    double ut = Planetarium.GetUniversalTime();
+                    string scriptToSend = !string.IsNullOrEmpty(rawScript)
+                        ? rawScript
+                        : GMATScriptGenerator.GenerateScript(vessel, steps, null, propagatorConfigs);
 
-                    // Ground-Truth Physical Spacecraft Mass Calculation
-                    double totalVesselWetMassKg = (vessel != null) ? vessel.totalMass * 1000.0 : 0.0;
-                    double fuelMassKg = 0.0;
-                    double dryMassKg = 0.0;
-
-                    // Determine active fuel mass from selected engine or stage
-                    if (engine != null && engine.fuelMassKg > 0) {
-                        fuelMassKg = engine.fuelMassKg;
-                    } else if (selectedStages != null && selectedStages.Count > 0) {
-                        foreach (var st in selectedStages) {
-                            if (st.fuelMassTonnes > 0.01) {
-                                fuelMassKg += st.fuelMassTonnes * 1000.0;
+                    GMATConsoleRunner.ExecuteScriptAsync(scriptToSend, steps, (success, result) => {
+                        sw.Stop();
+                        if (result != null) {
+                            result.solve_ut = Planetarium.GetUniversalTime();
+                            result.solve_principia_time = PrincipiaInterop.GetCurrentPrincipiaTime();
+                            if (result.success) {
+                                KSPGMATLog.Success($"GMAT execution succeeded in {sw.ElapsedMilliseconds} ms!");
+                                KSPGMATLog.Success($"Final Orbit: SMA={result.final_sma:F2}km, ECC={result.final_ecc:F5}, INC={result.final_inc:F2}°");
+                                KSPGMATLog.Success($"Solved Burns ({result.solved_burns.Count}):");
+                                for (int b = 0; b < result.solved_burns.Count; b++) {
+                                    var bn = result.solved_burns[b];
+                                    KSPGMATLog.Success($"  [Burn {b+1}] {bn.name} ({bn.type}): ΔV=({bn.dv_v:F1}, {bn.dv_n:F1}, {bn.dv_b:F1}) m/s, Mag={bn.magnitude:F1} m/s, Dur={bn.duration:F1}s");
+                                }
+                            } else {
+                                KSPGMATLog.Error($"GMAT execution failed in {sw.ElapsedMilliseconds} ms: {result.error}");
                             }
                         }
-                    }
-
-                    // Physical Law: Active Stage Dry Mass = Current Total Wet Mass - Available Propellant Mass
-                    if (totalVesselWetMassKg > fuelMassKg && totalVesselWetMassKg > 0) {
-                        dryMassKg = totalVesselWetMassKg - fuelMassKg;
-                    } else if (selectedStages != null && selectedStages.Count > 0) {
-                        var activeSt = selectedStages.Find(s => s.fuelMassTonnes > 0.05) ?? selectedStages[0];
-                        dryMassKg = activeSt.dryMassTonnes * 1000.0;
-                        if (fuelMassKg <= 0) fuelMassKg = activeSt.fuelMassTonnes * 1000.0;
-                    } else {
-                        dryMassKg = Math.Max(100.0, totalVesselWetMassKg - fuelMassKg);
-                    }
-                    double fuelDensity = engine != null ? engine.fuelDensityKgM3 : 0.0;
-                    double tankVolume = engine != null ? engine.tankVolumeM3 : 0.0;
-                    double tankPressure = engine != null ? engine.tankPressureKPa : 0.0;
-                    double thrustN = engine != null ? engine.thrustKN * 1000.0 : 0.0;
-                    double ispS = engine != null ? engine.ispVac : 0.0;
-                    string engName = engine != null ? engine.title : "";
-
-                    bool needsFiniteBurn = false;
-                    for (int i = 0; i < steps.Count; i++) if (steps[i].type == "FiniteBurn") needsFiniteBurn = true;
-                    if (needsFiniteBurn && (engine == null || fuelDensity <= 0.0 || tankVolume <= 0.0 || thrustN <= 0.0 || ispS <= 0.0)) {
-                        throw new InvalidOperationException("有限推力任务需要从游戏中读取到完整发动机、燃料密度、储罐容积、推力和 Isp 参数");
-                    }
-
-                    // ======================= DETAILED DEBUG LOGGING =======================
-                    KSPGMATLog.Section("GMAT MISSION PROPAGATION STARTED");
-                    KSPGMATLog.Info($"Vessel Name: {vessel.vesselName} (ID: {vessel.id}), CentralBody: {vessel.mainBody.name}, UT: {ut:F3} s");
-                    KSPGMATLog.Info($"ICRF Position: [{pos_km.x:F3}, {pos_km.y:F3}, {pos_km.z:F3}] km (|r| = {pos_km.magnitude:F1} km)");
-                    KSPGMATLog.Info($"ICRF Velocity: [{vel_kms.x:F6}, {vel_kms.y:F6}, {vel_kms.z:F6}] km/s (|v| = {vel_kms.magnitude:F3} km/s)");
-                    if (vessel.orbit != null) {
-                        KSPGMATLog.Info($"Orbit: SMA={vessel.orbit.semiMajorAxis / 1000.0:F1}km, ECC={vessel.orbit.eccentricity:F5}, INC={vessel.orbit.inclination:F3}°, RAAN={vessel.orbit.LAN:F3}°, PeA={vessel.orbit.PeA / 1000.0:F1}km, ApA={vessel.orbit.ApA / 1000.0:F1}km");
-                    }
-                    KSPGMATLog.Info($"Mass & Engine: DryMass={dryMassKg:F1}kg, FuelMass={fuelMassKg:F1}kg, WetMass={(dryMassKg+fuelMassKg):F1}kg, Thrust={thrustN/1000.0:F1}kN, Isp={ispS:F1}s, Propellant={engine?.propellantDesc ?? "Default"}");
-                    if (selectedStages != null && selectedStages.Count > 0) {
-                        List<string> sList = new List<string>();
-                        foreach (var st in selectedStages) sList.Add($"S{st.stageNumber}(Δv={st.deltaV:F0}m/s, wet={st.wetMassTonnes:F2}t)");
-                        KSPGMATLog.Info($"Selected Stages ({selectedStages.Count}): " + string.Join(", ", sList.ToArray()));
-                    }
-                    KSPGMATLog.Info($"Mission Sequence ({steps.Count} steps):");
-                    for (int sIdx = 0; sIdx < steps.Count; sIdx++) {
-                        var st = steps[sIdx];
-                        if (st.type == "Propagate") {
-                            KSPGMATLog.Info($"  [Step {sIdx+1}] Propagate '{st.label}' ({st.propagator}) -> Stop: {st.stop_type}, Duration: {st.duration:F1}s, TargetVal: {st.target_val:F2}");
-                        } else if (st.type == "ImpulsiveBurn") {
-                            KSPGMATLog.Info($"  [Step {sIdx+1}] ImpulsiveBurn '{st.label}' -> ΔV=({st.dv_v:F1}, {st.dv_n:F1}, {st.dv_b:F1}) m/s, Mag={Math.Sqrt(st.dv_v*st.dv_v + st.dv_n*st.dv_n + st.dv_b*st.dv_b):F1} m/s");
-                        } else if (st.type == "FiniteBurn") {
-                            KSPGMATLog.Info($"  [Step {sIdx+1}] FiniteBurn '{st.label}' -> Duration: {st.duration:F1}s");
-                        } else if (st.type == "Equation") {
-                            KSPGMATLog.Info($"  [Step {sIdx+1}] Equation -> Sat.{st.variable} = {st.expression}");
-                        } else {
-                            KSPGMATLog.Info($"  [Step {sIdx+1}] {st.type} '{st.label}'");
-                        }
-                    }
-                    if (propagatorConfigs != null && propagatorConfigs.Count > 0) {
-                        KSPGMATLog.Info($"Custom Propagators ({propagatorConfigs.Count}):");
-                        foreach (var kv in propagatorConfigs) {
-                            var p = kv.Value;
-                            KSPGMATLog.Info($"  - {kv.Key}: Type={p.integratorType}, Step={p.initialStepSize}s, MaxStep={p.maxStep}s, Center={p.centralBody}");
-                        }
-                    }
-
-                    StringBuilder sb = new StringBuilder();
-                    sb.Append("{");
-                    sb.Append("\"craft\": {");
-                    sb.Append($"\"name\": \"{Sanitize(vessel.vesselName)}\",");
-                    sb.Append($"\"central_body\": \"{vessel.mainBody.name}\",");
-                    sb.Append($"\"ut\": {ut.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)},");
-                    double jdVal = 2433647.5 + (ut / 86400.0);
-                    string epochUtcVal = JdToUtcGregorian(jdVal);
-                    sb.Append($"\"epoch_utc\": \"{epochUtcVal}\",");
-                    sb.Append($"\"x\": {pos_km.x.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)},");
-                    sb.Append($"\"y\": {pos_km.y.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)},");
-                    sb.Append($"\"z\": {pos_km.z.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)},");
-                    sb.Append($"\"vx\": {vel_kms.x.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)},");
-                    sb.Append($"\"vy\": {vel_kms.y.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)},");
-                    sb.Append($"\"vz\": {vel_kms.z.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)},");
-                    sb.Append($"\"dry_mass\": {dryMassKg.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)},");
-                    sb.Append($"\"fuel_mass\": {fuelMassKg.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)},");
-                    sb.Append($"\"fuel_density\": {fuelDensity.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)},");
-                    sb.Append($"\"tank_volume\": {tankVolume.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)},");
-                    sb.Append($"\"tank_pressure\": {tankPressure.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)},");
-                    sb.Append($"\"engine_name\": \"{Sanitize(engName)}\",");
-                    sb.Append($"\"thrust\": {thrustN.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)},");
-                    sb.Append($"\"isp\": {ispS.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)}");
-
-                    // Multi-Thruster Architecture
-                    var allEngines = ROEngineInterop.ScanVesselEngines(vessel);
-                    if (allEngines != null && allEngines.Count > 0) {
-                        sb.Append(",\"thrusters\": [");
-                        for (int te = 0; te < allEngines.Count; te++) {
-                            var teng = allEngines[te];
-                            if (te > 0) sb.Append(",");
-                            sb.Append("{");
-                            sb.Append($"\"name\": \"{Sanitize(teng.title)}\",");
-                            sb.Append($"\"thrust\": {(teng.thrustKN * 1000.0).ToString("F2", System.Globalization.CultureInfo.InvariantCulture)},");
-                            sb.Append($"\"isp\": {teng.ispVac.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)},");
-                            sb.Append($"\"fuel_density\": {teng.fuelDensityKgM3.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)},");
-                            sb.Append($"\"tank_volume\": {teng.tankVolumeM3.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)},");
-                            sb.Append($"\"bound_tank\": \"Stage_{teng.stageNumber}\"");
-                            sb.Append("}");
-                        }
-                        sb.Append("]");
-                    }
-
-                    // Multi-Tank Architecture
-                    var allTanks = ROEngineInterop.ScanVesselTanks(vessel);
-                    if (allTanks != null && allTanks.Count > 0) {
-                        sb.Append(",\"tanks\": [");
-                        for (int tk = 0; tk < allTanks.Count; tk++) {
-                            var tank = allTanks[tk];
-                            if (tk > 0) sb.Append(",");
-                            sb.Append("{");
-                            sb.Append($"\"name\": \"{Sanitize(tank.id)}\",");
-                            sb.Append($"\"fuel_mass\": {tank.fuelMassKg.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)},");
-                            sb.Append($"\"dry_mass\": {tank.dryMassKg.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)},");
-                            sb.Append($"\"volume\": {tank.maxVolumeM3.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)}");
-                            sb.Append("}");
-                        }
-                        sb.Append("]");
-                    }
-
-                    sb.Append("},");
-
-                    // Steps array
-                    sb.Append("\"sequence\": [");
-                    for (int i = 0; i < steps.Count; i++) {
-                        var st = steps[i];
-                        if (i > 0) sb.Append(",");
-                        sb.Append("{");
-                        sb.Append($"\"type\": \"{st.type}\",");
-                        sb.Append($"\"propagator\": \"{st.propagator}\",");
-                        sb.Append($"\"stop_type\": \"{st.stop_type}\",");
-                        sb.Append($"\"duration\": {st.duration.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)},");
-                        sb.Append($"\"target_val\": {st.target_val.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)},");
-                        sb.Append($"\"target_alt\": {st.target_alt.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)},");
-                        sb.Append($"\"target_goal\": \"{st.target_goal ?? "Apoapsis"}\",");
-                        sb.Append($"\"target_body\": \"{st.target_body ?? ""}\",");
-                        sb.Append($"\"dv_v\": {st.dv_v.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)},");
-                        sb.Append($"\"dv_n\": {st.dv_n.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)},");
-                        sb.Append($"\"dv_b\": {st.dv_b.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)},");
-                        sb.Append($"\"burn_coordinate_system\": \"{st.burn_coordinate_system}\",");
-                        sb.Append($"\"burn_axes\": \"{st.burn_axes}\",");
-                        sb.Append($"\"burn_origin\": \"{st.burn_origin}\",");
-                        sb.Append($"\"burn_isp\": {st.burn_isp.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)},");
-                        sb.Append($"\"burn_decrement_mass\": {(st.burn_decrement_mass ? "true" : "false")},");
-                        sb.Append($"\"burn_name\": \"{st.burn_name ?? ""}\",");
-                        sb.Append($"\"target_tolerance\": {st.target_tolerance.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)},");
-                        sb.Append($"\"vz_tolerance\": {st.vz_tolerance.ToString("G17", System.Globalization.CultureInfo.InvariantCulture)},");
-                        sb.Append($"\"vary_perturbation\": {st.vary_perturbation.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)},");
-                        sb.Append($"\"vary_lower\": {st.vary_lower.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)},");
-                        sb.Append($"\"vary_upper\": {st.vary_upper.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)},");
-                        sb.Append($"\"vary_max_step\": {st.vary_max_step.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)},");
-                        sb.Append($"\"variable\": \"{st.variable}\",");
-                        sb.Append($"\"expression\": \"{st.expression}\",");
-                        sb.Append($"\"burn_direction\": \"{st.burn_direction ?? "Prograde"}\",");
-                        sb.Append($"\"utc_epoch\": \"{st.utc_epoch ?? ""}\",");
-                        sb.Append($"\"dc_algorithm\": \"{st.dc_algorithm ?? "NewtonRaphson"}\",");
-                        sb.Append($"\"dc_derivative_method\": \"{st.dc_derivative_method ?? "ForwardDifference"}\",");
-                        sb.Append($"\"dc_max_iter\": {st.dc_max_iter},");
-                        sb.Append($"\"label\": \"{st.label}\",");
-                        sb.Append($"\"dc_name\": \"{st.dc_name ?? "DefaultDC"}\",");
-                        sb.Append($"\"solve_mode\": \"{st.solve_mode ?? "Solve"}\",");
-                        sb.Append($"\"exit_mode\": \"{st.exit_mode ?? "SaveAndContinue"}\",");
-                        sb.Append($"\"vary_variable\": \"{st.vary_variable ?? "burntime"}\",");
-                        sb.Append($"\"vary_initial\": {st.vary_initial.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)},");
-                        sb.Append($"\"achieve_param\": \"{st.achieve_param ?? "Earth.RMAG"}\",");
-                        sb.Append($"\"achieve_val\": {st.achieve_val.ToString("G17", System.Globalization.CultureInfo.InvariantCulture)},");
-                        sb.Append($"\"achieve_tolerance\": {st.achieve_tolerance.ToString("G17", System.Globalization.CultureInfo.InvariantCulture)},");
-                        sb.Append($"\"var_name\": \"{st.var_name ?? "burntime"}\",");
-                        sb.Append($"\"var_expr\": \"{st.var_expr ?? "150.0"}\",");
-                        sb.Append($"\"burn_use_vary_var\": {(st.burn_use_vary_var ? "true" : "false")},");
-                        sb.Append($"\"bound_thruster\": \"{Sanitize(st.bound_thruster ?? "")}\",");
-                        sb.Append($"\"bound_tank\": \"{Sanitize(st.bound_tank ?? "")}\",");
-                        sb.Append($"\"burn_vary_var_name\": \"{st.burn_vary_var_name ?? "burntime"}\",");
-                        sb.Append($"\"stop_tolerance\": {st.stop_tolerance.ToString("G17", System.Globalization.CultureInfo.InvariantCulture)},");
-                        sb.Append($"\"epoch_offset\": {st.epoch_offset.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)}");
-                        sb.Append("}");
-                    }
-                    sb.Append("]");
-
-                    // Propagator Configs from Registry
-                    var pConfigs = (propagatorConfigs != null && propagatorConfigs.Count > 0) ? propagatorConfigs : GMATParameterRegistry.GetAllPropagatorConfigs();
-                    if (pConfigs != null && pConfigs.Count > 0) {
-                        sb.Append(",\"propagator_configs\": {");
-                        bool first = true;
-                        foreach (var kv in pConfigs) {
-                            if (!first) sb.Append(",");
-                            sb.Append($"\"{kv.Key}\": {kv.Value.ToJson()}");
-                            first = false;
-                        }
-                        sb.Append("}");
-                    }
-
-                    // Solver / DifferentialCorrector Configs from Registry
-                    var solverConfigs = GMATParameterRegistry.GetAllSolverConfigs();
-                    if (solverConfigs != null && solverConfigs.Count > 0) {
-                        sb.Append(",\"solver_configs\": {");
-                        bool first = true;
-                        foreach (var kv in solverConfigs) {
-                            if (!first) sb.Append(",");
-                            sb.Append($"\"{kv.Key}\": {kv.Value.ToJson()}");
-                            first = false;
-                        }
-                        sb.Append("}");
-                    }
-
-                    // Custom User Coordinate Systems
-                    if (GMATParameterRegistry.UserCoordinateSystems != null && GMATParameterRegistry.UserCoordinateSystems.Count > 0) {
-                        sb.Append(",\"custom_coordinate_systems\": [");
-                        for (int csIdx = 0; csIdx < GMATParameterRegistry.UserCoordinateSystems.Count; csIdx++) {
-                            var cs = GMATParameterRegistry.UserCoordinateSystems[csIdx];
-                            if (csIdx > 0) sb.Append(",");
-                            sb.Append("{");
-                            sb.Append($"\"name\": \"{cs.name}\",");
-                            sb.Append($"\"origin\": \"{cs.origin}\",");
-                            sb.Append($"\"axes\": \"{cs.axes}\",");
-                            sb.Append($"\"primary\": \"{cs.primary}\",");
-                            sb.Append($"\"secondary\": \"{cs.secondary}\",");
-                            sb.Append($"\"xAxis\": \"{cs.xAxis}\",");
-                            sb.Append($"\"yAxis\": \"{cs.yAxis}\",");
-                            sb.Append($"\"zAxis\": \"{cs.zAxis}\",");
-                            sb.Append($"\"epoch\": \"{cs.epoch}\"");
-                            sb.Append("}");
-                        }
-                        sb.Append("]");
-                    }
-
-                    if (!string.IsNullOrEmpty(rawScript)) {
-                        sb.Append($",\"raw_script\": \"{EscapeJson(rawScript)}\"");
-                    }
-
-                    sb.Append("}");
-
-                    string responseJson = "";
-                    string cliScript = FindCliScript();
-                    string outputDir = GetOutputDir();
-                    string inputFile = Path.Combine(outputDir, "mission_input.json");
-                    string outputFile = Path.Combine(outputDir, "mission_result.json");
-                    if (File.Exists(outputFile)) {
-                        try { File.Delete(outputFile); } catch {}
-                    }
-
-                    File.WriteAllText(inputFile, sb.ToString(), Utf8NoBom);
-
-                    System.Diagnostics.ProcessStartInfo psi = new System.Diagnostics.ProcessStartInfo {
-                        FileName = FindPythonExe(),
-                        Arguments = $"\"{cliScript}\" --action solve --input \"{inputFile}\" --output \"{outputFile}\"",
-                        WorkingDirectory = GmatBinPath,
-                        UseShellExecute = false,
-                        CreateNoWindow = true,
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true
-                    };
-
-                    string cliStdOut = "";
-                    string cliStdErr = "";
-                    using (var process = System.Diagnostics.Process.Start(psi)) {
-                        cliStdOut = process.StandardOutput.ReadToEnd();
-                        cliStdErr = process.StandardError.ReadToEnd();
-                        process.WaitForExit(45000);
-                    }
-
-                    if (File.Exists(outputFile)) {
-                        responseJson = File.ReadAllText(outputFile, Encoding.UTF8);
-                    } else {
-                        throw new Exception("GMAT CLI 执行超时或未生成结果文件。");
-                    }
-                    sw.Stop();
-
-                    MissionResult result = ParseMissionResult(responseJson);
-                    result.solve_ut = ut;
-                    result.solve_principia_time = PrincipiaInterop.GetCurrentPrincipiaTime();
-
-                    if (result.success) {
-                        KSPGMATLog.Success($"GMAT execution succeeded in {sw.ElapsedMilliseconds} ms!");
-                        KSPGMATLog.Success($"Script Location: {result.script_path}");
-                        KSPGMATLog.Success($"Final Orbit State: SMA={result.final_sma:F2}km, ECC={result.final_ecc:F5}, INC={result.final_inc:F2}°, RAAN={result.final_raan:F2}°, Epoch={result.final_epoch}, Mass={result.final_mass:F1}kg");
-                        KSPGMATLog.Success($"Trajectory Points: {result.trajectory.Count}");
-                        KSPGMATLog.Success($"Solved Burns ({result.solved_burns.Count}):");
-                        for (int b = 0; b < result.solved_burns.Count; b++) {
-                            var bn = result.solved_burns[b];
-                            KSPGMATLog.Success($"  [Burn {b+1}] {bn.name} ({bn.type}) on {bn.origin}: t=+{bn.epoch_offset:F1}s (+{bn.epoch_offset/86400.0:F2}d), ΔV=({bn.dv_v:F1}, {bn.dv_n:F1}, {bn.dv_b:F1}) m/s, Mag={bn.magnitude:F1} m/s");
-                        }
-                        if (result.updated_sequence != null && result.updated_sequence.Count > 0) {
-                            KSPGMATLog.Info($"Targeter Updated Values reflected in {result.updated_sequence.Count} steps.");
-                        }
-                        if (!string.IsNullOrEmpty(result.render_image_path)) {
-                            KSPGMATLog.Info($"Simulation Render Image: {result.render_image_path}");
-                        }
-                    } else {
-                        KSPGMATLog.Error($"GMAT execution failed in {sw.ElapsedMilliseconds} ms: {result.error}");
-                    }
-                    KSPGMATLog.Section("GMAT MISSION PROPAGATION COMPLETED");
-
-                    KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(result.success, result));
+                        KSPGMATLog.Section("GMAT MISSION PROPAGATION COMPLETED");
+                        KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(success, result));
+                    });
                 } catch (Exception ex) {
                     sw.Stop();
                     KSPGMATLog.Error($"GMAT PropagateMission Exception in {sw.ElapsedMilliseconds} ms: {ex}");
                     KSPGMATLog.Section("GMAT MISSION PROPAGATION FAILED");
-                    MissionResult err = new MissionResult();
-                    err.success = false;
-                    err.error = ex.Message;
+                    MissionResult err = new MissionResult {
+                        success = false,
+                        error = ex.Message
+                    };
                     KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(false, err));
                 }
             });
@@ -808,131 +564,13 @@ namespace KSPGMAT {
         public static void ExportScript(string targetPath, Vessel vessel, List<MissionStep> sequence, List<GMATUserVariable> userVars, List<GMATUserArray> userArrays, List<GMATUserString> userStrings, Action<bool, string> callback) {
             ThreadPool.QueueUserWorkItem(_ => {
                 try {
-                    Vector3d pos_km, vel_kms;
-                    PrincipiaInterop.GetVesselStateICRF(vessel, out pos_km, out vel_kms);
-                    double ut = Planetarium.GetUniversalTime();
-                    double totalMass = vessel != null ? vessel.totalMass * 1000.0 : 1000.0;
-                    double dryMass = totalMass * 0.5;
-                    double fuelMass = totalMass * 0.5;
-
-                    StringBuilder sb = new StringBuilder();
-                    sb.Append("{");
-                    sb.Append($"\"export_path\": \"{targetPath.Replace("\\", "\\\\")}\",");
-                    sb.Append("\"craft\": {");
-                    sb.Append($"\"vessel_name\": \"{Sanitize(vessel != null ? vessel.vesselName : "Sat")}\",");
-                    sb.Append($"\"central_body\": \"{(vessel != null ? vessel.mainBody.bodyName : "Earth")}\",");
-                    sb.Append($"\"ut\": {ut.ToString("F3", CultureInfo.InvariantCulture)},");
-                    sb.Append($"\"x\": {pos_km.x.ToString("F6", CultureInfo.InvariantCulture)},");
-                    sb.Append($"\"y\": {pos_km.y.ToString("F6", CultureInfo.InvariantCulture)},");
-                    sb.Append($"\"z\": {pos_km.z.ToString("F6", CultureInfo.InvariantCulture)},");
-                    sb.Append($"\"vx\": {vel_kms.x.ToString("F8", CultureInfo.InvariantCulture)},");
-                    sb.Append($"\"vy\": {vel_kms.y.ToString("F8", CultureInfo.InvariantCulture)},");
-                    sb.Append($"\"vz\": {vel_kms.z.ToString("F8", CultureInfo.InvariantCulture)},");
-                    sb.Append($"\"dry_mass\": {dryMass.ToString("F2", CultureInfo.InvariantCulture)},");
-                    sb.Append($"\"fuel_mass\": {fuelMass.ToString("F2", CultureInfo.InvariantCulture)},");
-
-                    // User variables
-                    sb.Append("\"user_variables\": [");
-                    for (int v = 0; v < (userVars != null ? userVars.Count : 0); v++) {
-                        if (v > 0) sb.Append(",");
-                        sb.Append($"{{\"name\": \"{Sanitize(userVars[v].name)}\", \"value\": {userVars[v].value.ToString("G6", CultureInfo.InvariantCulture)}, \"description\": \"{Sanitize(userVars[v].description)}\"}}");
+                    if (vessel != null) {
+                        GMATStateManager.Current.SyncFromVessel(vessel);
                     }
-                    sb.Append("],");
-
-                    // User arrays
-                    sb.Append("\"user_arrays\": [");
-                    for (int a = 0; a < (userArrays != null ? userArrays.Count : 0); a++) {
-                        if (a > 0) sb.Append(",");
-                        sb.Append($"{{\"name\": \"{Sanitize(userArrays[a].name)}\", \"rows\": {userArrays[a].rows}, \"cols\": {userArrays[a].cols}, \"description\": \"{Sanitize(userArrays[a].description)}\"}}");
-                    }
-                    sb.Append("],");
-
-                    // User strings
-                    sb.Append("\"user_strings\": [");
-                    for (int s = 0; s < (userStrings != null ? userStrings.Count : 0); s++) {
-                        if (s > 0) sb.Append(",");
-                        sb.Append($"{{\"name\": \"{Sanitize(userStrings[s].name)}\", \"value\": \"{Sanitize(userStrings[s].value)}\", \"description\": \"{Sanitize(userStrings[s].description)}\"}}");
-                    }
-                    sb.Append("]");
-                    sb.Append("},");
-
-                    // Sequence steps
-                    sb.Append("\"sequence\": [");
-                    for (int i = 0; i < (sequence != null ? sequence.Count : 0); i++) {
-                        if (i > 0) sb.Append(",");
-                        var st = sequence[i];
-                        sb.Append("{");
-                        sb.Append($"\"type\": \"{st.type}\",");
-                        sb.Append($"\"propagator\": \"{st.propagator}\",");
-                        sb.Append($"\"stop_type\": \"{st.stop_type}\",");
-                        sb.Append($"\"duration\": {st.duration.ToString("F3", CultureInfo.InvariantCulture)},");
-                        sb.Append($"\"target_val\": {st.target_val.ToString("F3", CultureInfo.InvariantCulture)},");
-                        sb.Append($"\"burn_name\": \"{st.burn_name}\",");
-                        sb.Append($"\"burn_direction\": \"{st.burn_direction}\",");
-                        sb.Append($"\"burn_use_vary_var\": {(st.burn_use_vary_var ? "true" : "false")},");
-                        sb.Append($"\"burn_vary_var_name\": \"{st.burn_vary_var_name}\",");
-                        sb.Append($"\"optimizer_name\": \"{st.optimizer_name}\",");
-                        sb.Append($"\"minimize_variable\": \"{st.minimize_variable}\",");
-                        sb.Append($"\"constraint_lhs\": \"{st.constraint_lhs}\",");
-                        sb.Append($"\"constraint_op\": \"{st.constraint_op}\",");
-                        sb.Append($"\"constraint_val\": {st.constraint_val.ToString("F3", CultureInfo.InvariantCulture)},");
-                        sb.Append($"\"condition_expr\": \"{st.condition_expr}\",");
-                        sb.Append($"\"for_var\": \"{st.for_var}\",");
-                        sb.Append($"\"for_range\": \"{st.for_range}\",");
-                        sb.Append($"\"script_content\": \"{(st.script_content ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n")}\",");
-                        sb.Append($"\"set_target\": \"{st.set_target}\",");
-                        sb.Append($"\"set_expr\": \"{st.set_expr}\",");
-                        sb.Append($"\"global_objects\": \"{st.global_objects}\",");
-                        sb.Append($"\"function_name\": \"{st.function_name}\",");
-                        sb.Append($"\"func_inputs\": \"{st.func_inputs}\",");
-                        sb.Append($"\"func_outputs\": \"{st.func_outputs}\",");
-                        sb.Append($"\"subscriber_name\": \"{st.subscriber_name}\",");
-                        sb.Append($"\"action_state\": \"{st.action_state}\",");
-                        sb.Append($"\"event_locator\": \"{st.event_locator}\",");
-                        sb.Append($"\"mark_label\": \"{st.mark_label}\",");
-                        sb.Append($"\"echo_state\": \"{st.echo_state}\",");
-                        sb.Append($"\"dc_name\": \"{st.dc_name}\",");
-                        sb.Append($"\"vary_variable\": \"{st.vary_variable}\",");
-                        sb.Append($"\"vary_initial\": {st.vary_initial.ToString("F3", CultureInfo.InvariantCulture)},");
-                        sb.Append($"\"vary_lower\": {st.vary_lower.ToString("F3", CultureInfo.InvariantCulture)},");
-                        sb.Append($"\"vary_upper\": {st.vary_upper.ToString("F3", CultureInfo.InvariantCulture)},");
-                        sb.Append($"\"vary_max_step\": {st.vary_max_step.ToString("F3", CultureInfo.InvariantCulture)},");
-                        sb.Append($"\"achieve_param\": \"{st.achieve_param}\",");
-                        sb.Append($"\"achieve_val\": {st.achieve_val.ToString("F3", CultureInfo.InvariantCulture)},");
-                        sb.Append($"\"achieve_tolerance\": {st.achieve_tolerance.ToString("F4", CultureInfo.InvariantCulture)},");
-                        sb.Append($"\"solve_mode\": \"{st.solve_mode}\",");
-                        sb.Append($"\"label\": \"{st.label}\"");
-                        sb.Append("}");
-                    }
-                    sb.Append("]");
-                    sb.Append("}");
-
-                    string cliScript = FindCliScript();
-                    string outputDir = GetOutputDir();
-                    string inputFile = Path.Combine(outputDir, "export_input.json");
-                    string outputFile = Path.Combine(outputDir, "export_result.json");
-                    if (File.Exists(outputFile)) {
-                        try { File.Delete(outputFile); } catch {}
-                    }
-                    File.WriteAllText(inputFile, sb.ToString(), Utf8NoBom);
-
-                    System.Diagnostics.ProcessStartInfo psi = new System.Diagnostics.ProcessStartInfo {
-                        FileName = FindPythonExe(),
-                        Arguments = $"\"{cliScript}\" --action export --input \"{inputFile}\" --output \"{outputFile}\"",
-                        WorkingDirectory = GmatBinPath,
-                        UseShellExecute = false,
-                        CreateNoWindow = true,
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true
-                    };
-                    using (var process = System.Diagnostics.Process.Start(psi)) {
-                        process.WaitForExit(15000);
-                    }
-
-                    string json = File.Exists(outputFile) ? File.ReadAllText(outputFile, Encoding.UTF8) : "{}";
-                    bool ok = json.Contains("\"success\": true");
-                    string msg = ok ? $"✅ 成功导出高保真 GMAT 脚本至: {targetPath}" : "❌ 导出失败: " + ExtractString(json, "error");
-                    KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(ok, msg));
+                    string scriptContent = GMATScriptGenerator.GenerateScript(vessel, sequence, GMATStateManager.Current.Spacecraft.CentralBody);
+                    string sanitized = GMATStateManager.SanitizeGmatScript(scriptContent);
+                    File.WriteAllText(targetPath, sanitized, Utf8NoBom);
+                    KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(true, $"✅ 成功导出高保真 GMAT 脚本至: {targetPath}"));
                 } catch (Exception ex) {
                     KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(false, "导出异常: " + ex.Message));
                 }
@@ -942,173 +580,8 @@ namespace KSPGMAT {
         public static void ImportScript(string scriptPath, Vessel vessel, Action<bool, GMATImportResult, string> callback) {
             ThreadPool.QueueUserWorkItem(_ => {
                 try {
-                    double ut = Planetarium.GetUniversalTime();
-                    string vName = vessel != null ? Sanitize(vessel.vesselName) : "NRHOSat";
-
-                    StringBuilder sb = new StringBuilder();
-                    sb.Append("{");
-                    sb.Append($"\"script_path\": \"{scriptPath.Replace("\\", "\\\\")}\",");
-                    sb.Append($"\"ut\": {ut.ToString("F3", CultureInfo.InvariantCulture)},");
-                    sb.Append($"\"vessel_name\": \"{vName}\"");
-                    sb.Append("}");
-
-                    string cliScript = FindCliScript();
-                    string outputDir = GetOutputDir();
-                    string inputFile = Path.Combine(outputDir, "import_input.json");
-                    string outputFile = Path.Combine(outputDir, "import_result.json");
-                    if (File.Exists(outputFile)) {
-                        try { File.Delete(outputFile); } catch {}
-                    }
-                    File.WriteAllText(inputFile, sb.ToString(), Utf8NoBom);
-
-                    System.Diagnostics.ProcessStartInfo psi = new System.Diagnostics.ProcessStartInfo {
-                        FileName = FindPythonExe(),
-                        Arguments = $"\"{cliScript}\" --action import --input \"{inputFile}\" --output \"{outputFile}\"",
-                        WorkingDirectory = GmatBinPath,
-                        UseShellExecute = false,
-                        CreateNoWindow = true,
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true
-                    };
-                    using (var process = System.Diagnostics.Process.Start(psi)) {
-                        process.WaitForExit(15000);
-                    }
-
-                    string json = File.Exists(outputFile) ? File.ReadAllText(outputFile, Encoding.UTF8) : "{}";
-                    if (json.Contains("\"success\": true")) {
-                        GMATImportResult result = new GMATImportResult();
-                        result.success = true;
-                        result.script_name = ExtractString(json, "script_name") ?? Path.GetFileName(scriptPath);
-                        result.primary_craft_name = ExtractString(json, "primary_craft_name") ?? "Sat";
-
-                        // Parse user variables
-                        int varIdx = json.IndexOf("\"user_variables\":");
-                        if (varIdx >= 0) {
-                            int endVar = json.IndexOf("]", varIdx);
-                            if (endVar > varIdx) {
-                                string varSec = json.Substring(varIdx, endVar - varIdx + 1);
-                                string[] vItems = varSec.Split(new string[] { "{" }, StringSplitOptions.RemoveEmptyEntries);
-                                foreach (string vi in vItems) {
-                                    if (vi.Contains("\"name\":")) {
-                                        string vn = ExtractString("{" + vi, "name");
-                                        double vv = ExtractDouble("{" + vi, "value");
-                                        string vd = ExtractString("{" + vi, "description") ?? "";
-                                        result.user_variables.Add(new GMATUserVariable { name = vn, value = vv, description = vd });
-                                    }
-                                }
-                            }
-                        }
-
-                        // Parse user arrays
-                        int arrIdx = json.IndexOf("\"user_arrays\":");
-                        if (arrIdx >= 0) {
-                            int endArr = json.IndexOf("]", arrIdx);
-                            if (endArr > arrIdx) {
-                                string arrSec = json.Substring(arrIdx, endArr - arrIdx + 1);
-                                string[] aItems = arrSec.Split(new string[] { "{" }, StringSplitOptions.RemoveEmptyEntries);
-                                foreach (string ai in aItems) {
-                                    if (ai.Contains("\"name\":")) {
-                                        string an = ExtractString("{" + ai, "name");
-                                        int ar = (int)ExtractDouble("{" + ai, "rows");
-                                        int ac = (int)ExtractDouble("{" + ai, "cols");
-                                        string ad = ExtractString("{" + ai, "description") ?? "";
-                                        result.user_arrays.Add(new GMATUserArray { name = an, rows = ar <= 0 ? 3 : ar, cols = ac <= 0 ? 3 : ac, description = ad });
-                                    }
-                                }
-                            }
-                        }
-
-                        // Parse user strings
-                        int strIdx = json.IndexOf("\"user_strings\":");
-                        if (strIdx >= 0) {
-                            int endStr = json.IndexOf("]", strIdx);
-                            if (endStr > strIdx) {
-                                string strSec = json.Substring(strIdx, endStr - strIdx + 1);
-                                string[] sItems = strSec.Split(new string[] { "{" }, StringSplitOptions.RemoveEmptyEntries);
-                                foreach (string si in sItems) {
-                                    if (si.Contains("\"name\":")) {
-                                        string sn = ExtractString("{" + si, "name");
-                                        string sv = ExtractString("{" + si, "value") ?? "";
-                                        string sd = ExtractString("{" + si, "description") ?? "";
-                                        result.user_strings.Add(new GMATUserString { name = sn, value = sv, description = sd });
-                                    }
-                                }
-                            }
-                        }
-
-                        // Parse Mission Sequence steps
-                        int seqIdx = json.IndexOf("\"sequence\":");
-                        if (seqIdx >= 0) {
-                            int endIdx = json.LastIndexOf("]");
-                            string seqSection = json.Substring(seqIdx, endIdx - seqIdx + 1);
-                            string[] items = seqSection.Split(new string[] { "{" }, StringSplitOptions.RemoveEmptyEntries);
-                            foreach (string item in items) {
-                                if (item.Contains("\"type\":")) {
-                                    MissionStep st = new MissionStep();
-                                    st.type = ExtractString("{" + item, "type");
-                                    string importedType = st.type;
-                                    if (string.Equals(importedType, "Maneuver", StringComparison.OrdinalIgnoreCase)) st.type = "ImpulsiveBurn";
-                                    if (string.Equals(importedType, "EndTarget", StringComparison.OrdinalIgnoreCase)) st.type = "EndTarget";
-                                    st.propagator = ExtractString("{" + item, "propagator");
-                                    if (st.propagator == "NearEarth") st.propagator = "LEOProp";
-                                    else if (st.propagator == "NearMoon") st.propagator = "LunarNRHOProp";
-                                    st.stop_type = ExtractString("{" + item, "stop_type");
-                                    st.duration = ExtractDouble("{" + item, "duration");
-                                    st.target_val = ExtractDouble("{" + item, "target_val");
-                                    st.target_alt = ExtractDouble("{" + item, "target_alt");
-                                    st.dv_v = ExtractDouble("{" + item, "dv_v");
-                                    st.dv_n = ExtractDouble("{" + item, "dv_n");
-                                    st.dv_b = ExtractDouble("{" + item, "dv_b");
-                                    st.burn_name = ExtractString("{" + item, "burn_name") ?? ExtractString("{" + item, "name");
-                                    st.burn_origin = ExtractString("{" + item, "burn_origin") ?? ExtractString("{" + item, "origin");
-                                    st.burn_axes = ExtractString("{" + item, "burn_axes") ?? ExtractString("{" + item, "axes");
-                                    st.burn_coordinate_system = ExtractString("{" + item, "burn_coordinate_system") ?? ExtractString("{" + item, "coordinate_system");
-                                    st.burn_isp = ExtractDouble("{" + item, "burn_isp");
-                                    if (st.burn_isp <= 0) st.burn_isp = ExtractDouble("{" + item, "isp");
-                                    st.burn_decrement_mass = ExtractBool("{" + item, "burn_decrement_mass") || ExtractBool("{" + item, "decrement_mass");
-                                    st.variable = ExtractString("{" + item, "variable");
-                                    st.expression = ExtractString("{" + item, "expression");
-                                    st.label = ExtractString("{" + item, "label");
-                                    st.vary_variable = ExtractString("{" + item, "vary_variable");
-                                    st.vary_initial = ExtractDouble("{" + item, "vary_initial");
-                                    st.vary_perturbation = ExtractDouble("{" + item, "vary_perturbation");
-                                    st.vary_lower = ExtractDouble("{" + item, "vary_lower");
-                                    st.vary_upper = ExtractDouble("{" + item, "vary_upper");
-                                    st.vary_max_step = ExtractDouble("{" + item, "vary_max_step");
-                                    st.achieve_param = ExtractString("{" + item, "achieve_param");
-                                    st.achieve_val = ExtractDouble("{" + item, "achieve_val");
-                                    st.achieve_tolerance = ExtractDouble("{" + item, "achieve_tolerance");
-                                    st.solve_mode = ExtractString("{" + item, "solve_mode");
-                                    st.exit_mode = ExtractString("{" + item, "exit_mode");
-                                    st.optimizer_name = ExtractString("{" + item, "optimizer_name");
-                                    st.minimize_variable = ExtractString("{" + item, "minimize_variable");
-                                    st.constraint_lhs = ExtractString("{" + item, "constraint_lhs");
-                                    st.constraint_op = ExtractString("{" + item, "constraint_op");
-                                    st.constraint_val = ExtractDouble("{" + item, "constraint_val");
-                                    st.condition_expr = ExtractString("{" + item, "condition_expr");
-                                    st.for_var = ExtractString("{" + item, "for_var");
-                                    st.for_range = ExtractString("{" + item, "for_range");
-                                    st.script_content = ExtractString("{" + item, "script_content");
-                                    st.set_target = ExtractString("{" + item, "set_target");
-                                    st.set_expr = ExtractString("{" + item, "set_expr");
-                                    st.global_objects = ExtractString("{" + item, "global_objects");
-                                    st.subscriber_name = ExtractString("{" + item, "subscriber_name");
-                                    st.action_state = ExtractString("{" + item, "action_state");
-                                    st.event_locator = ExtractString("{" + item, "event_locator");
-                                    st.mark_label = ExtractString("{" + item, "mark_label");
-                                    st.echo_state = ExtractString("{" + item, "echo_state");
-
-                                    if (string.IsNullOrEmpty(st.stop_type)) st.stop_type = "Time";
-                                    if (string.IsNullOrEmpty(st.propagator)) st.propagator = "LEOProp";
-                                    result.sequence.Add(st);
-                                }
-                            }
-                        }
-                        KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(true, result, "成功"));
-                    } else {
-                        string err = ExtractString(json, "error");
-                        KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(false, null, err ?? "失败"));
-                    }
+                    var result = GMATScriptParser.ParseScriptFile(scriptPath, vessel);
+                    KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(result.success, result, result.message ?? (result.success ? "成功" : "解析失败")));
                 } catch (Exception ex) {
                     KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(false, null, ex.Message));
                 }
@@ -1235,10 +708,9 @@ namespace KSPGMAT {
                     int endIdx = json.IndexOf("]", repIdx);
                     if (endIdx > repIdx) {
                         string repSection = json.Substring(repIdx, endIdx - repIdx + 1);
-                        string[] items = repSection.Split(new string[] { "{" }, StringSplitOptions.RemoveEmptyEntries);
-                        foreach (string item in items) {
-                            if (item.Contains("\"step_index\":") || item.Contains("\"step_label\":")) {
-                                string block = "{" + item;
+                        List<string> items = SplitJsonObjects(repSection);
+                        foreach (string block in items) {
+                            if (block.Contains("\"step_index\":") || block.Contains("\"step_label\":")) {
                                 StepReportData rep = new StepReportData();
                                 rep.step_index = (int)ExtractDouble(block, "step_index");
                                 rep.step_label = ExtractString(block, "step_label");
@@ -1271,33 +743,35 @@ namespace KSPGMAT {
                 int burnsIdx = json.IndexOf("\"solved_burns\":");
                 if (burnsIdx >= 0) {
                     int endIdx = json.IndexOf("]", burnsIdx);
-                    string burnsSection = json.Substring(burnsIdx, endIdx - burnsIdx + 1);
-                    string[] items = burnsSection.Split(new string[] { "{" }, StringSplitOptions.RemoveEmptyEntries);
-                    foreach (string item in items) {
-                        if (item.Contains("\"type\":")) {
-                            SolvedBurn b = new SolvedBurn();
-                            b.type = ExtractString("{" + item, "type");
-                            b.name = ExtractString("{" + item, "name");
-                            b.origin = ExtractString("{" + item, "origin");
-                            b.dv_v = ExtractDouble("{" + item, "dv_v");
-                            b.dv_n = ExtractDouble("{" + item, "dv_n");
-                            b.dv_b = ExtractDouble("{" + item, "dv_b");
-                            b.magnitude = ExtractDouble("{" + item, "magnitude");
-                            b.duration = ExtractDouble("{" + item, "duration");
-                            b.thrust_kn = ExtractDouble("{" + item, "thrust_kn");
-                            b.isp = ExtractDouble("{" + item, "isp");
-                            b.fuel_burned = ExtractDouble("{" + item, "fuel_burned");
-                            b.epoch_offset = ExtractDouble("{" + item, "epoch_offset");
-                            b.burn_x = ExtractDouble("{" + item, "burn_x");
-                            b.burn_y = ExtractDouble("{" + item, "burn_y");
-                            b.burn_z = ExtractDouble("{" + item, "burn_z");
-                            b.burn_vx = ExtractDouble("{" + item, "burn_vx");
-                            b.burn_vy = ExtractDouble("{" + item, "burn_vy");
-                            b.burn_vz = ExtractDouble("{" + item, "burn_vz");
-                            b.has_native_delta_v = item.Contains("\"has_native_delta_v\": true");
-                            b.principia_writeable = item.Contains("\"principia_writeable\": true");
-                            b.native_result_note = ExtractString("{" + item, "native_result_note");
-                            res.solved_burns.Add(b);
+                    if (endIdx > burnsIdx) {
+                        string burnsSection = json.Substring(burnsIdx, endIdx - burnsIdx + 1);
+                        List<string> items = SplitJsonObjects(burnsSection);
+                        foreach (string item in items) {
+                            if (item.Contains("\"type\":")) {
+                                SolvedBurn b = new SolvedBurn();
+                                b.type = ExtractString(item, "type");
+                                b.name = ExtractString(item, "name");
+                                b.origin = ExtractString(item, "origin");
+                                b.dv_v = ExtractDouble(item, "dv_v");
+                                b.dv_n = ExtractDouble(item, "dv_n");
+                                b.dv_b = ExtractDouble(item, "dv_b");
+                                b.magnitude = ExtractDouble(item, "magnitude");
+                                b.duration = ExtractDouble(item, "duration");
+                                b.thrust_kn = ExtractDouble(item, "thrust_kn");
+                                b.isp = ExtractDouble(item, "isp");
+                                b.fuel_burned = ExtractDouble(item, "fuel_burned");
+                                b.epoch_offset = ExtractDouble(item, "epoch_offset");
+                                b.burn_x = ExtractDouble(item, "burn_x");
+                                b.burn_y = ExtractDouble(item, "burn_y");
+                                b.burn_z = ExtractDouble(item, "burn_z");
+                                b.burn_vx = ExtractDouble(item, "burn_vx");
+                                b.burn_vy = ExtractDouble(item, "burn_vy");
+                                b.burn_vz = ExtractDouble(item, "burn_vz");
+                                b.has_native_delta_v = item.Contains("\"has_native_delta_v\": true");
+                                b.principia_writeable = item.Contains("\"principia_writeable\": true");
+                                b.native_result_note = ExtractString(item, "native_result_note");
+                                res.solved_burns.Add(b);
+                            }
                         }
                     }
                 }
@@ -1306,23 +780,37 @@ namespace KSPGMAT {
                 int seqIdx = json.IndexOf("\"updated_sequence\":");
                 if (seqIdx >= 0) {
                     int endSeq = json.IndexOf("]", seqIdx);
-                    string seqSection = json.Substring(seqIdx, endSeq - seqIdx + 1);
-                    string[] sItems = seqSection.Split(new string[] { "{" }, StringSplitOptions.RemoveEmptyEntries);
-                    foreach (string sItem in sItems) {
-                        if (sItem.Contains("\"type\":")) {
-                            MissionStep step = new MissionStep();
-                            step.type = ExtractString("{" + sItem, "type");
-                            step.duration = ExtractDouble("{" + sItem, "duration");
-                            step.dv_v = ExtractDouble("{" + sItem, "dv_v");
-                            step.dv_n = ExtractDouble("{" + sItem, "dv_n");
-                            step.dv_b = ExtractDouble("{" + sItem, "dv_b");
-                            step.label = ExtractString("{" + sItem, "label");
-                            step.target_goal = ExtractString("{" + sItem, "target_goal");
-                            if (string.IsNullOrEmpty(step.target_goal)) step.target_goal = "Apoapsis";
-                            res.updated_sequence.Add(step);
+                    if (endSeq > seqIdx) {
+                        string seqSection = json.Substring(seqIdx, endSeq - seqIdx + 1);
+                        List<string> sItems = SplitJsonObjects(seqSection);
+                        foreach (string sItem in sItems) {
+                            if (sItem.Contains("\"type\":")) {
+                                MissionStep step = new MissionStep();
+                                step.type = ExtractString(sItem, "type");
+                                step.duration = ExtractDouble(sItem, "duration");
+                                step.dv_v = ExtractDouble(sItem, "dv_v");
+                                step.dv_n = ExtractDouble(sItem, "dv_n");
+                                step.dv_b = ExtractDouble(sItem, "dv_b");
+                                step.label = ExtractString(sItem, "label");
+                                step.target_goal = ExtractString(sItem, "target_goal");
+                                if (string.IsNullOrEmpty(step.target_goal)) step.target_goal = "Apoapsis";
+                                step.solved_value = ExtractDouble(sItem, "solved_value");
+                                step.solved_value_str = ExtractString(sItem, "solved_value_str");
+                                step.has_solved_value = ExtractBool(sItem, "has_solved_value") || !string.IsNullOrEmpty(step.solved_value_str);
+                                step.achieved_value = ExtractDouble(sItem, "achieved_value");
+                                step.achieved_variance = ExtractDouble(sItem, "achieved_variance");
+                                step.achieve_passed = ExtractBool(sItem, "achieve_passed");
+                                step.has_achieve_result = ExtractBool(sItem, "has_achieve_result") || (step.achieved_value != 0.0);
+                                step.solver_iterations = (int)ExtractDouble(sItem, "solver_iterations");
+                                step.solver_converged = ExtractBool(sItem, "solver_converged");
+                                res.updated_sequence.Add(step);
+                            }
                         }
                     }
                 }
+
+                res.all_solvers_converged = !json.Contains("\"all_solvers_converged\": false");
+                if (!res.all_solvers_converged) res.success = false;
 
                 int dcIdx = json.IndexOf("\"dc_summary\":");
                 if (dcIdx >= 0) {
@@ -1424,6 +912,50 @@ namespace KSPGMAT {
             while (idx < json.Length && char.IsWhiteSpace(json[idx])) idx++;
             return json.IndexOf("true", idx, StringComparison.OrdinalIgnoreCase) == idx;
         }
+
+        private static List<string> SplitJsonObjects(string section) {
+            List<string> result = new List<string>();
+            if (string.IsNullOrEmpty(section)) return result;
+
+            int depth = 0;
+            int start = -1;
+            bool inString = false;
+            bool escape = false;
+
+            for (int i = 0; i < section.Length; i++) {
+                char c = section[i];
+
+                if (escape) {
+                    escape = false;
+                    continue;
+                }
+
+                if (c == '\\' && inString) {
+                    escape = true;
+                    continue;
+                }
+
+                if (c == '"') {
+                    inString = !inString;
+                    continue;
+                }
+
+                if (!inString) {
+                    if (c == '{') {
+                        if (depth == 0) start = i;
+                        depth++;
+                    } else if (c == '}') {
+                        depth--;
+                        if (depth == 0 && start >= 0) {
+                            result.Add(section.Substring(start, i - start + 1));
+                            start = -1;
+                        }
+                    }
+                }
+            }
+
+            return result;
+        }
     
         public static string EscapeJson(string s) {
             if (string.IsNullOrEmpty(s)) return "";
@@ -1432,6 +964,10 @@ namespace KSPGMAT {
                     .Replace("\r", "")
                     .Replace("\n", "\\n")
                     .Replace("\t", "\\t");
+        }
+
+        public static string SanitizeGmatScript(string rawScript) {
+            return KSPGMAT.Model.GMATStateManager.SanitizeGmatScript(rawScript);
         }
     }
 }

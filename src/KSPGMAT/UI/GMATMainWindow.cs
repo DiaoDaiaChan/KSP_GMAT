@@ -88,32 +88,20 @@ private int activeTab = 0; // Default to Tab 0: Craft & Orbit
         private HashSet<int> selectedStageIndices = new HashSet<int> { 0 };
         private List<ROEngineInfo> cachedEngines = new List<ROEngineInfo>();
         private List<VesselTankInfo> cachedTanks = new List<VesselTankInfo>();
-        private int selectedEngineIndex = 0;
+        private int selectedEngineIndex {
+            get => GMATStateManager.Current.SelectedEngineIndex;
+            set => GMATStateManager.Current.SelectedEngineIndex = value;
+        }
         private string syncStatusMessage = "";
-        private bool ideEditMode = false;
+        private int ideViewMode = 0; // 0 = 高亮预览, 1 = 自由编辑, 2 = 分栏对照
         private string ideCustomBuffer = "";
         private GUIStyle ideEditorStyle;
-        private string ideSearchKeyword = "";
-        private bool showIdeIntelliSenseDrawer = true;
-        private int selectedIdeCategoryTab = 0;
-        private Vector2 ideIntelliSenseScrollPos = Vector2.zero;
-
-        // Resource Explorer Editable State
-        private double customSatDryMass = -1.0;
-        private double customSatDragArea = 15.0;
-        private double customSatCd = 2.2;
-        private double customSatCr = 1.8;
-        private double customSatSRPArea = 15.0;
-        private string customSatDateFormat = "UTCGregorian";
-        private string customSatCoordinateSystem = "EarthMJ2000Eq";
-        private string customSatDisplayStateType = "Cartesian";
+        private Vector2 ideAutocompleteScroll = Vector2.zero;
+        private string ideCurrentWordUnderCursor = "";
+        private int ideSelectedCompletionIndex = 0;
+        private int ideCursorWordStart = 0;
+        private bool isSavingAndSyncing = false;
         private string eventSearchKeyword = "";
-
-        private List<UserVariableDef> userCustomVariables = new List<UserVariableDef>();
-        private List<UserArrayDef> userCustomArrays = new List<UserArrayDef>();
-        private List<UserStringDef> userCustomStrings = new List<UserStringDef>();
-        private List<CustomImpulsiveBurnDef> userImpulsiveBurns = new List<CustomImpulsiveBurnDef>();
-        private List<CustomSolverDef> userCustomSolvers = new List<CustomSolverDef>();
 
         private bool isPropagating = false;
         private float solveProgress = 0.0f;
@@ -189,6 +177,7 @@ private int activeTab = 0; // Default to Tab 0: Craft & Orbit
         private List<MissionStep> missionSequence = new List<MissionStep>();
         private MissionResult latestResult = null;
         private string customScriptPath = "";
+        private string exportTemplateName = "custom_mission_preset.script";
         private bool showCustomScriptInput = false;
         private int draggedStepIndex = -1;
         private int stepToMoveUp = -1;
@@ -409,8 +398,22 @@ private int activeTab = 0; // Default to Tab 0: Craft & Orbit
         }
 
         public void SelectEngineAndSync(int engineIndex) {
-            GMATStateManager.Current.SelectedEngineIndex = engineIndex;
             selectedEngineIndex = engineIndex;
+            GMATStateManager.Current.SelectedEngineIndex = engineIndex;
+
+            if (FlightGlobals.ActiveVessel != null) {
+                if (cachedEngines == null || cachedEngines.Count == 0) {
+                    cachedEngines = ROEngineInterop.ScanVesselEngines(FlightGlobals.ActiveVessel);
+                }
+                if (cachedTanks == null || cachedTanks.Count == 0) {
+                    cachedTanks = ROEngineInterop.ScanVesselTanks(FlightGlobals.ActiveVessel);
+                }
+                if (GMATStateManager.Current.Thrusters == null || GMATStateManager.Current.Thrusters.Count < cachedEngines.Count) {
+                    GMATStateManager.Current.SyncFromVessel(FlightGlobals.ActiveVessel);
+                    GMATStateManager.Current.SelectedEngineIndex = engineIndex;
+                }
+            }
+
             var curThruster = GMATStateManager.Current.GetSelectedThruster();
             if (curThruster == null) return;
             string engId = curThruster.Id;
@@ -458,17 +461,21 @@ private int activeTab = 0; // Default to Tab 0: Craft & Orbit
             } else {
                 clusterList.Add(engName);
             }
+            string cb = (GMATStateManager.Current != null && GMATStateManager.Current.Spacecraft != null) ? GMATStateManager.Current.Spacecraft.CentralBody : "Earth";
+            string defaultProp = (propagatorConfigs != null && propagatorConfigs.Count > 0) ? new List<string>(propagatorConfigs.Keys)[0] : (cb == "Earth" ? "LEOProp" : "DeepSpaceProp");
+            string burnName = $"FiniteBurn_{((missionSequence != null) ? missionSequence.Count + 1 : 1)}";
             return new MissionStep {
                 type = "FiniteBurn",
-                propagator = "LEOProp",
+                burn_name = burnName,
+                propagator = defaultProp,
                 bound_thruster = engName,
                 bound_thrusters = clusterList,
                 bound_tank = tkName,
                 burn_use_vary_var = true,
-                burn_vary_var_name = "burntime",
+                burn_vary_var_name = $"{burnName}_Duration",
                 burn_decrement_mass = true,
                 burn_isp = curThruster != null ? curThruster.IspVac : 300.0,
-                label = clusterList.Count > 1 ? $"{label} (集群 {clusterList.Count}发)" : $"{label} ({engName})"
+                label = clusterList.Count > 1 ? $"{label} ({clusterList.Count}发集群)" : $"{label} ({engName})"
             };
         }
 

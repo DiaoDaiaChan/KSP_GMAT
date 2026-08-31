@@ -31,8 +31,7 @@ New-Item -ItemType Directory -Force -Path $LocalTemplates | Out-Null
 Copy-Item $BuildOutDll $LocalPlugins -Force
 Copy-Item $BuildOutPdb $LocalPlugins -Force
 
-$TemplateSource = Join-Path $ScriptDir "scripts\templates\*.script"
-Copy-Item $TemplateSource $LocalTemplates -Force
+$TemplateSource = Join-Path $LocalTemplates "*.script"
 
 Write-Host "✅ Deployed to local GameData: $LocalGameData" -ForegroundColor Green
 
@@ -45,6 +44,10 @@ if (Test-Path "C:\Program Files (x86)\Steam\steamapps\common\Kerbal Space Progra
     $KspTemplates = Join-Path $KspGameData "templates"
     New-Item -ItemType Directory -Force -Path $KspPlugins | Out-Null
     New-Item -ItemType Directory -Force -Path $KspTemplates | Out-Null
+
+    # Clean any stale backup files that Unity might accidentally load
+    Get-ChildItem -Path $KspPlugins -Filter "*.old" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+    Get-ChildItem -Path $KspPlugins -Filter "*.bak" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
 
     $TargetDll = Join-Path $KspPlugins "KSPGMAT.dll"
     $TargetPdb = Join-Path $KspPlugins "KSPGMAT.pdb"

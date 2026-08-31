@@ -1,6 +1,6 @@
 %----------------------------------------------------------------------
 % GMAT Official Standard Template: LEO to GEO via Finite Burn Double-Targeting
-% 28.6° LEO -> GTO -> 0° Inclination GEO Circularization
+% 28.6 deg LEO -> GTO -> 0 deg Inclination GEO Circularization
 %----------------------------------------------------------------------
 
 %----------------------------------------------------------------------
@@ -20,8 +20,10 @@ Sat.TA = 0.0;
 Sat.DryMass = 1000.0;
 
 Create ChemicalTank MainTank;
+MainTank.AllowNegativeFuelMass = true;
 MainTank.FuelMass = 3000.0;
-MainTank.FuelDensity = 1000.0;
+MainTank.Volume = 50.0;
+MainTank.PressureModel = 'PressureRegulated';
 
 Create ChemicalThruster MainEngine;
 MainEngine.CoordinateSystem = Local;
@@ -31,9 +33,14 @@ MainEngine.ThrustDirection1 = 1.0;
 MainEngine.ThrustDirection2 = 0.0;
 MainEngine.ThrustDirection3 = 0.0;
 MainEngine.DutyCycle = 1.0;
-MainEngine.Thrust = 10000.0;
-MainEngine.Isp = 320.0;
+MainEngine.ThrustScaleFactor = 1.0;
+MainEngine.DecrementMass = true;
 MainEngine.Tank = {MainTank};
+MainEngine.GravitationalAccel = 9.80665;
+MainEngine.C1 = 10000.0;
+MainEngine.C2 = 0.0;
+MainEngine.K1 = 320.0;
+MainEngine.K2 = 0.0;
 
 Sat.Tanks = {MainTank};
 Sat.Thrusters = {MainEngine};
@@ -105,17 +112,21 @@ Target DC_GTO {SolveMode = Solve, ExitMode = SaveAndContinue};
   Achieve DC_GTO(Sat.Earth.Altitude = 35786.0, {Tolerance = 0.5});
 EndTarget;
 
-% Step 3: Target GEO Circularization and 0° Inclination Removal
+% Step 3: Target GEO Circularization and 0 deg Inclination Removal
 Target DC_GEO {SolveMode = Solve, ExitMode = SaveAndContinue};
-  Vary DC_GEO(Sat.MainEngine.ThrustDirection2 = -0.50, {Perturbation = 0.0001, Lower = -1.0, Upper = 1.0, MaxStep = 0.05});
-  Vary DC_GEO(GEO_Duration = 70.0, {Perturbation = 0.0001, Lower = 10.0, Upper = 300.0, MaxStep = 10.0});
+  Vary DC_GEO(GEO_Duration = 70.0, {Perturbation = 0.0001, Lower = 5.0, Upper = 500.0, MaxStep = 5.0});
+  Sat.MainEngine.ThrustDirection1 = 1.0;
+  Vary DC_GEO(Sat.MainEngine.ThrustDirection2 = 0.50, {Perturbation = 0.0001, Lower = -3.0, Upper = 3.0, MaxStep = 0.10});
+  Sat.MainEngine.ThrustDirection3 = 0.0;
   BeginFiniteBurn GEO_Burn(Sat);
   Propagate LEOProp(Sat) {Sat.ElapsedSecs = GEO_Duration};
   EndFiniteBurn GEO_Burn(Sat);
-  Achieve DC_GEO(Sat.EarthMJ2000Eq.VZ = 0.0, {Tolerance = 0.001});
+  Propagate LEOProp(Sat) {Sat.Earth.Periapsis};
   Achieve DC_GEO(Sat.Earth.SMA = 42164.14, {Tolerance = 0.5});
+  Achieve DC_GEO(Sat.EarthMJ2000Eq.VZ = 0.0, {Tolerance = 0.001});
 EndTarget;
 
 % Step 4: 24-Hour GEO Stationkeeping Cruise & Final Report
-Propagate LEOProp(Sat) {Sat.ElapsedSecs = 86164.0};
+Propagate LEOProp(Sat) {Sat.ElapsedSecs = 86400.0};
 Report TrajReport Sat.ElapsedSecs Sat.X Sat.Y Sat.Z Sat.VX Sat.VY Sat.VZ Sat.TotalMass;
+

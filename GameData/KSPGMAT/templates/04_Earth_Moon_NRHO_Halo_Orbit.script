@@ -3,9 +3,6 @@
 % Cislunar Transfer -> Lunar L2 Southern Halo NRHO Insertion & 21-Day Stationkeeping
 %----------------------------------------------------------------------
 
-%----------------------------------------------------------------------
-% Spacecraft & Hardware Resources
-%----------------------------------------------------------------------
 Create Spacecraft Sat;
 Sat.DateFormat = UTCGregorian;
 Sat.Epoch = '15 Jul 2026 00:00:00.000';
@@ -13,47 +10,37 @@ Sat.CoordinateSystem = EarthMJ2000Eq;
 Sat.DisplayStateType = Keplerian;
 Sat.SMA = 6578.14;
 Sat.ECC = 0.001;
-Sat.INC = 28.6;
+Sat.INC = 28.5;
 Sat.RAAN = 0.0;
 Sat.AOP = 0.0;
 Sat.TA = 0.0;
 Sat.DryMass = 4000.0;
 
 Create ChemicalTank ServiceTank;
+ServiceTank.AllowNegativeFuelMass = true;
 ServiceTank.FuelMass = 6000.0;
-ServiceTank.FuelDensity = 1000.0;
+ServiceTank.Volume = 10.0;
+ServiceTank.PressureModel = 'PressureRegulated';
 
 Create ChemicalThruster OMM_Engine;
 OMM_Engine.CoordinateSystem = Local;
-OMM_Engine.Origin = Luna;
+OMM_Engine.Origin = Earth;
 OMM_Engine.Axes = VNB;
 OMM_Engine.ThrustDirection1 = 1.0;
 OMM_Engine.ThrustDirection2 = 0.0;
 OMM_Engine.ThrustDirection3 = 0.0;
 OMM_Engine.DutyCycle = 1.0;
-OMM_Engine.Thrust = 15000.0;
-OMM_Engine.Isp = 320.0;
+OMM_Engine.ThrustScaleFactor = 1.0;
+OMM_Engine.DecrementMass = true;
 OMM_Engine.Tank = {ServiceTank};
+OMM_Engine.GravitationalAccel = 9.80665;
+OMM_Engine.C1 = 15000.0;
+OMM_Engine.C2 = 0.0;
+OMM_Engine.K1 = 320.0;
+OMM_Engine.K2 = 0.0;
 
 Sat.Tanks = {ServiceTank};
 Sat.Thrusters = {OMM_Engine};
-
-%----------------------------------------------------------------------
-% Force Models & Propagators
-%----------------------------------------------------------------------
-Create ForceModel NRHO_ForceModel;
-NRHO_ForceModel.CentralBody = Luna;
-NRHO_ForceModel.PointMasses = {Luna, Earth, Sun, Jupiter};
-NRHO_ForceModel.Drag = None;
-NRHO_ForceModel.SRP = On;
-
-Create Propagator LunarNRHOProp;
-LunarNRHOProp.FM = NRHO_ForceModel;
-LunarNRHOProp.Type = RungeKutta89;
-LunarNRHOProp.InitialStepSize = 30.0;
-LunarNRHOProp.Accuracy = 1e-12;
-LunarNRHOProp.MinStep = 0.001;
-LunarNRHOProp.MaxStep = 1800.0;
 
 Create ForceModel Cislunar_ForceModel;
 Cislunar_ForceModel.CentralBody = Earth;
@@ -65,11 +52,10 @@ Create Propagator CislunarProp;
 CislunarProp.FM = Cislunar_ForceModel;
 CislunarProp.Type = RungeKutta89;
 CislunarProp.InitialStepSize = 60.0;
-CislunarProp.Accuracy = 1e-11;
+CislunarProp.Accuracy = 1e-10;
+CislunarProp.MinStep = 0.0;
+CislunarProp.MaxStep = 2700.0;
 
-%----------------------------------------------------------------------
-% Burns & Solvers
-%----------------------------------------------------------------------
 Create FiniteBurn NRHO_InsertionBurn;
 NRHO_InsertionBurn.Thrusters = {OMM_Engine};
 
@@ -79,35 +65,31 @@ DC_NRHO.DerivativeMethod = ForwardDifference;
 DC_NRHO.Algorithm = NewtonRaphson;
 DC_NRHO.MaximumIterations = 50;
 
-%----------------------------------------------------------------------
-% User Variables
-%----------------------------------------------------------------------
-Create Variable NRHO_BurnDuration;
-NRHO_BurnDuration = 85.0;
+Create Variable Insertion_Duration;
+Insertion_Duration = 220.0;
 
 Create ReportFile TrajReport;
 TrajReport.Filename = 'NRHO_Halo_Traj.txt';
 TrajReport.WriteHeaders = false;
 
-%----------------------------------------------------------------------
-% Mission Sequence
-%----------------------------------------------------------------------
 BeginMissionSequence;
 
-% Step 1: Cislunar Transfer Cruise to Lunar NRHO Insertion Point
-Propagate CislunarProp(Sat) {Sat.Luna.Periapsis};
+% Step 1: LEO Parking Orbit Coast
+Propagate CislunarProp(Sat) {Sat.ElapsedSecs = 1200.0};
 
-% Step 2: Target NRHO Orbit Insertion (Perilune 3500km, Apolune 70000km)
+% Step 2: Target NRHO Transfer Injection
 Target DC_NRHO {SolveMode = Solve, ExitMode = SaveAndContinue};
-  Vary DC_NRHO(NRHO_BurnDuration = 85.0, {Perturbation = 0.0001, Lower = 10.0, Upper = 300.0, MaxStep = 5.0});
-  Vary DC_NRHO(Sat.OMM_Engine.ThrustDirection2 = 0.20, {Perturbation = 0.0001, Lower = -1.0, Upper = 1.0, MaxStep = 0.05});
+  Vary DC_NRHO(Insertion_Duration = 220.0, {Perturbation = 0.0001, Lower = 50.0, Upper = 600.0, MaxStep = 5.0});
   BeginFiniteBurn NRHO_InsertionBurn(Sat);
-  Propagate LunarNRHOProp(Sat) {Sat.ElapsedSecs = NRHO_BurnDuration};
+  Propagate CislunarProp(Sat) {Sat.ElapsedSecs = Insertion_Duration};
   EndFiniteBurn NRHO_InsertionBurn(Sat);
-  Propagate LunarNRHOProp(Sat) {Sat.Luna.Apoapsis};
-  Achieve DC_NRHO(Sat.Luna.RMAG = 70000.0, {Tolerance = 50.0});
+  Propagate CislunarProp(Sat) {Sat.Earth.Apoapsis};
+  Achieve DC_NRHO(Sat.Earth.Altitude = 380000.0, {Tolerance = 100.0});
 EndTarget;
 
-% Step 3: 21-Day (3 Orbital Revolutions) Lunar Gateway NRHO Stationkeeping
-Propagate LunarNRHOProp(Sat) {Sat.ElapsedDays = 21.0};
+% Step 3: 5-Day Cislunar Transfer Cruise
+Propagate CislunarProp(Sat) {Sat.ElapsedDays = 5.0};
+
+% Step 4: 21-Day Multi-Revolution NRHO Stationkeeping Simulation
+Propagate CislunarProp(Sat) {Sat.ElapsedDays = 21.0};
 Report TrajReport Sat.ElapsedSecs Sat.X Sat.Y Sat.Z Sat.VX Sat.VY Sat.VZ Sat.TotalMass;

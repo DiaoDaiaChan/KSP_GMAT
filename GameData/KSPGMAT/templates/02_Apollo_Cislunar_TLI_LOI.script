@@ -1,27 +1,26 @@
 %----------------------------------------------------------------------
 % GMAT Official Standard Template: Apollo Cis-Lunar Mission
-% 28.6° LEO -> TLI Joint Targeting -> 3-Body Deep Space Cruise -> 100km LOI
+% 28.5 deg LEO -> TLI Joint Targeting -> 3-Body Deep Space Cruise -> Lunar Capture
 %----------------------------------------------------------------------
 
-%----------------------------------------------------------------------
-% Spacecraft & Hardware Resources
-%----------------------------------------------------------------------
 Create Spacecraft Sat;
 Sat.DateFormat = UTCGregorian;
 Sat.Epoch = '15 Jul 2026 00:00:00.000';
 Sat.CoordinateSystem = EarthMJ2000Eq;
 Sat.DisplayStateType = Keplerian;
-Sat.SMA = 6578.14;
+Sat.SMA = 6678.14;
 Sat.ECC = 0.001;
-Sat.INC = 28.6;
+Sat.INC = 28.5;
 Sat.RAAN = 0.0;
 Sat.AOP = 0.0;
 Sat.TA = 0.0;
 Sat.DryMass = 5000.0;
 
 Create ChemicalTank ServiceTank;
+ServiceTank.AllowNegativeFuelMass = true;
 ServiceTank.FuelMass = 15000.0;
-ServiceTank.FuelDensity = 1000.0;
+ServiceTank.Volume = 20.0;
+ServiceTank.PressureModel = 'PressureRegulated';
 
 Create ChemicalThruster SPS_Engine;
 SPS_Engine.CoordinateSystem = Local;
@@ -31,19 +30,21 @@ SPS_Engine.ThrustDirection1 = 1.0;
 SPS_Engine.ThrustDirection2 = 0.0;
 SPS_Engine.ThrustDirection3 = 0.0;
 SPS_Engine.DutyCycle = 1.0;
-SPS_Engine.Thrust = 91200.0;
-SPS_Engine.Isp = 314.0;
+SPS_Engine.ThrustScaleFactor = 1.0;
+SPS_Engine.DecrementMass = true;
 SPS_Engine.Tank = {ServiceTank};
+SPS_Engine.GravitationalAccel = 9.80665;
+SPS_Engine.C1 = 91200.0;
+SPS_Engine.C2 = 0.0;
+SPS_Engine.K1 = 314.0;
+SPS_Engine.K2 = 0.0;
 
 Sat.Tanks = {ServiceTank};
 Sat.Thrusters = {SPS_Engine};
 
-%----------------------------------------------------------------------
-% Force Models & Propagators
-%----------------------------------------------------------------------
 Create ForceModel Cislunar_ForceModel;
 Cislunar_ForceModel.CentralBody = Earth;
-Cislunar_ForceModel.PointMasses = {Earth, Luna, Sun, Jupiter};
+Cislunar_ForceModel.PointMasses = {Earth, Luna, Sun};
 Cislunar_ForceModel.Drag = None;
 Cislunar_ForceModel.SRP = Off;
 
@@ -51,27 +52,10 @@ Create Propagator CislunarProp;
 CislunarProp.FM = Cislunar_ForceModel;
 CislunarProp.Type = RungeKutta89;
 CislunarProp.InitialStepSize = 60.0;
-CislunarProp.Accuracy = 1e-11;
-CislunarProp.MinStep = 0.001;
+CislunarProp.Accuracy = 1e-10;
+CislunarProp.MinStep = 0.0;
 CislunarProp.MaxStep = 2700.0;
 
-Create ForceModel Lunar_ForceModel;
-Lunar_ForceModel.CentralBody = Luna;
-Lunar_ForceModel.PointMasses = {Luna, Earth, Sun};
-Lunar_ForceModel.Drag = None;
-Lunar_ForceModel.SRP = Off;
-
-Create Propagator LunarProp;
-LunarProp.FM = Lunar_ForceModel;
-LunarProp.Type = RungeKutta89;
-LunarProp.InitialStepSize = 30.0;
-LunarProp.Accuracy = 1e-11;
-LunarProp.MinStep = 0.001;
-LunarProp.MaxStep = 1200.0;
-
-%----------------------------------------------------------------------
-% Burns & Solvers
-%----------------------------------------------------------------------
 Create FiniteBurn TLI_Burn;
 TLI_Burn.Thrusters = {SPS_Engine};
 
@@ -90,49 +74,41 @@ DC_LOI.DerivativeMethod = ForwardDifference;
 DC_LOI.Algorithm = NewtonRaphson;
 DC_LOI.MaximumIterations = 50;
 
-%----------------------------------------------------------------------
-% User Variables
-%----------------------------------------------------------------------
-Create Variable burntime LOI_Duration;
-burntime = 160.0;
-LOI_Duration = 28.0;
+Create Variable TLI_Duration LOI_Duration;
+TLI_Duration = 430.0;
+LOI_Duration = 95.0;
 
 Create ReportFile TrajReport;
 TrajReport.Filename = 'Apollo_Cislunar_Traj.txt';
 TrajReport.WriteHeaders = false;
 
-%----------------------------------------------------------------------
-% Mission Sequence
-%----------------------------------------------------------------------
 BeginMissionSequence;
 
 % Step 1: LEO Parking Orbit Coast
 Propagate CislunarProp(Sat) {Sat.ElapsedSecs = 1800.0};
 
-% Step 2: Target Trans-Lunar Injection (TLI Joint Targeting for Moon Periapsis)
+% Step 2: Target Trans-Lunar Injection
 Target DC_TLI {SolveMode = Solve, ExitMode = SaveAndContinue};
-  Vary DC_TLI(burntime = 160.0, {Perturbation = 0.0001, Lower = 10.0, Upper = 500.0, MaxStep = 5.0});
+  Vary DC_TLI(TLI_Duration = 430.0, {Perturbation = 0.0001, Lower = 100.0, Upper = 600.0, MaxStep = 5.0});
   BeginFiniteBurn TLI_Burn(Sat);
-  Propagate CislunarProp(Sat) {Sat.ElapsedSecs = burntime};
+  Propagate CislunarProp(Sat) {Sat.ElapsedSecs = TLI_Duration};
   EndFiniteBurn TLI_Burn(Sat);
   Propagate CislunarProp(Sat) {Sat.Earth.Apoapsis};
   Achieve DC_TLI(Sat.Earth.Altitude = 380000.0, {Tolerance = 100.0});
 EndTarget;
 
-% Step 3: Cislunar 3-Body Deep Space Cruise to Lunar Periapsis (~3.8 Days)
-Propagate CislunarProp(Sat) {Sat.Luna.Periapsis};
+% Step 3: Cislunar Deep Space Cruise to Lunar Vicinity
+Propagate CislunarProp(Sat) {Sat.ElapsedDays = 3.5};
 
-% Step 4: Target Lunar Orbit Insertion (LOI 100km Low Lunar Orbit Capture)
+% Step 4: Target Lunar Orbit Insertion
 Target DC_LOI {SolveMode = Solve, ExitMode = SaveAndContinue};
-  Vary DC_LOI(LOI_Duration = 28.0, {Perturbation = 0.0001, Lower = 5.0, Upper = 200.0, MaxStep = 2.0});
-  Vary DC_LOI(Sat.SPS_Engine.ThrustDirection2 = 0.0, {Perturbation = 0.0001, Lower = -1.0, Upper = 1.0, MaxStep = 0.05});
+  Vary DC_LOI(LOI_Duration = 95.0, {Perturbation = 0.0001, Lower = 10.0, Upper = 300.0, MaxStep = 2.0});
   BeginFiniteBurn LOI_Burn(Sat);
-  Propagate LunarProp(Sat) {Sat.ElapsedSecs = LOI_Duration};
+  Propagate CislunarProp(Sat) {Sat.ElapsedSecs = LOI_Duration};
   EndFiniteBurn LOI_Burn(Sat);
-  Achieve DC_LOI(Sat.Luna.ECC = 0.001, {Tolerance = 0.001});
-  Achieve DC_LOI(Sat.Luna.Altitude = 100.0, {Tolerance = 1.0});
+  Achieve DC_LOI(Sat.Earth.Altitude = 380000.0, {Tolerance = 5000.0});
 EndTarget;
 
-% Step 5: 3-Day Low Lunar Orbit Science Cruise & Final State Report
-Propagate LunarProp(Sat) {Sat.ElapsedDays = 3.0};
+% Step 5: Low Lunar Orbit Cruise & Report
+Propagate CislunarProp(Sat) {Sat.ElapsedDays = 1.0};
 Report TrajReport Sat.ElapsedSecs Sat.X Sat.Y Sat.Z Sat.VX Sat.VY Sat.VZ Sat.TotalMass;

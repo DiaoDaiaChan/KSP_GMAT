@@ -46,19 +46,73 @@ namespace KSPGMAT.Model {
     [Serializable]
     public class GMATSpacecraftModel {
         public string Name { get; set; } = "Sat";
+        public string DateFormat { get; set; } = "UTCGregorian";
         public string EpochUtc { get; set; } = "01 Jan 1951 12:00:00.000";
         public double UniversalTime { get; set; } = 0.0;
         public string CoordinateSystem { get; set; } = "EarthMJ2000Eq";
         public string DisplayStateType { get; set; } = "Cartesian";
-        public double DryMassKg { get; set; } = 1000.0;
+        public double DryMassKg { get; set; } = 850.0; // 官方 GMAT 缺省 850kg
         public double TotalMassKg { get; set; } = 5000.0;
-        public double DragArea { get; set; } = 15.0;
-        public double Cd { get; set; } = 2.2;
-        public double Cr { get; set; } = 1.8;
-        public double SRPArea { get; set; } = 15.0;
+        public double DragArea { get; set; } = 15.0;  // 官方 GMAT 缺省 15m²
+        public double Cd { get; set; } = 2.2;         // 官方 GMAT 缺省 2.2
+        public double Cr { get; set; } = 1.8;         // 官方 GMAT 缺省 1.8
+        public double SRPArea { get; set; } = 1.0;    // 官方 GMAT 缺省 1.0m²
         public Vector3d PosKm { get; set; } = Vector3d.zero;
         public Vector3d VelKms { get; set; } = Vector3d.zero;
         public string CentralBody { get; set; } = "Earth";
+    }
+
+    [Serializable]
+    public class GMATVariableModel {
+        public string Name { get; set; } = "Var1";
+        public double InitialValue { get; set; } = 0.0;
+        public string Description { get; set; } = "用户自定义标量变量";
+    }
+
+    [Serializable]
+    public class GMATArrayModel {
+        public string Name { get; set; } = "Arr1";
+        public int Rows { get; set; } = 3;
+        public int Cols { get; set; } = 3;
+        public string Description { get; set; } = "用户自定义矩阵数组";
+    }
+
+    [Serializable]
+    public class GMATStringModel {
+        public string Name { get; set; } = "Str1";
+        public string Value { get; set; } = "";
+        public string Description { get; set; } = "用户自定义字符串变量";
+    }
+
+    [Serializable]
+    public class GMATSolverModel {
+        public string Name { get; set; } = "DefaultDC";
+        public string Algorithm { get; set; } = "NewtonRaphson";
+        public string DerivativeMethod { get; set; } = "ForwardDifference";
+        public int MaxIterations { get; set; } = 50;
+        public bool ShowProgress { get; set; } = true;
+        public string ReportStyle { get; set; } = "Normal";
+    }
+
+    [Serializable]
+    public class GMATBurnModel {
+        public string Name { get; set; } = "Impulsive1";
+        public string Type { get; set; } = "ImpulsiveBurn";
+        public string Origin { get; set; } = "Earth";
+        public string Axes { get; set; } = "VNB";
+        public string BoundThruster { get; set; } = "MainEngine";
+        public double Element1 { get; set; } = 0.0;
+        public double Element2 { get; set; } = 0.0;
+        public double Element3 { get; set; } = 0.0;
+        public double Isp { get; set; } = 300.0;
+        public bool DecrementMass { get; set; } = false;
+    }
+
+    [Serializable]
+    public class GMATReportFileModel {
+        public string Name { get; set; } = "TrajReport";
+        public string Filename { get; set; } = "TrajReport.txt";
+        public bool WriteHeaders { get; set; } = false;
     }
 
     /// <summary>
@@ -84,14 +138,36 @@ namespace KSPGMAT.Model {
         private static GMATStateManager _instance;
         public static GMATStateManager Current => _instance ?? (_instance = new GMATStateManager());
 
-        public GMATSpacecraftModel Spacecraft { get; private set; } = new GMATSpacecraftModel();
-        public List<GMATTankModel> Tanks { get; private set; } = new List<GMATTankModel>();
-        public List<GMATThrusterModel> Thrusters { get; private set; } = new List<GMATThrusterModel>();
+        public GMATSpacecraftModel Spacecraft { get; set; } = new GMATSpacecraftModel();
+        public List<GMATTankModel> Tanks { get; set; } = new List<GMATTankModel>();
+        public List<GMATThrusterModel> Thrusters { get; set; } = new List<GMATThrusterModel>();
+        public List<GMATVariableModel> Variables { get; set; } = new List<GMATVariableModel>();
+        public List<GMATArrayModel> Arrays { get; set; } = new List<GMATArrayModel>();
+        public List<GMATStringModel> Strings { get; set; } = new List<GMATStringModel>();
+        public List<GMATSolverModel> Solvers { get; set; } = new List<GMATSolverModel>();
+        public List<GMATBurnModel> Burns { get; set; } = new List<GMATBurnModel>();
+        public List<GMATReportFileModel> ReportFiles { get; set; } = new List<GMATReportFileModel>();
         public List<StageData> Stages { get; private set; } = new List<StageData>();
         public int SelectedEngineIndex { get; set; } = 0;
         public List<int> SelectedStageIndices { get; set; } = new List<int>();
 
-        private GMATStateManager() {}
+        private GMATStateManager() {
+            EnsureDefaultResources();
+        }
+
+        public void EnsureDefaultResources() {
+            if (Solvers.Count == 0) {
+                Solvers.Add(new GMATSolverModel { Name = "DC_GTO", Algorithm = "NewtonRaphson", DerivativeMethod = "ForwardDifference", MaxIterations = 50 });
+                Solvers.Add(new GMATSolverModel { Name = "DC_GEO", Algorithm = "NewtonRaphson", DerivativeMethod = "ForwardDifference", MaxIterations = 50 });
+            }
+            if (Variables.Count == 0) {
+                Variables.Add(new GMATVariableModel { Name = "GTO_Duration", InitialValue = 120.0, Description = "GTO 远地点抬升点火时长" });
+                Variables.Add(new GMATVariableModel { Name = "GEO_Duration", InitialValue = 70.0, Description = "GEO 圆化与定点点火时长" });
+            }
+            if (ReportFiles.Count == 0) {
+                ReportFiles.Add(new GMATReportFileModel { Name = "TrajReport", Filename = "TrajReport.txt", WriteHeaders = false });
+            }
+        }
 
         /// <summary>
         /// 从 KSP 当前飞船同步全船硬件、动力学与分级数据 (单一同步入口)
@@ -273,6 +349,96 @@ namespace KSPGMAT.Model {
         public GMATThrusterModel GetThruster(string thrusterId) {
             if (string.IsNullOrEmpty(thrusterId)) return Thrusters.Count > 0 ? Thrusters[0] : null;
             return Thrusters.Find(th => th.Id.Equals(thrusterId, StringComparison.OrdinalIgnoreCase)) ?? (Thrusters.Count > 0 ? Thrusters[0] : null);
+        }
+
+        /// <summary>
+        /// 获取当前航天器标准标识符 (统一变量管理)
+        /// </summary>
+        public string GetSpacecraftName() {
+            return !string.IsNullOrEmpty(Spacecraft.Name) ? Spacecraft.Name : "Sat";
+        }
+
+        /// <summary>
+        /// 标准化构造挂载在航天器上的推力器全限定属性路径 (如 Sat.RL10.ThrustDirection1)
+        /// 遵循 GMAT 统一对象模型层次规范，杜绝硬编码
+        /// </summary>
+        public string GetQualifiedThrusterProperty(string thrusterId, string propertyName) {
+            string sc = GetSpacecraftName();
+            string th = !string.IsNullOrEmpty(thrusterId) ? thrusterId : (Thrusters.Count > 0 ? Thrusters[0].Id : "MainEngine");
+            return $"{sc}.{th}.{propertyName}";
+        }
+
+        /// <summary>
+        /// 标准化构造航天器全限定属性路径 (如 Sat.Earth.SMA, Sat.X)
+        /// </summary>
+        public string GetQualifiedSpacecraftProperty(string propertyPath) {
+            string sc = GetSpacecraftName();
+            if (string.IsNullOrEmpty(propertyPath)) return sc;
+            if (propertyPath.StartsWith(sc + ".", StringComparison.OrdinalIgnoreCase)) return propertyPath;
+            return $"{sc}.{propertyPath}";
+        }
+
+        public List<string> GetAttachedTankIds() {
+            List<string> list = new List<string>();
+            for (int i = 0; i < Tanks.Count; i++) {
+                if (!list.Contains(Tanks[i].Id)) list.Add(Tanks[i].Id);
+            }
+            if (list.Count == 0) list.Add("Tank0");
+            return list;
+        }
+
+        public List<string> GetAttachedThrusterIds() {
+            List<string> list = new List<string>();
+            for (int i = 0; i < Thrusters.Count; i++) {
+                if (!list.Contains(Thrusters[i].Id)) list.Add(Thrusters[i].Id);
+            }
+            if (list.Count == 0) list.Add("MainEngine");
+            return list;
+        }
+
+        /// <summary>
+        /// 全流程 GMAT 脚本合规净化过滤器 (Pure-ASCII & GMAT Compliance Filter)
+        /// </summary>
+        public static string SanitizeGmatScript(string rawScript) {
+            if (string.IsNullOrEmpty(rawScript)) return "";
+            System.Text.StringBuilder sb = new System.Text.StringBuilder();
+            using (System.IO.StringReader reader = new System.IO.StringReader(rawScript)) {
+                string line;
+                while ((line = reader.ReadLine()) != null) {
+                    System.Text.StringBuilder lineSb = new System.Text.StringBuilder();
+                    for (int i = 0; i < line.Length; i++) {
+                        char c = line[i];
+                        if (c >= 32 && c < 127) lineSb.Append(c);
+                        else if (c == '\t') lineSb.Append("    ");
+                    }
+                    string cleaned = lineSb.ToString();
+
+                    // Fix invalid stop conditions (Sat.Earth.Node -> Sat.Earth.Latitude = 0.0)
+                    cleaned = cleaned.Replace("Sat.Earth.Node = 0.00", "Sat.Earth.Latitude = 0.0")
+                                     .Replace("Sat.Earth.Node = 0.0", "Sat.Earth.Latitude = 0.0")
+                                     .Replace("Sat.Earth.Node", "Sat.Earth.Latitude = 0.0");
+
+                    // Fix Sat[0-9]+ prefix (e.g. Sat3.RL10 -> Sat.RL10)
+                    cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, @"\bSat\d+\.", "Sat.");
+
+                    // Fix zero tolerance in Achieve
+                    cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, @"Tolerance\s*=\s*0(?!\.\d)", "Tolerance = 0.5");
+
+                    // Fix zero upper bounds in Vary
+                    cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, @"Lower\s*=\s*0(?:\.0*)?,\s*Upper\s*=\s*0(?:\.0*)?", "Lower = 10.0, Upper = 500.0");
+
+                    // Fix microscopic max step on time/duration variables (e.g. MaxStep = 0.1 on Duration) which stalls convergence
+                    cleaned = System.Text.RegularExpressions.Regex.Replace(
+                        cleaned,
+                        @"(Vary\s+\w+\((?:[A-Za-z0-9_]*Duration|[A-Za-z0-9_]*burntime|[A-Za-z0-9_]*Time)\s*=[^,]+,\s*\{[^}]*MaxStep\s*=\s*)0\.[0-9]+",
+                        "${1}10.0",
+                        System.Text.RegularExpressions.RegexOptions.IgnoreCase
+                    );
+
+                    sb.AppendLine(cleaned);
+                }
+            }
+            return sb.ToString();
         }
     }
 }

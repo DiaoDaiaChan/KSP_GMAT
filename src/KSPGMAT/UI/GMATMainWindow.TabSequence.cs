@@ -4,6 +4,8 @@ using System.IO;
 using System.Text;
 using UnityEngine;
 using KSPGMAT.Model;
+using KSPGMAT.Service;
+using KSPGMAT;
 
 namespace KSPGMAT.UI {
     public partial class GMATMainWindow {
@@ -42,16 +44,118 @@ namespace KSPGMAT.UI {
             return "DefaultDC";
         }
 
-        private List<string> GetActiveSolverNames() {
+        private List<string> GetAvailableSolverList() {
             List<string> list = new List<string>();
-            for (int j = 0; j < missionSequence.Count; j++) {
-                if (missionSequence[j].type == "Target") {
-                    string sName = string.IsNullOrEmpty(missionSequence[j].dc_name) ? "DefaultDC" : missionSequence[j].dc_name;
-                    if (!list.Contains(sName)) list.Add(sName);
+            
+            // 1. From GMATStateManager (Primary Single Source of Truth)
+            if (GMATStateManager.Current != null && GMATStateManager.Current.Solvers != null) {
+                for (int s = 0; s < GMATStateManager.Current.Solvers.Count; s++) {
+                    string sName = GMATStateManager.Current.Solvers[s].Name;
+                    if (!string.IsNullOrEmpty(sName) && !list.Contains(sName)) list.Add(sName);
                 }
             }
-            if (list.Count == 0) list.Add("DefaultDC");
+
+            // 2. From active sequence
+            if (missionSequence != null) {
+                for (int j = 0; j < missionSequence.Count; j++) {
+                    if (missionSequence[j].type == "Target" && !string.IsNullOrEmpty(missionSequence[j].dc_name)) {
+                        string sName = missionSequence[j].dc_name;
+                        if (!list.Contains(sName)) list.Add(sName);
+                    }
+                }
+            }
+
+            // Fallback defaults
+            if (list.Count == 0) {
+                list.Add("DC_GTO");
+                list.Add("DC_GEO");
+            }
+            if (!list.Contains("DefaultDC")) list.Insert(0, "DefaultDC");
             return list;
+        }
+
+        private List<string> GetActiveSolverNames() {
+            return GetAvailableSolverList();
+        }
+
+        private string GetContextCentralBody() {
+            if (GMATStateManager.Current != null && GMATStateManager.Current.Spacecraft != null && !string.IsNullOrEmpty(GMATStateManager.Current.Spacecraft.CentralBody)) {
+                return GMATStateManager.Current.Spacecraft.CentralBody;
+            }
+            Vessel v = FlightGlobals.ActiveVessel;
+            if (v != null && v.mainBody != null) {
+                return GMATParameterRegistry.MapBodyName(v.mainBody.bodyName);
+            }
+            return "Earth";
+        }
+
+        private string GetContextPropagator(string centralBody = null) {
+            string cb = string.IsNullOrEmpty(centralBody) ? GetContextCentralBody() : centralBody;
+            if (propagatorConfigs != null && propagatorConfigs.Count > 0) {
+                foreach (var k in propagatorConfigs.Keys) {
+                    return k;
+                }
+            }
+            if (cb == "Luna" || cb == "Moon") return "MoonProp";
+            if (cb == "Mars") return "MarsProp";
+            if (cb == "Sun") return "DeepSpaceProp";
+            return "LEOProp";
+        }
+
+        private void SetTargetGroupSolver(int targetStepIndex, string newSolverName) {
+            if (targetStepIndex < 0 || targetStepIndex >= missionSequence.Count) return;
+            var targetStep = missionSequence[targetStepIndex];
+            targetStep.dc_name = newSolverName;
+
+            // Sync solver settings from GMATStateManager if exists
+            if (GMATStateManager.Current != null && GMATStateManager.Current.Solvers != null) {
+                var found = GMATStateManager.Current.Solvers.Find(s => s.Name == newSolverName);
+                if (found != null) {
+                    targetStep.dc_algorithm = found.Algorithm;
+                    targetStep.dc_derivative_method = found.DerivativeMethod;
+                    targetStep.dc_max_iter = found.MaxIterations;
+                } else {
+                    // Register into state manager
+                    GMATStateManager.Current.Solvers.Add(new GMATSolverModel {
+                        Name = newSolverName,
+                        Algorithm = targetStep.dc_algorithm ?? "NewtonRaphson",
+                        DerivativeMethod = targetStep.dc_derivative_method ?? "ForwardDifference",
+                        MaxIterations = targetStep.dc_max_iter > 0 ? targetStep.dc_max_iter : 50
+                    });
+                }
+            }
+
+            // Cascade update all child steps within this Target group
+            for (int ch = targetStepIndex + 1; ch < missionSequence.Count; ch++) {
+                if (missionSequence[ch].type == "EndTarget") {
+                    missionSequence[ch].dc_name = newSolverName;
+                    break;
+                }
+                if (missionSequence[ch].type == "Target") break;
+                if (missionSequence[ch].type == "Vary" || missionSequence[ch].type == "Achieve") {
+                    missionSequence[ch].dc_name = newSolverName;
+                }
+            }
+        }
+
+        private void DrawInlineSolverPicker(MissionStep step, int stepIndex) {
+            GUILayout.Label("<color=#94a3b8>求解器:</color>", labelValueStyle, GUILayout.Width(45));
+            string parentDc = GetParentTargetDcName(stepIndex);
+            string currentDc = string.IsNullOrEmpty(step.dc_name) ? (string.IsNullOrEmpty(parentDc) ? "DefaultDC" : parentDc) : step.dc_name;
+
+            string newDc = GUILayout.TextField(currentDc, GUILayout.Width(75), GUILayout.Height(20));
+            if (newDc != currentDc) step.dc_name = newDc;
+
+            List<string> activeSolvers = GetAvailableSolverList();
+            if (!string.IsNullOrEmpty(parentDc) && !activeSolvers.Contains(parentDc)) activeSolvers.Insert(0, parentDc);
+
+            for (int s = 0; s < activeSolvers.Count; s++) {
+                string cand = activeSolvers[s];
+                bool isSel = (step.dc_name == cand);
+                if (GUILayout.Button(cand, isSel ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
+                    step.dc_name = cand;
+                }
+            }
         }
 
         private void DrawStepReorderControls(int i) {
@@ -115,564 +219,61 @@ namespace KSPGMAT.UI {
             }
             GUILayout.EndHorizontal();
 
-            // Quick Preset Buttons
+            // Dynamic Script Template Loader & Preset Buttons (NASA/CNSA Official Standards)
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("🚀 28.6° LEO ➔ GTO ➔ 0° GEO (全流程有限推力)", actionButtonStyle, GUILayout.Height(24))) {
-                missionSequence.Clear();
-
-                string activeThruster = "MainEngine";
-                if (cachedEngines != null && cachedEngines.Count > 0) {
-                    if (selectedEngineIndex >= 0 && selectedEngineIndex < cachedEngines.Count) {
-                        activeThruster = GMATParameterRegistry.SanitizeGmatIdentifier(cachedEngines[selectedEngineIndex].title, "Engine");
-                    } else {
-                        activeThruster = GMATParameterRegistry.SanitizeGmatIdentifier(cachedEngines[0].title, "Engine");
-                    }
-                }
-
-                // 1. LEO Coast to Equatorial Ascending Node
-                missionSequence.Add(new MissionStep {
-                    type = "Propagate",
-                    propagator = "LEOProp",
-                    stop_type = "Sat.Earth.Latitude",
-                    target_val = 0.0,
-                    label = "积分至赤道升交点 (纬度=0°)"
-                });
-
-                // 2. GTO Targeter (Prograde burn to 35,786 km apogee)
-                missionSequence.Add(new MissionStep {
-                    type = "Target",
-                    label = "GTO 远地点有限推力打靶",
-                    dc_name = "DCGTO",
-                    dc_algorithm = "NewtonRaphson",
-                    dc_max_iter = 50
-                });
-                missionSequence.Add(new MissionStep {
-                    type = "Vary",
-                    vary_variable = "GTODuration",
-                    vary_initial = 138.0,
-                    vary_lower = 10.0,
-                    vary_upper = 500.0,
-                    vary_max_step = 10.0,
-                    dc_name = "DCGTO",
-                    label = "Vary GTO 点火时长"
-                });
-                missionSequence.Add(new MissionStep {
-                    type = "FiniteBurn",
-                    propagator = "LEOProp",
-                    burn_name = "GTOBurn",
-                    burn_direction = "Prograde",
-                    thrust_dir1 = 1.0,
-                    thrust_dir2 = 0.0,
-                    thrust_dir3 = 0.0,
-                    burn_use_vary_var = true,
-                    burn_vary_var_name = "GTODuration",
-                    bound_thruster = activeThruster,
-                    label = "升交点顺行有限推力点火"
-                });
-                missionSequence.Add(new MissionStep {
-                    type = "Propagate",
-                    propagator = "LEOProp",
-                    stop_type = "Sat.Earth.Apoapsis",
-                    label = "滑行至 GTO 远地点"
-                });
-                missionSequence.Add(new MissionStep {
-                    type = "Achieve",
-                    achieve_param = "Sat.Earth.Altitude",
-                    achieve_val = 35786.0,
-                    achieve_tolerance = 0.5,
-                    dc_name = "DCGTO",
-                    label = "约束远地点高度 = 35786km"
-                });
-                missionSequence.Add(new MissionStep {
-                    type = "EndTarget",
-                    dc_name = "DCGTO",
-                    label = "闭合求解循环: '完成 GTO 入轨打靶'"
-                });
-
-                // 3. GEO Targeter (Simultaneous Circularization + 0° Inclination Removal Synthesis Burn)
-                missionSequence.Add(new MissionStep {
-                    type = "Target",
-                    label = "GEO 远地点圆化与 0° 倾角消除打靶",
-                    dc_name = "DCGEO",
-                    dc_algorithm = "NewtonRaphson",
-                    dc_max_iter = 50
-                });
-                missionSequence.Add(new MissionStep {
-                    type = "Vary",
-                    vary_variable = $"Sat.{activeThruster}.ThrustDirection2",
-                    vary_initial = -0.75,
-                    vary_lower = -1.0,
-                    vary_upper = 1.0,
-                    vary_max_step = 0.05,
-                    dc_name = "DCGEO",
-                    label = "Vary 法向推力矢量偏转 (消除 28.6° 倾角)"
-                });
-                missionSequence.Add(new MissionStep {
-                    type = "Vary",
-                    vary_variable = "GEODuration",
-                    vary_initial = 80.0,
-                    vary_lower = 5.0,
-                    vary_upper = 500.0,
-                    vary_max_step = 5.0,
-                    dc_name = "DCGEO",
-                    label = "Vary GEO 点火时长 (圆化半长轴)"
-                });
-                missionSequence.Add(new MissionStep {
-                    type = "FiniteBurn",
-                    propagator = "LEOProp",
-                    burn_name = "GEOBurn",
-                    burn_direction = "Prograde",
-                    thrust_dir1 = 1.0,
-                    thrust_dir2 = 0.0,
-                    thrust_dir3 = 0.0,
-                    burn_use_vary_var = true,
-                    burn_vary_var_name = "GEODuration",
-                    bound_thruster = activeThruster,
-                    label = "远地点合成矢量有限推力点火 (变倾角圆化)"
-                });
-                missionSequence.Add(new MissionStep {
-                    type = "Propagate",
-                    propagator = "LEOProp",
-                    stop_type = "Sat.ElapsedSecs",
-                    duration = 200.0,
-                    label = "圆化后巡航验证"
-                });
-                missionSequence.Add(new MissionStep {
-                    type = "Achieve",
-                    achieve_param = "Sat.Earth.SMA",
-                    achieve_val = 42164.14,
-                    achieve_tolerance = 0.5,
-                    dc_name = "DCGEO",
-                    label = "约束 GEO 同步半长轴 = 42164km (高度=35786km)"
-                });
-                missionSequence.Add(new MissionStep {
-                    type = "Achieve",
-                    achieve_param = "Sat.EarthMJ2000Eq.VZ",
-                    achieve_val = 0.0,
-                    achieve_tolerance = 0.001,
-                    dc_name = "DCGEO",
-                    label = "约束赤纬速度 VZ = 0 km/s (0° 倾角赤道共面)"
-                });
-                missionSequence.Add(new MissionStep {
-                    type = "EndTarget",
-                    dc_name = "DCGEO",
-                    label = "闭合求解循环: '完成 0° GEO 定轨打靶'"
-                });
-
-                // 4. Final GEO Station-Keeping Coast & Report
-                missionSequence.Add(new MissionStep {
-                    type = "Propagate",
-                    propagator = "LEOProp",
-                    stop_type = "Sat.ElapsedSecs",
-                    duration = 86164.0,
-                    label = "GEO 轨道巡航 24 小时验证"
-                });
-                missionSequence.Add(new MissionStep {
-                    type = "Report",
-                    label = "0° GEO 最终入轨报告"
-                });
-                ScreenMessages.PostScreenMessage("✅ 已加载 28.6° LEO ➔ GTO ➔ 0° GEO 全流程有限推力打靶序列！", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+            if (GUILayout.Button("🚀 28.6° LEO ➔ GTO ➔ 0° GEO", actionButtonStyle, GUILayout.Height(24))) {
+                LoadScriptTemplate("01_LEO_to_GEO_FiniteBurn.script", vessel);
             }
-            if (GUILayout.Button("🛰️ GTO 转移", secondaryButtonStyle, GUILayout.Height(24))) {
-                missionSequence.Clear();
-                missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LEOProp", stop_type = "Sat.Earth.Latitude", target_val = 0.0, label = "积分至赤道升交点" });
-                missionSequence.Add(new MissionStep { type = "Target", label = "GTO 远地点打靶", dc_name = "DC_GTO", dc_algorithm = "NewtonRaphson", dc_max_iter = 50 });
-                missionSequence.Add(new MissionStep { type = "Vary", vary_variable = "GTO_Duration", vary_initial = 120.0, vary_lower = 10.0, vary_upper = 300.0, vary_max_step = 10.0, dc_name = "DC_GTO", label = "Vary GTO 点火时长" });
-                missionSequence.Add(new MissionStep { type = "FiniteBurn", propagator = "LEOProp", burn_name = "GTO_Burn", burn_direction = "Prograde", burn_use_vary_var = true, burn_vary_var_name = "GTO_Duration", label = "升交点顺行有限推力点火" });
-                missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LEOProp", stop_type = "Sat.Earth.Apoapsis", label = "滑行至远地点" });
-                missionSequence.Add(new MissionStep { type = "Achieve", achieve_param = "Sat.Earth.Altitude", achieve_val = 35786.0, achieve_tolerance = 0.5, dc_name = "DC_GTO", label = "约束远地点高度=35786km" });
-                missionSequence.Add(new MissionStep { type = "EndTarget", dc_name = "DC_GTO", label = "结束 GTO 打靶" });
-                missionSequence.Add(new MissionStep { type = "Report", label = "GTO 入轨报告" });
+            if (GUILayout.Button("🌕 阿波罗地月 TLI+LOI", secondaryButtonStyle, GUILayout.Height(24))) {
+                LoadScriptTemplate("02_Apollo_Cislunar_TLI_LOI.script", vessel);
             }
-            if (GUILayout.Button("🌖 嫦娥六号 3次近月制动 (有限推力)", secondaryButtonStyle, GUILayout.Height(24))) {
-                missionSequence.Clear();
-                missionSequence.Add(new MissionStep { type = "Propagate", propagator = "CislunarProp", stop_type = "Sat.Luna.Periapsis", label = "地月转移巡航至近月点" });
-                
-                // 1st LOI: Lunar Orbit Capture (12h Ellipse, RMAG = 30000 km)
-                missionSequence.Add(new MissionStep { type = "Target", label = "第一次近月制动 (大椭圆捕获)", dc_name = "DefaultDC", dc_algorithm = "NewtonRaphson", dc_max_iter = 50 });
-                missionSequence.Add(new MissionStep { type = "Vary", vary_variable = "LOI_Duration1", vary_initial = 180.0, vary_lower = 10.0, vary_upper = 1200.0, vary_max_step = 30.0, vary_perturbation = 0.0001, label = "Vary 第1次点火时长" });
-                missionSequence.Add(new MissionStep { type = "FiniteBurn", propagator = "LunarNRHOProp", burn_name = "LOI_1", burn_direction = "Retrograde", burn_use_vary_var = true, burn_vary_var_name = "LOI_Duration1", bound_thruster = "YF37_Service", bound_tank = "MMH_Tank", label = "执行第1次近月制动点火" });
-                missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LunarNRHOProp", stop_type = "Sat.Luna.Apoapsis", label = "传播至远月点" });
-                missionSequence.Add(new MissionStep { type = "Achieve", achieve_param = "Sat.Luna.RMAG", achieve_val = 30000.0, achieve_tolerance = 5.0, label = "约束远月点半径=30000km" });
-                missionSequence.Add(new MissionStep { type = "EndTarget", label = "完成第1次近月制动" });
-
-                // Coast back to Periapsis
-                missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LunarNRHOProp", stop_type = "Sat.Luna.Periapsis", label = "环月椭圆滑行至近月点" });
-
-                // 2nd LOI: Lower Apoapsis to 7,000 km
-                missionSequence.Add(new MissionStep { type = "Target", label = "第二次近月制动 (中椭圆降轨)", dc_name = "DefaultDC", dc_algorithm = "NewtonRaphson", dc_max_iter = 50 });
-                missionSequence.Add(new MissionStep { type = "Vary", vary_variable = "LOI_Duration2", vary_initial = 120.0, vary_lower = 10.0, vary_upper = 1200.0, vary_max_step = 30.0, vary_perturbation = 0.0001, label = "Vary 第2次点火时长" });
-                missionSequence.Add(new MissionStep { type = "FiniteBurn", propagator = "LunarNRHOProp", burn_name = "LOI_2", burn_direction = "Retrograde", burn_use_vary_var = true, burn_vary_var_name = "LOI_Duration2", bound_thruster = "YF37_Service", bound_tank = "MMH_Tank", label = "复用发动机执行第2次降轨点火" });
-                missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LunarNRHOProp", stop_type = "Sat.Luna.Apoapsis", label = "传播至远月点" });
-                missionSequence.Add(new MissionStep { type = "Achieve", achieve_param = "Sat.Luna.RMAG", achieve_val = 7000.0, achieve_tolerance = 2.0, label = "约束远月点半径=7000km" });
-                missionSequence.Add(new MissionStep { type = "EndTarget", label = "完成第2次近月制动" });
-
-                // Coast to Periapsis
-                missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LunarNRHOProp", stop_type = "Sat.Luna.Periapsis", label = "滑行至近月点" });
-
-                // 3rd LOI: Circularize into 200km Lunar Orbit
-                missionSequence.Add(new MissionStep { type = "Target", label = "第三次近月制动 (200km圆化)", dc_name = "DefaultDC", dc_algorithm = "NewtonRaphson", dc_max_iter = 50 });
-                missionSequence.Add(new MissionStep { type = "Vary", vary_variable = "LOI_Duration3", vary_initial = 65.0, vary_lower = 5.0, vary_upper = 600.0, vary_max_step = 15.0, vary_perturbation = 0.0001, label = "Vary 第3次圆化点火时长" });
-                missionSequence.Add(new MissionStep { type = "FiniteBurn", propagator = "LunarNRHOProp", burn_name = "LOI_3", burn_direction = "Retrograde", burn_use_vary_var = true, burn_vary_var_name = "LOI_Duration3", bound_thruster = "YF37_Service", bound_tank = "MMH_Tank", label = "执行第3次环月圆化点火" });
-                missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LunarNRHOProp", stop_type = "Sat.Luna.Apoapsis", label = "传播至远月点" });
-                missionSequence.Add(new MissionStep { type = "Achieve", achieve_param = "Sat.Luna.RMAG", achieve_val = 1937.0, achieve_tolerance = 1.0, label = "约束200km环月圆轨道" });
-                missionSequence.Add(new MissionStep { type = "EndTarget", label = "完成环月圆化" });
-
-                missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LunarNRHOProp", stop_type = "ElapsedDays", duration = 7.0, label = "环月科学巡航 7 天" });
-                missionSequence.Add(new MissionStep { type = "Report", label = "嫦娥六号环月科学状态报告" });
+            if (GUILayout.Button("🌖 嫦娥六号 3次近月制动", secondaryButtonStyle, GUILayout.Height(24))) {
+                LoadScriptTemplate("03_ChangE6_Lunar_Orbit_Insertion_3Burns.script", vessel);
             }
-            if (GUILayout.Button("🌙 28.6° LEO ➔ TLI ➔ 0°低月轨道 (全流程双打靶)", tabButtonActiveStyle, GUILayout.Height(24))) {
-                missionSequence.Clear();
-
-                // 1. Propagate in LEO to Equatorial Ascending Node
-                missionSequence.Add(new MissionStep { 
-                    type = "Propagate", 
-                    propagator = "LEOProp", 
-                    stop_type = "Sat.Earth.Latitude", 
-                    target_val = 0.0, 
-                    label = "积分至赤道升交点 (TLI 地月转移窗口)" 
-                });
-
-                // 2. Target 1: Trans-Lunar Injection (TLI Finite Burn)
-                missionSequence.Add(new MissionStep { 
-                    type = "Target", 
-                    label = "TLI 地月转移注入打靶", 
-                    dc_name = "DC_TLI", 
-                    dc_algorithm = "NewtonRaphson", 
-                    dc_max_iter = 50 
-                });
-                missionSequence.Add(new MissionStep { 
-                    type = "Vary", 
-                    vary_variable = "TLI_Duration", 
-                    vary_initial = 310.0, 
-                    vary_lower = 50.0, 
-                    vary_upper = 800.0, 
-                    vary_max_step = 10.0, 
-                    vary_perturbation = 0.0001,
-                    dc_name = "DC_TLI", 
-                    label = "Vary TLI 点火时长" 
-                });
-                missionSequence.Add(new MissionStep { 
-                    type = "FiniteBurn", 
-                    propagator = "LEOProp", 
-                    burn_name = "TLI_Burn", 
-                    burn_direction = "Prograde", 
-                    burn_use_vary_var = true, 
-                    burn_vary_var_name = "TLI_Duration", 
-                    label = "升交点执行 TLI 顺行加速点火 (ΔV ≈ 3150 m/s)" 
-                });
-                missionSequence.Add(new MissionStep { 
-                    type = "Propagate", 
-                    propagator = "CislunarProp", 
-                    stop_type = "Sat.Luna.Periapsis", 
-                    label = "地月深空三体巡航至近月点 (约 3~4.5 天)" 
-                });
-                missionSequence.Add(new MissionStep { 
-                    type = "Achieve", 
-                    achieve_param = "Sat.Luna.Altitude", 
-                    achieve_val = 100.0, 
-                    achieve_tolerance = 2.0, 
-                    dc_name = "DC_TLI", 
-                    label = "约束近月点高度 = 100km" 
-                });
-                missionSequence.Add(new MissionStep { 
-                    type = "EndTarget", 
-                    dc_name = "DC_TLI", 
-                    label = "完成 TLI 注入打靶" 
-                });
-
-                // 3. Target 2: LOI into 0° Inclination Low Lunar Orbit (100km Circular)
-                missionSequence.Add(new MissionStep { 
-                    type = "Target", 
-                    label = "LOI 0° 倾角 100km 低月轨道捕获打靶", 
-                    dc_name = "DC_LOI", 
-                    dc_algorithm = "NewtonRaphson", 
-                    dc_max_iter = 50 
-                });
-                missionSequence.Add(new MissionStep { 
-                    type = "Vary", 
-                    vary_variable = "Sat.LOI_Burn_Thruster.ThrustDirection2", 
-                    vary_initial = 0.0, 
-                    vary_lower = -1.0, 
-                    vary_upper = 1.0, 
-                    vary_max_step = 0.05, 
-                    vary_perturbation = 0.0001,
-                    dc_name = "DC_LOI", 
-                    label = "Vary 副法向推力偏转分量 (0° 倾角校准)" 
-                });
-                missionSequence.Add(new MissionStep { 
-                    type = "Vary", 
-                    vary_variable = "LOI_Duration", 
-                    vary_initial = 120.0, 
-                    vary_lower = 10.0, 
-                    vary_upper = 600.0, 
-                    vary_max_step = 10.0, 
-                    vary_perturbation = 0.0001,
-                    dc_name = "DC_LOI", 
-                    label = "Vary LOI 近月制动点火时长" 
-                });
-                missionSequence.Add(new MissionStep { 
-                    type = "FiniteBurn", 
-                    propagator = "LunarNRHOProp", 
-                    burn_name = "LOI_Burn", 
-                    burn_direction = "GEOSynthesis", 
-                    burn_use_vary_var = true, 
-                    burn_vary_var_name = "LOI_Duration", 
-                    label = "执行近月逆行+副法向合成制动点火 (ΔV ≈ 850 m/s)" 
-                });
-                missionSequence.Add(new MissionStep { 
-                    type = "Propagate", 
-                    propagator = "LunarNRHOProp", 
-                    stop_type = "Sat.Luna.Apoapsis", 
-                    label = "环月滑行至远月点" 
-                });
-                missionSequence.Add(new MissionStep { 
-                    type = "Achieve", 
-                    achieve_param = "Sat.Luna.INC", 
-                    achieve_val = 0.0, 
-                    achieve_tolerance = 0.5, 
-                    dc_name = "DC_LOI", 
-                    label = "约束月心赤道倾角 INC = 0.0°" 
-                });
-                missionSequence.Add(new MissionStep { 
-                    type = "Achieve", 
-                    achieve_param = "Sat.Luna.SMA", 
-                    achieve_val = 1837.4, 
-                    achieve_tolerance = 1.0, 
-                    dc_name = "DC_LOI", 
-                    label = "约束月球半长轴 SMA = 1837.4km (100km 圆轨道)" 
-                });
-                missionSequence.Add(new MissionStep { 
-                    type = "EndTarget", 
-                    dc_name = "DC_LOI", 
-                    label = "完成 100km 0° 低月轨道圆化" 
-                });
-
-                // 4. Low Lunar Orbit Science Cruise & Report
-                missionSequence.Add(new MissionStep { 
-                    type = "Propagate", 
-                    propagator = "LunarNRHOProp", 
-                    stop_type = "ElapsedDays", 
-                    duration = 3.0, 
-                    label = "0° 倾角 100km 低月轨道稳定巡航 3 天" 
-                });
-                missionSequence.Add(new MissionStep { 
-                    type = "Report", 
-                    label = "低月球轨道任务最终状态报告" 
-                });
-
-                ScreenMessages.PostScreenMessage("✅ 已加载 LEO ➔ TLI ➔ 0° 倾角 100km 低月轨道 (全流程有限推力双打靶) 预设！", 3.5f, ScreenMessageStyle.UPPER_CENTER);
+            if (GUILayout.Button("🛰️ 地月中继 NRHO Halo", secondaryButtonStyle, GUILayout.Height(24))) {
+                LoadScriptTemplate("04_Earth_Moon_NRHO_Halo_Orbit.script", vessel);
             }
-            if (GUILayout.Button("🛰️ 阿波罗/嫦娥标准地月全流程 (TLI ➔ TCM中途修正 ➔ 0°低月圆化)", secondaryButtonStyle, GUILayout.Height(24))) {
-                missionSequence.Clear();
-
-                // 1. LEO Coast to TLI Window
-                missionSequence.Add(new MissionStep { 
-                    type = "Propagate", 
-                    propagator = "LEOProp", 
-                    stop_type = "Sat.Earth.Latitude", 
-                    target_val = 0.0, 
-                    label = "积分至赤道升交点 (TLI 点火窗口)" 
-                });
-
-                // 2. Stage 1: TLI Targeter (Pure Prograde to establish Cislunar Corridor)
-                missionSequence.Add(new MissionStep { 
-                    type = "Target", 
-                    label = "阶段1: TLI 地月转移注入打靶 (粗调送入地月走廊)", 
-                    dc_name = "DC_TLI", 
-                    dc_algorithm = "NewtonRaphson", 
-                    dc_max_iter = 50 
-                });
-                missionSequence.Add(new MissionStep { 
-                    type = "Vary", 
-                    vary_variable = "TLI_Duration", 
-                    vary_initial = 310.0, 
-                    vary_lower = 50.0, 
-                    vary_upper = 600.0, 
-                    vary_max_step = 10.0, 
-                    vary_perturbation = 0.0001,
-                    dc_name = "DC_TLI", 
-                    label = "Vary TLI 顺行点火时长" 
-                });
-                missionSequence.Add(new MissionStep { 
-                    type = "FiniteBurn", 
-                    propagator = "LEOProp", 
-                    burn_name = "TLI_Burn", 
-                    burn_direction = "Prograde", 
-                    burn_use_vary_var = true, 
-                    burn_vary_var_name = "TLI_Duration", 
-                    label = "升交点执行 TLI 顺行加速点火 (ΔV ≈ 3150 m/s)" 
-                });
-                missionSequence.Add(new MissionStep { 
-                    type = "Propagate", 
-                    propagator = "CislunarProp", 
-                    stop_type = "Sat.Luna.Periapsis", 
-                    label = "地月深空三体巡航至近月点" 
-                });
-                missionSequence.Add(new MissionStep { 
-                    type = "Achieve", 
-                    achieve_param = "Sat.Luna.RMAG", 
-                    achieve_val = 3000.0, 
-                    achieve_tolerance = 50.0, 
-                    dc_name = "DC_TLI", 
-                    label = "粗调送入月球引力范围 (近月点半径 ≤ 3000km)" 
-                });
-                missionSequence.Add(new MissionStep { 
-                    type = "EndTarget", 
-                    dc_name = "DC_TLI", 
-                    label = "完成 TLI 粗入轨打靶" 
-                });
-
-                // 3. Stage 2: TCM Mid-Course Correction (Fine Tuning Inclination & Perilune at 48h)
-                missionSequence.Add(new MissionStep { 
-                    type = "Target", 
-                    label = "阶段2: TCM-1 中途修正打靶 (极小ΔV精确锁定100km高度与0°赤道面)", 
-                    dc_name = "DC_TCM", 
-                    dc_algorithm = "NewtonRaphson", 
-                    dc_max_iter = 50 
-                });
-                missionSequence.Add(new MissionStep { 
-                    type = "Vary", 
-                    vary_variable = "Sat.TCM_Burn_Thruster.ThrustDirection2", 
-                    vary_initial = 0.0, 
-                    vary_lower = -1.0, 
-                    vary_upper = 1.0, 
-                    vary_max_step = 0.05, 
-                    vary_perturbation = 0.0001,
-                    dc_name = "DC_TCM", 
-                    label = "Vary TCM 副法向推力偏转 (0° 倾角精细校准)" 
-                });
-                missionSequence.Add(new MissionStep { 
-                    type = "Vary", 
-                    vary_variable = "TCM_Duration", 
-                    vary_initial = 5.0, 
-                    vary_lower = 0.1, 
-                    vary_upper = 60.0, 
-                    vary_max_step = 1.0, 
-                    vary_perturbation = 0.0001,
-                    dc_name = "DC_TCM", 
-                    label = "Vary TCM 微调点火时长 (ΔV仅需数米/秒)" 
-                });
-                missionSequence.Add(new MissionStep { 
-                    type = "FiniteBurn", 
-                    propagator = "CislunarProp", 
-                    burn_name = "TCM_Burn", 
-                    burn_direction = "Custom", 
-                    burn_use_vary_var = true, 
-                    burn_vary_var_name = "TCM_Duration", 
-                    label = "执行地月巡航中途修正点火 TCM-1 (ΔV ≈ 5~15 m/s)" 
-                });
-                missionSequence.Add(new MissionStep { 
-                    type = "Propagate", 
-                    propagator = "CislunarProp", 
-                    stop_type = "Sat.Luna.Periapsis", 
-                    label = "精确巡航至 100km 近月点" 
-                });
-                missionSequence.Add(new MissionStep { 
-                    type = "Achieve", 
-                    achieve_param = "Sat.Luna.Altitude", 
-                    achieve_val = 100.0, 
-                    achieve_tolerance = 2.0, 
-                    dc_name = "DC_TCM", 
-                    label = "精确锁定近月点高度 = 100km" 
-                });
-                missionSequence.Add(new MissionStep { 
-                    type = "Achieve", 
-                    achieve_param = "Sat.Luna.INC", 
-                    achieve_val = 0.0, 
-                    achieve_tolerance = 0.5, 
-                    dc_name = "DC_TCM", 
-                    label = "精确锁定月心赤道倾角 INC = 0.0°" 
-                });
-                missionSequence.Add(new MissionStep { 
-                    type = "EndTarget", 
-                    dc_name = "DC_TCM", 
-                    label = "完成 TCM 中途修正" 
-                });
-
-                // 4. Stage 3: LOI Lunar Orbit Insertion (Pure Retrograde Braking into Circular Orbit)
-                missionSequence.Add(new MissionStep { 
-                    type = "Target", 
-                    label = "阶段3: LOI 近月制动捕获打靶 (100km 圆轨道圆化)", 
-                    dc_name = "DC_LOI", 
-                    dc_algorithm = "NewtonRaphson", 
-                    dc_max_iter = 50 
-                });
-                missionSequence.Add(new MissionStep { 
-                    type = "Vary", 
-                    vary_variable = "LOI_Duration", 
-                    vary_initial = 120.0, 
-                    vary_lower = 10.0, 
-                    vary_upper = 500.0, 
-                    vary_max_step = 10.0, 
-                    vary_perturbation = 0.0001,
-                    dc_name = "DC_LOI", 
-                    label = "Vary LOI 逆行制动点火时长" 
-                });
-                missionSequence.Add(new MissionStep { 
-                    type = "FiniteBurn", 
-                    propagator = "LunarNRHOProp", 
-                    burn_name = "LOI_Burn", 
-                    burn_direction = "Retrograde", 
-                    burn_use_vary_var = true, 
-                    burn_vary_var_name = "LOI_Duration", 
-                    label = "近月点执行逆行制动点火 (ΔV ≈ 850 m/s)" 
-                });
-                missionSequence.Add(new MissionStep { 
-                    type = "Propagate", 
-                    propagator = "LunarNRHOProp", 
-                    stop_type = "Sat.Luna.Apoapsis", 
-                    label = "环月滑行至远月点" 
-                });
-                missionSequence.Add(new MissionStep { 
-                    type = "Achieve", 
-                    achieve_param = "Sat.Luna.SMA", 
-                    achieve_val = 1837.4, 
-                    achieve_tolerance = 2.0, 
-                    dc_name = "DC_LOI", 
-                    label = "约束月球半长轴 SMA = 1837.4km (100km 圆轨道)" 
-                });
-                missionSequence.Add(new MissionStep { 
-                    type = "EndTarget", 
-                    dc_name = "DC_LOI", 
-                    label = "完成 100km 0° 低月轨道圆化" 
-                });
-
-                // 5. Science Cruise & Report
-                missionSequence.Add(new MissionStep { 
-                    type = "Propagate", 
-                    propagator = "LunarNRHOProp", 
-                    stop_type = "ElapsedDays", 
-                    duration = 3.0, 
-                    label = "0° 倾角 100km 低月轨道稳定巡航 3 天" 
-                });
-                missionSequence.Add(new MissionStep { 
-                    type = "Report", 
-                    label = "阿波罗/嫦娥地月全流程最终任务报告" 
-                });
-
-                ScreenMessages.PostScreenMessage("✅ 已加载阿波罗/嫦娥标准地月全流程 (TLI ➔ TCM中途修正 ➔ 0°低月圆化) 预设！", 3.5f, ScreenMessageStyle.UPPER_CENTER);
+            if (GUILayout.Button("🔴 地火霍曼转移", secondaryButtonStyle, GUILayout.Height(24))) {
+                LoadScriptTemplate("05_Earth_Mars_Hohmann_Transfer.script", vessel);
             }
             GUILayout.EndHorizontal();
 
             if (showCustomScriptInput) {
                 GUILayout.Space(4);
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("脚本路径:", labelValueStyle, GUILayout.Width(65));
+                GUILayout.Label("📂 导入第三方脚本:", labelValueStyle, GUILayout.Width(110));
                 customScriptPath = GUILayout.TextField(customScriptPath);
                 if (GUILayout.Button("解析导入", secondaryButtonStyle, GUILayout.Width(75), GUILayout.Height(20))) {
                     if (System.IO.File.Exists(customScriptPath)) {
-                        GMATClient.ImportScript(customScriptPath, vessel, (ok, seq, msg) => {
-                            if (ok && seq != null && seq.Count > 0) {
-                                missionSequence = seq;
-                                ScreenMessages.PostScreenMessage($"✅ 成功导入 {seq.Count} 个任务步骤！", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                        GMATClient.ImportScript(customScriptPath, vessel, (ok, result, msg) => {
+                            if (ok && result != null) {
+                                ApplyImportResultToState(result);
+
+                                // Clear old solver diagnostics from previous run
+                                solveStageText = "就绪";
+                                latestResult = null;
+                                solveProgress = 0f;
+
+                                try {
+                                    ideCustomBuffer = File.ReadAllText(customScriptPath, System.Text.Encoding.UTF8);
+                                } catch {}
+
+                                ScreenMessages.PostScreenMessage($"✅ 成功导入第三方脚本 ({result.sequence?.Count ?? 0} 个任务步骤)！", 3.0f, ScreenMessageStyle.UPPER_CENTER);
                             } else {
-                                ScreenMessages.PostScreenMessage("❌ 解析脚本失败: " + msg, 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                                ScreenMessages.PostScreenMessage("❌ 解析第三方脚本失败: " + msg, 3.0f, ScreenMessageStyle.UPPER_CENTER);
                             }
                         });
                     } else {
                         ScreenMessages.PostScreenMessage("❌ 文件不存在: " + customScriptPath, 3.0f, ScreenMessageStyle.UPPER_CENTER);
                     }
+                }
+                GUILayout.EndHorizontal();
+
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("💾 导出为预设模板:", labelValueStyle, GUILayout.Width(110));
+                exportTemplateName = GUILayout.TextField(exportTemplateName);
+                if (GUILayout.Button("导出模板", secondaryButtonStyle, GUILayout.Width(75), GUILayout.Height(20))) {
+                    ExportScriptTemplate(exportTemplateName, vessel);
                 }
                 GUILayout.EndHorizontal();
             }
@@ -707,6 +308,23 @@ namespace KSPGMAT.UI {
             }
             GUILayout.EndHorizontal();
             GUILayout.Space(4);
+
+            if (latestResult != null) {
+                GUILayout.BeginVertical(cardBoxStyle);
+                GUILayout.BeginHorizontal();
+                if (latestResult.all_solvers_converged && latestResult.success) {
+                    GUILayout.Label("<color=#34d399><b>✅ 求解器状态：全部打靶任务 100% 收敛</b></color>", labelValueStyle);
+                } else {
+                    string unconvStr = (latestResult.unconverged_solvers != null && latestResult.unconverged_solvers.Count > 0)
+                        ? string.Join(", ", latestResult.unconverged_solvers.ToArray())
+                        : "部分求解器未收敛";
+                    GUILayout.Label($"<color=#f87171><b>⚠️ 求解器状态警告：打靶未收敛 ({unconvStr})</b></color>", labelValueStyle);
+                }
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+                GUILayout.EndVertical();
+                GUILayout.Space(4);
+            }
 
             scrollPosSequence = GUILayout.BeginScrollView(scrollPosSequence, cardBoxStyle, GUILayout.ExpandHeight(true));
 
@@ -901,42 +519,79 @@ namespace KSPGMAT.UI {
                     // Target Expanded Solver Config & Quick Add
                     if (!step.is_collapsed) {
                         if (expandedSolverSettings.Contains(i)) {
-                            GUILayout.Space(2);
+                            GUILayout.Space(4);
+                            GUILayout.BeginVertical(nestedCardBoxStyle);
+                            
+                            // Row 1: Solver selector chips & dynamic add button
                             GUILayout.BeginHorizontal();
-                            GUILayout.Space(8);
-                            GUILayout.Label("求解器名称 (Solver):", labelValueStyle, GUILayout.Width(130));
+                            GUILayout.Label("<color=#38bdf8><b>绑定求解器 (Solver):</b></color>", labelValueStyle, GUILayout.Width(130));
                             string curDc = string.IsNullOrEmpty(step.dc_name) ? "DefaultDC" : step.dc_name;
-                            step.dc_name = GUILayout.TextField(curDc, GUILayout.Width(105), GUILayout.Height(20));
+                            string editedDc = GUILayout.TextField(curDc, GUILayout.Width(110), GUILayout.Height(20));
+                            if (editedDc != curDc) {
+                                SetTargetGroupSolver(i, editedDc);
+                            }
 
-                            string[] commonSolvers = new string[] { "DefaultDC", "DC_GTO", "DC_GEO", "DC_TLI", "DC_LOI" };
-                            for (int c = 0; c < commonSolvers.Length; c++) {
-                                string cs = commonSolvers[c];
-                                if (GUILayout.Button(cs, (step.dc_name == cs) ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
-                                    step.dc_name = cs;
+                            List<string> availSolvers = GetAvailableSolverList();
+                            for (int c = 0; c < availSolvers.Count; c++) {
+                                string cs = availSolvers[c];
+                                bool isSel = (step.dc_name == cs);
+                                if (GUILayout.Button(cs, isSel ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
+                                    SetTargetGroupSolver(i, cs);
                                 }
                             }
 
-                            GUILayout.Label("寻优算法:", labelValueStyle, GUILayout.Width(65));
+                            if (GUILayout.Button("➕ 新增求解器", secondaryButtonStyle, GUILayout.Height(20))) {
+                                string newName = $"DC_{GMATStateManager.Current.Solvers.Count + 1}";
+                                GMATStateManager.Current.Solvers.Add(new GMATSolverModel {
+                                    Name = newName,
+                                    Algorithm = "NewtonRaphson",
+                                    DerivativeMethod = "ForwardDifference",
+                                    MaxIterations = 50
+                                });
+                                SetTargetGroupSolver(i, newName);
+                                ScreenMessages.PostScreenMessage($"✅ 已创建并绑定新求解器: {newName}", 2.5f, ScreenMessageStyle.UPPER_CENTER);
+                            }
+                            GUILayout.FlexibleSpace();
+                            GUILayout.EndHorizontal();
+
+                            // Row 2: Algorithm, Derivative Method, Maximum Iterations (Bidirectional sync with GMATStateManager)
+                            GUILayout.Space(3);
+                            GUILayout.BeginHorizontal();
+                            GUILayout.Label("<color=#94a3b8>寻优算法:</color>", gridLabelStyle, GUILayout.Width(65));
                             string[] dcAlgs = new string[] { "NewtonRaphson", "Broyden" };
                             int aIdx = Array.IndexOf(dcAlgs, step.dc_algorithm);
                             if (aIdx < 0) aIdx = 0;
                             if (GUILayout.Button(dcAlgs[aIdx], secondaryButtonStyle, GUILayout.Width(110), GUILayout.Height(20))) {
                                 step.dc_algorithm = dcAlgs[(aIdx + 1) % dcAlgs.Length];
+                                var sol = GMATStateManager.Current.Solvers.Find(s => s.Name == step.dc_name);
+                                if (sol != null) sol.Algorithm = step.dc_algorithm;
                             }
 
-                            GUILayout.Label("导数算法:", labelValueStyle, GUILayout.Width(65));
+                            GUILayout.Space(8);
+                            GUILayout.Label("<color=#94a3b8>导数算法:</color>", gridLabelStyle, GUILayout.Width(65));
                             string[] dcDms = new string[] { "ForwardDifference", "CentralDifference" };
                             int dmIdx = Array.IndexOf(dcDms, step.dc_derivative_method);
                             if (dmIdx < 0) dmIdx = 0;
                             if (GUILayout.Button(dcDms[dmIdx], secondaryButtonStyle, GUILayout.Width(125), GUILayout.Height(20))) {
                                 step.dc_derivative_method = dcDms[(dmIdx + 1) % dcDms.Length];
+                                var sol = GMATStateManager.Current.Solvers.Find(s => s.Name == step.dc_name);
+                                if (sol != null) sol.DerivativeMethod = step.dc_derivative_method;
                             }
 
-                            GUILayout.Label("最大迭代:", labelValueStyle, GUILayout.Width(65));
-                            string sIter = GUILayout.TextField(step.dc_max_iter.ToString(), GUILayout.Width(45));
-                            int.TryParse(sIter, out step.dc_max_iter);
+                            GUILayout.Space(8);
+                            GUILayout.Label("<color=#94a3b8>最大迭代:</color>", gridLabelStyle, GUILayout.Width(65));
+                            string sIter = GUILayout.TextField(step.dc_max_iter.ToString(), numericInputStyle, GUILayout.Width(50));
+                            int newMaxIter;
+                            if (int.TryParse(sIter, out newMaxIter) && newMaxIter != step.dc_max_iter) {
+                                step.dc_max_iter = newMaxIter;
+                                var sol = GMATStateManager.Current.Solvers.Find(s => s.Name == step.dc_name);
+                                if (sol != null) sol.MaxIterations = newMaxIter;
+                            }
+
                             GUILayout.FlexibleSpace();
                             GUILayout.EndHorizontal();
+                            GUILayout.EndVertical();
+                            GUILayout.Space(2);
                         }
 
                         GUILayout.Space(2);
@@ -1065,30 +720,24 @@ namespace KSPGMAT.UI {
                         draggedStepIndex = isBeingDragged ? -1 : i;
                     }
 
-                    // Modern Pill Badge by Type
-                    if (step.type == "Propagate") GUILayout.Box("🌐 轨道积分", pillPropStyle, GUILayout.Width(72), GUILayout.Height(20));
-                    else if (step.type == "Vary") GUILayout.Box("✏️ Vary 寻优", pillVaryStyle, GUILayout.Width(76), GUILayout.Height(20));
-                    else if (step.type == "Achieve") GUILayout.Box("🎯 Achieve 目标", pillAchieveStyle, GUILayout.Width(86), GUILayout.Height(20));
-                    else if (step.type == "FiniteBurn") GUILayout.Box("🔥 有限点火", pillBurnStyle, GUILayout.Width(72), GUILayout.Height(20));
-                    else if (step.type == "ThrustVectorControl" || step.type == "VaryThrustDirection") GUILayout.Box("🧭 推力矢量", pillBurnStyle, GUILayout.Width(76), GUILayout.Height(20));
-                    else if (step.type == "ImpulsiveBurn") GUILayout.Box("💥 脉冲机动", pillImpulseStyle, GUILayout.Width(72), GUILayout.Height(20));
-                    else if (step.type == "StageSeparation") GUILayout.Box("🚀 级段分离", pillStageStyle, GUILayout.Width(72), GUILayout.Height(20));
-                    else if (step.type == "Report") GUILayout.Box("🧾 状态报告", pillGenericStyle, GUILayout.Width(72), GUILayout.Height(20));
-                    else if (step.type == "Equation") GUILayout.Box("📐 变量赋值", pillGenericStyle, GUILayout.Width(72), GUILayout.Height(20));
-                    else GUILayout.Box(step.type, pillGenericStyle, GUILayout.Width(65), GUILayout.Height(20));
+                    // Modern Pill Badge by Type with Auto Width & Overflow Prevention
+                    string badgeTextChild = GetStepTypeBadgeText(step.type);
+                    GUIStyle pillStyleChild = GetStepPillStyle(step.type);
+                    GUILayout.Box(badgeTextChild, pillStyleChild, GUILayout.MinWidth(75), GUILayout.ExpandWidth(false), GUILayout.Height(20));
 
                     if (step.is_collapsed) {
                         string summaryBadge = "";
-                        if (step.type == "Propagate") summaryBadge = $"<color=#f87171><b>{step.propagator}</b></color> ➔ 停止: <b>{step.stop_type}</b> {(step.stop_type == "Time" ? $"({step.duration:F0}s)" : "")}";
-                        else if (step.type == "Vary") summaryBadge = $"<color=#38bdf8><b>{step.vary_variable}</b></color> (初猜: {step.vary_initial:F1}, 范围: [{step.vary_lower:F1}, {step.vary_upper:F1}])";
-                        else if (step.type == "Achieve") summaryBadge = $"<color=#38bdf8><b>{step.achieve_param}</b></color> = <b>{step.achieve_val:F2}</b> (容差: ±{step.achieve_tolerance})";
-                        else if (step.type == "FiniteBurn") summaryBadge = $"时长: <b>{(step.burn_use_vary_var ? step.burn_vary_var_name : step.duration.ToString("F1") + "s")}</b>";
+                        if (step.type == "Propagate") summaryBadge = $"<color=#f87171><b>{step.propagator}</b></color> ➔ 停止: <b>{step.stop_type}</b> {(!string.IsNullOrEmpty(step.duration_str) ? $"({step.duration_str})" : (step.stop_type == "Time" ? $"({step.duration:F0}s)" : ""))}";
+                        else if (step.type == "Vary") summaryBadge = $"<color=#38bdf8><b>{step.vary_variable}</b></color> (初猜: {(!string.IsNullOrEmpty(step.vary_initial_str) ? step.vary_initial_str : step.vary_initial.ToString("F1"))}, 范围: [{step.vary_lower:F1}, {step.vary_upper:F1}])";
+                        else if (step.type == "Achieve") summaryBadge = $"<color=#38bdf8><b>{step.achieve_param}</b></color> = <b>{(!string.IsNullOrEmpty(step.achieve_val_str) ? step.achieve_val_str : step.achieve_val.ToString("F2"))}</b> (容差: ±{step.achieve_tolerance})";
+                        else if (step.type == "FiniteBurn") summaryBadge = $"时长: <b>{(step.burn_use_vary_var ? step.burn_vary_var_name : (!string.IsNullOrEmpty(step.duration_str) ? step.duration_str : step.duration.ToString("F1") + "s"))}</b>";
                         else if (step.type == "ThrustVectorControl" || step.type == "VaryThrustDirection") summaryBadge = $"🧭 VNB 矢量 = ({step.thrust_dir1:F2}, {step.thrust_dir2:F2}, {step.thrust_dir3:F2})";
                         else if (step.type == "ImpulsiveBurn") summaryBadge = $"ΔV = ({step.dv_v:F1}, {step.dv_n:F1}, {step.dv_b:F1}) m/s";
                         else if (step.type == "Equation") summaryBadge = $"{step.variable} = {step.expression}";
                         else if (step.type == "StageSeparation") summaryBadge = $"抛离死重: {step.separated_mass:F0} kg (剩余干重: {step.remaining_dry_mass:F0} kg)";
                         else summaryBadge = string.IsNullOrEmpty(step.label) ? "" : step.label;
                         GUILayout.Label(summaryBadge, labelValueStyle);
+                        DrawStepCollapsedResultBadge(step);
                     } else {
                         GUILayout.Space(2);
                         step.label = GUILayout.TextField(string.IsNullOrEmpty(step.label) ? "" : step.label, stepLabelInputStyle, GUILayout.MinWidth(130), GUILayout.MaxWidth(280), GUILayout.Height(20));
@@ -1144,17 +793,10 @@ namespace KSPGMAT.UI {
                     draggedStepIndex = isBeingDragged ? -1 : i;
                 }
 
-                // Modern Pill Badge by Type
-                if (step.type == "Propagate") GUILayout.Box("🌐 轨道积分", pillPropStyle, GUILayout.Width(72), GUILayout.Height(20));
-                else if (step.type == "Vary") GUILayout.Box("✏️ Vary 寻优", pillVaryStyle, GUILayout.Width(76), GUILayout.Height(20));
-                else if (step.type == "Achieve") GUILayout.Box("🎯 Achieve 目标", pillAchieveStyle, GUILayout.Width(86), GUILayout.Height(20));
-                else if (step.type == "FiniteBurn") GUILayout.Box("🔥 有限点火", pillBurnStyle, GUILayout.Width(72), GUILayout.Height(20));
-                else if (step.type == "ThrustVectorControl" || step.type == "VaryThrustDirection") GUILayout.Box("🧭 推力矢量", pillBurnStyle, GUILayout.Width(76), GUILayout.Height(20));
-                else if (step.type == "ImpulsiveBurn") GUILayout.Box("💥 脉冲机动", pillImpulseStyle, GUILayout.Width(72), GUILayout.Height(20));
-                else if (step.type == "StageSeparation") GUILayout.Box("🚀 级段分离", pillStageStyle, GUILayout.Width(72), GUILayout.Height(20));
-                else if (step.type == "Report") GUILayout.Box("🧾 状态报告", pillGenericStyle, GUILayout.Width(72), GUILayout.Height(20));
-                else if (step.type == "Equation") GUILayout.Box("📐 变量赋值", pillGenericStyle, GUILayout.Width(72), GUILayout.Height(20));
-                else GUILayout.Box(step.type, pillGenericStyle, GUILayout.Width(65), GUILayout.Height(20));
+                // Modern Pill Badge by Type with Auto Width & Overflow Prevention
+                string badgeText = GetStepTypeBadgeText(step.type);
+                GUIStyle pillStyle = GetStepPillStyle(step.type);
+                GUILayout.Box(badgeText, pillStyle, GUILayout.MinWidth(75), GUILayout.ExpandWidth(false), GUILayout.Height(20));
 
                 if (step.is_collapsed) {
                     string summaryBadge = "";
@@ -1166,6 +808,7 @@ namespace KSPGMAT.UI {
                     else if (step.type == "ImpulsiveBurn") summaryBadge = $"ΔV = ({step.dv_v:F1}, {step.dv_n:F1}, {step.dv_b:F1}) m/s";
                     else summaryBadge = string.IsNullOrEmpty(step.label) ? "" : step.label;
                     GUILayout.Label(summaryBadge, labelValueStyle);
+                    DrawStepCollapsedResultBadge(step);
                 } else {
                     GUILayout.Space(2);
                     step.label = GUILayout.TextField(string.IsNullOrEmpty(step.label) ? "" : step.label, stepLabelInputStyle, GUILayout.MinWidth(130), GUILayout.MaxWidth(280), GUILayout.Height(20));
@@ -1222,23 +865,79 @@ namespace KSPGMAT.UI {
 
             // Execute insertions from Target quick buttons
             if (stepToInsertVary >= 0) {
-                missionSequence.Insert(stepToInsertVary, new MissionStep { type = "Vary", vary_variable = "burntime", vary_initial = 150.0, vary_lower = 0.0, vary_upper = 1000.0, vary_max_step = 2.0, label = "Vary variable" });
+                string parentDc = GetParentTargetDcName(stepToInsertVary);
+                string suggestedVar = "burntime";
+                for (int k = stepToInsertVary - 1; k >= 0; k--) {
+                    if (missionSequence[k].type == "Target") break;
+                    if (!string.IsNullOrEmpty(missionSequence[k].burn_name)) {
+                        suggestedVar = $"{missionSequence[k].burn_name}_Duration";
+                        break;
+                    }
+                    if (missionSequence[k].type == "BeginFiniteBurn" && !string.IsNullOrEmpty(missionSequence[k].burn_name)) {
+                        suggestedVar = $"{missionSequence[k].burn_name}_Duration";
+                        break;
+                    }
+                }
+                if (suggestedVar == "burntime" && !string.IsNullOrEmpty(parentDc) && parentDc != "DefaultDC") {
+                    suggestedVar = $"{parentDc}_Duration";
+                }
+                missionSequence.Insert(stepToInsertVary, new MissionStep {
+                    type = "Vary",
+                    vary_variable = suggestedVar,
+                    vary_initial = 120.0,
+                    vary_lower = 10.0,
+                    vary_upper = 1000.0,
+                    vary_max_step = 10.0,
+                    dc_name = parentDc,
+                    label = $"Vary 寻优 ({suggestedVar})"
+                });
             }
             if (stepToInsertAchieve >= 0) {
-                missionSequence.Insert(stepToInsertAchieve, new MissionStep { type = "Achieve", achieve_param = "Earth.Altitude", achieve_val = 35786.0, achieve_tolerance = 0.1, label = "Achieve goal" });
+                string parentDc = GetParentTargetDcName(stepToInsertAchieve);
+                string cb = GetContextCentralBody();
+                double defaultVal = (cb == "Earth") ? 42164.14 : ((cb == "Luna" || cb == "Moon") ? 1837.4 : 7000.0);
+                missionSequence.Insert(stepToInsertAchieve, new MissionStep {
+                    type = "Achieve",
+                    achieve_param = $"Sat.{cb}.SMA",
+                    achieve_val = defaultVal,
+                    achieve_tolerance = 1.0,
+                    dc_name = parentDc,
+                    label = $"Achieve 目标 ({cb}.SMA)"
+                });
             }
             if (stepToInsertImpulsive >= 0) {
-                missionSequence.Insert(stepToInsertImpulsive, new MissionStep { type = "ImpulsiveBurn", burn_name = "GEO_Burn", dv_v = 1100.0, dv_n = 1500.0, dv_b = 0.0, burn_axes = "VNB", label = "脉冲矢量机动" });
+                string burnName = $"Burn_{missionSequence.Count + 1}";
+                missionSequence.Insert(stepToInsertImpulsive, new MissionStep {
+                    type = "ImpulsiveBurn",
+                    burn_name = burnName,
+                    dv_v = 500.0,
+                    dv_n = 0.0,
+                    dv_b = 0.0,
+                    burn_axes = "VNB",
+                    label = $"脉冲矢量机动 ({burnName})"
+                });
             }
             if (stepToInsertBurn >= 0) {
-                missionSequence.Insert(stepToInsertBurn, CreateFiniteBurnStep("变轨有限推力点火"));
+                string parentDc = GetParentTargetDcName(stepToInsertBurn);
+                var fbStep = CreateFiniteBurnStep("变轨有限推力点火");
+                if (!string.IsNullOrEmpty(parentDc) && parentDc != "DefaultDC") {
+                    fbStep.burn_vary_var_name = $"{parentDc}_Duration";
+                }
+                missionSequence.Insert(stepToInsertBurn, fbStep);
             }
             if (stepToInsertProp >= 0) {
-                missionSequence.Insert(stepToInsertProp, new MissionStep { type = "Propagate", propagator = "LEOProp", stop_type = "Apoapsis", label = "轨道积分" });
+                string cb = GetContextCentralBody();
+                string propName = GetContextPropagator(cb);
+                missionSequence.Insert(stepToInsertProp, new MissionStep {
+                    type = "Propagate",
+                    propagator = propName,
+                    stop_type = "Apoapsis",
+                    label = $"轨道积分 ({cb}.Apoapsis)"
+                });
             }
             if (stepToInsertThrustVector >= 0) {
-                var defEng = GetDefaultOrActiveEngine();
-                string engName = defEng != null ? GMATParameterRegistry.SanitizeGmatIdentifier(defEng.title, "Engine") : "MainEngine";
+                var curThruster = GMATStateManager.Current.GetSelectedThruster();
+                string engName = curThruster != null ? curThruster.Id : "MainEngine";
                 missionSequence.Insert(stepToInsertThrustVector, new MissionStep {
                     type = "ThrustVectorControl",
                     bound_thruster = engName,
@@ -1247,13 +946,13 @@ namespace KSPGMAT.UI {
                     thrust_dir3 = 0.0,
                     vary_dir1_lower = -1.0,
                     vary_dir1_upper = 1.0,
-                    vary_dir1_max_step = 0.1,
+                    vary_dir1_max_step = 0.05,
                     vary_dir2_lower = -1.0,
                     vary_dir2_upper = 1.0,
-                    vary_dir2_max_step = 0.1,
+                    vary_dir2_max_step = 0.05,
                     vary_dir3_lower = -1.0,
                     vary_dir3_upper = 1.0,
-                    vary_dir3_max_step = 0.1,
+                    vary_dir3_max_step = 0.05,
                     is_vary_vector = true,
                     label = $"推力矢量寻优 ({engName})"
                 });
@@ -1298,21 +997,25 @@ namespace KSPGMAT.UI {
             GUILayout.Space(2);
             GUILayout.BeginHorizontal();
             if (GUILayout.Button(I18n.T("add_propagate"), actionButtonStyle, GUILayout.Height(24))) {
-                missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LEOProp", stop_type = "Time", duration = 3600.0, label = "轨道积分推进" });
+                string cb = GetContextCentralBody();
+                string propName = GetContextPropagator(cb);
+                missionSequence.Add(new MissionStep { type = "Propagate", propagator = propName, stop_type = "Time", duration = 3600.0, label = $"轨道积分推进 ({cb})" });
             }
             if (GUILayout.Button(I18n.T("add_target"), actionButtonStyle, GUILayout.Height(24))) {
-                string cb = (vessel != null && vessel.mainBody != null) ? vessel.mainBody.bodyName : "Earth";
-                if (cb == "Kerbin") cb = "Earth"; else if (cb == "Mun") cb = "Luna";
-                missionSequence.Add(new MissionStep { type = "Target", label = "自定义打靶组", dc_name = "DefaultDC", dc_algorithm = "NewtonRaphson", dc_max_iter = 50 });
-                missionSequence.Add(new MissionStep { type = "Vary", vary_variable = "burntime", vary_initial = 150.0, vary_lower = 0.0, vary_upper = 1000.0, vary_max_step = 20.0, label = "Vary 寻优变量" });
-                missionSequence.Add(new MissionStep { type = "Achieve", achieve_param = $"Sat.{cb}.Altitude", achieve_val = 35786.0, achieve_tolerance = 0.1, label = "Achieve 目标约束" });
-                missionSequence.Add(new MissionStep { type = "EndTarget", label = "闭合自定义打靶" });
+                string cb = GetContextCentralBody();
+                string newDc = $"DC_{missionSequence.Count + 1}";
+                double defaultVal = (cb == "Earth") ? 42164.14 : ((cb == "Luna" || cb == "Moon") ? 1837.4 : 7000.0);
+                missionSequence.Add(new MissionStep { type = "Target", label = $"打靶求解组 ({newDc})", dc_name = newDc, dc_algorithm = "NewtonRaphson", dc_max_iter = 50 });
+                missionSequence.Add(new MissionStep { type = "Vary", vary_variable = $"{newDc}_Duration", vary_initial = 120.0, vary_lower = 10.0, vary_upper = 1000.0, vary_max_step = 10.0, dc_name = newDc, label = $"Vary 点火寻优" });
+                missionSequence.Add(new MissionStep { type = "Achieve", achieve_param = $"Sat.{cb}.SMA", achieve_val = defaultVal, achieve_tolerance = 1.0, dc_name = newDc, label = $"Achieve 目标约束 ({cb}.SMA)" });
+                missionSequence.Add(new MissionStep { type = "EndTarget", label = $"闭合打靶 ({newDc})", dc_name = newDc });
             }
             if (GUILayout.Button(I18n.T("add_finiteburn"), secondaryButtonStyle, GUILayout.Height(24))) {
                 missionSequence.Add(CreateFiniteBurnStep("有限推力点火"));
             }
             if (GUILayout.Button(I18n.T("add_impulsive"), secondaryButtonStyle, GUILayout.Height(24))) {
-                missionSequence.Add(new MissionStep { type = "ImpulsiveBurn", burn_name = "Maneuver1", dv_v = 500.0, dv_n = 0.0, dv_b = 0.0, label = "脉冲机动" });
+                string burnName = $"Burn_{missionSequence.Count + 1}";
+                missionSequence.Add(new MissionStep { type = "ImpulsiveBurn", burn_name = burnName, dv_v = 500.0, dv_n = 0.0, dv_b = 0.0, label = $"脉冲矢量机动 ({burnName})" });
             }
             if (GUILayout.Button(I18n.T("add_stagesep"), secondaryButtonStyle, GUILayout.Height(24))) {
                 double curDry = vessel != null ? vessel.totalMass * 1000.0 * 0.4 : 1500.0;
@@ -1330,10 +1033,23 @@ namespace KSPGMAT.UI {
                 // Row 1: Targeting & Maneuvers
                 GUILayout.BeginHorizontal();
                 GUILayout.Label("<color=#facc15><b>打靶与控制:</b></color>", labelValueStyle, GUILayout.Width(80));
-                if (GUILayout.Button("Target", secondaryButtonStyle, GUILayout.Height(20))) missionSequence.Add(new MissionStep { type = "Target", label = "打靶控制块", dc_name = "DefaultDC" });
-                if (GUILayout.Button("Vary", secondaryButtonStyle, GUILayout.Height(20))) missionSequence.Add(new MissionStep { type = "Vary", vary_variable = "burntime", vary_initial = 100.0, vary_lower = 0.0, vary_upper = 500.0, vary_max_step = 10.0, label = "Vary 寻优" });
-                if (GUILayout.Button("Achieve", secondaryButtonStyle, GUILayout.Height(20))) missionSequence.Add(new MissionStep { type = "Achieve", achieve_param = "Sat.Earth.SMA", achieve_val = 42164.14, achieve_tolerance = 0.5, label = "Achieve 约束" });
-                if (GUILayout.Button("EndTarget", secondaryButtonStyle, GUILayout.Height(20))) missionSequence.Add(new MissionStep { type = "EndTarget", label = "闭合打靶" });
+                if (GUILayout.Button("Target", secondaryButtonStyle, GUILayout.Height(20))) {
+                    string dcName = $"DC_{missionSequence.Count + 1}";
+                    missionSequence.Add(new MissionStep { type = "Target", label = $"打靶控制块 ({dcName})", dc_name = dcName });
+                }
+                if (GUILayout.Button("Vary", secondaryButtonStyle, GUILayout.Height(20))) {
+                    string activeDc = GetAvailableSolverList()[0];
+                    missionSequence.Add(new MissionStep { type = "Vary", vary_variable = $"{activeDc}_Duration", vary_initial = 120.0, vary_lower = 10.0, vary_upper = 1000.0, vary_max_step = 10.0, dc_name = activeDc, label = "Vary 寻优" });
+                }
+                if (GUILayout.Button("Achieve", secondaryButtonStyle, GUILayout.Height(20))) {
+                    string cb = GetContextCentralBody();
+                    string activeDc = GetAvailableSolverList()[0];
+                    double defaultVal = (cb == "Earth") ? 42164.14 : 7000.0;
+                    missionSequence.Add(new MissionStep { type = "Achieve", achieve_param = $"Sat.{cb}.SMA", achieve_val = defaultVal, achieve_tolerance = 1.0, dc_name = activeDc, label = $"Achieve 约束 ({cb})" });
+                }
+                if (GUILayout.Button("EndTarget", secondaryButtonStyle, GUILayout.Height(20))) {
+                    missionSequence.Add(new MissionStep { type = "EndTarget", label = "闭合打靶" });
+                }
                 if (GUILayout.Button("BeginFiniteBurn", secondaryButtonStyle, GUILayout.Height(20))) missionSequence.Add(new MissionStep { type = "BeginFiniteBurn", burn_name = "Finite_1", label = "开启有限推力" });
                 if (GUILayout.Button("EndFiniteBurn", secondaryButtonStyle, GUILayout.Height(20))) missionSequence.Add(new MissionStep { type = "EndFiniteBurn", burn_name = "Finite_1", label = "关闭有限推力" });
                 GUILayout.FlexibleSpace();
@@ -1402,77 +1118,85 @@ namespace KSPGMAT.UI {
 
             GUILayout.Space(4);
 
-            GUI.enabled = !isPropagating && vessel != null;
-            string runBtnText = isPropagating ? "⏳ GMAT 多体引力打靶求解中..." : "🚀 启动 GMAT 全序列高保真求解";
-            if (GUILayout.Button(runBtnText, actionButtonStyle, GUILayout.Height(38))) {
-                isPropagating = true;
-                solveStartTime = Time.realtimeSinceStartup;
-                solveProgress = 0.05f;
-                solveStageText = "1/4 🛰️ 抓取飞船与引力场真实初始状态...";
-                solveCurrentStepIndex = 0;
-
-                // Ensure telemetry is live
-                if (cachedEngines == null || cachedEngines.Count == 0) cachedEngines = ROEngineInterop.ScanVesselEngines(vessel);
-                if (cachedTanks == null || cachedTanks.Count == 0) cachedTanks = ROEngineInterop.ScanVesselTanks(vessel);
-                if (cachedStages == null || cachedStages.Count == 0) cachedStages = MechJebInterop.GetStages(vessel);
-
-                // Auto-resolve active engine from sequence steps or highest thrust engine
-                ROEngineInfo selectedEngine = null;
-                string boundEngineId = "";
-                foreach (var st in missionSequence) {
-                    if (st.type == "FiniteBurn" && !string.IsNullOrEmpty(st.bound_thruster)) {
-                        boundEngineId = st.bound_thruster;
-                        break;
-                    }
-                }
-                if (cachedEngines != null && cachedEngines.Count > 0) {
-                    if (!string.IsNullOrEmpty(boundEngineId)) {
-                        selectedEngine = cachedEngines.Find(e => GMATParameterRegistry.SanitizeGmatIdentifier(e.title) == boundEngineId || e.title.Contains(boundEngineId));
-                    }
-                    if (selectedEngine == null && selectedEngineIndex < cachedEngines.Count) {
-                        selectedEngine = cachedEngines[selectedEngineIndex];
-                    }
-                    if (selectedEngine == null) {
-                        selectedEngine = cachedEngines[0];
-                    }
-                }
-
-                // Auto-resolve all stages with propellant or default to full vessel staging
-                List<StageData> selectedStages = GetSelectedStagesList();
-                if (selectedStages == null || selectedStages.Count == 0 || (selectedEngine != null && !selectedStages.Exists(s => s.stageNumber == selectedEngine.stageNumber))) {
-                    selectedStages = (cachedStages != null && cachedStages.Count > 0) ? cachedStages : new List<StageData>();
-                }
-
-                GMATClient.PropagateMission(vessel, selectedStages, selectedEngine, missionSequence, propagatorConfigs, (success, result) => {
+            if (isPropagating) {
+                GUILayout.BeginHorizontal();
+                GUILayout.Button("⏳ GMAT 多体引力打靶求解中...", actionButtonStyle, GUILayout.Height(38), GUILayout.ExpandWidth(true));
+                if (GUILayout.Button("🛑 中断求解", deleteButtonStyle, GUILayout.Width(110), GUILayout.Height(38))) {
+                    GMATClient.AbortCurrentExecution();
                     isPropagating = false;
-                    solveProgress = success ? 1.0f : 0.0f;
                     solveTotalTime = Time.realtimeSinceStartup - solveStartTime;
-                    solveStageText = success ? $"✅ GMAT 求解收敛完成 (耗时 {solveTotalTime:F2}s)！" : "❌ GMAT 求解失败";
-                    latestResult = result;
+                    solveStageText = $"⚠️ 用户已手动中断 GMAT 求解 (耗时 {solveTotalTime:F1}s)";
+                    solveProgress = 0f;
+                    ScreenMessages.PostScreenMessage("⚠️ 已手动中断 GMAT 物理求解进程。", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                }
+                GUILayout.EndHorizontal();
+            } else {
+                GUI.enabled = (vessel != null);
+                if (GUILayout.Button("🚀 启动 GMAT 全序列高保真求解", actionButtonStyle, GUILayout.Height(38))) {
+                    isPropagating = true;
+                    solveStartTime = Time.realtimeSinceStartup;
+                    solveProgress = 0.05f;
+                    solveStageText = "1/4 🛰️ 抓取飞船与引力场真实初始状态...";
+                    solveCurrentStepIndex = 0;
 
-                    if (success) {
-                        if (result.updated_sequence != null && result.updated_sequence.Count > 0) {
-                            for (int k = 0; k < Math.Min(missionSequence.Count, result.updated_sequence.Count); k++) {
-                                var newStep = result.updated_sequence[k];
-                                var curStep = missionSequence[k];
-                                if (newStep.duration > 0) curStep.duration = newStep.duration;
-                                if (curStep.type == "ImpulsiveBurn" || curStep.type == "TargetApoapsis" || curStep.type == "Maneuver") {
-                                    curStep.dv_v = newStep.dv_v;
-                                    curStep.dv_n = newStep.dv_n;
-                                    curStep.dv_b = newStep.dv_b;
-                                }
-                            }
+                    // Ensure telemetry is live
+                    if (cachedEngines == null || cachedEngines.Count == 0) cachedEngines = ROEngineInterop.ScanVesselEngines(vessel);
+                    if (cachedTanks == null || cachedTanks.Count == 0) cachedTanks = ROEngineInterop.ScanVesselTanks(vessel);
+                    if (cachedStages == null || cachedStages.Count == 0) cachedStages = MechJebInterop.GetStages(vessel);
+
+                    // Auto-resolve active engine from sequence steps or highest thrust engine
+                    ROEngineInfo selectedEngine = null;
+                    string boundEngineId = "";
+                    foreach (var st in missionSequence) {
+                        if (st.type == "FiniteBurn" && !string.IsNullOrEmpty(st.bound_thruster)) {
+                            boundEngineId = st.bound_thruster;
+                            break;
                         }
-                        if (!string.IsNullOrEmpty(result.render_image_path)) {
-                            LoadSimulationTexture(result.render_image_path);
-                        }
-                        ScreenMessages.PostScreenMessage($"✅ GMAT 求解成功 (耗时 {solveTotalTime:F2}s)！机动数值与发射窗口已更新。", 4.0f, ScreenMessageStyle.UPPER_CENTER);
-                    } else {
-                        ScreenMessages.PostScreenMessage("❌ GMAT 求解失败: " + result.error, 5.0f, ScreenMessageStyle.UPPER_CENTER);
                     }
-                });
+                    if (cachedEngines != null && cachedEngines.Count > 0) {
+                        if (!string.IsNullOrEmpty(boundEngineId)) {
+                            selectedEngine = cachedEngines.Find(e => GMATParameterRegistry.SanitizeGmatIdentifier(e.title) == boundEngineId || e.title.Contains(boundEngineId));
+                        }
+                        if (selectedEngine == null && selectedEngineIndex < cachedEngines.Count) {
+                            selectedEngine = cachedEngines[selectedEngineIndex];
+                        }
+                        if (selectedEngine == null) {
+                            selectedEngine = cachedEngines[0];
+                        }
+                    }
+
+                    // Auto-resolve all stages with propellant or default to full vessel staging
+                    List<StageData> selectedStages = GetSelectedStagesList();
+                    if (selectedStages == null || selectedStages.Count == 0 || (selectedEngine != null && !selectedStages.Exists(s => s.stageNumber == selectedEngine.stageNumber))) {
+                        selectedStages = (cachedStages != null && cachedStages.Count > 0) ? cachedStages : new List<StageData>();
+                    }
+
+                    string cBody = GMATStateManager.Current.Spacecraft.CentralBody ?? "Earth";
+                    string scriptToSend = (ideScriptViewMode == 1 && !string.IsNullOrEmpty(ideCustomBuffer)) 
+                        ? ideCustomBuffer 
+                        : GMATScriptGenerator.GenerateScript(vessel, missionSequence, cBody, propagatorConfigs);
+
+                    GMATClient.PropagateMissionWithRawScript(vessel, selectedStages, selectedEngine, missionSequence, propagatorConfigs, scriptToSend, (success, result) => {
+                        isPropagating = false;
+                        solveProgress = success ? 1.0f : 0.0f;
+                        solveTotalTime = Time.realtimeSinceStartup - solveStartTime;
+                        solveStageText = success ? $"✅ GMAT 求解收敛完成 (耗时 {solveTotalTime:F2}s)！" : "❌ GMAT 求解失败";
+                        latestResult = result;
+
+                        SyncSolvedValuesToSequence(result);
+                        if (success) {
+                            if (result != null && result.trajectory != null && result.trajectory.Count > 0) {
+                                simulationTexture = GMATOrbitCanvas.RenderTrajectoryTexture(result.trajectory, cBody);
+                            }
+                            ScreenMessages.PostScreenMessage($"✅ GMAT 求解成功 (耗时 {solveTotalTime:F2}s)！机动数值与发射窗口已更新。", 4.0f, ScreenMessageStyle.UPPER_CENTER);
+                        } else {
+                            string errTxt = (result != null && !string.IsNullOrEmpty(result.error)) ? result.error : "打靶未完全收敛";
+                            ScreenMessages.PostScreenMessage("⚠️ GMAT 求解提示: " + errTxt, 5.0f, ScreenMessageStyle.UPPER_CENTER);
+                        }
+                    });
+                }
+                GUI.enabled = true;
             }
-            GUI.enabled = true;
 
             // =========================================================================
             // LIVE SOLVER PROGRESS BAR & STEP FLOW HUD
@@ -1669,8 +1393,16 @@ namespace KSPGMAT.UI {
                 } else {
                     GUILayout.Space(8);
                     GUILayout.Label("<color=#94a3b8>目标阈值:</color>", gridLabelStyle, GUILayout.Width(60));
-                    string sTVal = GUILayout.TextField(step.target_val.ToString("F3"), numericInputStyle, GUILayout.Width(75));
-                    double.TryParse(sTVal, out step.target_val);
+                    string curTVal = !string.IsNullOrEmpty(step.target_val_str) ? step.target_val_str : (step.target_val != 0.0 ? step.target_val.ToString("F3") : (step.duration > 0 ? (step.stop_type != null && step.stop_type.Contains("Days") ? (step.duration / 86400.0).ToString("F1") : step.duration.ToString("F1")) : "0.000"));
+                    string sTVal = GUILayout.TextField(curTVal, numericInputStyle, GUILayout.MinWidth(75), GUILayout.Width(95), GUILayout.Height(20));
+                    if (sTVal != curTVal) {
+                        step.target_val_str = sTVal;
+                        double parsedT;
+                        if (double.TryParse(sTVal, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out parsedT)) {
+                            step.target_val = parsedT;
+                            step.duration = parsedT;
+                        }
+                    }
                 }
 
                 GUILayout.FlexibleSpace();
@@ -1728,25 +1460,7 @@ namespace KSPGMAT.UI {
                 }
 
                 GUILayout.Space(10);
-                GUILayout.Label("<color=#94a3b8>求解器:</color>", labelValueStyle, GUILayout.Width(45));
-                string parentDc = GetParentTargetDcName(i);
-                string currentVaryDc = string.IsNullOrEmpty(step.dc_name) ? (string.IsNullOrEmpty(parentDc) ? "DefaultDC" : parentDc) : step.dc_name;
-
-                string newVaryDc = GUILayout.TextField(currentVaryDc, GUILayout.Width(85), GUILayout.Height(20));
-                if (newVaryDc != currentVaryDc) step.dc_name = newVaryDc;
-
-                List<string> activeSolvers = GetActiveSolverNames();
-                if (!activeSolvers.Contains("DefaultDC")) activeSolvers.Insert(0, "DefaultDC");
-                if (!string.IsNullOrEmpty(parentDc) && !activeSolvers.Contains(parentDc)) activeSolvers.Insert(0, parentDc);
-
-                if (activeSolvers.Count > 1) {
-                    int curIdx = activeSolvers.IndexOf(step.dc_name);
-                    if (curIdx < 0) curIdx = 0;
-                    if (GUILayout.Button("▾ 切换", secondaryButtonStyle, GUILayout.Width(50), GUILayout.Height(20))) {
-                        step.dc_name = activeSolvers[(curIdx + 1) % activeSolvers.Count];
-                    }
-                }
-
+                DrawInlineSolverPicker(step, i);
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
 
@@ -1754,8 +1468,15 @@ namespace KSPGMAT.UI {
                 GUILayout.Space(3);
                 GUILayout.BeginHorizontal();
                 GUILayout.Label("<color=#94a3b8>初猜:</color>", gridLabelStyle, GUILayout.Width(35));
-                string sInit = GUILayout.TextField(step.vary_initial.ToString("F2"), numericInputStyle, GUILayout.Width(60));
-                double.TryParse(sInit, out step.vary_initial);
+                string curVaryInit = !string.IsNullOrEmpty(step.vary_initial_str) ? step.vary_initial_str : step.vary_initial.ToString("F2");
+                string sInit = GUILayout.TextField(curVaryInit, numericInputStyle, GUILayout.MinWidth(55), GUILayout.Width(75), GUILayout.Height(20));
+                if (sInit != curVaryInit) {
+                    step.vary_initial_str = sInit;
+                    double parsedInit;
+                    if (double.TryParse(sInit, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out parsedInit)) {
+                        step.vary_initial = parsedInit;
+                    }
+                }
 
                 GUILayout.Space(6);
                 GUILayout.Label("<color=#94a3b8>下界:</color>", gridLabelStyle, GUILayout.Width(35));
@@ -1774,16 +1495,17 @@ namespace KSPGMAT.UI {
                 if (double.TryParse(sStep, out mStep)) step.vary_max_step = mStep;
 
                 // Inline Solved Value
-                if (latestResult != null && latestResult.success) {
+                if (step.has_solved_value) {
+                    string unitStr = (step.vary_variable != null && (step.vary_variable.Contains("Direction") || step.vary_variable.Contains("Thrust"))) ? "" : ((step.vary_variable != null && step.vary_variable.Contains("Element")) ? "km/s" : "s");
+                    GUILayout.Space(12);
+                    GUILayout.Label($"<color=#34d399><b>➔ 🎯 求解收敛解: {step.solved_value_str} {unitStr}</b></color>", labelValueStyle);
+                } else if (latestResult != null && latestResult.success) {
                     double solvedVal = -1.0;
                     if (latestResult.dc_summary != null && latestResult.dc_summary.final_variables != null) {
                         string vKey = step.vary_variable ?? "burntime";
                         if (latestResult.dc_summary.final_variables.ContainsKey(vKey)) {
                             solvedVal = latestResult.dc_summary.final_variables[vKey];
                         }
-                    }
-                    if (solvedVal <= 0 && latestResult.solved_burns != null && latestResult.solved_burns.Count > 0) {
-                        solvedVal = latestResult.solved_burns[0].duration;
                     }
                     if (solvedVal > 0) {
                         string unitStr = (step.vary_variable != null && step.vary_variable.Contains("Element")) ? "km/s" : "s";
@@ -1830,25 +1552,7 @@ namespace KSPGMAT.UI {
                 }
 
                 GUILayout.Space(10);
-                GUILayout.Label("<color=#94a3b8>求解器:</color>", labelValueStyle, GUILayout.Width(45));
-                string parentDcAch = GetParentTargetDcName(i);
-                string currentAchDc = string.IsNullOrEmpty(step.dc_name) ? (string.IsNullOrEmpty(parentDcAch) ? "DefaultDC" : parentDcAch) : step.dc_name;
-
-                string newAchDc = GUILayout.TextField(currentAchDc, GUILayout.Width(85), GUILayout.Height(20));
-                if (newAchDc != currentAchDc) step.dc_name = newAchDc;
-
-                List<string> activeSolversAch = GetActiveSolverNames();
-                if (!activeSolversAch.Contains("DefaultDC")) activeSolversAch.Insert(0, "DefaultDC");
-                if (!string.IsNullOrEmpty(parentDcAch) && !activeSolversAch.Contains(parentDcAch)) activeSolversAch.Insert(0, parentDcAch);
-
-                if (activeSolversAch.Count > 1) {
-                    int curIdx = activeSolversAch.IndexOf(step.dc_name);
-                    if (curIdx < 0) curIdx = 0;
-                    if (GUILayout.Button("▾ 切换", secondaryButtonStyle, GUILayout.Width(50), GUILayout.Height(20))) {
-                        step.dc_name = activeSolversAch[(curIdx + 1) % activeSolversAch.Count];
-                    }
-                }
-
+                DrawInlineSolverPicker(step, i);
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
 
@@ -1856,8 +1560,15 @@ namespace KSPGMAT.UI {
                 GUILayout.Space(3);
                 GUILayout.BeginHorizontal();
                 GUILayout.Label("<color=#94a3b8>期望目标值:</color>", gridLabelStyle, GUILayout.Width(75));
-                string sGVal = GUILayout.TextField(step.achieve_val.ToString("F3"), numericInputStyle, GUILayout.Width(85));
-                double.TryParse(sGVal, out step.achieve_val);
+                string curAchVal = !string.IsNullOrEmpty(step.achieve_val_str) ? step.achieve_val_str : step.achieve_val.ToString("F3");
+                string sGVal = GUILayout.TextField(curAchVal, numericInputStyle, GUILayout.MinWidth(75), GUILayout.Width(95), GUILayout.Height(20));
+                if (sGVal != curAchVal) {
+                    step.achieve_val_str = sGVal;
+                    double parsedAch;
+                    if (double.TryParse(sGVal, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out parsedAch)) {
+                        step.achieve_val = parsedAch;
+                    }
+                }
 
                 GUILayout.Space(8);
                 GUILayout.Label("<color=#94a3b8>容差: ±</color>", gridLabelStyle, GUILayout.Width(50));
@@ -1865,10 +1576,12 @@ namespace KSPGMAT.UI {
                 double.TryParse(sGTol, out step.achieve_tolerance);
 
                 // Inline Solved Result
-                if (latestResult != null && latestResult.success && latestResult.dc_summary != null && latestResult.dc_summary.achieved > 0) {
-                    var dcs = latestResult.dc_summary;
+                if (step.has_achieve_result) {
+                    string col = step.achieve_passed ? "#34d399" : "#f87171";
+                    string icon = step.achieve_passed ? "🎯" : "⚠️";
+                    string convStatus = step.solver_converged ? "收敛" : "未收敛";
                     GUILayout.Space(12);
-                    GUILayout.Label($"<color=#34d399><b>➔ 🎯 打靶达成值: {dcs.achieved:F3}</b></color> <color=#94a3b8>(残差: {dcs.variance:F4} | {dcs.iterations} 次收敛)</color>", labelValueStyle);
+                    GUILayout.Label($"<color={col}><b>➔ {icon} 打靶达成值: {step.achieved_value:F3}</b></color> <color=#94a3b8>(残差: {step.achieved_variance:F4} | {step.solver_iterations} 步 {convStatus})</color>", labelValueStyle);
                 }
 
                 GUILayout.FlexibleSpace();
@@ -1974,7 +1687,6 @@ namespace KSPGMAT.UI {
                         bool isCurTank = (step.bound_tank == tkId) || (string.IsNullOrEmpty(step.bound_tank) && tk == bestTkIdx);
                         if (GUILayout.Button($"⛽ Stage {tnk.stageNumber} ({tnk.fuelMassKg:F0}kg 燃料)", isCurTank ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
                             step.bound_tank = tkId;
-                            // Auto-select stage with this fuel tank
                             if (cachedStages != null) {
                                 for (int s = 0; s < cachedStages.Count; s++) {
                                     if (cachedStages[s].stageNumber == tnk.stageNumber && !selectedStageIndices.Contains(s)) {
@@ -2028,11 +1740,21 @@ namespace KSPGMAT.UI {
                 step.burn_use_vary_var = GUILayout.Toggle(step.burn_use_vary_var, " 使用 Vary 变量控制时长", GUILayout.Width(160));
                 if (step.burn_use_vary_var) {
                     GUILayout.Label("<color=#94a3b8>变量名:</color>", gridLabelStyle, GUILayout.Width(45));
-                    step.burn_vary_var_name = GUILayout.TextField(string.IsNullOrEmpty(step.burn_vary_var_name) ? "burntime" : step.burn_vary_var_name, GUILayout.Width(85), GUILayout.Height(20));
+                    step.burn_vary_var_name = GUILayout.TextField(string.IsNullOrEmpty(step.burn_vary_var_name) ? (!string.IsNullOrEmpty(step.duration_str) ? step.duration_str : "burntime") : step.burn_vary_var_name, GUILayout.MinWidth(85), GUILayout.Width(110), GUILayout.Height(20));
                 } else {
                     GUILayout.Label("<color=#94a3b8>固定时长 (s):</color>", gridLabelStyle, GUILayout.Width(75));
-                    string sDur = GUILayout.TextField(step.duration.ToString("F1"), numericInputStyle, GUILayout.Width(65));
-                    double.TryParse(sDur, out step.duration);
+                    string curDur = !string.IsNullOrEmpty(step.duration_str) ? step.duration_str : step.duration.ToString("F1");
+                    string sDur = GUILayout.TextField(curDur, numericInputStyle, GUILayout.MinWidth(65), GUILayout.Width(80), GUILayout.Height(20));
+                    if (sDur != curDur) {
+                        step.duration_str = sDur;
+                        double parsedD;
+                        if (double.TryParse(sDur, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out parsedD)) {
+                            step.duration = parsedD;
+                        } else {
+                            step.burn_use_vary_var = true;
+                            step.burn_vary_var_name = sDur;
+                        }
+                    }
                 }
 
                 GUILayout.FlexibleSpace();
@@ -2060,14 +1782,12 @@ namespace KSPGMAT.UI {
                         string btnPrefix = isSelectedInCluster ? "☑ " : "☐ ";
                         if (GUILayout.Button($"{btnPrefix}{eng.title} ({eng.thrustKN:F0}kN / {eng.ispVac:F0}s)", isSelectedInCluster ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
                             if (Event.current.control || Event.current.shift) {
-                                // Multi-selection for heterogenous engine clusters
                                 if (step.bound_thrusters.Contains(engId)) {
                                     step.bound_thrusters.Remove(engId);
                                 } else {
                                     step.bound_thrusters.Add(engId);
                                 }
                             } else {
-                                // Single selection with full bidirectional sync
                                 SelectEngineAndSync(eg);
                                 step.bound_thrusters.Clear();
                                 step.bound_thrusters.Add(engId);
@@ -2341,6 +2061,7 @@ namespace KSPGMAT.UI {
                 GUILayout.EndVertical();
             }
 
+            // =========================================================================
             // 6. EQUATION STEP CARD
             // =========================================================================
             else if (step.type == "Equation") {
@@ -2358,38 +2079,155 @@ namespace KSPGMAT.UI {
             }
 
             // =========================================================================
-            // =========================================================================
-            // 7. REPORT STEP CARD
+            // 7. REPORT STEP CARD (EXPANDABLE COMPREHENSIVE FLIGHT REPORT & METRICS)
             // =========================================================================
             else if (step.type == "Report") {
+                StepReportData rep = null;
+                if (latestResult != null && latestResult.step_reports != null) {
+                    rep = latestResult.step_reports.Find(r => r.step_index == i);
+                }
+
+                // Row 1: Header + Target File Identifier + Expand Toggle + Quick Inline Status
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("<b>📊 瞬时状态报告 (Report File)</b> - 自动导出该时刻的瞬时轨道六根数、空间位置与剩余质量", labelValueStyle);
+                GUILayout.Label("<color=#38bdf8><b>🧾 瞬时状态报告 (Report File):</b></color>", labelValueStyle, GUILayout.Width(185));
+
+                GUILayout.Label("<color=#94a3b8>对象名:</color>", gridLabelStyle, GUILayout.Width(45));
+                step.subscriber_name = GUILayout.TextField(string.IsNullOrEmpty(step.subscriber_name) ? $"StepReport_{i + 1}" : step.subscriber_name, GUILayout.Width(110), GUILayout.Height(20));
+
+                GUILayout.Space(6);
+                step.is_expanded = GUILayout.Toggle(step.is_expanded, step.is_expanded ? " ▾ 收起数据明细" : " ▸ 展开详细数据报表", secondaryButtonStyle, GUILayout.Height(20));
+
+                GUILayout.Space(10);
+                if (rep != null) {
+                    GUILayout.Label($"<color=#34d399><b>● 已就绪</b></color> <color=#94a3b8>T+{rep.elapsed_secs:F1}s | SMA: {rep.sma_km:F1}km | 高度: {rep.altitude_km:F1}km | 质量: {rep.total_mass_kg:F1}kg</color>", labelValueStyle);
+                } else {
+                    GUILayout.Label("<color=#94a3b8><i>(求解后自动捕获该瞬时所有动力学物理参量)</i></color>", labelValueStyle);
+                }
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
 
-                // If solver produced a report for this step, render the report readout directly inline!
-                if (latestResult != null && latestResult.step_reports != null) {
-                    var rep = latestResult.step_reports.Find(r => r.step_index == i);
+                // Detailed Expandable Multi-Column Dashboard
+                if (step.is_expanded) {
+                    GUILayout.Space(3);
+                    GUILayout.BeginVertical(nestedCardBoxStyle);
+
                     if (rep != null) {
-                        GUILayout.Space(2);
-                        GUILayout.BeginVertical(nestedCardBoxStyle);
+                        // Section 1: Keplerian Orbital Elements
+                        GUILayout.BeginVertical(cardBoxStyle);
                         GUILayout.BeginHorizontal();
-                        GUILayout.Label($"<color=#34d399><b>✅ 节点 #{i + 1} 瞬时状态报告:</b></color>", labelValueStyle, GUILayout.Width(170));
-                        GUILayout.Label($"时刻: <b>T+{rep.elapsed_secs:F1}s</b> | 高度: <b>{rep.altitude_km:F1} km</b> | 轨道模长: <b>{rep.rmag_km:F1} km</b>", labelValueStyle);
+                        GUILayout.Label("<color=#facc15><b>🪐 瞬时开普勒轨道六根数 (Keplerian Elements):</b></color>", labelValueStyle);
                         GUILayout.FlexibleSpace();
                         GUILayout.EndHorizontal();
 
+                        GUILayout.Space(2);
+                        // Row A: SMA, ECC, INC, RAAN
                         GUILayout.BeginHorizontal();
-                        GUILayout.Label($"SMA: <b>{rep.sma_km:F1} km</b> | ECC: <b>{rep.ecc:F5}</b> | INC: <b>{rep.inc_deg:F2}°</b> | RAAN: <b>{rep.raan_deg:F2}°</b> | 质量: <b>{rep.total_mass_kg:F1} kg</b>", labelValueStyle);
+                        GUILayout.Label($"半长轴 (SMA): <color=#38bdf8><b>{rep.sma_km:F2} km</b></color>", labelValueStyle, GUILayout.Width(170));
+                        GUILayout.Label($"偏心率 (ECC): <color=#38bdf8><b>{rep.ecc:F5}</b></color>", labelValueStyle, GUILayout.Width(150));
+                        GUILayout.Label($"倾角 (INC): <color=#38bdf8><b>{rep.inc_deg:F3}°</b></color>", labelValueStyle, GUILayout.Width(140));
+                        GUILayout.Label($"升交点赤经 (RAAN): <color=#38bdf8><b>{rep.raan_deg:F3}°</b></color>", labelValueStyle);
+                        GUILayout.FlexibleSpace();
+                        GUILayout.EndHorizontal();
+
+                        // Row B: AOP, TA, Periapsis Alt, Apoapsis Alt
+                        GUILayout.BeginHorizontal();
+                        GUILayout.Label($"近心点幅角 (AOP): <color=#38bdf8><b>{rep.aop_deg:F3}°</b></color>", labelValueStyle, GUILayout.Width(170));
+                        GUILayout.Label($"真近点角 (TA): <color=#38bdf8><b>{rep.ta_deg:F3}°</b></color>", labelValueStyle, GUILayout.Width(150));
+                        string periStr = rep.periapsis_km > 0 ? $"{rep.periapsis_km:F1} km" : $"{rep.altitude_km:F1} km";
+                        string apoStr = rep.apoapsis_km > 0 ? $"{rep.apoapsis_km:F1} km" : $"{rep.altitude_km:F1} km";
+                        GUILayout.Label($"近地点高: <color=#34d399><b>{periStr}</b></color>", labelValueStyle, GUILayout.Width(140));
+                        GUILayout.Label($"远地点高: <color=#34d399><b>{apoStr}</b></color>", labelValueStyle);
                         GUILayout.FlexibleSpace();
                         GUILayout.EndHorizontal();
                         GUILayout.EndVertical();
+
+                        GUILayout.Space(2);
+
+                        // Section 2: Cartesian 3D Vectors & Mass
+                        GUILayout.BeginHorizontal();
+
+                        // Col 1: Position & Velocity
+                        GUILayout.BeginVertical(cardBoxStyle, GUILayout.Width(380));
+                        GUILayout.Label("<color=#38bdf8><b>📍 空间三维笛卡尔状态 (MJ2000Eq):</b></color>", labelValueStyle);
+                        GUILayout.Label($"位置向量: <b>X={rep.x:F1}, Y={rep.y:F1}, Z={rep.z:F1} km</b>", labelValueStyle);
+                        GUILayout.Label($"轨道矢径模长: <color=#34d399><b>|R| = {rep.rmag_km:F2} km</b></color> (距地心)", labelValueStyle);
+                        GUILayout.Label($"速度向量: <b>Vx={rep.vx:F4}, Vy={rep.vy:F4}, Vz={rep.vz:F4} km/s</b>", labelValueStyle);
+                        double vmag = rep.vmag_km_s > 0 ? rep.vmag_km_s : Math.Sqrt(rep.vx * rep.vx + rep.vy * rep.vy + rep.vz * rep.vz);
+                        GUILayout.Label($"空间合速度: <color=#34d399><b>|V| = {vmag:F4} km/s ({vmag * 1000.0:F1} m/s)</b></color>", labelValueStyle);
+                        GUILayout.EndVertical();
+
+                        GUILayout.Space(3);
+
+                        // Col 2: Mass, Fuel & Epoch Timing
+                        GUILayout.BeginVertical(cardBoxStyle);
+                        GUILayout.Label("<color=#a78bfa><b>🚀 航天器质量与任务时间:</b></color>", labelValueStyle);
+                        GUILayout.Label($"总质量 (TotalMass): <color=#34d399><b>{rep.total_mass_kg:F1} kg</b></color>", labelValueStyle);
+                        if (rep.fuel_mass_kg > 0) {
+                            GUILayout.Label($"剩余推进剂 (Fuel): <b>{rep.fuel_mass_kg:F1} kg</b>", labelValueStyle);
+                        }
+                        GUILayout.Label($"飞行任务耗时: <color=#facc15><b>T+{rep.elapsed_secs:F1} s</b></color> ({rep.elapsed_secs / 60.0:F1} min / {rep.elapsed_secs / 86400.0:F2} d)", labelValueStyle);
+                        if (!string.IsNullOrEmpty(rep.epoch_utc)) {
+                            GUILayout.Label($"仿真历元: <color=#94a3b8>{rep.epoch_utc}</color>", labelValueStyle);
+                        }
+                        GUILayout.EndVertical();
+
+                        GUILayout.EndHorizontal();
+                    } else {
+                        GUILayout.BeginHorizontal();
+                        GUILayout.Label("<color=#facc15>ℹ️ 当前尚未执行求解计算。点击主面板顶部的 <b>[ 🚀 运行求解并生成轨道 ]</b> 即可实时捕获并查看该节点的瞬时全部动力学数据与六根数报表。</color>", labelValueStyle);
+                        GUILayout.FlexibleSpace();
+                        GUILayout.EndHorizontal();
                     }
+
+                    // Section 3: Output Variables Customization & Quick Presets
+                    GUILayout.Space(3);
+                    GUILayout.BeginVertical(cardBoxStyle);
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label("<color=#64748b><b>⚙️ 导出数据项配置 (GMAT Write Fields):</b></color>", labelValueStyle, GUILayout.Width(220));
+                    
+                    if (GUILayout.Button("🌐 默认全部数据", secondaryButtonStyle, GUILayout.Height(18))) {
+                        step.write_fields = "Sat.ElapsedSecs Sat.Earth.Altitude Sat.SMA Sat.ECC Sat.INC Sat.RAAN Sat.AOP Sat.TA Sat.Earth.RMAG Sat.TotalMass Sat.X Sat.Y Sat.Z Sat.VX Sat.VY Sat.VZ";
+                    }
+                    if (GUILayout.Button("🪐 仅轨道六根数", secondaryButtonStyle, GUILayout.Height(18))) {
+                        step.write_fields = "Sat.ElapsedSecs Sat.SMA Sat.ECC Sat.INC Sat.RAAN Sat.AOP Sat.TA Sat.Earth.Altitude";
+                    }
+                    if (GUILayout.Button("📍 仅位置与速度", secondaryButtonStyle, GUILayout.Height(18))) {
+                        step.write_fields = "Sat.ElapsedSecs Sat.X Sat.Y Sat.Z Sat.VX Sat.VY Sat.VZ";
+                    }
+                    if (GUILayout.Button("⛽ 仅质量与耗油", secondaryButtonStyle, GUILayout.Height(18))) {
+                        step.write_fields = "Sat.ElapsedSecs Sat.TotalMass Sat.FuelMassBurned Sat.DryMass";
+                    }
+                    GUILayout.FlexibleSpace();
+                    GUILayout.EndHorizontal();
+
+                    GUILayout.Space(2);
+                    GUILayout.BeginHorizontal();
+                    string curFields = !string.IsNullOrEmpty(step.write_fields) ? step.write_fields : "Sat.ElapsedSecs Sat.Earth.Altitude Sat.SMA Sat.ECC Sat.INC Sat.RAAN Sat.AOP Sat.TA Sat.Earth.RMAG Sat.TotalMass Sat.X Sat.Y Sat.Z Sat.VX Sat.VY Sat.VZ";
+                    string newFields = GUILayout.TextField(curFields, GUILayout.MinWidth(350), GUILayout.ExpandWidth(true), GUILayout.Height(20));
+                    if (newFields != curFields) step.write_fields = newFields;
+                    GUILayout.EndHorizontal();
+
+                    // Section 4: Raw Report Stream Preview
+                    if (rep != null && !string.IsNullOrEmpty(rep.raw_report_text)) {
+                        GUILayout.Space(2);
+                        GUILayout.BeginHorizontal();
+                        GUILayout.Label($"<color=#94a3b8>原始 GMAT 导出文本预览: {rep.raw_report_text.Trim().Split(new char[] { '\n' }).Length} 行数据已同步</color>", labelValueStyle);
+                        if (GUILayout.Button("📋 复制原始报表文本", secondaryButtonStyle, GUILayout.Width(130), GUILayout.Height(18))) {
+                            GUIUtility.systemCopyBuffer = rep.raw_report_text;
+                            ScreenMessages.PostScreenMessage("✅ 已复制该节点原始 GMAT 状态报告至剪贴板！", 2.5f, ScreenMessageStyle.UPPER_CENTER);
+                        }
+                        GUILayout.FlexibleSpace();
+                        GUILayout.EndHorizontal();
+                    }
+
+                    GUILayout.EndVertical();
+
+                    GUILayout.EndVertical(); // Closes nestedCardBoxStyle
                 }
             }
         }
 
-        private void DrawPropStopAutocompleteBar(int stepIndex, MissionStep step) {
+                private void DrawPropStopAutocompleteBar(int stepIndex, MissionStep step) {
             GUILayout.Space(2);
             Vessel v = FlightGlobals.ActiveVessel;
             List<string> allBodies = GMATParameterRegistry.GetAllBodies(v);
@@ -2474,6 +2312,7 @@ namespace KSPGMAT.UI {
                         step.stop_type = sug.InsertText;
                         if (sug.RecommendedValue != 0) {
                             step.target_val = sug.RecommendedValue;
+                            step.target_val_str = sug.RecommendedValue.ToString("F3");
                             step.duration = sug.RecommendedValue;
                         }
                         pendingFocusControl = $"Field_PropStop_{stepIndex}";
@@ -2495,7 +2334,6 @@ namespace KSPGMAT.UI {
             // If applying Spacecraft prefix (e.g. "Sat")
             if (objectPrefix.Equals("Sat", StringComparison.OrdinalIgnoreCase) || objectPrefix.StartsWith("Sat", StringComparison.OrdinalIgnoreCase)) {
                 if (cur.StartsWith("Sat.", StringComparison.OrdinalIgnoreCase)) {
-                    // Already has Sat. prefix
                     return;
                 }
                 step.stop_type = "Sat." + cur;
@@ -2506,7 +2344,6 @@ namespace KSPGMAT.UI {
             bool isBody = objectPrefix.Equals("Luna", StringComparison.OrdinalIgnoreCase) || objectPrefix.Equals("Earth", StringComparison.OrdinalIgnoreCase) || objectPrefix.Equals("Sun", StringComparison.OrdinalIgnoreCase) || objectPrefix.Equals("Mars", StringComparison.OrdinalIgnoreCase) || objectPrefix.Equals("Jupiter", StringComparison.OrdinalIgnoreCase);
             if (isBody) {
                 if (cur.StartsWith("Sat.", StringComparison.OrdinalIgnoreCase)) {
-                    // e.g. "Sat.Periapsis" -> "Sat.Luna.Periapsis" or "Sat.Earth.Periapsis" -> "Sat.Luna.Periapsis"
                     string rest = cur.Substring(4);
                     if (rest.Contains(".")) {
                         string paramOnly = rest.Substring(rest.LastIndexOf('.') + 1);
@@ -2552,6 +2389,7 @@ namespace KSPGMAT.UI {
                     step.achieve_param = item.InsertText;
                     if (item.RecommendedValue != 0 || item.RecommendedTolerance != 0) {
                         step.achieve_val = item.RecommendedValue;
+                        step.achieve_val_str = item.RecommendedValue.ToString("F3");
                         step.achieve_tolerance = item.RecommendedTolerance;
                     }
                     pendingFocusControl = $"Field_Achieve_{intelliSenseTargetStepIndex}";
@@ -2560,6 +2398,7 @@ namespace KSPGMAT.UI {
                     step.stop_type = item.InsertText;
                     if (item.RecommendedValue != 0) {
                         step.target_val = item.RecommendedValue;
+                        step.target_val_str = item.RecommendedValue.ToString("F3");
                     }
                     pendingFocusControl = $"Field_PropStop_{intelliSenseTargetStepIndex}";
                     GUI.FocusControl(pendingFocusControl);
@@ -2567,6 +2406,7 @@ namespace KSPGMAT.UI {
                     step.vary_variable = item.InsertText;
                     if (item.RecommendedValue != 0) {
                         step.vary_initial = item.RecommendedValue;
+                        step.vary_initial_str = item.RecommendedValue.ToString("F2");
                         step.vary_lower = 0.0;
                         step.vary_upper = item.RecommendedValue * 5.0;
                     }
@@ -2604,7 +2444,7 @@ namespace KSPGMAT.UI {
             GUI.color = Color.white;
 
             // Glassmorphism background box
-            GUI.Box(popRect, GUIContent.none, cardBoxStyle);
+            GUI.Box(popRect, GUIContent.none, cardBoxStyle ?? GUI.skin.box);
 
             GUILayout.BeginArea(popRect, GUI.skin.box);
 
@@ -2671,7 +2511,149 @@ namespace KSPGMAT.UI {
             GUI.depth = 0;
         }
 
-        // =========================================================================
-        // 1:1 NASA GMAT OFFICIAL "NEW COORDINATE SYSTEM" DIALOG WINDOW
+        private string GetStepTypeBadgeText(string type) {
+            switch (type) {
+                case "Propagate": return "🌐 轨道积分";
+                case "Vary": return "✏️ Vary 寻优";
+                case "Achieve": return "🎯 Achieve 目标";
+                case "FiniteBurn": return "🔥 有限点火";
+                case "BeginFiniteBurn": return "🔥 开启点火";
+                case "EndFiniteBurn": return "🛑 结束点火";
+                case "ThrustVectorControl":
+                case "VaryThrustDirection": return "🧭 推力矢量";
+                case "ImpulsiveBurn":
+                case "Maneuver": return "💥 脉冲机动";
+                case "StageSeparation": return "🚀 级段分离";
+                case "Report": return "🧾 状态报告";
+                case "Equation": return "📐 变量赋值";
+                case "If": return "🔀 If 分支";
+                case "Else": return "🔀 Else 分支";
+                case "EndIf": return "🔀 EndIf";
+                case "While": return "🔁 While 循环";
+                case "EndWhile": return "🔁 EndWhile";
+                case "For": return "🔁 For 循环";
+                case "EndFor": return "🔁 EndFor";
+                case "Optimize": return "🧬 优化器";
+                case "Minimize": return "📉 极小化";
+                case "NonlinearConstraint": return "🚧 约束条件";
+                case "EndOptimize": return "🧬 闭合优化";
+                case "ScriptEvent": return "📜 脚本事件";
+                case "BeginFileThrust": return "📁 开启文件推力";
+                case "EndFileThrust": return "🛑 结束文件推力";
+                case "Stop": return "⛔ 终止任务";
+                case "Breakpoint": return "🔴 调试断点";
+                default: return type ?? "Command";
+            }
+        }
+
+        private GUIStyle GetStepPillStyle(string type) {
+            switch (type) {
+                case "Propagate": return pillPropStyle ?? GUI.skin.box;
+                case "Vary": return pillVaryStyle ?? GUI.skin.box;
+                case "Achieve": return pillAchieveStyle ?? GUI.skin.box;
+                case "FiniteBurn":
+                case "BeginFiniteBurn":
+                case "EndFiniteBurn":
+                case "ThrustVectorControl":
+                case "VaryThrustDirection": return pillBurnStyle ?? GUI.skin.box;
+                case "ImpulsiveBurn":
+                case "Maneuver": return pillImpulseStyle ?? GUI.skin.box;
+                case "StageSeparation": return pillStageStyle ?? GUI.skin.box;
+                default: return pillGenericStyle ?? GUI.skin.box;
+            }
+        }
+
+        private void LoadScriptTemplate(string templateFileName, Vessel vessel) {
+            string[] searchPaths = new string[] {
+                Path.Combine(KSPUtil.ApplicationRootPath, "GameData", "KSPGMAT", "templates", templateFileName),
+                Path.Combine(GMATClient.GmatBinPath, "KSP_GMAT", "GameData", "KSPGMAT", "templates", templateFileName),
+                Path.Combine(GMATClient.GmatBinPath, "KSP_GMAT", "scripts", "templates", templateFileName),
+                Path.Combine(KSPUtil.ApplicationRootPath, "GameData", "KSPGMAT", "scripts", templateFileName),
+                Path.Combine(GMATClient.GmatBinPath, "KSP_GMAT", "scripts", templateFileName)
+            };
+
+            string foundPath = null;
+            for (int i = 0; i < searchPaths.Length; i++) {
+                if (File.Exists(searchPaths[i])) { foundPath = searchPaths[i]; break; }
+            }
+
+            if (!string.IsNullOrEmpty(foundPath)) {
+                GMATClient.ImportScript(foundPath, vessel, (ok, res, msg) => {
+                    if (ok && res != null) {
+                        ApplyImportResultToState(res);
+
+                        // Instantly synchronize IDE buffer with the loaded script template
+                        try {
+                            string rawScript = File.ReadAllText(foundPath, System.Text.Encoding.UTF8);
+                            ideCustomBuffer = rawScript;
+                        } catch {
+                            ideCustomBuffer = GenerateLiveGmatScript(ideScriptViewMode);
+                        }
+
+                        ScreenMessages.PostScreenMessage($"✅ 成功从标准模板文件导入: {templateFileName} ({res.sequence.Count} 个步骤)", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                    } else {
+                        ScreenMessages.PostScreenMessage($"❌ 解析脚本模板失败: {msg}", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                    }
+                });
+            } else {
+                ScreenMessages.PostScreenMessage($"❌ 未在模板库中找到文件: {templateFileName}", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+            }
+        }
+
+        private void ExportScriptTemplate(string templateName, Vessel vessel) {
+            try {
+                if (string.IsNullOrEmpty(templateName)) templateName = "custom_mission_preset.script";
+                string cleanName = templateName.EndsWith(".script") ? templateName : (templateName + ".script");
+                string templateDir = Path.Combine(KSPUtil.ApplicationRootPath, "GameData", "KSPGMAT", "templates");
+                if (!Directory.Exists(templateDir)) Directory.CreateDirectory(templateDir);
+                string outPath = Path.Combine(templateDir, cleanName);
+                string scriptContent = GMATClient.SanitizeGmatScript(ideCustomBuffer ?? GenerateLiveGmatScript(0));
+                File.WriteAllText(outPath, scriptContent, new System.Text.UTF8Encoding(false));
+                ScreenMessages.PostScreenMessage($"✅ 成功导出标准合规预设模板: {cleanName}", 3.5f, ScreenMessageStyle.UPPER_CENTER);
+            } catch (Exception ex) {
+                ScreenMessages.PostScreenMessage($"❌ 导出模板失败: {ex.Message}", 3.5f, ScreenMessageStyle.UPPER_CENTER);
+            }
+        }
+
+        private void SyncSolvedValuesToSequence(MissionResult result) {
+            if (result == null || result.updated_sequence == null || result.updated_sequence.Count == 0 || missionSequence == null) return;
+            for (int k = 0; k < Math.Min(missionSequence.Count, result.updated_sequence.Count); k++) {
+                var newStep = result.updated_sequence[k];
+                var curStep = missionSequence[k];
+                if (newStep.duration > 0) curStep.duration = newStep.duration;
+                curStep.has_solved_value = newStep.has_solved_value;
+                curStep.solved_value = newStep.solved_value;
+                curStep.solved_value_str = newStep.solved_value_str;
+                curStep.has_achieve_result = newStep.has_achieve_result;
+                curStep.achieved_value = newStep.achieved_value;
+                curStep.achieved_variance = newStep.achieved_variance;
+                curStep.achieve_passed = newStep.achieve_passed;
+                curStep.solver_iterations = newStep.solver_iterations;
+                curStep.solver_converged = newStep.solver_converged;
+                if (curStep.type == "ImpulsiveBurn" || curStep.type == "TargetApoapsis" || curStep.type == "Maneuver" || curStep.type == "FiniteBurn") {
+                    curStep.dv_v = newStep.dv_v;
+                    curStep.dv_n = newStep.dv_n;
+                    curStep.dv_b = newStep.dv_b;
+                }
+            }
+        }
+
+        private void DrawStepCollapsedResultBadge(MissionStep step) {
+            if (step == null) return;
+            if (step.type == "Vary" && step.has_solved_value) {
+                GUILayout.Space(8);
+                string unitStr = (step.vary_variable != null && (step.vary_variable.Contains("Direction") || step.vary_variable.Contains("Thrust"))) ? "" : ((step.vary_variable != null && step.vary_variable.Contains("Element")) ? "km/s" : "s");
+                GUILayout.Label($"<color=#34d399><b>➔ 求解值: {step.solved_value_str} {unitStr}</b></color>", labelValueStyle);
+            } else if (step.type == "Achieve" && step.has_achieve_result) {
+                GUILayout.Space(8);
+                string col = step.achieve_passed ? "#34d399" : "#f87171";
+                string icon = step.achieve_passed ? "🎯" : "⚠️";
+                GUILayout.Label($"<color={col}><b>➔ {icon} 达成值: {step.achieved_value:F3} (残差: {step.achieved_variance:F4})</b></color>", labelValueStyle);
+            } else if ((step.type == "FiniteBurn" || step.type == "ImpulsiveBurn") && (step.dv_v != 0 || step.dv_n != 0 || step.dv_b != 0)) {
+                GUILayout.Space(8);
+                double tot = Math.Sqrt(step.dv_v * step.dv_v + step.dv_n * step.dv_n + step.dv_b * step.dv_b);
+                GUILayout.Label($"<color=#34d399><b>➔ ΔV: {tot:F1} m/s (顺行: {step.dv_v:F1}, 法向: {step.dv_n:F1}, 径向: {step.dv_b:F1})</b></color>", labelValueStyle);
+            }
+        }
     }
 }
