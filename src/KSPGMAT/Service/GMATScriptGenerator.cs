@@ -293,7 +293,8 @@ namespace KSPGMAT.Service {
                         string vDC = GMATParameterRegistry.SanitizeGmatIdentifier(st.dc_name ?? currentDC, "DC");
                         string vVar = st.vary_variable ?? "burntime";
                         if (vVar.Contains(".")) {
-                            if (!vVar.StartsWith(satName + ".")) vVar = $"{satName}.{vVar}";
+                            string stripped = GMATParameterRegistry.StripCraftPrefix(vVar);
+                            vVar = $"{satName}.{stripped}";
                         }
                         double guess = st.vary_initial > 0.0 ? st.vary_initial : 120.0;
                         double pert = st.vary_perturbation > 0.0 ? st.vary_perturbation : 0.0001;
@@ -306,7 +307,9 @@ namespace KSPGMAT.Service {
                     else if (stype == "FiniteBurn") {
                         string fbName = GMATParameterRegistry.SanitizeGmatIdentifier(st.burn_name, $"Finite_{i + 1}");
                         string pName = !string.IsNullOrEmpty(st.propagator) ? st.propagator : "LEOProp";
-                        string durExpr = st.burn_use_vary_var ? (st.burn_vary_var_name ?? "burntime") : (st.duration > 0 ? st.duration.ToString("F2", CultureInfo.InvariantCulture) : (st.duration_str ?? "120.0"));
+                        string durExpr = st.burn_use_vary_var 
+                            ? (!string.IsNullOrEmpty(st.burn_vary_var_name) ? st.burn_vary_var_name : (!string.IsNullOrEmpty(st.duration_str) ? st.duration_str : "burntime")) 
+                            : (st.duration > 0 ? st.duration.ToString("F2", CultureInfo.InvariantCulture) : (!string.IsNullOrEmpty(st.duration_str) ? st.duration_str : "120.0"));
                         sb.AppendLine($"   % Finite Burn ({fbName})");
                         sb.AppendLine($"   BeginFiniteBurn {fbName}({satName});");
                         sb.AppendLine($"   Propagate {pName}({satName}) {{{satName}.ElapsedSecs = {durExpr}}};");
@@ -342,8 +345,12 @@ namespace KSPGMAT.Service {
                         if (goalParam.Contains("=")) {
                             goalParam = GMATParameterRegistry.StripCraftPrefix(goalParam.Split('=')[0].Trim());
                         }
-                        if (!goalParam.Contains(".") && !goalParam.StartsWith("SMA", StringComparison.OrdinalIgnoreCase) && !goalParam.StartsWith("ECC", StringComparison.OrdinalIgnoreCase) && !goalParam.StartsWith("INC", StringComparison.OrdinalIgnoreCase) && !goalParam.StartsWith("TA", StringComparison.OrdinalIgnoreCase)) {
-                            goalParam = $"{cBody}.{goalParam}";
+                        if (!goalParam.Contains(".")) {
+                            string[] craftDirect = new string[] { "TotalMass", "DryMass", "FuelMass", "ElapsedSecs", "ElapsedDays", "A1ModJulian" };
+                            bool isCraftDirect = Array.Exists(craftDirect, p => p.Equals(goalParam, StringComparison.OrdinalIgnoreCase));
+                            if (!isCraftDirect) {
+                                goalParam = $"{cBody}.{goalParam}";
+                            }
                         }
                         double val = st.achieve_val;
                         double tol = st.achieve_tolerance > 0 ? st.achieve_tolerance : 0.1;
@@ -361,6 +368,7 @@ namespace KSPGMAT.Service {
                     }
                     else if (stype == "Equation" || stype == "Set") {
                         string vName = st.variable ?? "";
+                        if (string.IsNullOrWhiteSpace(vName)) continue;
                         if (vName.Contains(".ThrustDirection")) continue; // Skip orphan ThrustDirection assignment steps
                         if (vName.Contains(".")) {
                             string stripped = GMATParameterRegistry.StripCraftPrefix(vName);

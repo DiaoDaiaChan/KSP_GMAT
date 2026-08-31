@@ -353,7 +353,7 @@ namespace KSPGMAT.Service {
                         string dc = achMatch.Groups[1].Value;
                         string param = achMatch.Groups[2].Value.Trim();
                         string valStr = achMatch.Groups[3].Value.Trim();
-                        double val = 42164.14;
+                        double val = 0.0;
                         double.TryParse(valStr, NumberStyles.Any, CultureInfo.InvariantCulture, out val);
                         double tol = 0.1;
                         if (achMatch.Groups.Count > 4 && !string.IsNullOrEmpty(achMatch.Groups[4].Value)) {
