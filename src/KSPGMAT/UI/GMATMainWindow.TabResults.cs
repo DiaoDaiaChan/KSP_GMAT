@@ -341,6 +341,19 @@ namespace KSPGMAT.UI {
                 } else {
                     centroidLead = duration * 0.5;
                 }
+
+                // 4. Second-Order Orbital Curvature & Gravity Gradient Lag Correction (二阶轨道曲率与引力梯度滞后修正)
+                // Finite tangential burning rotates the thrust arc by n*DeltaT along the Frenet frame,
+                // shifting the effective line of apsides forward.
+                double meanMotion = 0.001185; // Standard LEO mean motion ~ 0.001185 rad/s
+                if (vessel != null && vessel.orbit != null && vessel.orbit.period > 0) {
+                    meanMotion = (2.0 * Math.PI) / vessel.orbit.period;
+                }
+                double nTau = meanMotion * duration;
+                if (nTau > 0.0 && nTau < 1.5) {
+                    double curvatureLead = duration * ((1.0 / 12.0) * nTau + 0.75 * nTau * (centroidLead / duration));
+                    centroidLead += curvatureLead;
+                }
             }
             double initialTime = targetEpoch - centroidLead;
 
