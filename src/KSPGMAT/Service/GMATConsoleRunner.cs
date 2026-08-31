@@ -36,10 +36,13 @@ namespace KSPGMAT.Service {
             }
 
             string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
             string[] candidates = new string[] {
                 Path.Combine(userProfile, "gmat-win-R2026a", "bin", "GmatConsole.exe"),
-                @"C:\Users\43701\gmat-win-R2026a\bin\GmatConsole.exe",
-                @"D:\gmat-win-R2026a\bin\GmatConsole.exe",
+                Path.Combine(userProfile, "GMAT", "bin", "GmatConsole.exe"),
+                Path.Combine(programFiles, "GMAT", "bin", "GmatConsole.exe"),
+                @"C:\GMAT\bin\GmatConsole.exe",
+                @"D:\GMAT\bin\GmatConsole.exe",
                 Path.Combine(KSPUtil.ApplicationRootPath, "GameData", "KSPGMAT", "gmat", "bin", "GmatConsole.exe")
             };
 

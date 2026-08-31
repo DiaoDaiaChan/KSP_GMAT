@@ -294,45 +294,7 @@ namespace KSPGMAT.UI {
             GUILayout.EndScrollView();
         }
 
-        private double ComputeTimeToNextTLIWindow(Vessel vessel) {
-            if (vessel == null || vessel.orbit == null) return 3000.0;
-            CelestialBody moon = null;
-            if (FlightGlobals.Bodies != null) {
-                moon = FlightGlobals.Bodies.Find(b => b.name.Equals("Moon", StringComparison.OrdinalIgnoreCase) ||
-                                                      b.name.Equals("Luna", StringComparison.OrdinalIgnoreCase) ||
-                                                      b.name.Equals("Mun", StringComparison.OrdinalIgnoreCase));
-            }
-            if (moon == null || moon.orbit == null) return 3000.0;
 
-            double ut = Planetarium.GetUniversalTime();
-            Vector3d rSat = vessel.orbit.getRelativePositionAtUT(ut);
-            Vector3d rMoon = moon.orbit.getRelativePositionAtUT(ut);
-
-            // In-plane equatorial / orbital longitude
-            double lonSat = Math.Atan2(rSat.y, rSat.x) * (180.0 / Math.PI);
-            double lonMoon = Math.Atan2(rMoon.y, rMoon.x) * (180.0 / Math.PI);
-
-            // Current phase angle (Moon longitude - Sat longitude)
-            double currentPhase = lonMoon - lonSat;
-            while (currentPhase < 0.0) currentPhase += 360.0;
-            while (currentPhase >= 360.0) currentPhase -= 360.0;
-
-            // Standard theoretical lead angle for Earth->Moon Hohmann-like cislunar transfer (~3.8 days)
-            double targetPhase = 135.0; // Moon is ~135° ahead of Sat at TLI ignition
-
-            double dPhase = targetPhase - currentPhase;
-            while (dPhase < 0.0) dPhase += 360.0;
-            while (dPhase >= 360.0) dPhase -= 360.0;
-
-            double nSat = 360.0 / Math.Max(60.0, vessel.orbit.period); // deg/s (~0.068 deg/s)
-            double nMoon = 360.0 / Math.Max(86400.0, moon.orbit.period); // deg/s (~0.00015 deg/s)
-            double waitSec = dPhase / Math.Max(0.001, (nSat - nMoon));
-
-            // Ensure at least 60s preparation buffer if window is right now
-            if (waitSec < 60.0) waitSec += vessel.orbit.period;
-
-            return waitSec;
-        }
 
         double ComputeBurnInitialTime(Vessel vessel, SolvedBurn burn, double solveUT, out double targetEpoch, out double centroidLead) {
             double currentUT = Planetarium.GetUniversalTime();

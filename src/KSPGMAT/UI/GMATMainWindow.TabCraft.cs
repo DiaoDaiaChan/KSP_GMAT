@@ -67,30 +67,24 @@ namespace KSPGMAT.UI {
             // 1. Initial State Alignment (t0)
             GUILayout.BeginHorizontal();
             GUILayout.Label("飞船初始状态 (t₀):", labelValueStyle, GUILayout.Width(110));
-            GUILayout.Label("<color=#34d399>位置残差: <b>0.000 m</b> | 速度残差: <b>0.000 mm/s</b> (ICRF 地心绝对无损重合)</color>", labelValueStyle);
+            GUILayout.Label("<color=#34d399>已从 Principia ICRF 精确同步历元与六维状态矢量</color>", labelValueStyle);
             GUILayout.FlexibleSpace();
             GUILayout.EndHorizontal();
 
-            // 2. Perturbation Body (Moon/Luna) Ephemeris Residuals
+            // 2. Perturbation Body (Moon/Luna) Status
             CelestialBody moonBody = FlightGlobals.Bodies.Find(b => b.name == "Mun" || b.name == "Moon" || b.name == "Luna");
-            double moonDist_km = 384400.0;
             if (moonBody != null && vessel.mainBody != null) {
-                moonDist_km = Vector3d.Distance(moonBody.position, vessel.mainBody.position) / 1000.0;
+                double moonDist_km = Vector3d.Distance(moonBody.position, vessel.mainBody.position) / 1000.0;
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("主摄动月球星历:", labelValueStyle, GUILayout.Width(110));
+                GUILayout.Label($"当前地月距离: <b>{moonDist_km:F0} km</b> | 动力学校核: <color=#34d399>GMAT (JPL DE405) ↔ Principia (N-body 辛积分)</color>", labelValueStyle);
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
             }
-            // Real-world astronomical residual between JPL DE405 Chebyshev splines and high-order symplectic N-body integration
-            double ephemPosDiff_m = 32.4 + 4.8 * Math.Sin(Planetarium.GetUniversalTime() * 1e-6);
-            double ephemVelDiff_mms = 1.8 + 0.3 * Math.Cos(Planetarium.GetUniversalTime() * 1e-6);
-            double relErrorPercent = (ephemPosDiff_m / (moonDist_km * 1000.0)) * 100.0;
-
-            GUILayout.BeginHorizontal();
-            GUILayout.Label("主摄动月球星历:", labelValueStyle, GUILayout.Width(110));
-            GUILayout.Label($"地月距离: <b>{moonDist_km:F0} km</b> | 星历位置差 Δr: <color=#38bdf8><b>{ephemPosDiff_m:F1} m</b></color> (相对 {relErrorPercent:0.000008}%) | 速度差: <color=#38bdf8><b>{ephemVelDiff_mms:F1} mm/s</b></color>", labelValueStyle);
-            GUILayout.FlexibleSpace();
-            GUILayout.EndHorizontal();
 
             GUILayout.BeginHorizontal();
             GUILayout.Label("引力势场模型:", labelValueStyle, GUILayout.Width(110));
-            GUILayout.Label("GMAT: <b>JGM-4/EGM96 8×8 阶球谐</b> | Principia: <b>完全 N 体多极引力积分 + 广义相对论</b> <color=#34d399>[高度吻合]</color>", labelValueStyle);
+            GUILayout.Label("GMAT: <b>JGM-4/EGM96 8×8 阶球谐引力场</b> | Principia: <b>完全 N 体多极引力积分 + 广义相对论</b> <color=#34d399>[标准对齐]</color>", labelValueStyle);
             GUILayout.FlexibleSpace();
             GUILayout.EndHorizontal();
 
@@ -276,14 +270,14 @@ namespace KSPGMAT.UI {
             GUILayout.BeginVertical(nestedCardBoxStyle);
             GUILayout.Label("<color=#38bdf8><b>官方内建参考系:</b></color>", labelValueStyle);
             GUILayout.BeginHorizontal();
-            string[] quickBuiltIns = new string[] { "EarthMJ2000Eq", "EarthMoonRot", "MoonInertial", "EarthFixed", "EarthICRF" };
+            string[] quickBuiltIns = new string[] { "EarthMJ2000Eq", "EarthMJ2000Ec", "EarthFixed", "EarthICRF", "LunaMJ2000Eq", "LunaFixed" };
             for (int b = 0; b < quickBuiltIns.Length; b++) {
                 string csName = quickBuiltIns[b];
                 if (GUILayout.Button($"🌐 {csName}", secondaryButtonStyle, GUILayout.Height(20))) {
                     editingCoordSystem = new CustomCoordSystemDef {
                         name = csName,
-                        origin = csName.Contains("Moon") ? "Luna" : "Earth",
-                        axes = csName.Contains("Rot") ? "ObjectReferenced" : (csName.Contains("Fixed") ? "BodyFixed" : (csName.Contains("Inertial") ? "BodyInertial" : "MJ2000Eq")),
+                        origin = csName.StartsWith("Luna") ? "Luna" : "Earth",
+                        axes = csName.Contains("Fixed") ? "BodyFixed" : (csName.Contains("Ec") ? "MJ2000Ec" : "MJ2000Eq"),
                         primary = "Earth",
                         secondary = "Luna",
                         xAxis = "R",

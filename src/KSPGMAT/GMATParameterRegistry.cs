@@ -405,8 +405,8 @@ namespace KSPGMAT {
                 Path.Combine(gmatBin, "gmat_service", "gmat_capabilities.json"),
                 Path.Combine(gmatBin, "gmat_capabilities.json"),
                 Path.Combine(userProfile, "gmat-win-R2026a", "bin", "gmat_service", "gmat_capabilities.json"),
-                @"C:\Users\43701\gmat-win-R2026a\bin\gmat_service\gmat_capabilities.json",
-                @"d:\nocomp\gmat-win-R2026a\bin\gmat_service\gmat_capabilities.json"
+                Path.Combine(userProfile, "GMAT", "bin", "gmat_capabilities.json"),
+                Path.Combine(KSPUtil.ApplicationRootPath, "GameData", "KSPGMAT", "gmat_capabilities.json")
             };
 
             foreach (var path in candidatePaths) {

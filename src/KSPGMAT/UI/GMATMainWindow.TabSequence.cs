@@ -1468,21 +1468,7 @@ namespace KSPGMAT.UI {
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
 
-                // Smart TLI Window Calculator Helper (Only for explicit Lunar Transfer / TLI steps)
-                Vessel activeV = FlightGlobals.ActiveVessel;
-                if (activeV != null && ((step.label != null && (step.label.IndexOf("TLI", StringComparison.OrdinalIgnoreCase) >= 0 || step.label.Contains("地月") || step.label.Contains("月球转移"))) || (step.stop_type != null && step.stop_type.IndexOf("Luna", StringComparison.OrdinalIgnoreCase) >= 0))) {
-                    GUILayout.Space(2);
-                    GUILayout.BeginHorizontal();
-                    if (GUILayout.Button("🔍 一键解算最近的 TLI 地月转移窗口等待时间 (地月超前角 ~135°)", secondaryButtonStyle, GUILayout.Height(20))) {
-                        double waitSec = ComputeTimeToNextTLIWindow(activeV);
-                        step.stop_type = "Sat.ElapsedSecs";
-                        step.target_val = Math.Round(waitSec, 1);
-                        step.duration = Math.Round(waitSec, 1);
-                        ScreenMessages.PostScreenMessage($"✅ 成功解算最近地月转移窗口！等待时间: {waitSec:F1}s (T+{waitSec / 60.0:F1}min)，目标地月超前角 ~135° 已对齐！", 4.0f, ScreenMessageStyle.UPPER_CENTER);
-                    }
-                    GUILayout.FlexibleSpace();
-                    GUILayout.EndHorizontal();
-                }
+
             }
 
             // =========================================================================

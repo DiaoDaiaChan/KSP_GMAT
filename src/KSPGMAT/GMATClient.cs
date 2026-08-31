@@ -328,12 +328,14 @@ namespace KSPGMAT {
                 if (!string.IsNullOrEmpty(env) && Directory.Exists(env)) return env;
 
                 string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
                 string[] candidates = new string[] {
                     Path.Combine(userProfile, "gmat-win-R2026a", "bin"),
-                    @"C:\Users\43701\gmat-win-R2026a\bin",
-                    @"d:\nocomp\gmat-win-R2026a\bin",
+                    Path.Combine(userProfile, "GMAT", "bin"),
+                    Path.Combine(programFiles, "GMAT", "bin"),
                     @"C:\GMAT\bin",
-                    @"D:\GMAT\bin"
+                    @"D:\GMAT\bin",
+                    Path.Combine(KSPUtil.ApplicationRootPath, "GameData", "KSPGMAT", "gmat", "bin")
                 };
                 foreach (var c in candidates) {
                     if (Directory.Exists(c)) return c;
@@ -347,14 +349,16 @@ namespace KSPGMAT {
 
         public static string FindPythonExe() {
             if (!string.IsNullOrEmpty(CustomPythonPath) && File.Exists(CustomPythonPath)) return CustomPythonPath;
+            string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
             string[] candidates = new string[] {
                 "python.exe",
-                @"C:\Users\43701\AppData\Local\Programs\Python\Python310\python.exe",
-                @"C:\Users\43701\AppData\Local\Programs\Python\Python311\python.exe",
-                @"C:\Users\43701\AppData\Local\Programs\Python\Python312\python.exe",
-                @"C:\Program Files\Python310\python.exe",
-                @"C:\Program Files\Python311\python.exe",
-                @"C:\Program Files\Python312\python.exe"
+                Path.Combine(localAppData, @"Programs\Python\Python310\python.exe"),
+                Path.Combine(localAppData, @"Programs\Python\Python311\python.exe"),
+                Path.Combine(localAppData, @"Programs\Python\Python312\python.exe"),
+                Path.Combine(programFiles, @"Python310\python.exe"),
+                Path.Combine(programFiles, @"Python311\python.exe"),
+                Path.Combine(programFiles, @"Python312\python.exe")
             };
             foreach (var c in candidates) {
                 if (c == "python.exe") return c; // try PATH
