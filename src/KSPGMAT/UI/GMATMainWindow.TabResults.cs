@@ -113,7 +113,7 @@ namespace KSPGMAT.UI {
                         GUILayout.Label("<color=#38bdf8><b>🛰️ NASA GMAT 理论求解</b></color>", labelValueStyle);
                         GUILayout.Space(2);
                         GUILayout.Label($"合速度增量 (ΔV): <b>{b.magnitude:F3} m/s</b>", labelValueStyle);
-                        GUILayout.Label($"分量: 切向(顺行) {b.dv_v:F2} | 径向(向心) {b.dv_n:F2} | 副法向(变倾角) {b.dv_b:F2} m/s", labelValueStyle);
+                        GUILayout.Label($"分量: 顺行(V) {b.dv_v:F2} | 法向(N/变倾角) {b.dv_n:F2} | 径向(B/面内) {b.dv_b:F2} m/s", labelValueStyle);
                         GUILayout.Label($"点火时长 (Duration): <color=#38bdf8><b>{b.duration:F2} s</b></color>", labelValueStyle);
                         GUILayout.Label($"预计消耗推进剂: <b>{b.fuel_burned:F2} kg</b>", labelValueStyle);
                         GUILayout.Label($"动力学模型推力: {b.thrust_kn:F1} kN | 比冲: {b.isp:F1} s", labelValueStyle);
@@ -388,7 +388,7 @@ namespace KSPGMAT.UI {
             double targetEpoch, centroidLead;
             double burnInitialTime = ComputeBurnInitialTime(vessel, b, solveUT, out targetEpoch, out centroidLead);
 
-            Vector3d dv = new Vector3d(b.dv_v, b.dv_n, b.dv_b); // Principia Frenet: X=Tangent(dv_v), Y=Normal/Radial(dv_n), Z=Binormal/Out-of-Plane(dv_b)
+            Vector3d dv = new Vector3d(b.dv_v, b.dv_b, b.dv_n); // GMAT VNB -> Principia Frenet: X=Tangent(V), Y=In-Plane Normal(B), Z=Out-of-Plane Binormal(N)
             double thrust = b.thrust_kn > 0 ? b.thrust_kn : 50.0;
             double isp = b.isp > 0 ? b.isp : 310.0;
 
@@ -417,7 +417,7 @@ namespace KSPGMAT.UI {
                 double targetEpoch, centroidLead;
                 double burnInitialTime = ComputeBurnInitialTime(vessel, b, solveUT, out targetEpoch, out centroidLead);
 
-                Vector3d dv = new Vector3d(b.dv_v, b.dv_n, b.dv_b); // Principia Frenet: X=Tangent(dv_v), Y=Normal/Radial(dv_n), Z=Binormal/Out-of-Plane(dv_b)
+                Vector3d dv = new Vector3d(b.dv_v, b.dv_b, b.dv_n); // GMAT VNB -> Principia Frenet: X=Tangent(V), Y=In-Plane Normal(B), Z=Out-of-Plane Binormal(N)
                 double thrust = b.thrust_kn > 0 ? b.thrust_kn : 50.0;
                 double isp = b.isp > 0 ? b.isp : 310.0;
 
