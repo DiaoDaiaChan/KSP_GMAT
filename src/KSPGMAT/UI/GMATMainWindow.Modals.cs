@@ -30,9 +30,9 @@ namespace KSPGMAT.UI {
             psdPendingSelectedValue = currentVal ?? "";
             paramPickerSearchQuery = "";
             showParamPickerModal = true;
-            if (paramPickerWindowRect.width < 760 || paramPickerWindowRect.height < 480) {
-                paramPickerWindowRect = new Rect((Screen.width - 780) / 2, (Screen.height - 520) / 2, 780, 520);
-            }
+            float pw = Mathf.Clamp(Screen.width * 0.65f, 760f, 1000f);
+            float ph = Mathf.Clamp(Screen.height * 0.65f, 500f, 750f);
+            paramPickerWindowRect = new Rect((Screen.width - pw) / 2, (Screen.height - ph) / 2, pw, ph);
         }
 
         private void DrawParamPickerWindow(int windowID) {

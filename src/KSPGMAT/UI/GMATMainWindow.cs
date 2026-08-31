@@ -50,8 +50,14 @@ namespace KSPGMAT.UI {
         private Vector2 resizeStartMouse;
         private Rect resizeStartRect;
 
-private int activeTab = 0; // Default to Tab 0: Craft & Orbit
-        private readonly string[] tabNames = new string[] { "🛰️ 飞船与动力学", "📁 资源库 (Resources)", "📋 任务序列与求解", "📈 变轨与轨迹明细", "⚙️ 设置" };
+        private int activeTab = 0; // Default to Tab 0: Craft & Orbit
+        private string[] GetTabNames() => new string[] {
+            I18n.T("tab_craft", "🛰️ 飞船与动力学"),
+            I18n.T("tab_resources", "📁 资源库 (Resources)"),
+            I18n.T("tab_mission", "📋 任务控制序列"),
+            I18n.T("tab_results", "📈 变轨与轨迹明细"),
+            I18n.T("tab_settings", "⚙️ 设置")
+        };
 
         private Vector2 scrollPosCraft = Vector2.zero;
         private Vector2 scrollPosResources = Vector2.zero;
@@ -600,6 +606,11 @@ private int activeTab = 0; // Default to Tab 0: Craft & Orbit
             }
 
             if (showCoordSystemWindow) {
+                if (coordSystemWindowRect.width < 450 || coordSystemWindowRect.height < 450) {
+                    float cw = Mathf.Clamp(Screen.width * 0.45f, 480f, 650f);
+                    float ch = Mathf.Clamp(Screen.height * 0.6f, 480f, 680f);
+                    coordSystemWindowRect = new Rect((Screen.width - cw) / 2, (Screen.height - ch) / 2, cw, ch);
+                }
                 coordSystemWindowRect = GUILayout.Window(982307, coordSystemWindowRect, DrawCoordSystemWindow, "", windowStyle,
                     GUILayout.Width(coordSystemWindowRect.width), GUILayout.Height(coordSystemWindowRect.height));
             }
@@ -680,10 +691,11 @@ private int activeTab = 0; // Default to Tab 0: Craft & Orbit
         }
 
         private void DrawTabBar() {
+            var tabs = GetTabNames();
             GUILayout.BeginHorizontal();
-            for (int i = 0; i < tabNames.Length; i++) {
+            for (int i = 0; i < tabs.Length; i++) {
                 bool isSelected = (activeTab == i);
-                if (GUILayout.Button(tabNames[i], isSelected ? tabButtonActiveStyle : tabButtonStyle, GUILayout.Height(26))) {
+                if (GUILayout.Button(tabs[i], isSelected ? tabButtonActiveStyle : tabButtonStyle, GUILayout.Height(26))) {
                     activeTab = i;
                 }
             }
