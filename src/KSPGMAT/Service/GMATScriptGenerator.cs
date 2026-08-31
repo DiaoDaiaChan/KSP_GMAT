@@ -388,37 +388,47 @@ namespace KSPGMAT.Service {
 
         private static string FormatStopCondition(string satName, string centralBody, MissionStep st) {
             string rawCond = st.stop_type ?? "Time";
-            string cond = GMATParameterRegistry.StripCraftPrefix(rawCond);
+            string cond = GMATParameterRegistry.StripCraftPrefix(rawCond).Trim();
 
-            // Handle condition containing =
+            // 1. If condition already contains an explicit '=', e.g. "Earth.Altitude = 200" or "ElapsedSecs = 3600"
             if (cond.Contains("=")) {
                 var p = cond.Split('=');
                 string lhs = GMATParameterRegistry.StripCraftPrefix(p[0].Trim());
                 string rhs = p[1].Trim();
+                if (!lhs.Contains(".") && !lhs.StartsWith("Elapsed", StringComparison.OrdinalIgnoreCase) && !lhs.StartsWith("TA", StringComparison.OrdinalIgnoreCase)) {
+                    lhs = $"{centralBody}.{lhs}";
+                }
                 return $"{satName}.{lhs} = {rhs}";
             }
 
-            if (cond.Equals("Apoapsis", StringComparison.OrdinalIgnoreCase) || cond.Equals("Periapsis", StringComparison.OrdinalIgnoreCase)) {
-                return $"{satName}.{centralBody}.{cond}";
-            }
-            if (cond.EndsWith(".Apoapsis", StringComparison.OrdinalIgnoreCase) || cond.EndsWith(".Periapsis", StringComparison.OrdinalIgnoreCase)) {
-                return $"{satName}.{cond}";
-            }
-            if (cond.Contains("Latitude") || cond.Contains("Altitude") || cond.Contains("RMAG") || cond.Contains("TA")) {
-                string rhs = !string.IsNullOrEmpty(st.target_val_str) ? st.target_val_str : st.target_val.ToString("G", CultureInfo.InvariantCulture);
-                if (!cond.Contains(".") && !cond.StartsWith("TA", StringComparison.OrdinalIgnoreCase)) {
-                    cond = $"{centralBody}.{cond}";
+            // 2. GMAT Built-in Extrema Events (No '=' sign required by GMAT syntax)
+            // e.g. Apoapsis, Periapsis, Node, AN, DN
+            string[] extremaKeywords = new string[] { "Apoapsis", "Periapsis", "Node", "AN", "DN" };
+            foreach (var kw in extremaKeywords) {
+                if (cond.Equals(kw, StringComparison.OrdinalIgnoreCase)) {
+                    return $"{satName}.{centralBody}.{kw}";
                 }
-                return $"{satName}.{cond} = {rhs}";
+                if (cond.EndsWith("." + kw, StringComparison.OrdinalIgnoreCase)) {
+                    return $"{satName}.{cond}";
+                }
+            }
+
+            // 3. Elapsed Time Stop Conditions
+            if (cond.Equals("Time", StringComparison.OrdinalIgnoreCase) || cond.Equals("ElapsedSecs", StringComparison.OrdinalIgnoreCase) || cond.EndsWith(".ElapsedSecs", StringComparison.OrdinalIgnoreCase)) {
+                string durVal = !string.IsNullOrEmpty(st.duration_str) ? st.duration_str : (st.duration > 0 ? st.duration.ToString("G", CultureInfo.InvariantCulture) : (!string.IsNullOrEmpty(st.target_val_str) ? st.target_val_str : (st.target_val > 0 ? st.target_val.ToString("G", CultureInfo.InvariantCulture) : "3600.0")));
+                return $"{satName}.ElapsedSecs = {durVal}";
             }
             if (cond.Equals("Days", StringComparison.OrdinalIgnoreCase) || cond.Equals("ElapsedDays", StringComparison.OrdinalIgnoreCase) || cond.EndsWith(".ElapsedDays", StringComparison.OrdinalIgnoreCase)) {
-                string durStr = !string.IsNullOrEmpty(st.duration_str) ? st.duration_str : (st.duration > 0 ? (st.duration / 86400.0).ToString("G", CultureInfo.InvariantCulture) : "1.0");
+                string durStr = !string.IsNullOrEmpty(st.duration_str) ? st.duration_str : (st.duration > 0 ? (st.duration / 86400.0).ToString("G", CultureInfo.InvariantCulture) : (!string.IsNullOrEmpty(st.target_val_str) ? st.target_val_str : (st.target_val > 0 ? st.target_val.ToString("G", CultureInfo.InvariantCulture) : "1.0")));
                 return $"{satName}.ElapsedDays = {durStr}";
             }
 
-            // Default ElapsedSecs
-            string dVal = !string.IsNullOrEmpty(st.duration_str) ? st.duration_str : (st.duration > 0 ? st.duration.ToString("G", CultureInfo.InvariantCulture) : "3600.0");
-            return $"{satName}.ElapsedSecs = {dVal}";
+            // 4. Value-based Numerical Stop Conditions (e.g. Altitude, RMAG, Latitude, TA, RAAN, AOP, FPA, etc.)
+            string rhsVal = !string.IsNullOrEmpty(st.target_val_str) ? st.target_val_str : st.target_val.ToString("G", CultureInfo.InvariantCulture);
+            if (!cond.Contains(".") && !cond.StartsWith("Elapsed", StringComparison.OrdinalIgnoreCase)) {
+                cond = $"{centralBody}.{cond}";
+            }
+            return $"{satName}.{cond} = {rhsVal}";
         }
     }
 }
