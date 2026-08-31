@@ -333,8 +333,25 @@ namespace KSPGMAT.UI {
             }
 
             double solveUT = (latestResult.solve_ut > 0) ? latestResult.solve_ut : Planetarium.GetUniversalTime();
+            double currentUT = Planetarium.GetUniversalTime();
+
+            // Compute global orbit period wrapping shift based on the first burn
+            double globalTimeShift = 0.0;
+            if (vessel != null && vessel.orbit != null) {
+                Orbit orb = vessel.orbit;
+                if (orb.period > 0 && orb.eccentricity < 1.0) {
+                    double firstTargetEpoch = solveUT + b.epoch_offset;
+                    double firstDuration = b.duration;
+                    double firstCentroidLead = (firstDuration > 0.0) ? (firstDuration * 0.5) : 0.0;
+                    double firstInitialTime = firstTargetEpoch - firstCentroidLead;
+                    while (firstInitialTime + globalTimeShift < currentUT + 3.0) {
+                        globalTimeShift += orb.period;
+                    }
+                }
+            }
+
             double targetEpoch, centroidLead;
-            double burnInitialTime = ComputeBurnInitialTime(vessel, b, solveUT, out targetEpoch, out centroidLead);
+            double burnInitialTime = ComputeBurnInitialTime(vessel, b, solveUT, out targetEpoch, out centroidLead, globalTimeShift);
 
             Vector3d dv = new Vector3d(b.dv_v, b.dv_b, b.dv_n); // GMAT VNB -> Principia Frenet: X=Tangent(V), Y=In-Plane Normal(B), Z=Out-of-Plane Binormal(N)
             double thrust = b.thrust_kn > 0 ? b.thrust_kn : 50.0;
@@ -368,7 +385,7 @@ namespace KSPGMAT.UI {
                 double firstCentroidLead = (firstDuration > 0.0) ? (firstDuration * 0.5) : 0.0;
                 double firstInitialTime = firstTargetEpoch - firstCentroidLead;
                 Orbit orb = vessel.orbit;
-                if (orb.period > 0 && orb.eccentricity < 1.0 && firstInitialTime < currentUT + 3.0 && firstBurn.epoch_offset < orb.period * 2.0) {
+                if (orb.period > 0 && orb.eccentricity < 1.0) {
                     while (firstInitialTime + globalTimeShift < currentUT + 3.0) {
                         globalTimeShift += orb.period;
                     }
