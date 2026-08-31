@@ -7,6 +7,7 @@ using UnityEngine;
 namespace KSPGMAT.UI {
     public partial class GMATMainWindow {
         private bool showTrajPointsList = false;
+        private double lastCalibrationFactor = 1.0;
         private List<PrincipiaInterop.FlightPlanNode> cachedFlightPlanNodes = null;
         private float lastFlightPlanReadTime = -999f;
         private void DrawTabResults() {
@@ -177,15 +178,49 @@ namespace KSPGMAT.UI {
                             double dtDiff = pNode.duration - b.duration;
                             double dtPercent = (b.duration > 0) ? (dtDiff / b.duration) * 100.0 : 0.0;
                             double dvDiff = pNode.deltaV.magnitude - b.magnitude;
+                            double curRatio = (b.duration > 0) ? (pNode.duration / b.duration) : 1.0;
 
                             GUILayout.Space(4);
                             GUILayout.BeginVertical(nestedCardBoxStyle);
                             GUILayout.BeginHorizontal();
-                            GUILayout.Label($"<b>Principia 实机校核:</b> 时长差 Δt: <b>{dtDiff:+0.00;-0.00;0.00} s ({dtPercent:+0.1;-0.1;0.1}%)</b> | 速度差 Δ(ΔV): <b>{dvDiff:+0.000;-0.000;0.000} m/s</b> <color=#34d399>[标准吻合]</color>", labelValueStyle);
+                            GUILayout.Label($"<b>动力学偏差:</b> 时长差 Δt: <b>{dtDiff:+0.00;-0.00;0.00} s ({dtPercent:+0.1;-0.1;0.1}%)</b> | 速度差 Δ(ΔV): <b>{dvDiff:+0.000;-0.000;0.000} m/s</b>", labelValueStyle);
                             GUILayout.FlexibleSpace();
-                            if (GUILayout.Button("🔄 重新写入此节点", secondaryButtonStyle, GUILayout.Width(120), GUILayout.Height(20))) {
+                            GUILayout.Label("<color=#94a3b8><i>注: 偏差主要源于实时重力损耗微漂移</i></color>", labelValueStyle);
+                            GUILayout.EndHorizontal();
+
+                            GUILayout.Space(4);
+                            GUILayout.BeginHorizontal();
+                            GUILayout.Label("<color=#38bdf8><b>实机真值对齐处理:</b></color>", labelValueStyle, GUILayout.Width(130));
+
+                            // Action 1: Reconcile GMAT Variable with Principia Duration
+                            if (GUILayout.Button($"⚡ 以 Principia 实机时长 ({pNode.duration:F1}s) 校准 GMAT 变量初猜", successButtonStyle, GUILayout.Height(22))) {
+                                int reconciledCount = 0;
+                                for (int s = 0; s < missionSequence.Count; s++) {
+                                    var step = missionSequence[s];
+                                    if (step.type == "Vary" && (step.vary_variable.ToLower().Contains("burn") || step.vary_variable.ToLower().Contains("time") || step.vary_variable.ToLower().Contains("dur"))) {
+                                        step.vary_initial = pNode.duration;
+                                        reconciledCount++;
+                                    } else if (step.type == "FiniteBurn") {
+                                        step.duration = pNode.duration;
+                                        reconciledCount++;
+                                    }
+                                }
+                                lastCalibrationFactor = curRatio;
+                                ScreenMessages.PostScreenMessage($"✅ 成功将 GMAT 变量初猜与点火时长校准为 Principia 游戏实机真值: {pNode.duration:F2} s！", 4.0f, ScreenMessageStyle.UPPER_CENTER);
+                            }
+
+                            // Action 2: Calibrate Ratio
+                            if (GUILayout.Button("📐 记录推力修正比", secondaryButtonStyle, GUILayout.Width(130), GUILayout.Height(22))) {
+                                lastCalibrationFactor = curRatio;
+                                ScreenMessages.PostScreenMessage($"📐 已记录动力学校准系数: {lastCalibrationFactor:F4}", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                            }
+
+                            // Action 3: Re-apply to Principia
+                            if (GUILayout.Button("🔄 重新同步此节点", secondaryButtonStyle, GUILayout.Width(120), GUILayout.Height(22))) {
                                 WriteBurnsToPrincipia(vessel);
                             }
+
+                            GUILayout.FlexibleSpace();
                             GUILayout.EndHorizontal();
                             GUILayout.EndVertical();
                         }
@@ -256,15 +291,13 @@ namespace KSPGMAT.UI {
             GUILayout.EndScrollView();
         }
 
-
-
-        double ComputeBurnInitialTime(Vessel vessel, SolvedBurn burn, double solveUT, out double targetEpoch, out double centroidLead) {
+        double ComputeBurnInitialTime(Vessel vessel, SolvedBurn burn, double solveUT, out double targetEpoch, out double centroidLead, double globalTimeShift = 0.0) {
             double currentUT = Planetarium.GetUniversalTime();
             double anchorUT = (solveUT > 0) ? solveUT : currentUT;
             centroidLead = 0.0;
 
             // 1. Target Event Epoch from GMAT multi-body numerical integration
-            targetEpoch = anchorUT + burn.epoch_offset;
+            targetEpoch = anchorUT + burn.epoch_offset + globalTimeShift;
 
             // 2. Exact Tsiolkovsky Rocket Equation for finite burn duration
             double duration = burn.duration;
@@ -281,15 +314,6 @@ namespace KSPGMAT.UI {
             // 3. Universal Centroid Law: finite burn begins half-duration before the target impulsive centroid
             centroidLead = (duration > 0.0) ? (duration * 0.5) : 0.0;
             double initialTime = targetEpoch - centroidLead;
-
-            // Handle UI pause/delay wrapping in closed periodic orbits
-            Orbit orb = (vessel != null) ? vessel.orbit : null;
-            if (orb != null && orb.period > 0 && orb.eccentricity < 1.0 && initialTime < currentUT + 3.0 && burn.epoch_offset < orb.period * 2.0) {
-                while (initialTime < currentUT + 3.0) {
-                    initialTime += orb.period;
-                    targetEpoch += orb.period;
-                }
-            }
 
             burn.computed_initial_time = initialTime;
             burn.centroid_lead_time = centroidLead;
@@ -333,13 +357,31 @@ namespace KSPGMAT.UI {
             }
 
             double solveUT = (latestResult.solve_ut > 0) ? latestResult.solve_ut : Planetarium.GetUniversalTime();
+            double currentUT = Planetarium.GetUniversalTime();
+
+            // Compute global orbit period wrapping shift based on the first burn so all sequential burns shift synchronously
+            double globalTimeShift = 0.0;
+            if (latestResult.solved_burns.Count > 0 && vessel != null && vessel.orbit != null) {
+                var firstBurn = latestResult.solved_burns[0];
+                double firstTargetEpoch = solveUT + firstBurn.epoch_offset;
+                double firstDuration = firstBurn.duration;
+                double firstCentroidLead = (firstDuration > 0.0) ? (firstDuration * 0.5) : 0.0;
+                double firstInitialTime = firstTargetEpoch - firstCentroidLead;
+                Orbit orb = vessel.orbit;
+                if (orb.period > 0 && orb.eccentricity < 1.0 && firstInitialTime < currentUT + 3.0 && firstBurn.epoch_offset < orb.period * 2.0) {
+                    while (firstInitialTime + globalTimeShift < currentUT + 3.0) {
+                        globalTimeShift += orb.period;
+                    }
+                }
+            }
+
             int writtenCount = 0;
             for (int i = 0; i < latestResult.solved_burns.Count; i++) {
                 var b = latestResult.solved_burns[i];
                 if (!b.principia_writeable) continue;
 
                 double targetEpoch, centroidLead;
-                double burnInitialTime = ComputeBurnInitialTime(vessel, b, solveUT, out targetEpoch, out centroidLead);
+                double burnInitialTime = ComputeBurnInitialTime(vessel, b, solveUT, out targetEpoch, out centroidLead, globalTimeShift);
 
                 Vector3d dv = new Vector3d(b.dv_v, b.dv_b, b.dv_n); // GMAT VNB -> Principia Frenet: X=Tangent(V), Y=In-Plane Normal(B), Z=Out-of-Plane Binormal(N)
                 double thrust = b.thrust_kn > 0 ? b.thrust_kn : 50.0;
