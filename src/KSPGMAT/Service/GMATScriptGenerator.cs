@@ -337,12 +337,18 @@ namespace KSPGMAT.Service {
                     }
                     else if (stype == "Achieve") {
                         string aDC = GMATParameterRegistry.SanitizeGmatIdentifier(st.dc_name ?? currentDC, "DC");
-                        string goalParam = st.achieve_param ?? "Earth.RMAG";
-                        if (!goalParam.StartsWith(satName + ".")) goalParam = $"{satName}.{goalParam}";
+                        string rawGoal = st.achieve_param ?? "Earth.RMAG";
+                        string goalParam = GMATParameterRegistry.StripCraftPrefix(rawGoal);
+                        if (goalParam.Contains("=")) {
+                            goalParam = GMATParameterRegistry.StripCraftPrefix(goalParam.Split('=')[0].Trim());
+                        }
+                        if (!goalParam.Contains(".") && !goalParam.StartsWith("SMA", StringComparison.OrdinalIgnoreCase) && !goalParam.StartsWith("ECC", StringComparison.OrdinalIgnoreCase) && !goalParam.StartsWith("INC", StringComparison.OrdinalIgnoreCase) && !goalParam.StartsWith("TA", StringComparison.OrdinalIgnoreCase)) {
+                            goalParam = $"{cBody}.{goalParam}";
+                        }
                         double val = st.achieve_val;
                         double tol = st.achieve_tolerance > 0 ? st.achieve_tolerance : 0.1;
-                        sb.AppendLine($"   % Achieve ({goalParam})");
-                        sb.AppendLine($"   Achieve {aDC}({goalParam} = {val.ToString("G", CultureInfo.InvariantCulture)}, {{Tolerance = {tol.ToString("G", CultureInfo.InvariantCulture)}}});");
+                        sb.AppendLine($"   % Achieve ({satName}.{goalParam})");
+                        sb.AppendLine($"   Achieve {aDC}({satName}.{goalParam} = {val.ToString("G", CultureInfo.InvariantCulture)}, {{Tolerance = {tol.ToString("G", CultureInfo.InvariantCulture)}}});");
                     }
                     else if (stype == "EndTarget") {
                         insideTarget = false;
@@ -354,7 +360,13 @@ namespace KSPGMAT.Service {
                         sb.AppendLine($"Maneuver {bName}({satName});");
                     }
                     else if (stype == "Equation" || stype == "Set") {
-                        sb.AppendLine($"{st.variable} = {st.expression};");
+                        string vName = st.variable ?? "";
+                        if (vName.Contains(".ThrustDirection")) continue; // Skip orphan ThrustDirection assignment steps
+                        if (vName.Contains(".")) {
+                            string stripped = GMATParameterRegistry.StripCraftPrefix(vName);
+                            vName = $"{satName}.{stripped}";
+                        }
+                        sb.AppendLine($"{vName} = {st.expression};");
                     }
                     else if (stype == "Report") {
                         if (!string.IsNullOrWhiteSpace(st.expression)) {
@@ -375,39 +387,33 @@ namespace KSPGMAT.Service {
         }
 
         private static string FormatStopCondition(string satName, string centralBody, MissionStep st) {
-            string cond = st.stop_type ?? "Time";
-            
-            // Handle qualified / custom expression stop types (e.g. Sat.Earth.Latitude, Sat.Earth.Apoapsis, Earth.Latitude)
-            if (cond.Contains(".")) {
-                if (cond.Contains("=")) {
-                    return cond.StartsWith(satName + ".") ? cond : $"{satName}.{cond}";
-                }
-                string cleanCond = cond.StartsWith(satName + ".") ? cond.Substring(satName.Length + 1) : cond;
-                if (cleanCond.Equals("Apoapsis", StringComparison.OrdinalIgnoreCase) || cleanCond.Equals("Periapsis", StringComparison.OrdinalIgnoreCase)) {
-                    return $"{satName}.{centralBody}.{cleanCond}";
-                }
-                if (cleanCond.EndsWith(".Apoapsis", StringComparison.OrdinalIgnoreCase) || cleanCond.EndsWith(".Periapsis", StringComparison.OrdinalIgnoreCase)) {
-                    return $"{satName}.{cleanCond}";
-                }
-                if (cleanCond.Contains("Latitude") || cleanCond.Contains("Altitude") || cleanCond.Contains("RMAG") || cleanCond.Contains("TA")) {
-                    string rhs = !string.IsNullOrEmpty(st.target_val_str) ? st.target_val_str : st.target_val.ToString("G", CultureInfo.InvariantCulture);
-                    return $"{satName}.{cleanCond} = {rhs}";
-                }
-                if (cleanCond.Contains("ElapsedSecs") || cleanCond.Contains("ElapsedDays")) {
-                    string durStr = !string.IsNullOrEmpty(st.duration_str) ? st.duration_str : (st.duration > 0 ? st.duration.ToString("G", CultureInfo.InvariantCulture) : "3600.0");
-                    return $"{satName}.{cleanCond} = {durStr}";
-                }
-                return $"{satName}.{cleanCond}";
+            string rawCond = st.stop_type ?? "Time";
+            string cond = GMATParameterRegistry.StripCraftPrefix(rawCond);
+
+            // Handle condition containing =
+            if (cond.Contains("=")) {
+                var p = cond.Split('=');
+                string lhs = GMATParameterRegistry.StripCraftPrefix(p[0].Trim());
+                string rhs = p[1].Trim();
+                return $"{satName}.{lhs} = {rhs}";
             }
 
-            if (cond.Equals("Apoapsis", StringComparison.OrdinalIgnoreCase)) return $"{satName}.{centralBody}.Apoapsis";
-            if (cond.Equals("Periapsis", StringComparison.OrdinalIgnoreCase)) return $"{satName}.{centralBody}.Periapsis";
-            if (cond.Equals("Latitude", StringComparison.OrdinalIgnoreCase)) return $"{satName}.{centralBody}.Latitude = {st.target_val.ToString("G", CultureInfo.InvariantCulture)}";
-            if (cond.Equals("Altitude", StringComparison.OrdinalIgnoreCase)) return $"{satName}.{centralBody}.Altitude = {st.target_val.ToString("G", CultureInfo.InvariantCulture)}";
-            if (cond.Equals("RMAG", StringComparison.OrdinalIgnoreCase)) return $"{satName}.{centralBody}.RMAG = {st.target_val.ToString("G", CultureInfo.InvariantCulture)}";
-            if (cond.Equals("TA", StringComparison.OrdinalIgnoreCase)) return $"{satName}.TA = {st.target_val.ToString("G", CultureInfo.InvariantCulture)}";
-            if (cond.Equals("Days", StringComparison.OrdinalIgnoreCase) || cond.Equals("ElapsedDays", StringComparison.OrdinalIgnoreCase)) {
-                return $"{satName}.ElapsedDays = {(st.duration / 86400.0).ToString("G", CultureInfo.InvariantCulture)}";
+            if (cond.Equals("Apoapsis", StringComparison.OrdinalIgnoreCase) || cond.Equals("Periapsis", StringComparison.OrdinalIgnoreCase)) {
+                return $"{satName}.{centralBody}.{cond}";
+            }
+            if (cond.EndsWith(".Apoapsis", StringComparison.OrdinalIgnoreCase) || cond.EndsWith(".Periapsis", StringComparison.OrdinalIgnoreCase)) {
+                return $"{satName}.{cond}";
+            }
+            if (cond.Contains("Latitude") || cond.Contains("Altitude") || cond.Contains("RMAG") || cond.Contains("TA")) {
+                string rhs = !string.IsNullOrEmpty(st.target_val_str) ? st.target_val_str : st.target_val.ToString("G", CultureInfo.InvariantCulture);
+                if (!cond.Contains(".") && !cond.StartsWith("TA", StringComparison.OrdinalIgnoreCase)) {
+                    cond = $"{centralBody}.{cond}";
+                }
+                return $"{satName}.{cond} = {rhs}";
+            }
+            if (cond.Equals("Days", StringComparison.OrdinalIgnoreCase) || cond.Equals("ElapsedDays", StringComparison.OrdinalIgnoreCase) || cond.EndsWith(".ElapsedDays", StringComparison.OrdinalIgnoreCase)) {
+                string durStr = !string.IsNullOrEmpty(st.duration_str) ? st.duration_str : (st.duration > 0 ? (st.duration / 86400.0).ToString("G", CultureInfo.InvariantCulture) : "1.0");
+                return $"{satName}.ElapsedDays = {durStr}";
             }
 
             // Default ElapsedSecs

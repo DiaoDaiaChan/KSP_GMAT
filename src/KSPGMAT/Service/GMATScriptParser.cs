@@ -406,7 +406,12 @@ namespace KSPGMAT.Service {
                     }
 
                     // 9. Equation / Assignment Command (e.g. Sat.DryMass = 1200 or burntime = 150)
-                    if (rawLine.Contains("=") && !rawLine.StartsWith("Propagate", StringComparison.OrdinalIgnoreCase) && !rawLine.StartsWith("Vary", StringComparison.OrdinalIgnoreCase) && !rawLine.StartsWith("Achieve", StringComparison.OrdinalIgnoreCase) && !rawLine.StartsWith("Target", StringComparison.OrdinalIgnoreCase)) {
+                    if (rawLine.Contains("=") && 
+                        !rawLine.StartsWith("Propagate", StringComparison.OrdinalIgnoreCase) && 
+                        !rawLine.StartsWith("Vary", StringComparison.OrdinalIgnoreCase) && 
+                        !rawLine.StartsWith("Achieve", StringComparison.OrdinalIgnoreCase) && 
+                        !rawLine.StartsWith("Target", StringComparison.OrdinalIgnoreCase) &&
+                        !rawLine.Contains(".ThrustDirection")) {
                         var eqMatch = Regex.Match(rawLine, @"([A-Za-z0-9_.]+)\s*=\s*([^;]+);?");
                         if (eqMatch.Success) {
                             string lhs = eqMatch.Groups[1].Value.Trim();

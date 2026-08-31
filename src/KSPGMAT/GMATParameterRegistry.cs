@@ -260,6 +260,50 @@ namespace KSPGMAT {
             SaveUserCoordinateSystems();
         }
 
+        public static string StripCraftPrefix(string param) {
+            if (string.IsNullOrEmpty(param)) return "";
+            param = param.Trim();
+            int firstDot = param.IndexOf('.');
+            if (firstDot > 0) {
+                string prefix = param.Substring(0, firstDot);
+                string remainder = param.Substring(firstDot + 1);
+                if (remainder.StartsWith("Earth", StringComparison.OrdinalIgnoreCase) ||
+                    remainder.StartsWith("Luna", StringComparison.OrdinalIgnoreCase) ||
+                    remainder.StartsWith("Sun", StringComparison.OrdinalIgnoreCase) ||
+                    remainder.StartsWith("Jupiter", StringComparison.OrdinalIgnoreCase) ||
+                    remainder.StartsWith("Mars", StringComparison.OrdinalIgnoreCase) ||
+                    remainder.StartsWith("Venus", StringComparison.OrdinalIgnoreCase) ||
+                    remainder.StartsWith("Elapsed", StringComparison.OrdinalIgnoreCase) ||
+                    remainder.StartsWith("SMA", StringComparison.OrdinalIgnoreCase) ||
+                    remainder.StartsWith("ECC", StringComparison.OrdinalIgnoreCase) ||
+                    remainder.StartsWith("INC", StringComparison.OrdinalIgnoreCase) ||
+                    remainder.StartsWith("RAAN", StringComparison.OrdinalIgnoreCase) ||
+                    remainder.StartsWith("AOP", StringComparison.OrdinalIgnoreCase) ||
+                    remainder.StartsWith("TA", StringComparison.OrdinalIgnoreCase) ||
+                    remainder.StartsWith("Altitude", StringComparison.OrdinalIgnoreCase) ||
+                    remainder.StartsWith("Apoapsis", StringComparison.OrdinalIgnoreCase) ||
+                    remainder.StartsWith("Periapsis", StringComparison.OrdinalIgnoreCase) ||
+                    remainder.StartsWith("RMAG", StringComparison.OrdinalIgnoreCase) ||
+                    remainder.StartsWith("Latitude", StringComparison.OrdinalIgnoreCase) ||
+                    remainder.StartsWith("Longitude", StringComparison.OrdinalIgnoreCase) ||
+                    remainder.StartsWith("X", StringComparison.OrdinalIgnoreCase) ||
+                    remainder.StartsWith("Y", StringComparison.OrdinalIgnoreCase) ||
+                    remainder.StartsWith("Z", StringComparison.OrdinalIgnoreCase) ||
+                    remainder.StartsWith("VX", StringComparison.OrdinalIgnoreCase) ||
+                    remainder.StartsWith("VY", StringComparison.OrdinalIgnoreCase) ||
+                    remainder.StartsWith("VZ", StringComparison.OrdinalIgnoreCase) ||
+                    remainder.StartsWith("DryMass", StringComparison.OrdinalIgnoreCase) ||
+                    remainder.StartsWith("TotalMass", StringComparison.OrdinalIgnoreCase) ||
+                    remainder.Contains("MJ2000") ||
+                    prefix.StartsWith("Sat", StringComparison.OrdinalIgnoreCase) ||
+                    prefix.Equals("Spacecraft", StringComparison.OrdinalIgnoreCase) ||
+                    prefix.Equals("SC", StringComparison.OrdinalIgnoreCase)) {
+                    return remainder;
+                }
+            }
+            return param;
+        }
+
         private static string GetUserCoordsSavePath() {
             try {
                 string root = KSPUtil.ApplicationRootPath;

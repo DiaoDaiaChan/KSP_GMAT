@@ -93,6 +93,7 @@ namespace KSPGMAT.Service {
                         StandardErrorEncoding = Encoding.UTF8
                     };
 
+                    int exitCode = 0;
                     using (var process = Process.Start(psi)) {
                         lock (processLock) {
                             currentRunningProcess = process;
@@ -100,6 +101,7 @@ namespace KSPGMAT.Service {
                         stdout = process.StandardOutput.ReadToEnd();
                         stderr = process.StandardError.ReadToEnd();
                         process.WaitForExit(45000);
+                        exitCode = process.ExitCode;
 
                         lock (processLock) {
                             if (currentRunningProcess == process) currentRunningProcess = null;
@@ -107,10 +109,10 @@ namespace KSPGMAT.Service {
                     }
 
                     sw.Stop();
-                    KSPGMATLog.Info($"⚡ GmatConsole finished in {sw.ElapsedMilliseconds} ms (Script size: {scriptContent.Length} bytes)");
+                    KSPGMATLog.Info($"⚡ GmatConsole finished in {sw.ElapsedMilliseconds} ms (ExitCode: {exitCode}, Script size: {scriptContent.Length} bytes)");
 
                     // Parse Native Results
-                    var result = ParseGmatConsoleOutput(stdout, stderr, reportFile, outputDir, originalSteps, scriptContent);
+                    var result = ParseGmatConsoleOutput(stdout, stderr, exitCode, reportFile, outputDir, originalSteps, scriptContent);
                     result.script_path = scriptFile;
                     result.gmat_log = stdout;
 
@@ -125,7 +127,7 @@ namespace KSPGMAT.Service {
             });
         }
 
-        private static MissionResult ParseGmatConsoleOutput(string stdout, string stderr, string reportFile, string outputDir, List<MissionStep> originalSteps, string scriptText) {
+        private static MissionResult ParseGmatConsoleOutput(string stdout, string stderr, int exitCode, string reportFile, string outputDir, List<MissionStep> originalSteps, string scriptText) {
             var result = new MissionResult();
             result.solved_burns = new List<SolvedBurn>();
             result.trajectory = new List<TrajectoryPoint>();
@@ -133,8 +135,6 @@ namespace KSPGMAT.Service {
 
             // 1. Extract Converged Variables from Stdout (Final Variable values:)
             Dictionary<string, double> solvedVars = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
-            bool hasCompletedMarker = stdout.Contains("Targeting Completed in") || stdout.Contains("The Targeter converged!");
-            bool hasFailedMarker = stdout.Contains("Targeting failed to converge") || stdout.Contains("Exception");
 
             var varMatches = Regex.Matches(stdout, @"([A-Za-z_][\w.]*)\s*=\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)");
             foreach (Match m in varMatches) {
@@ -313,9 +313,25 @@ namespace KSPGMAT.Service {
                 }
             }
 
-            result.success = (result.trajectory.Count > 0 || solvedVars.Count > 0) && !hasFailedMarker;
+            bool hasTargetFail = stdout.Contains("Targeting failed to converge");
+            bool hasScriptError = stdout.Contains("**** ERROR ****") || stdout.Contains("Could not read script") || stdout.Contains("Console Application Execution Failed");
+            bool hasCompletedMarker = stdout.Contains("Mission run completed") || stdout.Contains("The Targeter converged!") || stdout.Contains("Targeting Completed in");
+
+            result.success = (exitCode == 0 && !hasTargetFail && !hasScriptError && (result.trajectory.Count > 0 || hasCompletedMarker));
             if (!result.success) {
-                result.error = !string.IsNullOrEmpty(stderr) ? stderr : "GmatConsole 打靶未收敛";
+                var sbErr = new StringBuilder();
+                var outLines = stdout.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                foreach (var l in outLines) {
+                    string tl = l.Trim();
+                    if (tl.Contains("**** ERROR ****") || tl.Contains("Exception") || tl.Contains("Targeting failed") || tl.Contains("Rvector error") || tl.Contains("Could not read script") || tl.Contains("Execution Failed")) {
+                        sbErr.AppendLine(tl);
+                    }
+                }
+                if (!string.IsNullOrEmpty(stderr)) sbErr.AppendLine(stderr);
+                string extracted = sbErr.ToString().Trim();
+
+                result.error = !string.IsNullOrEmpty(extracted) ? extracted : (!string.IsNullOrEmpty(stderr) ? stderr : "GmatConsole 打靶未收敛");
+                result.error_details = !string.IsNullOrEmpty(extracted) ? extracted : stdout;
             }
 
             return result;

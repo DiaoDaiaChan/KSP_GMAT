@@ -418,29 +418,6 @@ namespace KSPGMAT.Model {
                         else if (c == '\t') lineSb.Append("    ");
                     }
                     string cleaned = lineSb.ToString();
-
-                    // Fix invalid stop conditions (Sat.Earth.Node -> Sat.Earth.Latitude = 0.0)
-                    cleaned = cleaned.Replace("Sat.Earth.Node = 0.00", "Sat.Earth.Latitude = 0.0")
-                                     .Replace("Sat.Earth.Node = 0.0", "Sat.Earth.Latitude = 0.0")
-                                     .Replace("Sat.Earth.Node", "Sat.Earth.Latitude = 0.0");
-
-                    // Fix Sat[0-9]+ prefix (e.g. Sat3.RL10 -> Sat.RL10)
-                    cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, @"\bSat\d+\.", "Sat.");
-
-                    // Fix zero tolerance in Achieve
-                    cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, @"Tolerance\s*=\s*0(?!\.\d)", "Tolerance = 0.5");
-
-                    // Fix zero upper bounds in Vary
-                    cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, @"Lower\s*=\s*0(?:\.0*)?,\s*Upper\s*=\s*0(?:\.0*)?", "Lower = 10.0, Upper = 500.0");
-
-                    // Fix microscopic max step on time/duration variables (e.g. MaxStep = 0.1 on Duration) which stalls convergence
-                    cleaned = System.Text.RegularExpressions.Regex.Replace(
-                        cleaned,
-                        @"(Vary\s+\w+\((?:[A-Za-z0-9_]*Duration|[A-Za-z0-9_]*burntime|[A-Za-z0-9_]*Time)\s*=[^,]+,\s*\{[^}]*MaxStep\s*=\s*)0\.[0-9]+",
-                        "${1}10.0",
-                        System.Text.RegularExpressions.RegexOptions.IgnoreCase
-                    );
-
                     sb.AppendLine(cleaned);
                 }
             }
