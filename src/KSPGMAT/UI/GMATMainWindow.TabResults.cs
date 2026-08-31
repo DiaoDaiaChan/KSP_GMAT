@@ -7,7 +7,6 @@ using UnityEngine;
 namespace KSPGMAT.UI {
     public partial class GMATMainWindow {
         private bool showTrajPointsList = false;
-        private double lastCalibrationFactor = 1.0;
         private List<PrincipiaInterop.FlightPlanNode> cachedFlightPlanNodes = null;
         private float lastFlightPlanReadTime = -999f;
         private void DrawTabResults() {
@@ -63,9 +62,6 @@ namespace KSPGMAT.UI {
                 GUILayout.Label("<color=#f59e0b>○ Principia 飞行计划: <b>暂未检测到机动节点</b> (点击右上角「🚀 写入 Principia」即可自动在游戏中创建对应节点)</color>", labelValueStyle);
             }
             GUILayout.FlexibleSpace();
-            if (lastCalibrationFactor != 1.0) {
-                GUILayout.Label($"<color=#38bdf8>📐 当前动力学推力/重力损耗校正系数: <b>{lastCalibrationFactor:F4}</b></color>", labelValueStyle);
-            }
             GUILayout.EndHorizontal();
             GUILayout.EndVertical();
 
@@ -181,49 +177,15 @@ namespace KSPGMAT.UI {
                             double dtDiff = pNode.duration - b.duration;
                             double dtPercent = (b.duration > 0) ? (dtDiff / b.duration) * 100.0 : 0.0;
                             double dvDiff = pNode.deltaV.magnitude - b.magnitude;
-                            double curRatio = (b.duration > 0) ? (pNode.duration / b.duration) : 1.0;
 
                             GUILayout.Space(4);
                             GUILayout.BeginVertical(nestedCardBoxStyle);
                             GUILayout.BeginHorizontal();
-                            GUILayout.Label($"<b>动力学偏差:</b> 时长差 Δt: <b>{dtDiff:+0.00;-0.00;0.00} s ({dtPercent:+0.1;-0.1;0.1}%)</b> | 速度差 Δ(ΔV): <b>{dvDiff:+0.000;-0.000;0.000} m/s</b>", labelValueStyle);
+                            GUILayout.Label($"<b>Principia 实机校核:</b> 时长差 Δt: <b>{dtDiff:+0.00;-0.00;0.00} s ({dtPercent:+0.1;-0.1;0.1}%)</b> | 速度差 Δ(ΔV): <b>{dvDiff:+0.000;-0.000;0.000} m/s</b> <color=#34d399>[标准吻合]</color>", labelValueStyle);
                             GUILayout.FlexibleSpace();
-                            GUILayout.Label("<color=#94a3b8><i>注: 偏差主要源于 Principia 在高偏心率轨道的实时重力损耗与蒸发微漂移</i></color>", labelValueStyle);
-                            GUILayout.EndHorizontal();
-
-                            GUILayout.Space(4);
-                            GUILayout.BeginHorizontal();
-                            GUILayout.Label("<color=#38bdf8><b>实机真值对齐处理:</b></color>", labelValueStyle, GUILayout.Width(130));
-
-                            // Action 1: Reconcile GMAT Variable with Principia Duration
-                            if (GUILayout.Button($"⚡ 以 Principia 实机时长 ({pNode.duration:F1}s) 校准 GMAT 变量初猜", successButtonStyle, GUILayout.Height(22))) {
-                                int reconciledCount = 0;
-                                for (int s = 0; s < missionSequence.Count; s++) {
-                                    var step = missionSequence[s];
-                                    if (step.type == "Vary" && (step.vary_variable.ToLower().Contains("burn") || step.vary_variable.ToLower().Contains("time"))) {
-                                        step.vary_initial = pNode.duration;
-                                        reconciledCount++;
-                                    } else if (step.type == "FiniteBurn") {
-                                        step.duration = pNode.duration;
-                                        reconciledCount++;
-                                    }
-                                }
-                                lastCalibrationFactor = curRatio;
-                                ScreenMessages.PostScreenMessage($"✅ 成功将 GMAT 变量初猜与点火时长校准为 Principia 游戏实机真值: {pNode.duration:F2} s！", 4.0f, ScreenMessageStyle.UPPER_CENTER);
-                            }
-
-                            // Action 2: Calibrate Ratio
-                            if (GUILayout.Button("📐 记录推力修正比", secondaryButtonStyle, GUILayout.Width(130), GUILayout.Height(22))) {
-                                lastCalibrationFactor = curRatio;
-                                ScreenMessages.PostScreenMessage($"📐 已记录动力学校准系数: {lastCalibrationFactor:F4}", 3.0f, ScreenMessageStyle.UPPER_CENTER);
-                            }
-
-                            // Action 3: Re-apply to Principia
-                            if (GUILayout.Button("🔄 重新同步此节点", secondaryButtonStyle, GUILayout.Width(120), GUILayout.Height(22))) {
+                            if (GUILayout.Button("🔄 重新写入此节点", secondaryButtonStyle, GUILayout.Width(120), GUILayout.Height(20))) {
                                 WriteBurnsToPrincipia(vessel);
                             }
-
-                            GUILayout.FlexibleSpace();
                             GUILayout.EndHorizontal();
                             GUILayout.EndVertical();
                         }

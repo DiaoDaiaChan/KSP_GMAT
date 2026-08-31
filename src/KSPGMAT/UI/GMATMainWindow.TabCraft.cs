@@ -102,10 +102,10 @@ namespace KSPGMAT.UI {
 
                 GUILayout.Space(2);
                 GUILayout.Label("<color=#34d399><b>二、工程实践上：可以 100% 消除对任务成功的影响 (航天闭环协议)</b></color>", labelValueStyle);
-                GUILayout.Label("真实航天（阿波罗登月、嫦娥六号、阿耳忒弥斯）<b>没有任何一次任务是不依靠中途修正的</b>。工程标准解决方案为：", labelValueStyle);
-                GUILayout.Label("• <b>基准重合</b>: 采用本插件已实现的地心 ICRF/J2000 惯性坐标系与时间校准，使 t₀ 初始状态偏差达到 <b>0.000 米</b>；", labelValueStyle);
-                GUILayout.Label("• <b>实机真值对齐</b>: 在本插件「📈 变轨与轨迹明细」中点击「<b>以 Principia 实机时长校准 GMAT 变量</b>」，直接以游戏物理真值为中心迭代收敛；", labelValueStyle);
-                GUILayout.Label("• <b>中途修正 (TCM)</b>: 在地月中途安排 1~2 次仅消耗 1~3 m/s 的微量中途修正脉冲，完全抹平长途飞行中的微弱积分漂移！", labelValueStyle);
+                GUILayout.Label("真实航天（阿波罗登月、嫦娥六号、阿耳忒弥斯）<b>依靠高精度打靶与中途修正</b>。工程标准解决方案为：", labelValueStyle);
+                GUILayout.Label("• <b>基准对齐</b>: 采用本插件实现的地心 ICRF 惯性坐标系与历元对齐；", labelValueStyle);
+                GUILayout.Label("• <b>原生高精求解</b>: GMAT 原生微分修正器直接对真实发动机与质量进行高阶数值积分，求解精确有限点火参数；", labelValueStyle);
+                GUILayout.Label("• <b>中途修正 (TCM)</b>: 在地月中途安排微量修正脉冲，抹平长途飞行中的微弱积分漂移！", labelValueStyle);
                 GUILayout.EndVertical();
             }
 
