@@ -268,7 +268,6 @@ namespace KSPGMAT.Service {
             sb.AppendLine("% GMAT Mission Sequence Execution Control");
             sb.AppendLine("% -------------------------------------------------------------");
             sb.AppendLine("BeginMissionSequence;\n");
-            sb.AppendLine($"Report TrajReport {satName}.ElapsedSecs {satName}.X {satName}.Y {satName}.Z {satName}.VX {satName}.VY {satName}.VZ {satName}.{cBody}.Altitude {satName}.SMA {satName}.ECC {satName}.INC {satName}.RAAN {satName}.AOP {satName}.TA {satName}.TotalMass;");
 
             if (steps != null && steps.Count > 0) {
                 string currentDC = "DC";
@@ -385,6 +384,10 @@ namespace KSPGMAT.Service {
                     }
                 }
             }
+
+            // Final Native Trajectory and Orbital Elements Report
+            sb.AppendLine("% Trajectory & Orbital Parameters Report");
+            sb.AppendLine($"Report TrajReport {satName}.ElapsedSecs {satName}.X {satName}.Y {satName}.Z {satName}.VX {satName}.VY {satName}.VZ {satName}.{cBody}.Altitude {satName}.SMA {satName}.ECC {satName}.INC {satName}.RAAN {satName}.AOP {satName}.TA {satName}.TotalMass;");
 
             return sb.ToString();
         }
