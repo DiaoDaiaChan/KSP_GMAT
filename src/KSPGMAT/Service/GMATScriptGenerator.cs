@@ -268,6 +268,7 @@ namespace KSPGMAT.Service {
             sb.AppendLine("% GMAT Mission Sequence Execution Control");
             sb.AppendLine("% -------------------------------------------------------------");
             sb.AppendLine("BeginMissionSequence;\n");
+            sb.AppendLine($"Report TrajReport {satName}.ElapsedSecs {satName}.X {satName}.Y {satName}.Z {satName}.VX {satName}.VY {satName}.VZ {satName}.{cBody}.Altitude {satName}.SMA {satName}.ECC {satName}.INC {satName}.RAAN {satName}.AOP {satName}.TA {satName}.TotalMass;");
 
             if (steps != null && steps.Count > 0) {
                 string currentDC = "DC";
@@ -282,6 +283,7 @@ namespace KSPGMAT.Service {
                         string stopCond = FormatStopCondition(satName, cBody, st);
                         sb.AppendLine($"% Propagate ({pName})");
                         sb.AppendLine($"Propagate {pName}({satName}) {{{stopCond}}};");
+                        sb.AppendLine($"Report TrajReport {satName}.ElapsedSecs {satName}.X {satName}.Y {satName}.Z {satName}.VX {satName}.VY {satName}.VZ {satName}.{cBody}.Altitude {satName}.SMA {satName}.ECC {satName}.INC {satName}.RAAN {satName}.AOP {satName}.TA {satName}.TotalMass;");
                     }
                     else if (stype == "Target") {
                         currentDC = GMATParameterRegistry.SanitizeGmatIdentifier(st.dc_name ?? "DC", "DC");
@@ -314,6 +316,7 @@ namespace KSPGMAT.Service {
                         sb.AppendLine($"   BeginFiniteBurn {fbName}({satName});");
                         sb.AppendLine($"   Propagate {pName}({satName}) {{{satName}.ElapsedSecs = {durExpr}}};");
                         sb.AppendLine($"   EndFiniteBurn {fbName}({satName});");
+                        sb.AppendLine($"   Report TrajReport {satName}.ElapsedSecs {satName}.X {satName}.Y {satName}.Z {satName}.VX {satName}.VY {satName}.VZ {satName}.{cBody}.Altitude {satName}.SMA {satName}.ECC {satName}.INC {satName}.RAAN {satName}.AOP {satName}.TA {satName}.TotalMass;");
                     }
                     else if (stype == "ThrustVectorControl" || stype == "VaryThrustDirection") {
                         string eng = !string.IsNullOrEmpty(st.bound_thruster) && thrusterNames.Contains(st.bound_thruster) ? st.bound_thruster : (thrusterNames.Count > 1 ? thrusterNames[1] : thrusterNames[0]);
@@ -362,6 +365,7 @@ namespace KSPGMAT.Service {
                         string bName = GMATParameterRegistry.SanitizeGmatIdentifier(st.burn_name ?? st.label, "Burn1");
                         sb.AppendLine($"% Impulsive Maneuver ({bName})");
                         sb.AppendLine($"Maneuver {bName}({satName});");
+                        sb.AppendLine($"Report TrajReport {satName}.ElapsedSecs {satName}.X {satName}.Y {satName}.Z {satName}.VX {satName}.VY {satName}.VZ {satName}.{cBody}.Altitude {satName}.SMA {satName}.ECC {satName}.INC {satName}.RAAN {satName}.AOP {satName}.TA {satName}.TotalMass;");
                     }
                     else if (stype == "Equation" || stype == "Set") {
                         string vName = st.variable ?? "";
@@ -381,10 +385,6 @@ namespace KSPGMAT.Service {
                     }
                 }
             }
-
-            // Final Native Trajectory and Orbital Elements Report
-            sb.AppendLine("% Trajectory & Orbital Parameters Report");
-            sb.AppendLine($"Report TrajReport {satName}.ElapsedSecs {satName}.X {satName}.Y {satName}.Z {satName}.VX {satName}.VY {satName}.VZ {satName}.{cBody}.Altitude {satName}.SMA {satName}.ECC {satName}.INC {satName}.RAAN {satName}.AOP {satName}.TA {satName}.TotalMass;");
 
             return sb.ToString();
         }
