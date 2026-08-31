@@ -410,15 +410,21 @@ namespace KSPGMAT.Service {
             }
 
             // 2. GMAT Built-in Extrema Events
-            // Apoapsis and Periapsis in GMAT syntax are strictly: {Sat.Apoapsis}, {Sat.Periapsis} (no central body prefix)
-            if (cond.Equals("Apoapsis", StringComparison.OrdinalIgnoreCase) || cond.EndsWith(".Apoapsis", StringComparison.OrdinalIgnoreCase)) {
-                return $"{satName}.Apoapsis";
+            // Apoapsis and Periapsis in GMAT syntax can be {Sat.Earth.Apoapsis} or {Sat.Apoapsis}
+            if (cond.EndsWith(".Apoapsis", StringComparison.OrdinalIgnoreCase)) {
+                return $"{satName}.{cond}";
             }
-            if (cond.Equals("Periapsis", StringComparison.OrdinalIgnoreCase) || cond.EndsWith(".Periapsis", StringComparison.OrdinalIgnoreCase)) {
-                return $"{satName}.Periapsis";
+            if (cond.Equals("Apoapsis", StringComparison.OrdinalIgnoreCase)) {
+                return $"{satName}.{centralBody}.Apoapsis";
+            }
+            if (cond.EndsWith(".Periapsis", StringComparison.OrdinalIgnoreCase)) {
+                return $"{satName}.{cond}";
+            }
+            if (cond.Equals("Periapsis", StringComparison.OrdinalIgnoreCase)) {
+                return $"{satName}.{centralBody}.Periapsis";
             }
 
-            // Equatorial Nodes in GMAT syntax are strictly: {Sat.Earth.Latitude = 0.0}
+            // Equatorial Nodes in GMAT syntax are strictly: {Sat.Earth.Latitude = 0.0} or {Sat.EarthMJ2000Eq.Z = 0.0}
             if (cond.Equals("Node", StringComparison.OrdinalIgnoreCase) || cond.Equals("AN", StringComparison.OrdinalIgnoreCase) || cond.Equals("DN", StringComparison.OrdinalIgnoreCase) ||
                 cond.EndsWith(".Node", StringComparison.OrdinalIgnoreCase) || cond.EndsWith(".AN", StringComparison.OrdinalIgnoreCase) || cond.EndsWith(".DN", StringComparison.OrdinalIgnoreCase)) {
                 return $"{satName}.{centralBody}.Latitude = 0.0";

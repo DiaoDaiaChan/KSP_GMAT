@@ -668,9 +668,10 @@ namespace KSPGMAT {
             AllPropStopDefs = new List<PropStopDef> {
                 new PropStopDef("Time", "⏱️ 飞行秒数 (ElapsedSecs) [s]", "⏱️ 时间与历元", "s", "推进指定秒数", false, 3600.0, 1e-5),
                 new PropStopDef("Days", "📅 飞行天数 (ElapsedDays) [Day]", "⏱️ 时间与历元", "Day", "推进指定天数", false, 3.0, 1e-5),
-                new PropStopDef("Apoapsis", "🔺 远拱点 (Apoapsis)", "🪐 轨道极值与交点", "", "自动积分至远地点/远月点", true, 0.0, 1e-5),
-                new PropStopDef("Periapsis", "🔻 近拱点 (Periapsis)", "🪐 轨道极值与交点", "", "自动积分至近地点/近月点", true, 0.0, 1e-5),
-                new PropStopDef("Node", "🧭 赤道交点 (Latitude = 0°) [°]", "🪐 轨道极值与交点", "°", "自动积分至赤道交点", false, 0.0, 1e-5),
+                new PropStopDef("Apoapsis", "🔺 远拱点 (Apoapsis)", "🪐 轨道极值与交点", "", "自动积分至远心点/远地点", true, 0.0, 1e-5),
+                new PropStopDef("Periapsis", "🔻 近拱点 (Periapsis)", "🪐 轨道极值与交点", "", "自动积分至近心点/近地点", true, 0.0, 1e-5),
+                new PropStopDef("Latitude", "🧭 赤道升降交点 (Latitude = 0°)", "🪐 轨道极值与交点", "°", "自动积分至赤道面升降交点", false, 0.0, 1e-5),
+                new PropStopDef("EarthMJ2000Eq.Z", "🧭 J2000 赤道面交点 (Z = 0 Km)", "🪐 轨道极值与交点", "Km", "自动积分至 J2000 赤道面交点", false, 0.0, 1e-5),
                 new PropStopDef("TA", "📐 真近点角 (TA) [°]", "🌐 轨道根数", "°", "真近点角 0~360°", false, 180.0, 1e-4),
                 new PropStopDef("SMA", "🌐 半长轴 (SMA) [Km]", "🌐 轨道根数", "Km", "半长轴", false, 7000.0, 0.1),
                 new PropStopDef("Altitude", "📏 距地高度 (Altitude) [Km]", "📏 空间距离与高度", "Km", "距地几何高度", false, 400.0, 0.1),
