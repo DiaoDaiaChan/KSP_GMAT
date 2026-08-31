@@ -356,12 +356,27 @@ namespace KSPGMAT.UI {
                         if (step.type == "FiniteBurn" || step.type == "ImpulsiveBurn" || step.type == "Maneuver") break;
                         if (step.type == "Propagate") {
                             string cond = (step.stop_type ?? "").ToLower();
-                            if (cond.Contains("latitude") || cond.Contains("node") || cond.Contains("equator") || cond.Contains("dn")) {
+                            if (cond.Contains("an") || cond.Contains("ascending")) {
+                                targetEpoch = GetNextANTime(orb, currentUT);
+                                snapped = true;
+                                break;
+                            } else if (cond.Contains("dn") || cond.Contains("descending")) {
                                 targetEpoch = GetNextDNTime(orb, currentUT);
                                 snapped = true;
                                 break;
-                            } else if (cond.Contains("an") || cond.Contains("ascending")) {
-                                targetEpoch = GetNextANTime(orb, currentUT);
+                            } else if (cond.Contains("latitude") || cond.Contains("node") || cond.Contains("equator") || cond.Contains("z_")) {
+                                double omega = orb.argumentOfPeriapsis;
+                                double taAN = (360.0 - omega) % 360.0; if (taAN < 0.0) taAN += 360.0;
+                                double taDN = (180.0 - omega) % 360.0; if (taDN < 0.0) taDN += 360.0;
+                                double dtAN = GetTimeToTrueAnomaly(orb, taAN);
+                                double dtDN = GetTimeToTrueAnomaly(orb, taDN);
+
+                                // If GMAT's epoch offset is closer to dtAN, snap to AN; else snap to DN
+                                if (Math.Abs(burn.epoch_offset - dtAN) <= Math.Abs(burn.epoch_offset - dtDN)) {
+                                    targetEpoch = currentUT + dtAN;
+                                } else {
+                                    targetEpoch = currentUT + dtDN;
+                                }
                                 snapped = true;
                                 break;
                             } else if (cond.Contains("apo") || cond.Contains("ap")) {
