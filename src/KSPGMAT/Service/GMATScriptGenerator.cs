@@ -357,7 +357,10 @@ namespace KSPGMAT.Service {
                         sb.AppendLine($"{st.variable} = {st.expression};");
                     }
                     else if (stype == "Report") {
-                        sb.AppendLine($"Report TrajReport {st.expression ?? $"{satName}.ElapsedSecs {satName}.X {satName}.Y {satName}.Z {satName}.VX {satName}.VY {satName}.VZ"};");
+                        if (!string.IsNullOrWhiteSpace(st.expression)) {
+                            string sub = !string.IsNullOrEmpty(st.subscriber_name) ? st.subscriber_name : "TrajReport";
+                            sb.AppendLine($"Report {sub} {st.expression};");
+                        }
                     }
                 }
             } else {

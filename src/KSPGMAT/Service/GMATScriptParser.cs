@@ -31,6 +31,8 @@ namespace KSPGMAT.Service {
                 return result;
             }
 
+            result.raw_script_content = scriptContent;
+
             var lines = scriptContent.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
             bool inMissionSeq = false;
             string primaryCraft = null;
@@ -125,13 +127,21 @@ namespace KSPGMAT.Service {
                                 else if (prop.Equals("Cr", StringComparison.OrdinalIgnoreCase) && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double cr)) result.craft_cr = cr;
                                 else if (prop.Equals("SRPArea", StringComparison.OrdinalIgnoreCase) && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double srp)) result.craft_srp_area = srp;
                                 else if (prop.Equals("Epoch", StringComparison.OrdinalIgnoreCase)) result.craft_epoch = rhs;
+                                else if (prop.Equals("DateFormat", StringComparison.OrdinalIgnoreCase)) result.craft_date_format = rhs;
                                 else if (prop.Equals("CoordinateSystem", StringComparison.OrdinalIgnoreCase)) result.craft_coord_system = rhs;
+                                else if (prop.Equals("DisplayStateType", StringComparison.OrdinalIgnoreCase)) result.craft_state_type = rhs;
                                 else if (prop.Equals("X", StringComparison.OrdinalIgnoreCase) && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double x)) result.craft_x = x;
                                 else if (prop.Equals("Y", StringComparison.OrdinalIgnoreCase) && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double y)) result.craft_y = y;
                                 else if (prop.Equals("Z", StringComparison.OrdinalIgnoreCase) && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double z)) result.craft_z = z;
                                 else if (prop.Equals("VX", StringComparison.OrdinalIgnoreCase) && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double vx)) result.craft_vx = vx;
                                 else if (prop.Equals("VY", StringComparison.OrdinalIgnoreCase) && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double vy)) result.craft_vy = vy;
                                 else if (prop.Equals("VZ", StringComparison.OrdinalIgnoreCase) && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double vz)) result.craft_vz = vz;
+                                else if (prop.Equals("SMA", StringComparison.OrdinalIgnoreCase) && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double sma)) result.craft_sma = sma;
+                                else if (prop.Equals("ECC", StringComparison.OrdinalIgnoreCase) && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double ecc)) result.craft_ecc = ecc;
+                                else if (prop.Equals("INC", StringComparison.OrdinalIgnoreCase) && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double inc)) result.craft_inc = inc;
+                                else if (prop.Equals("RAAN", StringComparison.OrdinalIgnoreCase) && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double raan)) result.craft_raan = raan;
+                                else if (prop.Equals("AOP", StringComparison.OrdinalIgnoreCase) && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double aop)) result.craft_aop = aop;
+                                else if (prop.Equals("TA", StringComparison.OrdinalIgnoreCase) && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double ta)) result.craft_ta = ta;
                             }
 
                             // Tank properties
@@ -155,6 +165,10 @@ namespace KSPGMAT.Service {
                                     else if (prop.Equals("ThrustDirection1", StringComparison.OrdinalIgnoreCase) && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double d1)) kvp.Value.ThrustDirection1 = d1;
                                     else if (prop.Equals("ThrustDirection2", StringComparison.OrdinalIgnoreCase) && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double d2)) kvp.Value.ThrustDirection2 = d2;
                                     else if (prop.Equals("ThrustDirection3", StringComparison.OrdinalIgnoreCase) && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double d3)) kvp.Value.ThrustDirection3 = d3;
+                                    else if (prop.Equals("DecrementMass", StringComparison.OrdinalIgnoreCase) && bool.TryParse(rhs, out bool dm)) kvp.Value.DecrementMass = dm;
+                                    else if (prop.Equals("Axes", StringComparison.OrdinalIgnoreCase)) kvp.Value.Axes = rhs;
+                                    else if (prop.Equals("Origin", StringComparison.OrdinalIgnoreCase)) kvp.Value.Origin = rhs;
+                                    else if (prop.Equals("CoordinateSystem", StringComparison.OrdinalIgnoreCase)) kvp.Value.CoordinateSystem = rhs;
                                 }
                             }
 
@@ -374,6 +388,36 @@ namespace KSPGMAT.Service {
                             burn_name = bName,
                             label = $"Maneuver ({bName})"
                         });
+                    }
+
+                    // 8. Report Command
+                    var repMatch = Regex.Match(rawLine, @"Report\s+([A-Za-z0-9_]+)\s*(.*);?", RegexOptions.IgnoreCase);
+                    if (repMatch.Success) {
+                        string subName = repMatch.Groups[1].Value;
+                        string repParams = repMatch.Groups[2].Value.Trim().TrimEnd(';');
+                        if (!subName.Equals("TrajReport", StringComparison.OrdinalIgnoreCase)) {
+                            result.sequence.Add(new MissionStep {
+                                type = "Report",
+                                subscriber_name = subName,
+                                expression = repParams,
+                                label = $"Report ({subName})"
+                            });
+                        }
+                    }
+
+                    // 9. Equation / Assignment Command (e.g. Sat.DryMass = 1200 or burntime = 150)
+                    if (rawLine.Contains("=") && !rawLine.StartsWith("Propagate", StringComparison.OrdinalIgnoreCase) && !rawLine.StartsWith("Vary", StringComparison.OrdinalIgnoreCase) && !rawLine.StartsWith("Achieve", StringComparison.OrdinalIgnoreCase) && !rawLine.StartsWith("Target", StringComparison.OrdinalIgnoreCase)) {
+                        var eqMatch = Regex.Match(rawLine, @"([A-Za-z0-9_.]+)\s*=\s*([^;]+);?");
+                        if (eqMatch.Success) {
+                            string lhs = eqMatch.Groups[1].Value.Trim();
+                            string rhs = eqMatch.Groups[2].Value.Trim();
+                            result.sequence.Add(new MissionStep {
+                                type = "Equation",
+                                variable = lhs,
+                                expression = rhs,
+                                label = $"{lhs} = {rhs}"
+                            });
+                        }
                     }
                 }
             }

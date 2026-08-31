@@ -54,13 +54,22 @@ namespace KSPGMAT {
         public double craft_cr = 1.8;
         public double craft_srp_area = 15.0;
         public string craft_epoch = "";
+        public string craft_date_format = "UTCGregorian";
         public string craft_coord_system = "EarthMJ2000Eq";
+        public string craft_state_type = "Cartesian";
         public double craft_x = 0.0;
         public double craft_y = 0.0;
         public double craft_z = 0.0;
         public double craft_vx = 0.0;
         public double craft_vy = 0.0;
         public double craft_vz = 0.0;
+        public double craft_sma = 0.0;
+        public double craft_ecc = 0.0;
+        public double craft_inc = 0.0;
+        public double craft_raan = 0.0;
+        public double craft_aop = 0.0;
+        public double craft_ta = 0.0;
+        public string raw_script_content = "";
     }
 
     [Serializable]

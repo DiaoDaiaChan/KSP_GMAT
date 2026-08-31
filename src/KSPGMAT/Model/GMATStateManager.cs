@@ -38,6 +38,12 @@ namespace KSPGMAT.Model {
         public bool IsActiveOrIgnited { get; set; } = false;
         public string PropellantDesc { get; set; } = "LiquidFuel+Oxidizer";
         public double FuelDensityKgM3 { get; set; } = 1000.0;
+        public string CoordinateSystem { get; set; } = "Local";
+        public string Origin { get; set; } = "Earth";
+        public string Axes { get; set; } = "VNB";
+        public double DutyCycle { get; set; } = 1.0;
+        public double ThrustScaleFactor { get; set; } = 1.0;
+        public double GravitationalAccel { get; set; } = 9.80665;
     }
 
     /// <summary>
