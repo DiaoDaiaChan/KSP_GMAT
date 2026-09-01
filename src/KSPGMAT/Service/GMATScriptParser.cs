@@ -284,16 +284,20 @@ namespace KSPGMAT.Service {
                             label = $"Propagate ({pName})"
                         };
 
-                        if (stopCond.Contains("ElapsedSecs") || stopCond.Contains("ElapsedDays") || stopCond.Contains("=")) {
+                        if (stopCond.Contains("=")) {
                             var parts = stopCond.Split('=');
                             st.stop_type = parts[0].Trim();
                             string rVal = parts.Length > 1 ? parts[1].Trim() : "3600.0";
+                            st.target_val_str = rVal;
+                            st.duration_str = rVal;
                             if (double.TryParse(rVal, NumberStyles.Any, CultureInfo.InvariantCulture, out double dur)) {
                                 if (st.stop_type.Contains("ElapsedDays")) st.duration = dur * 86400.0;
                                 else st.duration = dur;
                                 st.target_val = dur;
+                                st.burn_use_vary_var = false;
                             } else {
                                 st.duration_str = rVal;
+                                st.target_val_str = rVal;
                                 st.burn_use_vary_var = true;
                                 st.burn_vary_var_name = rVal;
                             }

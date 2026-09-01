@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Text;
 using UnityEngine;
@@ -1508,10 +1509,48 @@ namespace KSPGMAT.UI {
                     GUILayout.Label("<color=#34d399><b>● 极值事件 (自动精确积分至最高/低点，无需设值)</b></color>", labelValueStyle);
                 } else {
                     GUILayout.Space(8);
-                    GUILayout.Label("<color=#94a3b8>目标阈值:</color>", gridLabelStyle, GUILayout.Width(60));
-                    double defTVal = step.target_val != 0.0 ? step.target_val : (step.duration > 0 ? (step.stop_type != null && step.stop_type.Contains("Days") ? (step.duration / 86400.0) : step.duration) : 0.0);
-                    step.target_val = DrawDelayedNumericField($"prop_tval_{i}", defTVal, numericInputStyle, GUILayout.Width(95), "G");
-                    step.duration = step.target_val;
+                    GUILayout.Label("<color=#94a3b8>目标阈值 / 变量:</color>", gridLabelStyle, GUILayout.Width(95));
+
+                    GUI.SetNextControlName($"Field_PropVal_{i}");
+                    string prevValStr = !string.IsNullOrEmpty(step.target_val_str) 
+                        ? step.target_val_str 
+                        : (!string.IsNullOrEmpty(step.duration_str) 
+                            ? step.duration_str 
+                            : (step.target_val != 0.0 
+                                ? step.target_val.ToString("G", CultureInfo.InvariantCulture) 
+                                : (step.duration > 0.0 ? step.duration.ToString("G", CultureInfo.InvariantCulture) : "3600")));
+
+                    string newValStr = GUILayout.TextField(prevValStr, GUILayout.MinWidth(100), GUILayout.Width(130), GUILayout.Height(20));
+
+                    if (Event.current.type == EventType.Repaint) {
+                        if (GUI.GetNameOfFocusedControl() == $"Field_PropVal_{i}") {
+                            Rect r = GUILayoutUtility.GetLastRect();
+                            Vector2 sp = GUIUtility.GUIToScreenPoint(new Vector2(r.x, r.y));
+                            intelliSenseAnchorRect = new Rect(sp.x, sp.y, r.width, r.height);
+                        }
+                    }
+
+                    if (newValStr != prevValStr || (GUI.GetNameOfFocusedControl() == $"Field_PropVal_{i}" && !intelliSenseOpen && !intelliSenseDismissed)) {
+                        step.target_val_str = newValStr;
+                        step.duration_str = newValStr;
+                        if (double.TryParse(newValStr, NumberStyles.Any, CultureInfo.InvariantCulture, out double dVal)) {
+                            step.target_val = dVal;
+                            step.duration = dVal;
+                            step.burn_use_vary_var = false;
+                        } else {
+                            step.burn_use_vary_var = true;
+                            step.burn_vary_var_name = newValStr;
+                        }
+                        TriggerIntelliSense(newValStr, "prop_val", i);
+                    }
+
+                    // Variable Name Reference Badge
+                    if (GMATStateManager.Current != null && GMATStateManager.Current.Variables != null) {
+                        var matchedVar = GMATStateManager.Current.Variables.Find(v => v.Name.Equals(newValStr, StringComparison.OrdinalIgnoreCase));
+                        if (matchedVar != null) {
+                            GUILayout.Label($"<color=#facc15><b>[变量: {matchedVar.Name} = {matchedVar.InitialValue}]</b></color>", labelValueStyle);
+                        }
+                    }
                 }
 
                 GUILayout.FlexibleSpace();
@@ -1820,7 +1859,29 @@ namespace KSPGMAT.UI {
                 step.burn_use_vary_var = GUILayout.Toggle(step.burn_use_vary_var, " 使用 Vary 变量控制时长", GUILayout.Width(160));
                 if (step.burn_use_vary_var) {
                     GUILayout.Label("<color=#94a3b8>变量名:</color>", gridLabelStyle, GUILayout.Width(45));
-                    step.burn_vary_var_name = GUILayout.TextField(string.IsNullOrEmpty(step.burn_vary_var_name) ? (!string.IsNullOrEmpty(step.duration_str) ? step.duration_str : "burntime") : step.burn_vary_var_name, stepLabelInputStyle ?? GUI.skin.textField, GUILayout.MinWidth(85), GUILayout.Width(110), GUILayout.Height(20));
+                    GUI.SetNextControlName($"Field_FBurnVar_{i}");
+                    string prevVarName = string.IsNullOrEmpty(step.burn_vary_var_name) ? (!string.IsNullOrEmpty(step.duration_str) ? step.duration_str : "burntime") : step.burn_vary_var_name;
+                    string newVarName = GUILayout.TextField(prevVarName, stepLabelInputStyle ?? GUI.skin.textField, GUILayout.MinWidth(85), GUILayout.Width(110), GUILayout.Height(20));
+
+                    if (Event.current.type == EventType.Repaint) {
+                        if (GUI.GetNameOfFocusedControl() == $"Field_FBurnVar_{i}") {
+                            Rect r = GUILayoutUtility.GetLastRect();
+                            Vector2 sp = GUIUtility.GUIToScreenPoint(new Vector2(r.x, r.y));
+                            intelliSenseAnchorRect = new Rect(sp.x, sp.y, r.width, r.height);
+                        }
+                    }
+                    if (newVarName != prevVarName || (GUI.GetNameOfFocusedControl() == $"Field_FBurnVar_{i}" && !intelliSenseOpen && !intelliSenseDismissed)) {
+                        step.burn_vary_var_name = newVarName;
+                        step.duration_str = newVarName;
+                        TriggerIntelliSense(newVarName, "fburn_var", i);
+                    }
+
+                    if (GMATStateManager.Current != null && GMATStateManager.Current.Variables != null) {
+                        var matchedVar = GMATStateManager.Current.Variables.Find(v => v.Name.Equals(newVarName, StringComparison.OrdinalIgnoreCase));
+                        if (matchedVar != null) {
+                            GUILayout.Label($"<color=#facc15><b>[变量: {matchedVar.Name} = {matchedVar.InitialValue}]</b></color>", labelValueStyle);
+                        }
+                    }
                 } else {
                     GUILayout.Label("<color=#94a3b8>固定时长 (s):</color>", gridLabelStyle, GUILayout.Width(75));
                     step.duration = DrawDelayedNumericField($"fburn_dur_{i}", step.duration, numericInputStyle, GUILayout.Width(80), "F1");
@@ -2486,6 +2547,29 @@ namespace KSPGMAT.UI {
                         step.vary_upper = item.RecommendedValue * 5.0;
                     }
                     pendingFocusControl = $"Field_Vary_{intelliSenseTargetStepIndex}";
+                    GUI.FocusControl(pendingFocusControl);
+                } else if (intelliSenseFieldName == "prop_val") {
+                    step.target_val_str = item.InsertText;
+                    step.duration_str = item.InsertText;
+                    if (item.Kind == IntelliSenseKind.Variable) {
+                        step.burn_use_vary_var = true;
+                        step.burn_vary_var_name = item.InsertText;
+                        if (item.RecommendedValue != 0) {
+                            step.target_val = item.RecommendedValue;
+                            step.duration = item.RecommendedValue;
+                        }
+                    } else if (item.RecommendedValue != 0) {
+                        step.target_val = item.RecommendedValue;
+                        step.duration = item.RecommendedValue;
+                        step.burn_use_vary_var = false;
+                    }
+                    pendingFocusControl = $"Field_PropVal_{intelliSenseTargetStepIndex}";
+                    GUI.FocusControl(pendingFocusControl);
+                } else if (intelliSenseFieldName == "fburn_var") {
+                    step.burn_vary_var_name = item.InsertText;
+                    step.duration_str = item.InsertText;
+                    step.burn_use_vary_var = true;
+                    pendingFocusControl = $"Field_FBurnVar_{intelliSenseTargetStepIndex}";
                     GUI.FocusControl(pendingFocusControl);
                 }
             }
