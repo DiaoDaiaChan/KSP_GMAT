@@ -6,28 +6,69 @@ using KSPGMAT.Model;
 
 namespace KSPGMAT.UI {
     public partial class GMATMainWindow {
-        private double DrawDoubleField(string label, double val, float labelW = 110, float fieldW = 90, string format = null) {
+        private static Dictionary<string, string> smartFieldBuffers = new Dictionary<string, string>();
+        private static string activeSmartControlId = null;
+
+        private double DrawDoubleField(string label, double val, float labelW = 110, float fieldW = 90, string format = "auto", string customId = null) {
             GUILayout.BeginHorizontal();
             if (!string.IsNullOrEmpty(label)) GUILayout.Label(label, labelValueStyle, GUILayout.Width(labelW));
-            string formatted;
-            if (!string.IsNullOrEmpty(format)) {
-                formatted = val.ToString(format, System.Globalization.CultureInfo.InvariantCulture);
-            } else {
-                formatted = (val == 0.0) ? "0.0" :
-                            (Math.Abs(val) < 1e-4) ? val.ToString("E2", System.Globalization.CultureInfo.InvariantCulture) :
-                            (Math.Abs(val) >= 10000.0) ? val.ToString("F1", System.Globalization.CultureInfo.InvariantCulture) :
-                            (Math.Abs(val) >= 100.0) ? val.ToString("F2", System.Globalization.CultureInfo.InvariantCulture) :
-                            val.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
+            
+            string ctrlId = !string.IsNullOrEmpty(customId) ? customId : ("res_field_" + (label ?? "num").GetHashCode());
+            GUI.SetNextControlName(ctrlId);
+            bool isFocused = (GUI.GetNameOfFocusedControl() == ctrlId);
+
+            string currentBuf;
+            if (!smartFieldBuffers.TryGetValue(ctrlId, out currentBuf)) {
+                currentBuf = FormatSmartDoubleForDisplay(val, format);
+                smartFieldBuffers[ctrlId] = currentBuf;
             }
-            string txt = GUILayout.TextField(formatted, numericInputStyle ?? GUI.skin.textField, GUILayout.Width(fieldW));
-            double res;
-            if (double.TryParse(txt, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out res)) {
-                if (res != 0.0 || val == 0.0) {
+
+            if (!isFocused) {
+                if (activeSmartControlId == ctrlId) {
+                    activeSmartControlId = null;
+                }
+                currentBuf = FormatSmartDoubleForDisplay(val, format);
+                smartFieldBuffers[ctrlId] = currentBuf;
+            } else {
+                // When focused, expand to raw data string if newly entered
+                if (activeSmartControlId != ctrlId) {
+                    activeSmartControlId = ctrlId;
+                    currentBuf = (val == 0.0) ? "0.0" : val.ToString("G", System.Globalization.CultureInfo.InvariantCulture);
+                    smartFieldBuffers[ctrlId] = currentBuf;
+                }
+            }
+
+            string edited = GUILayout.TextField(currentBuf, numericInputStyle ?? GUI.skin.textField, GUILayout.Width(fieldW), GUILayout.Height(20));
+            if (edited != currentBuf) {
+                smartFieldBuffers[ctrlId] = edited;
+                double res;
+                if (double.TryParse(edited, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out res)) {
                     val = res;
                 }
             }
             GUILayout.EndHorizontal();
             return val;
+        }
+
+        private static string FormatSmartDoubleForDisplay(double val, string format = "auto") {
+            if (val == 0.0) return "0.0";
+            if (format != "auto") {
+                return val.ToString(format, System.Globalization.CultureInfo.InvariantCulture);
+            }
+            double abs = Math.Abs(val);
+            if (abs < 1e-4) {
+                return val.ToString("E2", System.Globalization.CultureInfo.InvariantCulture); // e.g. 1.00E-11
+            }
+            if (abs >= 10000.0) {
+                return val.ToString("F1", System.Globalization.CultureInfo.InvariantCulture); // e.g. 35786.0
+            }
+            if (abs >= 100.0) {
+                return val.ToString("F2", System.Globalization.CultureInfo.InvariantCulture); // e.g. 6282.84
+            }
+            if (abs >= 1.0) {
+                return val.ToString("F2", System.Globalization.CultureInfo.InvariantCulture); // e.g. 2.16
+            }
+            return val.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture); // e.g. 0.0001
         }
 
         private string DrawTextField(string label, string val, float labelW = 110, float fieldW = 120) {
@@ -163,17 +204,17 @@ namespace KSPGMAT.UI {
                 GUILayout.Space(2);
                 double effDryMass = scModel.DryMassKg > 0 ? scModel.DryMassKg : totalDryMassKg;
                 GUILayout.BeginHorizontal();
-                double newDry = DrawDoubleField("干重 DryMass (kg):", effDryMass, 140, 100);
+                double newDry = DrawDoubleField("干重 DryMass (kg):", effDryMass, 140, 100, "F2", "sc_dry_mass");
                 if (newDry != effDryMass) scModel.DryMassKg = newDry;
                 GUILayout.Label($"燃料质量 FuelMass: <b>{totalFuelMassKg:F1} kg</b>", labelValueStyle, GUILayout.Width(180));
                 GUILayout.Label($"总湿重 WetMass: <b>{(effDryMass + totalFuelMassKg):F1} kg</b>", labelValueStyle);
                 GUILayout.EndHorizontal();
 
                 GUILayout.BeginHorizontal();
-                scModel.DragArea = DrawDoubleField("迎风面积 DragArea (m²):", scModel.DragArea, 140, 100);
-                scModel.Cd = DrawDoubleField("阻力系数 Cd:", scModel.Cd, 100, 70);
-                scModel.Cr = DrawDoubleField("光压系数 Cr:", scModel.Cr, 100, 70);
-                scModel.SRPArea = DrawDoubleField("光压面积 SRPArea (m²):", scModel.SRPArea, 140, 70);
+                scModel.DragArea = DrawDoubleField("迎风面积 DragArea (m²):", scModel.DragArea, 140, 100, "F2", "sc_drag_area");
+                scModel.Cd = DrawDoubleField("阻力系数 Cd:", scModel.Cd, 100, 70, "F2", "sc_cd");
+                scModel.Cr = DrawDoubleField("光压系数 Cr:", scModel.Cr, 100, 70, "F2", "sc_cr");
+                scModel.SRPArea = DrawDoubleField("光压面积 SRPArea (m²):", scModel.SRPArea, 140, 70, "F2", "sc_srp_area");
                 GUILayout.EndHorizontal();
                 GUILayout.EndVertical();
 
@@ -244,9 +285,9 @@ namespace KSPGMAT.UI {
                         GUILayout.EndHorizontal();
 
                         GUILayout.BeginHorizontal();
-                        tnk.FuelMassKg = DrawDoubleField("燃料质量 (kg):", tnk.FuelMassKg, 90, 75, "F2");
-                        tnk.DryMassKg = DrawDoubleField("结构干重 (kg):", tnk.DryMassKg, 90, 70, "F2");
-                        tnk.VolumeM3 = DrawDoubleField("容积 (m³):", tnk.VolumeM3, 70, 65, "0.###");
+                        tnk.FuelMassKg = DrawDoubleField("燃料质量 (kg):", tnk.FuelMassKg, 90, 80, "F2", $"tank_fuel_{tk}_{tnk.Id}");
+                        tnk.DryMassKg = DrawDoubleField("结构干重 (kg):", tnk.DryMassKg, 90, 70, "F2", $"tank_dry_{tk}_{tnk.Id}");
+                        tnk.VolumeM3 = DrawDoubleField("容积 (m³):", tnk.VolumeM3, 70, 60, "F3", $"tank_vol_{tk}_{tnk.Id}");
                         GUILayout.FlexibleSpace();
                         GUILayout.EndHorizontal();
                         GUILayout.EndVertical();
@@ -277,8 +318,8 @@ namespace KSPGMAT.UI {
                         GUILayout.EndHorizontal();
 
                         GUILayout.BeginHorizontal();
-                        eng.ThrustKN = DrawDoubleField("真空推力 (kN):", eng.ThrustKN, 95, 75);
-                        eng.IspVac = DrawDoubleField("真空比冲 (s):", eng.IspVac, 85, 65);
+                        eng.ThrustKN = DrawDoubleField("真空推力 (kN):", eng.ThrustKN, 95, 75, "F2", $"thr_thrust_{eg}_{eng.Id}");
+                        eng.IspVac = DrawDoubleField("真空比冲 (s):", eng.IspVac, 85, 65, "F1", $"thr_isp_{eg}_{eng.Id}");
                         
                         // Bound Tank Switcher
                         GUILayout.Label($"供油储罐: <b>{{{eng.BoundTankId}}}</b>", labelValueStyle, GUILayout.Width(130));
@@ -338,9 +379,9 @@ namespace KSPGMAT.UI {
 
                         GUILayout.BeginHorizontal();
                         st.burn_direction = DrawTextField("点火方向模式:", st.burn_direction, 100, 100);
-                        st.thrust_dir1 = DrawDoubleField("V(向):", st.thrust_dir1, 50, 50);
-                        st.thrust_dir2 = DrawDoubleField("N(法):", st.thrust_dir2, 50, 50);
-                        st.thrust_dir3 = DrawDoubleField("B(径):", st.thrust_dir3, 50, 50);
+                        st.thrust_dir1 = DrawDoubleField("V(向):", st.thrust_dir1, 50, 50, "F3", $"fb_v_{i}_{st.burn_name}");
+                        st.thrust_dir2 = DrawDoubleField("N(法):", st.thrust_dir2, 50, 50, "F3", $"fb_n_{i}_{st.burn_name}");
+                        st.thrust_dir3 = DrawDoubleField("B(径):", st.thrust_dir3, 50, 50, "F3", $"fb_b_{i}_{st.burn_name}");
                         GUILayout.FlexibleSpace();
                         GUILayout.EndHorizontal();
                         GUILayout.EndVertical();
@@ -373,10 +414,10 @@ namespace KSPGMAT.UI {
                         GUILayout.EndHorizontal();
 
                         GUILayout.BeginHorizontal();
-                        imp.Element1 = DrawDoubleField("ΔV1 (km/s):", imp.Element1, 80, 60);
-                        imp.Element2 = DrawDoubleField("ΔV2 (km/s):", imp.Element2, 80, 60);
-                        imp.Element3 = DrawDoubleField("ΔV3 (km/s):", imp.Element3, 80, 60);
-                        imp.Isp = DrawDoubleField("比冲 (s):", imp.Isp, 60, 60);
+                        imp.Element1 = DrawDoubleField("ΔV1 (km/s):", imp.Element1, 80, 60, "F4", $"imp_v1_{ib}_{imp.Name}");
+                        imp.Element2 = DrawDoubleField("ΔV2 (km/s):", imp.Element2, 80, 60, "F4", $"imp_v2_{ib}_{imp.Name}");
+                        imp.Element3 = DrawDoubleField("ΔV3 (km/s):", imp.Element3, 80, 60, "F4", $"imp_v3_{ib}_{imp.Name}");
+                        imp.Isp = DrawDoubleField("比冲 (s):", imp.Isp, 60, 60, "F1", $"imp_isp_{ib}_{imp.Name}");
                         GUILayout.FlexibleSpace();
                         GUILayout.EndHorizontal();
                         GUILayout.EndVertical();
@@ -437,9 +478,9 @@ namespace KSPGMAT.UI {
 
                     GUILayout.BeginHorizontal();
                     cfg.integratorType = DrawTextField("积分器类型:", cfg.integratorType, 80, 130);
-                    cfg.accuracy = DrawDoubleField("精度/容差:", cfg.accuracy, 80, 90);
-                    cfg.minStep = DrawDoubleField("最小步长(s):", cfg.minStep, 90, 60);
-                    cfg.maxStep = DrawDoubleField("最大步长(s):", cfg.maxStep, 90, 70);
+                    cfg.accuracy = DrawDoubleField("精度/容差:", cfg.accuracy, 80, 90, "E2", $"prop_acc_{pKey}");
+                    cfg.minStep = DrawDoubleField("最小步长(s):", cfg.minStep, 90, 60, "F3", $"prop_min_{pKey}");
+                    cfg.maxStep = DrawDoubleField("最大步长(s):", cfg.maxStep, 90, 70, "F1", $"prop_max_{pKey}");
                     GUILayout.FlexibleSpace();
                     GUILayout.EndHorizontal();
 
@@ -631,7 +672,7 @@ namespace KSPGMAT.UI {
                         GUILayout.BeginVertical(nestedCardBoxStyle);
                         GUILayout.BeginHorizontal();
                         uvar.Name = DrawTextField("<color=#facc15><b>变量名:</b></color>", uvar.Name, 60, 140);
-                        uvar.InitialValue = DrawDoubleField("初值:", uvar.InitialValue, 50, 90);
+                        uvar.InitialValue = DrawDoubleField("初值:", uvar.InitialValue, 50, 90, "auto", $"uvar_val_{v}_{uvar.Name}");
                         GUILayout.FlexibleSpace();
                         if (GUILayout.Button("❌ 删除", deleteButtonStyle, GUILayout.Height(18), GUILayout.Width(50))) {
                             vars.RemoveAt(v);

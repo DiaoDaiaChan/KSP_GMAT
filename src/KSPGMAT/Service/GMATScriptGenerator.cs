@@ -29,11 +29,11 @@ namespace KSPGMAT.Service {
             sb.AppendLine($"{satName}.VX = {sc.VelKms.x.ToString("F6", CultureInfo.InvariantCulture)};");
             sb.AppendLine($"{satName}.VY = {sc.VelKms.y.ToString("F6", CultureInfo.InvariantCulture)};");
             sb.AppendLine($"{satName}.VZ = {sc.VelKms.z.ToString("F6", CultureInfo.InvariantCulture)};");
-            sb.AppendLine($"{satName}.DryMass = {sc.DryMassKg.ToString("F2", CultureInfo.InvariantCulture)};");
-            sb.AppendLine($"{satName}.DragArea = {sc.DragArea.ToString("F2", CultureInfo.InvariantCulture)};");
-            sb.AppendLine($"{satName}.Cd = {sc.Cd.ToString("F2", CultureInfo.InvariantCulture)};");
-            sb.AppendLine($"{satName}.Cr = {sc.Cr.ToString("F2", CultureInfo.InvariantCulture)};");
-            sb.AppendLine($"{satName}.SRPArea = {sc.SRPArea.ToString("F2", CultureInfo.InvariantCulture)};");
+            sb.AppendLine($"{satName}.DryMass = {sc.DryMassKg.ToString("G", CultureInfo.InvariantCulture)};");
+            sb.AppendLine($"{satName}.DragArea = {sc.DragArea.ToString("G", CultureInfo.InvariantCulture)};");
+            sb.AppendLine($"{satName}.Cd = {sc.Cd.ToString("G", CultureInfo.InvariantCulture)};");
+            sb.AppendLine($"{satName}.Cr = {sc.Cr.ToString("G", CultureInfo.InvariantCulture)};");
+            sb.AppendLine($"{satName}.SRPArea = {sc.SRPArea.ToString("G", CultureInfo.InvariantCulture)};");
             sb.AppendLine();
 
             // Tanks
@@ -46,10 +46,10 @@ namespace KSPGMAT.Service {
                         tankNames.Add(tkId);
                         sb.AppendLine($"Create ChemicalTank {tkId};");
                         sb.AppendLine($"{tkId}.AllowNegativeFuelMass = true;");
-                        sb.AppendLine($"{tkId}.FuelMass = {tk.FuelMassKg.ToString("F2", CultureInfo.InvariantCulture)};");
+                        sb.AppendLine($"{tkId}.FuelMass = {tk.FuelMassKg.ToString("G", CultureInfo.InvariantCulture)};");
                         double calcVol = Math.Max(tk.VolumeM3, (tk.FuelMassKg / Math.Max(100.0, tk.FuelDensityKgM3)) * 1.1 + 0.1);
-                        sb.AppendLine($"{tkId}.Volume = {calcVol.ToString("F3", CultureInfo.InvariantCulture)};");
-                        sb.AppendLine($"{tkId}.FuelDensity = {tk.FuelDensityKgM3.ToString("F2", CultureInfo.InvariantCulture)};");
+                        sb.AppendLine($"{tkId}.Volume = {calcVol.ToString("G", CultureInfo.InvariantCulture)};");
+                        sb.AppendLine($"{tkId}.FuelDensity = {tk.FuelDensityKgM3.ToString("G", CultureInfo.InvariantCulture)};");
                         sb.AppendLine($"{tkId}.PressureModel = '{tk.PressureModel}';");
                     }
                 }
@@ -58,7 +58,7 @@ namespace KSPGMAT.Service {
                 tankNames.Add("Tank0");
                 sb.AppendLine("Create ChemicalTank Tank0;");
                 sb.AppendLine("Tank0.AllowNegativeFuelMass = true;");
-                sb.AppendLine($"Tank0.FuelMass = {Math.Max(100.0, sc.TotalMassKg - sc.DryMassKg).ToString("F2", CultureInfo.InvariantCulture)};");
+                sb.AppendLine($"Tank0.FuelMass = {Math.Max(100.0, sc.TotalMassKg - sc.DryMassKg).ToString("G", CultureInfo.InvariantCulture)};");
                 sb.AppendLine("Tank0.Volume = 50.00;");
                 sb.AppendLine("Tank0.PressureModel = 'PressureRegulated';");
             }
@@ -83,8 +83,8 @@ namespace KSPGMAT.Service {
                         sb.AppendLine($"{engId}.ThrustDirection3 = {thr.ThrustDirection3.ToString("G", CultureInfo.InvariantCulture)};");
                         sb.AppendLine($"{engId}.DecrementMass = {thr.DecrementMass.ToString().ToLower()};");
                         sb.AppendLine($"{engId}.Tank = {{{boundTk}}};");
-                        sb.AppendLine($"{engId}.C1 = {(thr.ThrustKN * 1000.0).ToString("F2", CultureInfo.InvariantCulture)};");
-                        sb.AppendLine($"{engId}.K1 = {thr.IspVac.ToString("F2", CultureInfo.InvariantCulture)};");
+                        sb.AppendLine($"{engId}.C1 = {(thr.ThrustKN * 1000.0).ToString("G", CultureInfo.InvariantCulture)};");
+                        sb.AppendLine($"{engId}.K1 = {thr.IspVac.ToString("G", CultureInfo.InvariantCulture)};");
                     }
                 }
             }
