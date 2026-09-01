@@ -6,14 +6,19 @@ using KSPGMAT.Model;
 
 namespace KSPGMAT.UI {
     public partial class GMATMainWindow {
-        private double DrawDoubleField(string label, double val, float labelW = 110, float fieldW = 90) {
+        private double DrawDoubleField(string label, double val, float labelW = 110, float fieldW = 90, string format = null) {
             GUILayout.BeginHorizontal();
             if (!string.IsNullOrEmpty(label)) GUILayout.Label(label, labelValueStyle, GUILayout.Width(labelW));
-            string formatted = (val == 0.0) ? "0.0" :
-                               (Math.Abs(val) < 1e-4) ? val.ToString("E2", System.Globalization.CultureInfo.InvariantCulture) :
-                               (Math.Abs(val) >= 10000.0) ? val.ToString("F1", System.Globalization.CultureInfo.InvariantCulture) :
-                               (Math.Abs(val) >= 100.0) ? val.ToString("F2", System.Globalization.CultureInfo.InvariantCulture) :
-                               val.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
+            string formatted;
+            if (!string.IsNullOrEmpty(format)) {
+                formatted = val.ToString(format, System.Globalization.CultureInfo.InvariantCulture);
+            } else {
+                formatted = (val == 0.0) ? "0.0" :
+                            (Math.Abs(val) < 1e-4) ? val.ToString("E2", System.Globalization.CultureInfo.InvariantCulture) :
+                            (Math.Abs(val) >= 10000.0) ? val.ToString("F1", System.Globalization.CultureInfo.InvariantCulture) :
+                            (Math.Abs(val) >= 100.0) ? val.ToString("F2", System.Globalization.CultureInfo.InvariantCulture) :
+                            val.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
+            }
             string txt = GUILayout.TextField(formatted, numericInputStyle ?? GUI.skin.textField, GUILayout.Width(fieldW));
             double res;
             if (double.TryParse(txt, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out res)) {
@@ -239,9 +244,9 @@ namespace KSPGMAT.UI {
                         GUILayout.EndHorizontal();
 
                         GUILayout.BeginHorizontal();
-                        tnk.FuelMassKg = DrawDoubleField("燃料质量 (kg):", tnk.FuelMassKg, 90, 80);
-                        tnk.DryMassKg = DrawDoubleField("结构干重 (kg):", tnk.DryMassKg, 90, 70);
-                        tnk.VolumeM3 = DrawDoubleField("容积 (m³):", tnk.VolumeM3, 70, 60);
+                        tnk.FuelMassKg = DrawDoubleField("燃料质量 (kg):", tnk.FuelMassKg, 90, 75, "F2");
+                        tnk.DryMassKg = DrawDoubleField("结构干重 (kg):", tnk.DryMassKg, 90, 70, "F2");
+                        tnk.VolumeM3 = DrawDoubleField("容积 (m³):", tnk.VolumeM3, 70, 65, "0.###");
                         GUILayout.FlexibleSpace();
                         GUILayout.EndHorizontal();
                         GUILayout.EndVertical();
