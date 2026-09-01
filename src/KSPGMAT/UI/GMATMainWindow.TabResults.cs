@@ -371,15 +371,16 @@ namespace KSPGMAT.UI {
                         GUILayout.EndVertical();
                         if (Event.current.type == EventType.Repaint) {
                             Rect cardRect = GUILayoutUtility.GetLastRect();
-                            if (cardRect.Contains(Event.current.mousePosition)) {
+                            bool isHoveredNow = cardRect.Contains(Event.current.mousePosition);
+                            if (isHoveredNow) {
                                 nextHoveredBurnIndex = i;
                             }
                             Color themeColor = GetStepThemeColor("FiniteBurn");
-                            float stripW = isBurnHovered ? 5f : 3f;
-                            Color stripCol = isBurnHovered ? themeColor : new Color(themeColor.r, themeColor.g, themeColor.b, 0.65f);
+                            float stripW = isHoveredNow ? 6f : 3.5f;
+                            Color stripCol = isHoveredNow ? themeColor : new Color(themeColor.r, themeColor.g, themeColor.b, 0.75f);
                             GUI.DrawTexture(new Rect(cardRect.x + 1, cardRect.y + 2, stripW, cardRect.height - 4), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, stripCol, 0, 0);
 
-                            if (isBurnHovered) {
+                            if (isHoveredNow) {
                                 GUI.DrawTexture(new Rect(cardRect.x, cardRect.y, cardRect.width, 2), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, themeColor, 0, 0);
                                 GUI.DrawTexture(new Rect(cardRect.x, cardRect.y + cardRect.height - 2, cardRect.width, 2), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, themeColor, 0, 0);
                                 GUI.DrawTexture(new Rect(cardRect.x + cardRect.width - 2, cardRect.y, 2, cardRect.height), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, themeColor, 0, 0);

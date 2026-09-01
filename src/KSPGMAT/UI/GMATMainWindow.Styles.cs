@@ -464,27 +464,33 @@ namespace KSPGMAT.UI {
         public static Color GetStepThemeColor(string stepType) {
             if (string.IsNullOrEmpty(stepType)) return new Color(0.58f, 0.64f, 0.72f, 1f);
             switch (stepType) {
-                case "Target":
-                case "EndTarget":
-                    return new Color(0.39f, 0.40f, 0.95f, 1f); // #6366f1 Indigo
-                case "Vary":
-                case "VaryThrustDirection":
-                    return new Color(0.22f, 0.74f, 0.97f, 1f); // #38bdf8 Sky Blue
-                case "Achieve":
-                    return new Color(0.20f, 0.83f, 0.60f, 1f); // #34d399 Emerald
+                case "Propagate":
+                    return new Color(0.96f, 0.38f, 0.45f, 1f); // #f43f5e Coral Red (100% Matches pillPropStyle)
                 case "FiniteBurn":
                 case "BeginFiniteBurn":
                 case "EndFiniteBurn":
-                    return new Color(0.96f, 0.62f, 0.04f, 1f); // #f59e0b Amber Flame
-                case "Propagate":
-                    return new Color(0.66f, 0.33f, 0.97f, 1f); // #a855f7 Purple
+                    return new Color(0.96f, 0.62f, 0.04f, 1f); // #f59e0b Amber Flame (100% Matches pillBurnStyle)
                 case "ImpulsiveBurn":
                 case "Maneuver":
-                    return new Color(0.96f, 0.25f, 0.37f, 1f); // #f43f5e Rose
-                case "ThrustVectorControl":
-                    return new Color(0.14f, 0.65f, 0.96f, 1f); // #0284c7 Ocean
+                    return new Color(0.78f, 0.48f, 0.98f, 1f); // #c084fc Purple / Violet (100% Matches pillImpulseStyle)
+                case "Vary":
+                case "VaryThrustDirection":
+                    return new Color(0.22f, 0.74f, 0.97f, 1f); // #38bdf8 Sky Blue (100% Matches pillVaryStyle)
+                case "Achieve":
+                    return new Color(0.20f, 0.83f, 0.60f, 1f); // #34d399 Emerald Green (100% Matches pillAchieveStyle)
+                case "Target":
+                    return new Color(0.39f, 0.40f, 0.95f, 1f); // #6366f1 Indigo (100% Matches pillTargetStyle)
+                case "EndTarget":
+                    return new Color(0.60f, 0.68f, 0.78f, 1f); // #94a3b8 Slate (100% Matches pillEndTargetStyle)
                 case "StageSeparation":
-                    return new Color(0.58f, 0.64f, 0.72f, 1f); // #94a3b8 Slate
+                    return new Color(0.95f, 0.85f, 0.45f, 1f); // #facc15 Gold Yellow (100% Matches pillStageStyle)
+                case "ThrustVectorControl":
+                    return new Color(0.14f, 0.65f, 0.96f, 1f); // #0284c7 Ocean Blue
+                case "Equation":
+                case "Set":
+                    return new Color(0.38f, 0.82f, 1.0f, 1f);  // Cyan
+                case "Report":
+                    return new Color(0.65f, 0.75f, 0.88f, 1f); // Steel
                 default:
                     return new Color(0.38f, 0.82f, 1.0f, 1f);
             }
