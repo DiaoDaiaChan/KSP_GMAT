@@ -881,8 +881,10 @@ namespace KSPGMAT.UI {
             double.TryParse(sInitStep, out cfg.initialStepSize);
 
             GUILayout.Label("数值精度 (Accuracy):", labelValueStyle, GUILayout.Width(140));
-            string sAcc = GUILayout.TextField(cfg.accuracy.ToString("G3"), GUILayout.Width(80));
-            double.TryParse(sAcc, out cfg.accuracy);
+            string sAcc = GUILayout.TextField((cfg.accuracy > 1e-20 ? cfg.accuracy : 1e-11).ToString("E2", System.Globalization.CultureInfo.InvariantCulture), GUILayout.Width(80));
+            if (double.TryParse(sAcc, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double parsedAcc)) {
+                if (parsedAcc > 0.0) cfg.accuracy = parsedAcc;
+            }
 
             GUILayout.Label("最小步长 (MinStep):", labelValueStyle, GUILayout.Width(130));
             string sMinStep = GUILayout.TextField(cfg.minStep.ToString("F3"), GUILayout.Width(60));

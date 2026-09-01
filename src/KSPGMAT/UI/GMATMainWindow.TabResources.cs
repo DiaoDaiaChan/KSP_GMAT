@@ -9,14 +9,17 @@ namespace KSPGMAT.UI {
         private double DrawDoubleField(string label, double val, float labelW = 110, float fieldW = 90) {
             GUILayout.BeginHorizontal();
             if (!string.IsNullOrEmpty(label)) GUILayout.Label(label, labelValueStyle, GUILayout.Width(labelW));
-            string formatted = (Math.Abs(val) >= 10000.0) ? val.ToString("F1", System.Globalization.CultureInfo.InvariantCulture) :
+            string formatted = (val == 0.0) ? "0.0" :
+                               (Math.Abs(val) < 1e-4) ? val.ToString("E2", System.Globalization.CultureInfo.InvariantCulture) :
+                               (Math.Abs(val) >= 10000.0) ? val.ToString("F1", System.Globalization.CultureInfo.InvariantCulture) :
                                (Math.Abs(val) >= 100.0) ? val.ToString("F2", System.Globalization.CultureInfo.InvariantCulture) :
-                               (Math.Abs(val) >= 1.0) ? val.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) :
-                               (val == 0.0) ? "0.0" : val.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
+                               val.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
             string txt = GUILayout.TextField(formatted, numericInputStyle ?? GUI.skin.textField, GUILayout.Width(fieldW));
             double res;
             if (double.TryParse(txt, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out res)) {
-                val = res;
+                if (res != 0.0 || val == 0.0) {
+                    val = res;
+                }
             }
             GUILayout.EndHorizontal();
             return val;
