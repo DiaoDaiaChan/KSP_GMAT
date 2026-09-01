@@ -329,8 +329,7 @@ namespace KSPGMAT.Service {
                     }
                 }
                 else if (st.type == "FiniteBurn") {
-                    double burnStartTime = (trajectory != null && trajIdx < trajectory.Count) ? trajectory[trajIdx].t : (insideTarget ? targetStartCumTime : cumTime);
-                    if (trajectory != null && trajIdx < trajectory.Count) trajIdx++;
+                    double burnStartTime = insideTarget ? targetStartCumTime : cumTime;
 
                     double dur = st.duration;
                     if (currentGroupDuration > 0) {
@@ -423,19 +422,15 @@ namespace KSPGMAT.Service {
                     };
                     burns.Add(sbEntry);
 
-                    if (!insideTarget) {
-                        if (trajectory != null && trajIdx < trajectory.Count) {
-                            cumTime = trajectory[trajIdx].t;
-                            trajIdx++;
-                        } else {
-                            cumTime += dur;
-                        }
+                    if (insideTarget) {
+                        targetStartCumTime += dur;
+                    } else {
+                        cumTime += dur;
                     }
                 }
                 else if (st.type == "ImpulsiveBurn" || st.type == "Maneuver") {
                     double mag = Math.Sqrt(st.dv_v * st.dv_v + st.dv_n * st.dv_n + st.dv_b * st.dv_b);
-                    double burnStartTime = (trajectory != null && trajIdx < trajectory.Count) ? trajectory[trajIdx].t : (insideTarget ? targetStartCumTime : cumTime);
-                    if (trajectory != null && trajIdx < trajectory.Count) trajIdx++;
+                    double burnStartTime = insideTarget ? targetStartCumTime : cumTime;
 
                     burns.Add(new SolvedBurn {
                         type = "Impulsive",

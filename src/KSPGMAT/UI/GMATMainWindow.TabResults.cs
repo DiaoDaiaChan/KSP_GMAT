@@ -177,6 +177,14 @@ namespace KSPGMAT.UI {
                         // Card Header
                         GUILayout.BeginHorizontal();
                         GUILayout.Label($"<b>🎯 机动 #{i + 1}: {(string.IsNullOrEmpty(b.name) ? "变轨机动" : b.name)}</b> <color=#94a3b8>({b.type})</color>", headerStyle);
+                        GUILayout.Space(12);
+
+                        // Per-Burn Checkbox: If checked, apply ignition timing optimization (mode selected on top)
+                        bool newOpt = GUILayout.Toggle(b.enable_timing_optimization, " ⚡ 启用点火时相优化 (应用上方模式)", GUILayout.Height(20));
+                        if (newOpt != b.enable_timing_optimization) {
+                            b.enable_timing_optimization = newOpt;
+                        }
+
                         GUILayout.FlexibleSpace();
 
                         if (pNode != null) {
@@ -272,11 +280,13 @@ namespace KSPGMAT.UI {
                         // EVALUATION ROW: Deviation against raw unmodified baseline
                         GUILayout.Space(2);
                         GUILayout.BeginHorizontal();
-                        if (currentIgnitionMode == IgnitionCorrectionMode.RawUnmodified) {
-                            GUILayout.Label("<color=#94a3b8>⚖️ <b>未修正基线:</b> 简单几何折半 (-" + rawLead.ToString("F2") + "s) | 无变质量质心后移补偿与开普勒实机时钟锁相</color>", labelValueStyle);
+                        if (!b.enable_timing_optimization) {
+                            GUILayout.Label("<color=#34d399>⚖️ <b>当前状态:</b> 1:1 原生直通点火 (未勾选时相优化，直接在 GMAT 规划的精确时刻点火，零偏移)</color>", labelValueStyle);
+                        } else if (currentIgnitionMode == IgnitionCorrectionMode.RawUnmodified) {
+                            GUILayout.Label("<color=#94a3b8>⚖️ <b>时相优化模式 1 (原生折半):</b> 简单几何折半 (-" + rawLead.ToString("F2") + "s) | 无变质量质心后移补偿与开普勒实机时钟锁相</color>", labelValueStyle);
                         } else {
                             string evalGrade = (Math.Abs(centroidShift) > 0.05 || Math.Abs(phaseShift) > 0.5) ? "<color=#34d399>🌟 修正有效 (消除非线性重心漂移)</color>" : "<color=#38bdf8>ℹ️ 微小扰动修正</color>";
-                            GUILayout.Label($"⚖️ <b>与未修正基准误差对比:</b> 质心补偿: <color=#38bdf8><b>{centroidShift:+0.00;-0.00;0.00}s</b></color> (vs 原生对半 -{rawLead:F2}s) | 锁相平移: <color=#facc15><b>{phaseShift:+0.00;-0.00;0.00}s</b></color> | 净点火修正: <color=#34d399><b>{totalBurnShift:+0.00;-0.00;0.00}s</b></color> | {evalGrade}", labelValueStyle);
+                            GUILayout.Label($"⚖️ <b>时相优化生效中:</b> 质心补偿: <color=#38bdf8><b>{centroidShift:+0.00;-0.00;0.00}s</b></color> (vs 原生对半 -{rawLead:F2}s) | 锁相平移: <color=#facc15><b>{phaseShift:+0.00;-0.00;0.00}s</b></color> | 净点火修正: <color=#34d399><b>{totalBurnShift:+0.00;-0.00;0.00}s</b></color> | {evalGrade}", labelValueStyle);
                         }
                         GUILayout.FlexibleSpace();
                         GUILayout.EndHorizontal();
@@ -435,15 +445,16 @@ namespace KSPGMAT.UI {
 
             // 2. Strict Exact GMAT Mission Epoch Mapping (Zero hidden snapping, Zero period wrapping)
             double initialTime;
-            if (burn.type == "FiniteBurn" || burn.type == "BeginFiniteBurn" || burn.type != "ImpulsiveBurn") {
-                // For GMAT FiniteBurn, epoch_offset is the exact instant of BeginFiniteBurn (Ignition Start)
-                initialTime = anchorUT + burn.epoch_offset + globalTimeShift;
-                targetEpoch = initialTime + centroidLead;
-            } else {
-                // For Impulsive Burn, epoch_offset is the geometric target impulse epoch
+            if (burn.enable_timing_optimization) {
+                // User explicitly checked optimization: shift ignition start by centroid lead to achieve symmetric centroid on target
                 targetEpoch = anchorUT + burn.epoch_offset + globalTimeShift;
                 initialTime = targetEpoch - centroidLead;
+            } else {
+                // Default: 100% Pure 1:1 direct ignition start from GMAT simulation timeline (Zero offset, zero manipulation)
+                initialTime = anchorUT + burn.epoch_offset + globalTimeShift;
+                targetEpoch = initialTime + centroidLead;
             }
+
             burn.computed_initial_time = initialTime;
             burn.centroid_lead_time = centroidLead;
             return initialTime;

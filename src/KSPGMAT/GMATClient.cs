@@ -234,6 +234,7 @@ namespace KSPGMAT {
         public string native_result_note;
         public double computed_initial_time;
         public double centroid_lead_time;
+        public bool enable_timing_optimization;
     }
 
     [Serializable]
