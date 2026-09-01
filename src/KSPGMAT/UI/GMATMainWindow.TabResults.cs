@@ -497,21 +497,21 @@ namespace KSPGMAT.UI {
                 return;
             }
 
-            // Step 3: Reconcile MissionSequence with Principia live ground truth
-            int reconciledVars = 0;
-            double pDur = pNodes[0].duration;
-            double bDur = latestResult.solved_burns[0].duration;
-            double curRatio = (bDur > 0) ? (pDur / bDur) : 1.0;
-            lastCalibrationFactor = curRatio;
-
+            // Step 3: Strictly 1-to-1 Burn-Indexed Reconciliation with Principia live ground truth
+            int currentBurnIdx = 0;
             for (int s = 0; s < missionSequence.Count; s++) {
                 var step = missionSequence[s];
                 if (step.type == "Vary" && (step.vary_variable.ToLower().Contains("burn") || step.vary_variable.ToLower().Contains("time") || step.vary_variable.ToLower().Contains("dur"))) {
-                    step.vary_initial = pDur;
-                    reconciledVars++;
+                    if (pNodes != null && currentBurnIdx < pNodes.Count) {
+                        step.vary_initial = pNodes[currentBurnIdx].duration;
+                    }
                 } else if (step.type == "FiniteBurn") {
-                    step.duration = pDur;
-                    reconciledVars++;
+                    if (pNodes != null && currentBurnIdx < pNodes.Count) {
+                        step.duration = pNodes[currentBurnIdx].duration;
+                    }
+                    currentBurnIdx++;
+                } else if (step.type == "ImpulsiveBurn" || step.type == "Maneuver") {
+                    currentBurnIdx++;
                 }
             }
 

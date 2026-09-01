@@ -221,7 +221,7 @@ namespace KSPGMAT.Service {
                             sb.AppendLine($"{sName}.ShowProgress = true;");
                             sb.AppendLine($"{sName}.DerivativeMethod = ForwardDifference;");
                             sb.AppendLine($"{sName}.Algorithm = NewtonRaphson;");
-                            sb.AppendLine($"{sName}.MaximumIterations = 50;");
+                            sb.AppendLine($"{sName}.MaximumIterations = 25;");
                             sb.AppendLine();
                         }
                     }
