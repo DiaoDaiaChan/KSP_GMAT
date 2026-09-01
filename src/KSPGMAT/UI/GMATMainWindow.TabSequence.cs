@@ -1233,16 +1233,21 @@ namespace KSPGMAT.UI {
             // =========================================================================
             GUILayout.BeginVertical(cardBoxStyle);
             GUILayout.Label("<b>📊 GMAT 官方原生打靶求解看板 (Results & Targeters)</b>", headerStyle);
-            GUILayout.Space(2);
+            GUILayout.Space(3);
 
             if (latestResult != null && latestResult.success) {
+                // 1. Top Orbital Elements Snapshot Frame
+                GUILayout.BeginVertical(nestedCardBoxStyle);
                 GUILayout.BeginHorizontal();
                 GUILayout.Label($"最终半长轴: <color=#38bdf8><b>{latestResult.final_sma:F1} km</b></color>", labelValueStyle);
+                GUILayout.FlexibleSpace();
                 GUILayout.Label($"离心率: <color=#38bdf8><b>{latestResult.final_ecc:F4}</b></color>", labelValueStyle);
+                GUILayout.FlexibleSpace();
                 GUILayout.Label($"倾角: <color=#38bdf8><b>{latestResult.final_inc:F2}°</b></color>", labelValueStyle);
                 GUILayout.EndHorizontal();
+                GUILayout.EndVertical();
 
-                // 1. 打靶器收敛状态矩阵 (Per-DC Matrix)
+                // 2. 打靶器收敛状态矩阵 (Per-DC Matrix)
                 if (latestResult.dc_summaries != null && latestResult.dc_summaries.Count > 0) {
                     GUILayout.Space(3);
                     GUILayout.Label("<color=#38bdf8><b>🎯 微分修正器打靶矩阵 (Differential Corrector Status):</b></color>", labelValueStyle);
@@ -1261,25 +1266,26 @@ namespace KSPGMAT.UI {
 
                         // 显示解算变量
                         if (dcs.final_variables != null && dcs.final_variables.Count > 0) {
-                            GUILayout.Space(1);
+                            GUILayout.Space(2);
                             var varStrs = new List<string>();
                             foreach (var v in dcs.final_variables) {
                                 if (!v.Key.Contains(".")) { // 只显示主变量名
-                                    varStrs.Add($"{v.Key} = <b><color=#38bdf8>{v.Value:F2}</color></b>");
+                                    varStrs.Add($"<b>{v.Key}</b> = <color=#38bdf8><b>{v.Value:F3}</b></color>");
                                 }
                             }
                             if (varStrs.Count > 0) {
-                                GUILayout.Label($" • 变量解: {string.Join(" | ", varStrs.ToArray())}", labelValueStyle);
+                                GUILayout.Label($" • <b>变量解:</b> {string.Join(" | ", varStrs.ToArray())}", labelValueStyle);
                             }
                         }
 
                         // 显示达成目标
                         if (dcs.goals_summary != null && dcs.goals_summary.Count > 0) {
-                            var goalStrs = new List<string>();
+                            GUILayout.Space(2);
                             foreach (var g in dcs.goals_summary) {
-                                goalStrs.Add($"{g.GoalName}: 达成 <b><color=#34d399>{g.Achieved:F2}</color></b> (目标 {g.Desired:F2})");
+                                double err = g.Achieved - g.Desired;
+                                string col = Math.Abs(err) < 1.0 ? "#34d399" : "#facc15";
+                                GUILayout.Label($" • <b>目标达成:</b> {g.GoalName} ➔ 达成 <color={col}><b>{g.Achieved:F2}</b></color> (目标 {g.Desired:F2})", labelValueStyle);
                             }
-                            GUILayout.Label($" • 目标达成: {string.Join(" | ", goalStrs.ToArray())}", labelValueStyle);
                         }
 
                         GUILayout.EndVertical();
@@ -1287,18 +1293,31 @@ namespace KSPGMAT.UI {
                     }
                 }
 
-                // 2. 解算机动列表 (Solved Burns)
+                // 3. 解算机动列表 (Solved Burns Frames)
                 if (latestResult.solved_burns != null && latestResult.solved_burns.Count > 0) {
-                    GUILayout.Space(2);
+                    GUILayout.Space(3);
                     GUILayout.Label($"<color=#34d399><b>🚀 解算机动点火 ({latestResult.solved_burns.Count} 个):</b></color>", labelValueStyle);
                     for (int bIdx = 0; bIdx < latestResult.solved_burns.Count; bIdx++) {
                         var sb = latestResult.solved_burns[bIdx];
-                        GUILayout.Label($" • <b>#{bIdx + 1} {sb.name}</b> ({sb.type}): <color=#38bdf8>ΔV = {sb.magnitude:F2} m/s</color> (切向 {sb.dv_v:F1}, 径向 {sb.dv_b:F1}, 变倾角 {sb.dv_n:F1}) | 时长: <b>{sb.duration:F1}s</b> | 推力: {sb.thrust_kn:F1}kN (Isp {sb.isp:F0}s)", labelValueStyle);
+                        GUILayout.BeginVertical(nestedCardBoxStyle);
+                        GUILayout.BeginHorizontal();
+                        GUILayout.Label($"<b>#{bIdx + 1} {sb.name}</b> <color=#94a3b8>({sb.type})</color>", labelValueStyle);
+                        GUILayout.FlexibleSpace();
+                        GUILayout.Label($"<color=#38bdf8><b>ΔV = {sb.magnitude:F2} m/s</b></color>", labelValueStyle);
+                        GUILayout.EndHorizontal();
+                        GUILayout.Space(2);
+                        GUILayout.Label($" • <b>推力分解:</b> 切向 <b>{sb.dv_v:F1}</b> | 变面 <b>{sb.dv_n:F1}</b> | 径向 <b>{sb.dv_b:F1}</b> m/s", labelValueStyle);
+                        GUILayout.Label($" • <b>点火时相:</b> 时长 <b><color=#facc15>{sb.duration:F1}s</color></b> | 推力 <b>{sb.thrust_kn:F1} kN</b> (Isp {sb.isp:F0}s)", labelValueStyle);
+                        GUILayout.EndVertical();
+                        GUILayout.Space(2);
                     }
                 }
 
                 if (latestResult.has_fuel_deficit) {
-                    GUILayout.Label($"<color=#f87171>⚠️ 燃料赤字: {latestResult.fuel_deficit:F1} kg</color>", labelValueStyle);
+                    GUILayout.Space(2);
+                    GUILayout.BeginVertical(nestedCardBoxStyle);
+                    GUILayout.Label($"<color=#f87171>⚠️ <b>燃料赤字:</b> {latestResult.fuel_deficit:F1} kg</color>", labelValueStyle);
+                    GUILayout.EndVertical();
                 }
             } else if (latestResult != null && !latestResult.success) {
                 string shortError = (latestResult.error ?? "求解未收敛").Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)[0].Trim();
@@ -1309,7 +1328,7 @@ namespace KSPGMAT.UI {
                 if (!string.IsNullOrEmpty(errDetails)) {
                     GUILayout.Space(2);
                     GUILayout.Label("<color=#94a3b8><b>📋 详细错误诊断与引擎日志:</b></color>", labelValueStyle);
-                    GUILayout.BeginVertical(GUI.skin.box);
+                    GUILayout.BeginVertical(nestedCardBoxStyle);
                     GUILayout.Label($"<color=#fca5a5><size=11>{errDetails}</size></color>", labelValueStyle);
                     GUILayout.EndVertical();
 
@@ -1335,15 +1354,31 @@ namespace KSPGMAT.UI {
             GUILayout.FlexibleSpace();
             GUILayout.Label("<color=#34d399><size=11>● LIVE 同步</size></color>", labelValueStyle);
             GUILayout.EndHorizontal();
+            GUILayout.Space(3);
 
             if (!string.IsNullOrEmpty(b.EngineTitle)) {
-                GUILayout.Label($" • <b>Stage {b.StageNumber}</b> ({b.EngineTitle}): <color=#38bdf8>ΔV={b.DeltaV:F0}m/s</color> | 湿重=<b>{b.WetMassTonnes:F2}t</b> | 燃料=<b>{b.FuelMassTonnes:F2}t</b> | 干重=<b>{b.DryMassTonnes:F2}t</b>", labelValueStyle);
-                GUILayout.Label($"<color=#34d399>组合湿重: <b>{b.WetMassTonnes:F2}t</b> | 干重: <b>{b.DryMassTonnes:F2}t</b> | 推进剂: <b>{b.FuelMassTonnes:F2}t</b> | 设计ΔV: <b>{b.DeltaV:F0}m/s</b></color>", labelValueStyle);
+                // Frame 1: Stage Mass & Delta-V Summary Frame
+                GUILayout.BeginVertical(nestedCardBoxStyle);
+                GUILayout.BeginHorizontal();
+                GUILayout.Label($"<b>Stage {b.StageNumber} 推进构型</b>", labelValueStyle);
+                GUILayout.FlexibleSpace();
+                GUILayout.Label($"<color=#34d399><b>设计能力 ΔV: {b.DeltaV:F0} m/s</b></color>", labelValueStyle);
+                GUILayout.EndHorizontal();
                 GUILayout.Space(2);
-                GUILayout.Label($"当前发动机: <b>{b.EngineTitle}</b> | 推力: <color=#38bdf8><b>{b.ThrustKN:F1} kN</b></color> | 比冲: <color=#38bdf8><b>{b.IspVac:F0} s</b></color>", labelValueStyle);
-                GUILayout.Label($"推进剂: <color=#facc15><b>{b.PropellantDesc}</b></color> ({b.FuelDensityKgM3:F0} kg/m³)", labelValueStyle);
+                GUILayout.Label($" • <b>质量分配:</b> 湿重 <b>{b.WetMassTonnes:F2}t</b> | 燃料 <b>{b.FuelMassTonnes:F2}t</b> | 干重 <b>{b.DryMassTonnes:F2}t</b>", labelValueStyle);
+                GUILayout.EndVertical();
+
+                GUILayout.Space(3);
+
+                // Frame 2: Hardware & Propellant Specs Frame
+                GUILayout.BeginVertical(nestedCardBoxStyle);
+                GUILayout.Label($" • <b>主推力器:</b> <color=#38bdf8><b>{b.EngineTitle}</b></color> (额定推力 <b>{b.ThrustKN:F1} kN</b> | 比冲 <b>{b.IspVac:F0} s</b>)", labelValueStyle);
+                GUILayout.Label($" • <b>推进剂组元:</b> <color=#facc15><b>{b.PropellantDesc}</b></color> (密度 <b>{b.FuelDensityKgM3:F0} kg/m³</b>)", labelValueStyle);
+                GUILayout.EndVertical();
             } else if (vessel != null) {
+                GUILayout.BeginVertical(nestedCardBoxStyle);
                 GUILayout.Label($"飞船总质量: <b>{vessel.GetTotalMass():F2} 吨</b>", labelValueStyle);
+                GUILayout.EndVertical();
             }
             GUILayout.EndVertical();
 
