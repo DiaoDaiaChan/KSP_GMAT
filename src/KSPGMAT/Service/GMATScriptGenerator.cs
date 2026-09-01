@@ -334,12 +334,11 @@ namespace KSPGMAT.Service {
                             ? (st.burn_vary_var_name ?? "") 
                             : (!string.IsNullOrEmpty(st.duration_str) ? st.duration_str : st.duration.ToString("G", CultureInfo.InvariantCulture));
                         sb.AppendLine($"   % Finite Burn ({fbName})");
+                        sb.AppendLine($"   Report TrajReport {satName}.ElapsedSecs {satName}.X {satName}.Y {satName}.Z {satName}.VX {satName}.VY {satName}.VZ {satName}.{cBody}.Altitude {satName}.SMA {satName}.ECC {satName}.INC {satName}.RAAN {satName}.AOP {satName}.TA {satName}.TotalMass;");
                         sb.AppendLine($"   BeginFiniteBurn {fbName}({satName});");
                         sb.AppendLine($"   Propagate {pName}({satName}) {{{satName}.ElapsedSecs = {durExpr}}};");
                         sb.AppendLine($"   EndFiniteBurn {fbName}({satName});");
-                        if (!insideTarget) {
-                            sb.AppendLine($"   Report TrajReport {satName}.ElapsedSecs {satName}.X {satName}.Y {satName}.Z {satName}.VX {satName}.VY {satName}.VZ {satName}.{cBody}.Altitude {satName}.SMA {satName}.ECC {satName}.INC {satName}.RAAN {satName}.AOP {satName}.TA {satName}.TotalMass;");
-                        }
+                        sb.AppendLine($"   Report TrajReport {satName}.ElapsedSecs {satName}.X {satName}.Y {satName}.Z {satName}.VX {satName}.VY {satName}.VZ {satName}.{cBody}.Altitude {satName}.SMA {satName}.ECC {satName}.INC {satName}.RAAN {satName}.AOP {satName}.TA {satName}.TotalMass;");
                     }
                     else if (stype == "ThrustVectorControl" || stype == "VaryThrustDirection") {
                         string eng = !string.IsNullOrEmpty(st.bound_thruster) && thrusterNames.Contains(st.bound_thruster) ? st.bound_thruster : (thrusterNames.Count > 1 ? thrusterNames[1] : thrusterNames[0]);
@@ -391,10 +390,9 @@ namespace KSPGMAT.Service {
                     else if (stype == "ImpulsiveBurn" || stype == "Maneuver") {
                         string bName = GMATParameterRegistry.SanitizeGmatIdentifier(st.burn_name ?? st.label, "Burn1");
                         sb.AppendLine($"% Impulsive Maneuver ({bName})");
+                        sb.AppendLine($"Report TrajReport {satName}.ElapsedSecs {satName}.X {satName}.Y {satName}.Z {satName}.VX {satName}.VY {satName}.VZ {satName}.{cBody}.Altitude {satName}.SMA {satName}.ECC {satName}.INC {satName}.RAAN {satName}.AOP {satName}.TA {satName}.TotalMass;");
                         sb.AppendLine($"Maneuver {bName}({satName});");
-                        if (!insideTarget) {
-                            sb.AppendLine($"Report TrajReport {satName}.ElapsedSecs {satName}.X {satName}.Y {satName}.Z {satName}.VX {satName}.VY {satName}.VZ {satName}.{cBody}.Altitude {satName}.SMA {satName}.ECC {satName}.INC {satName}.RAAN {satName}.AOP {satName}.TA {satName}.TotalMass;");
-                        }
+                        sb.AppendLine($"Report TrajReport {satName}.ElapsedSecs {satName}.X {satName}.Y {satName}.Z {satName}.VX {satName}.VY {satName}.VZ {satName}.{cBody}.Altitude {satName}.SMA {satName}.ECC {satName}.INC {satName}.RAAN {satName}.AOP {satName}.TA {satName}.TotalMass;");
                     }
                     else if (stype == "Equation" || stype == "Set") {
                         string vName = st.variable ?? "";
