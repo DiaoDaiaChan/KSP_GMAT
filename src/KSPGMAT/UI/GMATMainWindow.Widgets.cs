@@ -1,0 +1,712 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using UnityEngine;
+using KSPGMAT.Model;
+using KSPGMAT.Service;
+
+namespace KSPGMAT.UI {
+    /// <summary>
+    /// KSP_GMAT 统一标准化 UI 控件库与交互引擎
+    /// 包含：延迟输入框家族 (Numeric/Smart/Int/Text)、行内选择器、状态徽章、悬浮智能补全 (IntelliSense)
+    /// </summary>
+    public partial class GMATMainWindow {
+        /// <summary>
+        /// 全局延迟输入框防抖与未完成输入缓存池 (以 controlId 为 Key，保持编辑态字符串)
+        /// </summary>
+        private static readonly Dictionary<string, string> inputStringCache = new Dictionary<string, string>();
+
+        // =========================================================================
+        // 1. 延迟输入控件家族 (Delayed Input Field Suite)
+        // =========================================================================
+
+        /// <summary>
+        /// 延迟格式化浮点数值输入框：当输入框聚焦编辑时保持用户原始输入，不重置光标或提前格式化；失焦后才安全格式化同步模型。
+        /// </summary>
+        /// <param name="controlId">输入框唯一标识符 (用于防抖缓存与聚焦状态跟踪)</param>
+        /// <param name="currentValue">当前绑定的 double 数值</param>
+        /// <param name="style">GUIStyle 样式 (若为 null 则使用 GUI.skin.textField)</param>
+        /// <param name="widthOpt">GUILayout 宽度布局选项</param>
+        /// <param name="format">格式化字符串 (例如 "G", "F2", "F4")</param>
+        /// <returns>用户输入解析后的 double 数值</returns>
+        private static double DrawDelayedNumericField(string controlId, double currentValue, GUIStyle style, GUILayoutOption widthOpt, string format = "G") {
+            GUI.SetNextControlName(controlId);
+            bool isFocused = (GUI.GetNameOfFocusedControl() == controlId);
+
+            string displayStr;
+            if (!inputStringCache.TryGetValue(controlId, out displayStr)) {
+                displayStr = currentValue.ToString(format, CultureInfo.InvariantCulture);
+                inputStringCache[controlId] = displayStr;
+            }
+
+            if (!isFocused) {
+                displayStr = currentValue.ToString(format, CultureInfo.InvariantCulture);
+                inputStringCache[controlId] = displayStr;
+            }
+
+            string newStr = GUILayout.TextField(displayStr, style ?? GUI.skin.textField, widthOpt, GUILayout.Height(20));
+            if (newStr != displayStr) {
+                inputStringCache[controlId] = newStr;
+                double parsed;
+                if (double.TryParse(newStr, NumberStyles.Float, CultureInfo.InvariantCulture, out parsed)) {
+                    currentValue = parsed;
+                }
+            }
+            return currentValue;
+        }
+
+        /// <summary>
+        /// 统一智能双模态延迟输入框：支持变量名 (如 Coast_Time)/表达式/数值双模态输入，编辑时防焦点跳变，失焦保持原始内容，深度集成智能补全与锚点定位。
+        /// </summary>
+        /// <param name="controlId">输入框唯一标识符</param>
+        /// <param name="rawValue">当前存储的原始文本内容 (若为变量名则传入变量名字符串)</param>
+        /// <param name="fallbackNumericValue">兜底数值 (当 rawValue 为空时的默认显示数值)</param>
+        /// <param name="style">GUIStyle 样式</param>
+        /// <param name="widthOpt">GUILayout 宽度布局选项</param>
+        /// <param name="intelliSenseContextMode">智能补全上下文模式 (如 "prop_val", "fburn_var", "variable_or_value")，为空则不激活补全</param>
+        /// <param name="stepIndex">当前时序节点索引 (用于补全回填模型)</param>
+        /// <returns>当前文本框中的最新字符串内容</returns>
+        private string DrawDelayedSmartField(string controlId, string rawValue, double fallbackNumericValue, GUIStyle style, GUILayoutOption widthOpt, string intelliSenseContextMode = null, int stepIndex = -1) {
+            GUI.SetNextControlName(controlId);
+            bool isFocused = (GUI.GetNameOfFocusedControl() == controlId);
+
+            string displayStr;
+            if (!inputStringCache.TryGetValue(controlId, out displayStr)) {
+                displayStr = !string.IsNullOrEmpty(rawValue) 
+                    ? rawValue 
+                    : (fallbackNumericValue != 0.0 ? fallbackNumericValue.ToString("G", CultureInfo.InvariantCulture) : "0");
+                inputStringCache[controlId] = displayStr;
+            }
+
+            if (!isFocused && !string.IsNullOrEmpty(rawValue)) {
+                displayStr = rawValue;
+                inputStringCache[controlId] = displayStr;
+            }
+
+            string newStr = GUILayout.TextField(displayStr, style ?? GUI.skin.textField, widthOpt, GUILayout.Height(20));
+
+            if (Event.current.type == EventType.Repaint && isFocused) {
+                Rect r = GUILayoutUtility.GetLastRect();
+                Vector2 sp = GUIUtility.GUIToScreenPoint(new Vector2(r.x, r.y));
+                intelliSenseAnchorRect = new Rect(sp.x, sp.y, r.width, r.height);
+            }
+
+            if (newStr != displayStr || (isFocused && !intelliSenseOpen && !intelliSenseDismissed && !string.IsNullOrEmpty(intelliSenseContextMode))) {
+                inputStringCache[controlId] = newStr;
+                if (!string.IsNullOrEmpty(intelliSenseContextMode) && stepIndex >= 0) {
+                    TriggerIntelliSense(newStr, intelliSenseContextMode, stepIndex);
+                }
+                return newStr;
+            }
+
+            return displayStr;
+        }
+
+        /// <summary>
+        /// 延迟格式化整型输入框：用于迭代次数、步数等整数类型输入。
+        /// </summary>
+        /// <param name="controlId">输入框唯一标识符</param>
+        /// <param name="currentValue">当前绑定的 int 数值</param>
+        /// <param name="style">GUIStyle 样式</param>
+        /// <param name="widthOpt">GUILayout 宽度布局选项</param>
+        /// <returns>用户输入解析后的 int 数值</returns>
+        private static int DrawDelayedIntField(string controlId, int currentValue, GUIStyle style, GUILayoutOption widthOpt) {
+            GUI.SetNextControlName(controlId);
+            bool isFocused = (GUI.GetNameOfFocusedControl() == controlId);
+
+            string displayStr;
+            if (!inputStringCache.TryGetValue(controlId, out displayStr)) {
+                displayStr = currentValue.ToString();
+                inputStringCache[controlId] = displayStr;
+            }
+
+            if (!isFocused) {
+                displayStr = currentValue.ToString();
+                inputStringCache[controlId] = displayStr;
+            }
+
+            string newStr = GUILayout.TextField(displayStr, style ?? GUI.skin.textField, widthOpt, GUILayout.Height(20));
+            if (newStr != displayStr) {
+                inputStringCache[controlId] = newStr;
+                int parsed;
+                if (int.TryParse(newStr, out parsed)) {
+                    currentValue = parsed;
+                }
+            }
+            return currentValue;
+        }
+
+        /// <summary>
+        /// 延迟字符串文本输入框：编辑期间保留中间未完成输入，失焦后安全提交，防止高频每帧 String 分配。
+        /// </summary>
+        /// <param name="controlId">输入框唯一标识符</param>
+        /// <param name="currentText">当前绑定的字符串</param>
+        /// <param name="style">GUIStyle 样式</param>
+        /// <param name="widthOpt">GUILayout 宽度布局选项</param>
+        /// <returns>最新编辑的字符串</returns>
+        private static string DrawDelayedTextField(string controlId, string currentText, GUIStyle style, GUILayoutOption widthOpt) {
+            GUI.SetNextControlName(controlId);
+            bool isFocused = (GUI.GetNameOfFocusedControl() == controlId);
+
+            string displayStr;
+            if (!inputStringCache.TryGetValue(controlId, out displayStr)) {
+                displayStr = currentText ?? "";
+                inputStringCache[controlId] = displayStr;
+            }
+
+            if (!isFocused) {
+                displayStr = currentText ?? "";
+                inputStringCache[controlId] = displayStr;
+            }
+
+            string newStr = GUILayout.TextField(displayStr, style ?? GUI.skin.textField, widthOpt, GUILayout.Height(20));
+            if (newStr != displayStr) {
+                inputStringCache[controlId] = newStr;
+                return newStr;
+            }
+            return displayStr;
+        }
+
+        // =========================================================================
+        // 2. 选择器与胶囊组 (Pickers, Dropdowns & Chips)
+        // =========================================================================
+
+        /// <summary>
+        /// 行内微分修正求解器选择器：以胶囊按钮组的形式快速切换节点绑定的求解器 (如 DC_1, DC_2)。
+        /// </summary>
+        /// <param name="step">当前任务节点对象</param>
+        /// <param name="stepIndex">节点索引</param>
+        private void DrawInlineSolverPicker(MissionStep step, int stepIndex) {
+            GUILayout.Label("<color=#94a3b8>绑定求解器:</color>", gridLabelStyle, GUILayout.Width(75));
+            List<string> availSolvers = GetAvailableSolverList();
+            if (availSolvers == null || availSolvers.Count == 0) availSolvers = new List<string> { "DefaultDC" };
+
+            string currentDc = !string.IsNullOrEmpty(step.dc_name) ? step.dc_name : GetParentTargetDcName(stepIndex);
+
+            for (int s = 0; s < availSolvers.Count; s++) {
+                string sName = availSolvers[s];
+                bool isSel = currentDc.Equals(sName, StringComparison.OrdinalIgnoreCase);
+                string label = isSel ? $"<b>[✓ {sName}]</b>" : sName;
+                if (GUILayout.Button(label, isSel ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
+                    step.dc_name = sName;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 行内传播子选择器：以胶囊按钮组的形式快速切换积分传播子 (如 LEOProp, CislunarProp)。
+        /// </summary>
+        /// <param name="step">当前任务节点对象</param>
+        /// <param name="stepIndex">节点索引</param>
+        private void DrawInlinePropagatorPicker(MissionStep step, int stepIndex) {
+            GUILayout.Label("<color=#94a3b8>动力学传播子:</color>", gridLabelStyle, GUILayout.Width(80));
+            List<string> props = new List<string> { "LEOProp", "CislunarProp", "LunarNRHOProp", "DefaultProp" };
+            var regProps = GMATParameterRegistry.GetAllPropagatorConfigs();
+            if (regProps != null) {
+                foreach (var kvp in regProps) {
+                    if (!props.Contains(kvp.Key)) props.Add(kvp.Key);
+                }
+            }
+
+            string curProp = !string.IsNullOrEmpty(step.propagator) ? step.propagator : "LEOProp";
+            for (int p = 0; p < props.Count; p++) {
+                string pName = props[p];
+                bool isSel = curProp.Equals(pName, StringComparison.OrdinalIgnoreCase);
+                if (GUILayout.Button(pName, isSel ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
+                    step.propagator = pName;
+                }
+            }
+        }
+
+        // =========================================================================
+        // 3. 视觉反馈与状态徽章 (Badges & Visual Indicators)
+        // =========================================================================
+
+        /// <summary>
+        /// 绘制高质感平滑任务/状态进度条
+        /// </summary>
+        /// <param name="progress">进度值 [0.0 ~ 1.0]</param>
+        /// <param name="labelText">进度条中央文本</param>
+        /// <param name="height">高度 (像素)</param>
+        private void DrawProgressBar(float progress, string labelText, float height = 22f) {
+            Rect barRect = GUILayoutUtility.GetRect(GUIContent.none, GUIStyle.none, GUILayout.ExpandWidth(true), GUILayout.Height(height));
+            GUI.Box(barRect, GUIContent.none, nestedCardBoxStyle);
+
+            float pClamped = Mathf.Clamp01(progress);
+            if (pClamped > 0f) {
+                Rect fillRect = new Rect(barRect.x + 2, barRect.y + 2, (barRect.width - 4) * pClamped, barRect.height - 4);
+                Color oldColor = GUI.color;
+                GUI.color = isPropagating ? new Color(0.2f, 0.8f, 0.9f) : (latestResult != null && latestResult.success ? new Color(0.2f, 0.85f, 0.45f) : new Color(0.9f, 0.35f, 0.35f));
+                GUI.DrawTexture(fillRect, Texture2D.whiteTexture);
+                GUI.color = oldColor;
+            }
+
+            GUIStyle centerStyle = new GUIStyle(labelValueStyle) {
+                alignment = TextAnchor.MiddleCenter,
+                fontStyle = FontStyle.Bold
+            };
+            string displayPercent = $"{(pClamped * 100f):F0}%";
+            string fullBarLabel = string.IsNullOrEmpty(labelText) ? displayPercent : $"{labelText}  ({displayPercent})";
+            GUI.Label(barRect, $"<b>{fullBarLabel}</b>", centerStyle);
+        }
+
+        /// <summary>
+        /// 绘制 GMAT 官方参数类型中英文提示徽章
+        /// </summary>
+        /// <param name="paramName">参数全名 (例如 Sat.Earth.Altitude, Sat.Luna.RadPer)</param>
+        private void DrawParamBadge(string paramName) {
+            if (string.IsNullOrEmpty(paramName)) return;
+            string propBadge = GMATParameterRegistry.GetParamBadgeI18n(paramName);
+            if (!string.IsNullOrEmpty(propBadge)) {
+                GUILayout.Label($"<color=#38bdf8><b>[{propBadge}]</b></color>", labelValueStyle);
+            }
+        }
+
+        /// <summary>
+        /// 绘制全局变量绑定感知徽章 (如果传入的名字与 GMAT 变量库匹配，自动显示其当前值)
+        /// </summary>
+        /// <param name="varName">待检测的变量名</param>
+        private void DrawVariableBadge(string varName) {
+            if (string.IsNullOrEmpty(varName)) return;
+            if (GMATStateManager.Current != null && GMATStateManager.Current.Variables != null) {
+                var matchedVar = GMATStateManager.Current.Variables.Find(v => v.Name.Equals(varName, StringComparison.OrdinalIgnoreCase));
+                if (matchedVar != null) {
+                    GUILayout.Label($"<color=#facc15><b>[变量: {matchedVar.Name} = {matchedVar.InitialValue}]</b></color>", labelValueStyle);
+                }
+            }
+        }
+
+        // =========================================================================
+        // 4. 悬浮智能补全引擎 (Floating IntelliSense Engine)
+        // =========================================================================
+
+        /// <summary>
+        /// 唤起 GMAT IntelliSense 智能补全查询
+        /// </summary>
+        /// <param name="query">用户当前输入的文本前缀</param>
+        /// <param name="fieldName">目标字段类型 ("achieve", "vary", "prop_stop", "prop_val", "fburn_var")</param>
+        /// <param name="stepIndex">目标时序步骤索引</param>
+        private void TriggerIntelliSense(string query, string fieldName, int stepIndex) {
+            if (intelliSenseDismissed && intelliSenseLastQuery == query) return;
+            intelliSenseTargetStepIndex = stepIndex;
+            intelliSenseFieldName = fieldName;
+            intelliSenseLastQuery = query;
+            intelliSenseItems = GMATParameterRegistry.QueryIntelliSense(query, FlightGlobals.ActiveVessel, fieldName);
+            intelliSenseSelectedIndex = 0;
+            intelliSenseOpen = (intelliSenseItems != null && intelliSenseItems.Count > 0);
+        }
+
+        /// <summary>
+        /// 将选中的 IntelliSense 补全项应用并回填到目标时序节点与数据模型中
+        /// </summary>
+        /// <param name="item">被选中的补全数据项</param>
+        private void ApplyIntelliSense(IntelliSenseItem item) {
+            if (item == null) return;
+            if (intelliSenseTargetStepIndex >= 0 && intelliSenseTargetStepIndex < missionSequence.Count) {
+                var step = missionSequence[intelliSenseTargetStepIndex];
+                if (intelliSenseFieldName == "achieve") {
+                    step.achieve_param = item.InsertText;
+                    if (item.RecommendedValue != 0 || item.RecommendedTolerance != 0) {
+                        step.achieve_val = item.RecommendedValue;
+                        step.achieve_val_str = item.RecommendedValue.ToString("F3");
+                        step.achieve_tolerance = item.RecommendedTolerance;
+                    }
+                    pendingFocusControl = $"Field_Achieve_{intelliSenseTargetStepIndex}";
+                    GUI.FocusControl(pendingFocusControl);
+                } else if (intelliSenseFieldName == "prop_stop") {
+                    step.stop_type = item.InsertText;
+                    if (item.RecommendedValue != 0) {
+                        step.target_val = item.RecommendedValue;
+                        step.target_val_str = item.RecommendedValue.ToString("F3");
+                    }
+                    pendingFocusControl = $"Field_PropStop_{intelliSenseTargetStepIndex}";
+                    GUI.FocusControl(pendingFocusControl);
+                } else if (intelliSenseFieldName == "vary") {
+                    step.vary_variable = item.InsertText;
+                    if (item.RecommendedValue != 0) {
+                        step.vary_initial = item.RecommendedValue;
+                        step.vary_initial_str = item.RecommendedValue.ToString("F2");
+                        step.vary_lower = 0.0;
+                        step.vary_upper = item.RecommendedValue * 5.0;
+                    }
+                    pendingFocusControl = $"Field_Vary_{intelliSenseTargetStepIndex}";
+                    GUI.FocusControl(pendingFocusControl);
+                } else if (intelliSenseFieldName == "prop_val") {
+                    step.target_val_str = item.InsertText;
+                    step.duration_str = item.InsertText;
+                    if (item.Kind == IntelliSenseKind.Variable) {
+                        step.burn_use_vary_var = true;
+                        step.burn_vary_var_name = item.InsertText;
+                        if (item.RecommendedValue != 0) {
+                            step.target_val = item.RecommendedValue;
+                            step.duration = item.RecommendedValue;
+                        }
+                    } else if (item.RecommendedValue != 0) {
+                        step.target_val = item.RecommendedValue;
+                        step.duration = item.RecommendedValue;
+                        step.burn_use_vary_var = false;
+                    }
+                    pendingFocusControl = $"Field_PropVal_{intelliSenseTargetStepIndex}";
+                    GUI.FocusControl(pendingFocusControl);
+                } else if (intelliSenseFieldName == "fburn_var") {
+                    step.burn_vary_var_name = item.InsertText;
+                    step.duration_str = item.InsertText;
+                    step.burn_use_vary_var = true;
+                    pendingFocusControl = $"Field_FBurnVar_{intelliSenseTargetStepIndex}";
+                    GUI.FocusControl(pendingFocusControl);
+                } else if (intelliSenseFieldName == "achieve_val") {
+                    step.achieve_val_str = item.InsertText;
+                    if (item.RecommendedValue != 0) {
+                        step.achieve_val = item.RecommendedValue;
+                    }
+                    pendingFocusControl = $"Field_AchVal_{intelliSenseTargetStepIndex}";
+                    GUI.FocusControl(pendingFocusControl);
+                } else if (intelliSenseFieldName == "vary_init") {
+                    step.vary_initial_str = item.InsertText;
+                    if (item.RecommendedValue != 0) {
+                        step.vary_initial = item.RecommendedValue;
+                    }
+                    pendingFocusControl = $"Field_VaryInit_{intelliSenseTargetStepIndex}";
+                    GUI.FocusControl(pendingFocusControl);
+                }
+            }
+            intelliSenseOpen = false;
+            intelliSenseDismissed = true;
+            intelliSenseLastQuery = item.InsertText;
+        }
+
+        /// <summary>
+        /// 绘制全局顶层浮动 IntelliSense 智能补全窗口 (支持键盘上下导航、翻页、分类图标及文档提示)
+        /// </summary>
+        private void DrawFloatingIntelliSenseWindow() {
+            if (!intelliSenseOpen || intelliSenseItems == null || intelliSenseItems.Count == 0) return;
+            if (intelliSenseAnchorRect.width <= 0) return;
+
+            float popW = 420f;
+            float itemH = 26f;
+            float listH = Mathf.Min(182f, intelliSenseItems.Count * itemH + 6f);
+            float totalH = listH + 60f; // header + list + footer doc
+
+            float px = intelliSenseAnchorRect.x;
+            float py = intelliSenseAnchorRect.y + intelliSenseAnchorRect.height + 4f;
+
+            if (py + totalH > Screen.height - 30f) {
+                py = intelliSenseAnchorRect.y - totalH - 4f;
+            }
+
+            Rect popRect = new Rect(px, py, popW, totalH);
+
+            GUI.depth = -200;
+            GUI.color = Color.white;
+
+            GUI.Box(popRect, GUIContent.none, cardBoxStyle ?? GUI.skin.box);
+            GUILayout.BeginArea(popRect, GUI.skin.box);
+
+            // Header with Pagination Status & Quick Page Buttons
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("<color=#38bdf8><b>⚡ GMAT IntelliSense</b></color>", labelValueStyle, GUILayout.Width(130));
+            GUILayout.Label($"<color=#38bdf8>[ {intelliSenseSelectedIndex + 1} / {intelliSenseItems.Count} ]</color> <color=#64748b>↑↓/PgUp/PgDn/Tab</color>", labelValueStyle);
+            GUILayout.FlexibleSpace();
+
+            if (GUILayout.Button("▲", secondaryButtonStyle, GUILayout.Width(22), GUILayout.Height(18))) {
+                intelliSenseSelectedIndex = Mathf.Max(0, intelliSenseSelectedIndex - 5);
+                intelliSenseScroll.y = Mathf.Max(0, (intelliSenseSelectedIndex - 2) * itemH);
+            }
+            if (GUILayout.Button("▼", secondaryButtonStyle, GUILayout.Width(22), GUILayout.Height(18))) {
+                intelliSenseSelectedIndex = Mathf.Min(intelliSenseItems.Count - 1, intelliSenseSelectedIndex + 5);
+                intelliSenseScroll.y = Mathf.Max(0, (intelliSenseSelectedIndex - 2) * itemH);
+            }
+            if (GUILayout.Button("✕", secondaryButtonStyle, GUILayout.Width(20), GUILayout.Height(18))) {
+                intelliSenseOpen = false;
+                intelliSenseDismissed = true;
+            }
+            GUILayout.EndHorizontal();
+
+            // Scrollable Items List
+            intelliSenseScroll = GUILayout.BeginScrollView(intelliSenseScroll, GUILayout.Height(listH));
+            for (int i = 0; i < intelliSenseItems.Count; i++) {
+                var item = intelliSenseItems[i];
+                bool isSelected = (i == intelliSenseSelectedIndex);
+
+                if (isSelected) {
+                    GUI.backgroundColor = new Color(0.02f, 0.52f, 0.78f, 1f);
+                } else {
+                    GUI.backgroundColor = new Color(0.12f, 0.16f, 0.24f, 0.85f);
+                }
+
+                GUILayout.BeginHorizontal(GUI.skin.button, GUILayout.Height(itemH));
+                GUILayout.Label(item.GetIcon(), GUILayout.Width(20));
+                GUILayout.Label($"<b>{item.Label}</b>", isSelected ? headerStyle : labelValueStyle, GUILayout.Width(150));
+                GUILayout.FlexibleSpace();
+                GUILayout.Label($"<color=#38bdf8>{item.TypeTag}</color>", labelValueStyle);
+                GUILayout.EndHorizontal();
+
+                if (Event.current.type == EventType.MouseDown && GUILayoutUtility.GetLastRect().Contains(Event.current.mousePosition)) {
+                    intelliSenseSelectedIndex = i;
+                    ApplyIntelliSense(item);
+                    Event.current.Use();
+                }
+
+                GUI.backgroundColor = Color.white;
+            }
+            GUILayout.EndScrollView();
+
+            // Selected Item Documentation Pane
+            if (intelliSenseSelectedIndex >= 0 && intelliSenseSelectedIndex < intelliSenseItems.Count) {
+                var cur = intelliSenseItems[intelliSenseSelectedIndex];
+                GUILayout.Space(2);
+                GUILayout.BeginHorizontal();
+                GUILayout.Label($"<color=#94a3b8>📖 {cur.Doc}</color>", labelValueStyle);
+                GUILayout.EndHorizontal();
+            }
+
+            GUILayout.EndArea();
+            GUI.depth = 0;
+        }
+
+        /// <summary>
+        /// 绘制停止条件快捷补全分类栏 (天体、坐标系、航天器前缀胶囊)
+        /// </summary>
+        private void DrawPropStopAutocompleteBar(int stepIndex, MissionStep step) {
+            GUILayout.Space(2);
+            Vessel v = FlightGlobals.ActiveVessel;
+            List<string> allBodies = GMATParameterRegistry.GetAllBodies(v);
+            List<string> allCoords = GMATParameterRegistry.GetAllCoordinateSystems();
+            List<string> allCraft = GMATParameterRegistry.GetAllSpacecraft(v);
+
+            // Row 1: Entity Category Tabs
+            GUILayout.BeginHorizontal();
+            GUILayout.Space(75);
+            GUILayout.Label("<color=#64748b>对象类型:</color>", labelValueStyle, GUILayout.Width(60));
+
+            string[] catTabs = new string[] { "🪐 天体", "📐 坐标系", "🛰️ 航天器" };
+            for (int t = 0; t < catTabs.Length; t++) {
+                bool isSel = (propCategoryTab == t);
+                GUI.backgroundColor = isSel ? new Color(0.2f, 0.7f, 0.9f) : Color.white;
+                if (GUILayout.Button(catTabs[t], secondaryButtonStyle, GUILayout.Height(18))) {
+                    propCategoryTab = t;
+                }
+                GUI.backgroundColor = Color.white;
+            }
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+
+            // Row 2: Selected Category's Chips
+            GUILayout.BeginHorizontal();
+            GUILayout.Space(75);
+            GUILayout.Label("<color=#64748b>补全对象:</color>", labelValueStyle, GUILayout.Width(60));
+
+            if (propCategoryTab == 0) { // 🪐 天体
+                int chipLimit = Math.Min(6, allBodies.Count);
+                for (int b = 0; b < chipLimit; b++) {
+                    string bName = allBodies[b];
+                    string icon = (bName == "Earth") ? "🌍 " : (bName == "Luna" || bName == "Moon") ? "🌙 " : (bName == "Sun") ? "☀️ " : (bName == "Mars") ? "🔴 " : (bName == "Venus") ? "🟡 " : (bName == "Jupiter") ? "⚡ " : "🪐 ";
+                    bool hasPrefix = !string.IsNullOrEmpty(step.stop_type) && step.stop_type.StartsWith(bName + ".");
+                    GUI.backgroundColor = hasPrefix ? new Color(0.2f, 0.7f, 0.9f) : Color.white;
+                    if (GUILayout.Button(icon + bName + ".", secondaryButtonStyle, GUILayout.Height(18))) {
+                        ApplyPropStopPrefix(step, bName);
+                        pendingFocusControl = $"Field_PropStop_{stepIndex}";
+                        GUI.FocusControl(pendingFocusControl);
+                    }
+                    GUI.backgroundColor = Color.white;
+                }
+            } else if (propCategoryTab == 1) { // 📐 坐标系
+                for (int c = 0; c < Math.Min(5, allCoords.Count); c++) {
+                    string cName = allCoords[c];
+                    bool hasPrefix = !string.IsNullOrEmpty(step.stop_type) && step.stop_type.StartsWith(cName + ".");
+                    GUI.backgroundColor = hasPrefix ? new Color(0.2f, 0.7f, 0.9f) : Color.white;
+                    if (GUILayout.Button("📐 " + cName + ".", secondaryButtonStyle, GUILayout.Height(18))) {
+                        ApplyPropStopPrefix(step, cName);
+                        pendingFocusControl = $"Field_PropStop_{stepIndex}";
+                        GUI.FocusControl(pendingFocusControl);
+                    }
+                    GUI.backgroundColor = Color.white;
+                }
+            } else if (propCategoryTab == 2) { // 🛰️ 航天器
+                for (int sc = 0; sc < allCraft.Count; sc++) {
+                    string scName = allCraft[sc];
+                    bool hasPrefix = !string.IsNullOrEmpty(step.stop_type) && step.stop_type.StartsWith(scName + ".");
+                    GUI.backgroundColor = hasPrefix ? new Color(0.2f, 0.7f, 0.9f) : Color.white;
+                    if (GUILayout.Button("🛰️ " + scName + ".", secondaryButtonStyle, GUILayout.Height(18))) {
+                        ApplyPropStopPrefix(step, scName);
+                        pendingFocusControl = $"Field_PropStop_{stepIndex}";
+                        GUI.FocusControl(pendingFocusControl);
+                    }
+                    GUI.backgroundColor = Color.white;
+                }
+            }
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+
+            // Row 3: Dynamic Smart Suggestions
+            string curStop = (step.stop_type ?? "").Trim();
+            List<IntelliSenseItem> suggestions = GMATParameterRegistry.QueryIntelliSense(curStop, v);
+            if (suggestions.Count > 0) {
+                GUILayout.Space(1);
+                GUILayout.BeginHorizontal();
+                GUILayout.Space(75);
+                GUILayout.Label("<color=#38bdf8>智能推荐:</color>", labelValueStyle, GUILayout.Width(60));
+                for (int s = 0; s < Math.Min(6, suggestions.Count); s++) {
+                    var sug = suggestions[s];
+                    if (GUILayout.Button(sug.GetIcon() + " " + sug.InsertText, secondaryButtonStyle, GUILayout.Height(18))) {
+                        step.stop_type = sug.InsertText;
+                        if (sug.RecommendedValue != 0) {
+                            step.target_val = sug.RecommendedValue;
+                            step.target_val_str = sug.RecommendedValue.ToString("F3");
+                            step.duration = sug.RecommendedValue;
+                        }
+                        pendingFocusControl = $"Field_PropStop_{stepIndex}";
+                        GUI.FocusControl(pendingFocusControl);
+                    }
+                }
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+            }
+        }
+
+        /// <summary>
+        /// 格式化应用对象前缀至停止条件
+        /// </summary>
+        private void ApplyPropStopPrefix(MissionStep step, string objectPrefix) {
+            string cur = (step.stop_type ?? "").Trim();
+            if (string.IsNullOrEmpty(cur)) {
+                step.stop_type = objectPrefix + ".";
+                return;
+            }
+
+            if (objectPrefix.Equals("Sat", StringComparison.OrdinalIgnoreCase) || objectPrefix.StartsWith("Sat", StringComparison.OrdinalIgnoreCase)) {
+                if (cur.StartsWith("Sat.", StringComparison.OrdinalIgnoreCase)) return;
+                step.stop_type = "Sat." + cur;
+                return;
+            }
+
+            bool isBody = objectPrefix.Equals("Luna", StringComparison.OrdinalIgnoreCase) || objectPrefix.Equals("Earth", StringComparison.OrdinalIgnoreCase) || objectPrefix.Equals("Sun", StringComparison.OrdinalIgnoreCase) || objectPrefix.Equals("Mars", StringComparison.OrdinalIgnoreCase) || objectPrefix.Equals("Jupiter", StringComparison.OrdinalIgnoreCase);
+            if (isBody) {
+                if (cur.StartsWith("Sat.", StringComparison.OrdinalIgnoreCase)) {
+                    string rest = cur.Substring(4);
+                    if (rest.Contains(".")) {
+                        string paramOnly = rest.Substring(rest.LastIndexOf('.') + 1);
+                        step.stop_type = $"Sat.{objectPrefix}.{paramOnly}";
+                    } else {
+                        step.stop_type = $"Sat.{objectPrefix}.{rest}";
+                    }
+                } else if (cur.Contains(".")) {
+                    string paramOnly = cur.Substring(cur.LastIndexOf('.') + 1);
+                    step.stop_type = $"{objectPrefix}.{paramOnly}";
+                } else {
+                    step.stop_type = $"{objectPrefix}.{cur}";
+                }
+                return;
+            }
+
+            if (cur.StartsWith("Sat.", StringComparison.OrdinalIgnoreCase)) {
+                string paramOnly = cur.Contains(".") ? cur.Substring(cur.LastIndexOf('.') + 1) : "Z";
+                if (paramOnly == "Periapsis" || paramOnly == "Apoapsis" || paramOnly == "Time") paramOnly = "Z";
+                step.stop_type = $"Sat.{objectPrefix}.{paramOnly}";
+            } else {
+                string paramOnly = cur.Contains(".") ? cur.Substring(cur.LastIndexOf('.') + 1) : "Z";
+                step.stop_type = $"{objectPrefix}.{paramOnly}";
+            }
+        }
+
+        // =========================================================================
+        // 5. 标签式表单字段控件 (Labeled Form Input Fields)
+        // =========================================================================
+
+        private static Dictionary<string, string> smartFieldBuffers = new Dictionary<string, string>();
+        private static string activeSmartControlId = null;
+
+        /// <summary>
+        /// 带左侧文本标签的延迟浮点数值输入表单行
+        /// </summary>
+        private double DrawDoubleField(string label, double val, float labelW = 110, float fieldW = 90, string format = "auto", string customId = null) {
+            GUILayout.BeginHorizontal();
+            if (!string.IsNullOrEmpty(label)) GUILayout.Label(label, labelValueStyle, GUILayout.Width(labelW));
+            
+            string ctrlId = !string.IsNullOrEmpty(customId) ? customId : ("res_field_" + (label ?? "num").GetHashCode());
+            GUI.SetNextControlName(ctrlId);
+            bool isFocused = (GUI.GetNameOfFocusedControl() == ctrlId);
+
+            string currentBuf;
+            if (!smartFieldBuffers.TryGetValue(ctrlId, out currentBuf)) {
+                currentBuf = FormatSmartDoubleForDisplay(val, format);
+                smartFieldBuffers[ctrlId] = currentBuf;
+            }
+
+            if (!isFocused) {
+                if (activeSmartControlId == ctrlId) {
+                    activeSmartControlId = null;
+                }
+                currentBuf = FormatSmartDoubleForDisplay(val, format);
+                smartFieldBuffers[ctrlId] = currentBuf;
+            } else {
+                if (activeSmartControlId != ctrlId) {
+                    activeSmartControlId = ctrlId;
+                    currentBuf = (val == 0.0) ? "0.0" : val.ToString("G", CultureInfo.InvariantCulture);
+                    smartFieldBuffers[ctrlId] = currentBuf;
+                }
+            }
+
+            string edited = GUILayout.TextField(currentBuf, numericInputStyle ?? GUI.skin.textField, GUILayout.Width(fieldW), GUILayout.Height(20));
+            if (edited != currentBuf) {
+                smartFieldBuffers[ctrlId] = edited;
+                double res;
+                if (double.TryParse(edited, NumberStyles.Any, CultureInfo.InvariantCulture, out res)) {
+                    val = res;
+                }
+            }
+            GUILayout.EndHorizontal();
+            return val;
+        }
+
+        /// <summary>
+        /// 智能浮点显示格式化 (根据数量级自动选用科学计数法、高精度小数或定点数)
+        /// </summary>
+        private static string FormatSmartDoubleForDisplay(double val, string format = "auto") {
+            if (val == 0.0) return "0.0";
+            if (format != "auto") {
+                return val.ToString(format, CultureInfo.InvariantCulture);
+            }
+            double abs = Math.Abs(val);
+            if (abs < 1e-4) {
+                return val.ToString("E2", CultureInfo.InvariantCulture); // e.g. 1.00E-11
+            }
+            if (abs >= 10000.0) {
+                return val.ToString("F1", CultureInfo.InvariantCulture); // e.g. 35786.0
+            }
+            if (abs >= 100.0) {
+                return val.ToString("F2", CultureInfo.InvariantCulture); // e.g. 6282.84
+            }
+            if (abs >= 1.0) {
+                return val.ToString("F2", CultureInfo.InvariantCulture); // e.g. 2.16
+            }
+            return val.ToString("0.####", CultureInfo.InvariantCulture); // e.g. 0.0001
+        }
+
+        /// <summary>
+        /// 带左侧文本标签的字符串文本输入表单行
+        /// </summary>
+        private string DrawTextField(string label, string val, float labelW = 110, float fieldW = 120) {
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(label, labelValueStyle, GUILayout.Width(labelW));
+            string txt = GUILayout.TextField(val ?? "", stepLabelInputStyle ?? GUI.skin.textField, GUILayout.Width(fieldW));
+            GUILayout.EndHorizontal();
+            return txt;
+        }
+
+        /// <summary>
+        /// 带左侧文本标签的整型数值输入表单行
+        /// </summary>
+        private int DrawIntField(string label, int val, float labelW = 110, float fieldW = 60) {
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(label, labelValueStyle, GUILayout.Width(labelW));
+            string txt = GUILayout.TextField(val.ToString(), numericInputStyle ?? GUI.skin.textField, GUILayout.Width(fieldW));
+            int res;
+            if (int.TryParse(txt, out res)) {
+                val = res;
+            }
+            GUILayout.EndHorizontal();
+            return val;
+        }
+    }
+}

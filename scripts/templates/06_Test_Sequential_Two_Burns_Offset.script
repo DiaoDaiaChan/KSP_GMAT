@@ -1,0 +1,100 @@
+%----------------------------------------------------------------------
+% GMAT Verification Preset: Sequential Dual-Burn Timing Offset Test
+% Timeline:
+% 1. Coast 200s (T+0 -> T+200s)
+% 2. Burn #1: Fire 30s (T+200s -> T+230s)
+% 3. Coast 200s (T+230s -> T+430s)
+% 4. Burn #2: Fire 30s (T+430s -> T+460s)
+% 5. Cruise 600s
+%----------------------------------------------------------------------
+
+Create Spacecraft Sat;
+Sat.DateFormat = UTCGregorian;
+Sat.Epoch = '15 Jul 2026 00:00:00.000';
+Sat.CoordinateSystem = EarthMJ2000Eq;
+Sat.DisplayStateType = Keplerian;
+Sat.SMA = 6778.14;
+Sat.ECC = 0.001;
+Sat.INC = 28.5;
+Sat.RAAN = 0.0;
+Sat.AOP = 0.0;
+Sat.TA = 0.0;
+Sat.DryMass = 1000.0;
+
+Create ChemicalTank MainTank;
+MainTank.AllowNegativeFuelMass = true;
+MainTank.FuelMass = 2000.0;
+MainTank.PressureModel = 'PressureRegulated';
+
+Create ChemicalThruster MainEngine;
+MainEngine.CoordinateSystem = Local;
+MainEngine.Origin = Earth;
+MainEngine.Axes = VNB;
+MainEngine.ThrustDirection1 = 1.0;
+MainEngine.ThrustDirection2 = 0.0;
+MainEngine.ThrustDirection3 = 0.0;
+MainEngine.DutyCycle = 1.0;
+MainEngine.ThrustScaleFactor = 1.0;
+MainEngine.DecrementMass = true;
+MainEngine.Tank = {MainTank};
+MainEngine.GravitationalAccel = 9.80665;
+MainEngine.C1 = 50000.0;
+MainEngine.K1 = 310.0;
+
+Sat.Tanks = {MainTank};
+Sat.Thrusters = {MainEngine};
+
+Create ForceModel LEOProp_ForceModel;
+LEOProp_ForceModel.CentralBody = Earth;
+LEOProp_ForceModel.PointMasses = {Earth, Sun, Luna};
+LEOProp_ForceModel.Drag = None;
+LEOProp_ForceModel.SRP = Off;
+
+Create Propagator LEOProp;
+LEOProp.FM = LEOProp_ForceModel;
+LEOProp.Type = RungeKutta89;
+LEOProp.InitialStepSize = 30.0;
+LEOProp.Accuracy = 1e-11;
+LEOProp.MinStep = 0.001;
+LEOProp.MaxStep = 2700.0;
+
+Create FiniteBurn Burn1;
+Burn1.Thrusters = {MainEngine};
+
+Create FiniteBurn Burn2;
+Burn2.Thrusters = {MainEngine};
+
+Create ReportFile TrajReport;
+TrajReport.Filename = 'TrajReport.txt';
+TrajReport.WriteHeaders = false;
+
+%----------------------------------------------------------------------
+% Mission Sequence
+%----------------------------------------------------------------------
+BeginMissionSequence;
+
+% Step 1: Initial Coast 200s (Wait until T+200s)
+Propagate LEOProp(Sat) {Sat.ElapsedSecs = 200.0};
+Report TrajReport Sat.ElapsedSecs Sat.X Sat.Y Sat.Z Sat.VX Sat.VY Sat.VZ Sat.Earth.Altitude Sat.SMA Sat.ECC Sat.INC Sat.RAAN Sat.AOP Sat.TA Sat.TotalMass;
+
+% Step 2: Burn #1 (30s duration: T+200s -> T+230s)
+Report TrajReport Sat.ElapsedSecs Sat.X Sat.Y Sat.Z Sat.VX Sat.VY Sat.VZ Sat.Earth.Altitude Sat.SMA Sat.ECC Sat.INC Sat.RAAN Sat.AOP Sat.TA Sat.TotalMass;
+BeginFiniteBurn Burn1(Sat);
+Propagate LEOProp(Sat) {Sat.ElapsedSecs = 30.0};
+EndFiniteBurn Burn1(Sat);
+Report TrajReport Sat.ElapsedSecs Sat.X Sat.Y Sat.Z Sat.VX Sat.VY Sat.VZ Sat.Earth.Altitude Sat.SMA Sat.ECC Sat.INC Sat.RAAN Sat.AOP Sat.TA Sat.TotalMass;
+
+% Step 3: Intermediate Coast 200s (Wait from T+230s until T+430s)
+Propagate LEOProp(Sat) {Sat.ElapsedSecs = 200.0};
+Report TrajReport Sat.ElapsedSecs Sat.X Sat.Y Sat.Z Sat.VX Sat.VY Sat.VZ Sat.Earth.Altitude Sat.SMA Sat.ECC Sat.INC Sat.RAAN Sat.AOP Sat.TA Sat.TotalMass;
+
+% Step 4: Burn #2 (30s duration: T+430s -> T+460s)
+Report TrajReport Sat.ElapsedSecs Sat.X Sat.Y Sat.Z Sat.VX Sat.VY Sat.VZ Sat.Earth.Altitude Sat.SMA Sat.ECC Sat.INC Sat.RAAN Sat.AOP Sat.TA Sat.TotalMass;
+BeginFiniteBurn Burn2(Sat);
+Propagate LEOProp(Sat) {Sat.ElapsedSecs = 30.0};
+EndFiniteBurn Burn2(Sat);
+Report TrajReport Sat.ElapsedSecs Sat.X Sat.Y Sat.Z Sat.VX Sat.VY Sat.VZ Sat.Earth.Altitude Sat.SMA Sat.ECC Sat.INC Sat.RAAN Sat.AOP Sat.TA Sat.TotalMass;
+
+% Step 5: Final Observation Cruise
+Propagate LEOProp(Sat) {Sat.ElapsedSecs = 600.0};
+Report TrajReport Sat.ElapsedSecs Sat.X Sat.Y Sat.Z Sat.VX Sat.VY Sat.VZ Sat.Earth.Altitude Sat.SMA Sat.ECC Sat.INC Sat.RAAN Sat.AOP Sat.TA Sat.TotalMass;
