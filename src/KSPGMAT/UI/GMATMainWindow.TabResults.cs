@@ -389,7 +389,6 @@ namespace KSPGMAT.UI {
             double anchorUT = (solveUT > 0) ? solveUT : currentUT;
             centroidLead = 0.0;
             Orbit orb = (vessel != null) ? vessel.orbit : null;
-            targetEpoch = anchorUT + burn.epoch_offset + globalTimeShift;
 
             double duration = burn.duration;
             double m0 = GMATStateManager.Current.Spacecraft.TotalMassKg > 0 
@@ -404,51 +403,10 @@ namespace KSPGMAT.UI {
                 duration = (m0 * ve / thrustN) * (1.0 - Math.Exp(-burn.magnitude / ve));
             }
 
+            // 1. Compute Centroid Lead Time (Tsiolkovsky impulse centroid / half burn)
             if (currentIgnitionMode == IgnitionCorrectionMode.RawUnmodified) {
-                // Mode 1: GMAT Raw Unmodified (Simple geometric half duration, theoretical solve epoch without landmark snapping)
                 centroidLead = (duration > 0.0) ? (duration * 0.5) : 0.0;
             } else {
-                // Mode 2 & Mode 3: High-Precision Dynamics & Closed-Loop
-                // 1. Live Landmark Snapping on First Burn
-                if (orb != null && orb.period > 0 && latestResult != null && latestResult.solved_burns != null && latestResult.solved_burns.Count > 0 && burn == latestResult.solved_burns[0]) {
-                    if (missionSequence != null && missionSequence.Count > 0) {
-                        for (int s = 0; s < missionSequence.Count; s++) {
-                            var step = missionSequence[s];
-                            if (step.type == "FiniteBurn" || step.type == "ImpulsiveBurn" || step.type == "Maneuver") break;
-                            if (step.type == "Propagate") {
-                                string cond = (step.stop_type ?? "").ToLower();
-                                if (cond.Contains("an") || cond.Contains("ascending")) {
-                                    targetEpoch = GetNextANTime(orb, currentUT);
-                                    break;
-                                } else if (cond.Contains("dn") || cond.Contains("descending")) {
-                                    targetEpoch = GetNextDNTime(orb, currentUT);
-                                    break;
-                                } else if (cond.Contains("latitude") || cond.Contains("node") || cond.Contains("equator") || cond.Contains("z_")) {
-                                    double omega = orb.argumentOfPeriapsis;
-                                    double taAN = (360.0 - omega) % 360.0; if (taAN < 0.0) taAN += 360.0;
-                                    double taDN = (180.0 - omega) % 360.0; if (taDN < 0.0) taDN += 360.0;
-                                    double dtAN = GetTimeToTrueAnomaly(orb, taAN);
-                                    double dtDN = GetTimeToTrueAnomaly(orb, taDN);
-
-                                    if (Math.Abs(burn.epoch_offset - dtAN) <= Math.Abs(burn.epoch_offset - dtDN)) {
-                                        targetEpoch = currentUT + dtAN;
-                                    } else {
-                                        targetEpoch = currentUT + dtDN;
-                                    }
-                                    break;
-                                } else if (cond.Contains("apo") || cond.Contains("ap")) {
-                                    targetEpoch = GetNextApTime(orb, currentUT);
-                                    break;
-                                } else if (cond.Contains("peri") || cond.Contains("pe")) {
-                                    targetEpoch = GetNextPeTime(orb, currentUT);
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // 2. Principia Native Variable-Mass Half-Impulse Centroid
                 if (duration > 0.0 && thrustN > 0 && ve > 0) {
                     double fuelBurned = burn.fuel_burned > 0 ? burn.fuel_burned : (thrustN / ve) * duration;
                     double mf = Math.Max(1.0, m0 - fuelBurned);
@@ -459,15 +417,71 @@ namespace KSPGMAT.UI {
                 }
             }
 
-            // Time wrap protection: if initial ignition has elapsed, cycle by orbit period
-            double initialTime = targetEpoch - centroidLead;
-            if (orb != null && orb.period > 0 && initialTime < currentUT + 5.0) {
-                while (initialTime < currentUT + 5.0) {
-                    initialTime += orb.period;
-                    targetEpoch += orb.period;
+            // 2. Multi-Burn Strict Coherence Synchronization
+            var burnsList = latestResult != null ? latestResult.solved_burns : null;
+            if (burnsList != null && burnsList.Count > 0) {
+                var firstBurn = burnsList[0];
+                
+                // Determine Burn #1's true synchronized target epoch
+                double firstBaseEpoch = anchorUT + firstBurn.epoch_offset + globalTimeShift;
+                double firstTargetEpoch = firstBaseEpoch;
+
+                if (currentIgnitionMode != IgnitionCorrectionMode.RawUnmodified && orb != null && orb.period > 0) {
+                    // Check if first burn is aligned to a landmark (Ap, Pe, AN, DN)
+                    if (missionSequence != null && missionSequence.Count > 0) {
+                        for (int s = 0; s < missionSequence.Count; s++) {
+                            var step = missionSequence[s];
+                            if (step.type == "FiniteBurn" || step.type == "ImpulsiveBurn" || step.type == "Maneuver") break;
+                            if (step.type == "Propagate") {
+                                string cond = (step.stop_type ?? "").ToLower();
+                                if (cond.Contains("an") || cond.Contains("ascending")) {
+                                    firstTargetEpoch = GetNextANTime(orb, currentUT);
+                                    break;
+                                } else if (cond.Contains("dn") || cond.Contains("descending")) {
+                                    firstTargetEpoch = GetNextDNTime(orb, currentUT);
+                                    break;
+                                } else if (cond.Contains("latitude") || cond.Contains("node") || cond.Contains("equator") || cond.Contains("z_")) {
+                                    double omega = orb.argumentOfPeriapsis;
+                                    double taAN = (360.0 - omega) % 360.0; if (taAN < 0.0) taAN += 360.0;
+                                    double taDN = (180.0 - omega) % 360.0; if (taDN < 0.0) taDN += 360.0;
+                                    double dtAN = GetTimeToTrueAnomaly(orb, taAN);
+                                    double dtDN = GetTimeToTrueAnomaly(orb, taDN);
+                                    firstTargetEpoch = (Math.Abs(firstBurn.epoch_offset - dtAN) <= Math.Abs(firstBurn.epoch_offset - dtDN))
+                                        ? (currentUT + dtAN) : (currentUT + dtDN);
+                                    break;
+                                } else if (cond.Contains("apo") || cond.Contains("ap")) {
+                                    firstTargetEpoch = GetNextApTime(orb, currentUT);
+                                    break;
+                                } else if (cond.Contains("peri") || cond.Contains("pe")) {
+                                    firstTargetEpoch = GetNextPeTime(orb, currentUT);
+                                    break;
+                                }
+                            }
+                        }
+                    }
                 }
+
+                // Time wrap protection on First Burn: ensure first burn ignition is strictly in the future
+                double firstCentroidLead = (firstBurn.duration > 0.0) ? (firstBurn.duration * 0.5) : 0.0;
+                double firstInitialTime = firstTargetEpoch - firstCentroidLead;
+                if (orb != null && orb.period > 0 && firstInitialTime < currentUT + 5.0) {
+                    while (firstInitialTime < currentUT + 5.0) {
+                        firstInitialTime += orb.period;
+                        firstTargetEpoch += orb.period;
+                    }
+                }
+
+                // Compute exact delta time shift applied to First Burn
+                double firstBurnTimeShift = firstTargetEpoch - (anchorUT + firstBurn.epoch_offset);
+
+                // ALL downstream burns (Burn #2, Burn #3, ...) strictly inherit First Burn's delta shift
+                // so the inter-burn orbital transfer time is 100% mathematically preserved
+                targetEpoch = (anchorUT + burn.epoch_offset) + firstBurnTimeShift;
+            } else {
+                targetEpoch = anchorUT + burn.epoch_offset + globalTimeShift;
             }
 
+            double initialTime = targetEpoch - centroidLead;
             burn.computed_initial_time = initialTime;
             burn.centroid_lead_time = centroidLead;
             return initialTime;
@@ -579,29 +593,13 @@ namespace KSPGMAT.UI {
             double solveUT = (latestResult.solve_ut > 0) ? latestResult.solve_ut : Planetarium.GetUniversalTime();
             double currentUT = Planetarium.GetUniversalTime();
 
-            // Compute global orbit period wrapping shift based on the first burn so all sequential burns shift synchronously
-            double globalTimeShift = 0.0;
-            if (latestResult.solved_burns.Count > 0 && vessel != null && vessel.orbit != null) {
-                var firstBurn = latestResult.solved_burns[0];
-                double firstTargetEpoch = solveUT + firstBurn.epoch_offset;
-                double firstDuration = firstBurn.duration;
-                double firstCentroidLead = (firstDuration > 0.0) ? (firstDuration * 0.5) : 0.0;
-                double firstInitialTime = firstTargetEpoch - firstCentroidLead;
-                Orbit orb = vessel.orbit;
-                if (orb.period > 0 && orb.eccentricity < 1.0 && firstInitialTime < currentUT + 3.0 && firstBurn.epoch_offset < orb.period * 2.0) {
-                    while (firstInitialTime + globalTimeShift < currentUT + 3.0) {
-                        globalTimeShift += orb.period;
-                    }
-                }
-            }
-
             int writtenCount = 0;
             for (int i = 0; i < latestResult.solved_burns.Count; i++) {
                 var b = latestResult.solved_burns[i];
                 if (!b.principia_writeable) continue;
 
                 double targetEpoch, centroidLead;
-                double burnInitialTime = ComputeBurnInitialTime(vessel, b, solveUT, out targetEpoch, out centroidLead, globalTimeShift);
+                double burnInitialTime = ComputeBurnInitialTime(vessel, b, solveUT, out targetEpoch, out centroidLead);
 
                 Vector3d dv = new Vector3d(b.dv_v, b.dv_b, b.dv_n); // GMAT VNB -> Principia Frenet: X=Tangent(V), Y=In-Plane Normal(B), Z=Out-of-Plane Binormal(N)
                 double thrust = b.thrust_kn > 0 ? b.thrust_kn : 50.0;
