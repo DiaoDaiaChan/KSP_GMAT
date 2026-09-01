@@ -1306,7 +1306,9 @@ namespace KSPGMAT.UI {
 
             if (GMATStateManager.Current != null) {
                 // 1. Solvers
-                if (result.solvers != null && result.solvers.Count > 0) {
+                if (result.solver_models != null && result.solver_models.Count > 0) {
+                    GMATStateManager.Current.Solvers = new List<Model.GMATSolverModel>(result.solver_models);
+                } else if (result.solvers != null && result.solvers.Count > 0) {
                     GMATStateManager.Current.Solvers.Clear();
                     for (int s = 0; s < result.solvers.Count; s++) {
                         string sName = result.solvers[s];

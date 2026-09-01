@@ -70,44 +70,63 @@ namespace KSPGMAT.Service {
                     }
 
                     // 2. Tanks
-                    var tkMatch = Regex.Match(rawLine, @"Create\s+ChemicalTank\s+([A-Za-z0-9_]+)", RegexOptions.IgnoreCase);
+                    var tkMatch = Regex.Match(rawLine, @"Create\s+ChemicalTank\s+([^;]+);?", RegexOptions.IgnoreCase);
                     if (tkMatch.Success) {
-                        string tkName = tkMatch.Groups[1].Value;
-                        if (!tanksDict.ContainsKey(tkName)) {
-                            var tkObj = new GMATTankModel { Id = tkName, StageNumber = tanksDict.Count };
-                            tanksDict[tkName] = tkObj;
+                        string[] tkNames = tkMatch.Groups[1].Value.Split(new[] { ' ', ',', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                        foreach (var tkName in tkNames) {
+                            string clean = tkName.Trim();
+                            if (!string.IsNullOrEmpty(clean) && !tanksDict.ContainsKey(clean)) {
+                                tanksDict[clean] = new GMATTankModel { Id = clean, StageNumber = tanksDict.Count };
+                            }
                         }
                     }
 
                     // 3. Thrusters
-                    var thrMatch = Regex.Match(rawLine, @"Create\s+ChemicalThruster\s+([A-Za-z0-9_]+)", RegexOptions.IgnoreCase);
+                    var thrMatch = Regex.Match(rawLine, @"Create\s+ChemicalThruster\s+([^;]+);?", RegexOptions.IgnoreCase);
                     if (thrMatch.Success) {
-                        string thrName = thrMatch.Groups[1].Value;
-                        if (!thrustersDict.ContainsKey(thrName)) {
-                            var thrObj = new GMATThrusterModel { Id = thrName, RawTitle = thrName, StageNumber = thrustersDict.Count };
-                            thrustersDict[thrName] = thrObj;
+                        string[] thrNames = thrMatch.Groups[1].Value.Split(new[] { ' ', ',', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                        foreach (var thrName in thrNames) {
+                            string clean = thrName.Trim();
+                            if (!string.IsNullOrEmpty(clean) && !thrustersDict.ContainsKey(clean)) {
+                                thrustersDict[clean] = new GMATThrusterModel { Id = clean, RawTitle = clean, StageNumber = thrustersDict.Count };
+                            }
                         }
                     }
 
                     // 4. FiniteBurns
-                    var fbMatch = Regex.Match(rawLine, @"Create\s+FiniteBurn\s+([A-Za-z0-9_]+)", RegexOptions.IgnoreCase);
+                    var fbMatch = Regex.Match(rawLine, @"Create\s+FiniteBurn\s+([^;]+);?", RegexOptions.IgnoreCase);
                     if (fbMatch.Success) {
-                        finiteBurnsDict[fbMatch.Groups[1].Value] = "";
+                        string[] fbNames = fbMatch.Groups[1].Value.Split(new[] { ' ', ',', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                        foreach (var fbName in fbNames) {
+                            string clean = fbName.Trim();
+                            if (!string.IsNullOrEmpty(clean)) finiteBurnsDict[clean] = "";
+                        }
                     }
 
                     // 5. Solvers / DifferentialCorrectors
-                    var dcMatch = Regex.Match(rawLine, @"Create\s+DifferentialCorrector\s+([A-Za-z0-9_]+)", RegexOptions.IgnoreCase);
+                    var dcMatch = Regex.Match(rawLine, @"Create\s+DifferentialCorrector\s+([^;]+);?", RegexOptions.IgnoreCase);
                     if (dcMatch.Success) {
-                        string dcName = dcMatch.Groups[1].Value;
-                        if (!result.solvers.Contains(dcName)) result.solvers.Add(dcName);
+                        string[] dcNames = dcMatch.Groups[1].Value.Split(new[] { ' ', ',', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                        foreach (var dcName in dcNames) {
+                            string clean = dcName.Trim();
+                            if (!string.IsNullOrEmpty(clean)) {
+                                if (!result.solvers.Contains(clean)) result.solvers.Add(clean);
+                                if (!result.solver_models.Exists(s => s.Name.Equals(clean, StringComparison.OrdinalIgnoreCase))) {
+                                    result.solver_models.Add(new GMATSolverModel { Name = clean, Algorithm = "NewtonRaphson", DerivativeMethod = "ForwardDifference", MaxIterations = 50, ShowProgress = true });
+                                }
+                            }
+                        }
                     }
 
                     // 6. Variables
-                    var varMatch = Regex.Match(rawLine, @"Create\s+Variable\s+([A-Za-z0-9_]+)", RegexOptions.IgnoreCase);
+                    var varMatch = Regex.Match(rawLine, @"Create\s+Variable\s+([^;]+);?", RegexOptions.IgnoreCase);
                     if (varMatch.Success) {
-                        string vName = varMatch.Groups[1].Value;
-                        if (!result.user_variables.Exists(v => v.name == vName)) {
-                            result.user_variables.Add(new GMATUserVariable { name = vName, value = 0.0 });
+                        string[] vNames = varMatch.Groups[1].Value.Split(new[] { ' ', ',', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                        foreach (var vName in vNames) {
+                            string clean = vName.Trim();
+                            if (!string.IsNullOrEmpty(clean) && !result.user_variables.Exists(v => v.name.Equals(clean, StringComparison.OrdinalIgnoreCase))) {
+                                result.user_variables.Add(new GMATUserVariable { name = clean, value = 0.0 });
+                            }
                         }
                     }
 
@@ -187,14 +206,9 @@ namespace KSPGMAT.Service {
                             }
 
                             // DifferentialCorrector properties
-                            foreach (var dcName in result.solvers) {
-                                if (lhs.StartsWith(dcName + ".")) {
-                                    string prop = lhs.Substring(dcName.Length + 1);
-                                    var slv = GMATStateManager.Current.Solvers.Find(s => s.Name.Equals(dcName, StringComparison.OrdinalIgnoreCase));
-                                    if (slv == null) {
-                                        slv = new GMATSolverModel { Name = dcName };
-                                        GMATStateManager.Current.Solvers.Add(slv);
-                                    }
+                            foreach (var slv in result.solver_models) {
+                                if (lhs.StartsWith(slv.Name + ".")) {
+                                    string prop = lhs.Substring(slv.Name.Length + 1);
                                     if (prop.Equals("Algorithm", StringComparison.OrdinalIgnoreCase)) slv.Algorithm = rhs;
                                     else if (prop.Equals("DerivativeMethod", StringComparison.OrdinalIgnoreCase)) slv.DerivativeMethod = rhs;
                                     else if (prop.Equals("MaximumIterations", StringComparison.OrdinalIgnoreCase) && int.TryParse(rhs, out int mi)) slv.MaxIterations = mi;
@@ -330,26 +344,54 @@ namespace KSPGMAT.Service {
                             var thMatch = Regex.Match(varExpr, @"(?:[A-Za-z0-9_]+\.)?([A-Za-z0-9_]+)\.ThrustDirection");
                             if (thMatch.Success) thrName = thMatch.Groups[1].Value;
 
-                            var st = new MissionStep {
-                                type = "ThrustVectorControl",
-                                dc_name = dc,
-                                bound_thruster = thrName,
-                                label = $"TVC Direction{dirIdx}",
-                                thrust_dir1 = dirIdx == 1 ? initVal : 1.0,
-                                thrust_dir2 = dirIdx == 2 ? initVal : 0.0,
-                                thrust_dir3 = dirIdx == 3 ? initVal : 0.0,
-                                vary_dir1_enabled = dirIdx == 1,
-                                vary_dir2_enabled = dirIdx == 2,
-                                vary_dir3_enabled = dirIdx == 3,
-                                vary_dir1_lower = dirIdx == 1 ? low : -1.0,
-                                vary_dir1_upper = dirIdx == 1 ? up : 1.0,
-                                vary_dir2_lower = dirIdx == 2 ? low : -3.0,
-                                vary_dir2_upper = dirIdx == 2 ? up : 3.0,
-                                vary_dir3_lower = dirIdx == 3 ? low : -1.0,
-                                vary_dir3_upper = dirIdx == 3 ? up : 1.0,
-                                vary_dir2_max_step = maxStep
-                            };
-                            result.sequence.Add(st);
+                            MissionStep existingTvc = (result.sequence.Count > 0 && result.sequence[result.sequence.Count - 1].type == "ThrustVectorControl" && (string.IsNullOrEmpty(thrName) || result.sequence[result.sequence.Count - 1].bound_thruster == thrName)) 
+                                ? result.sequence[result.sequence.Count - 1] 
+                                : null;
+
+                            if (existingTvc != null) {
+                                if (dirIdx == 1) {
+                                    existingTvc.thrust_dir1 = initVal;
+                                    existingTvc.vary_dir1_enabled = true;
+                                    existingTvc.vary_dir1_lower = low;
+                                    existingTvc.vary_dir1_upper = up;
+                                    existingTvc.vary_dir1_max_step = maxStep;
+                                } else if (dirIdx == 2) {
+                                    existingTvc.thrust_dir2 = initVal;
+                                    existingTvc.vary_dir2_enabled = true;
+                                    existingTvc.vary_dir2_lower = low;
+                                    existingTvc.vary_dir2_upper = up;
+                                    existingTvc.vary_dir2_max_step = maxStep;
+                                } else if (dirIdx == 3) {
+                                    existingTvc.thrust_dir3 = initVal;
+                                    existingTvc.vary_dir3_enabled = true;
+                                    existingTvc.vary_dir3_lower = low;
+                                    existingTvc.vary_dir3_upper = up;
+                                    existingTvc.vary_dir3_max_step = maxStep;
+                                }
+                            } else {
+                                var st = new MissionStep {
+                                    type = "ThrustVectorControl",
+                                    dc_name = !string.IsNullOrEmpty(dc) ? dc : currentDC,
+                                    bound_thruster = thrName,
+                                    label = $"推力矢量 ({thrName})",
+                                    thrust_dir1 = (dirIdx == 1) ? initVal : 1.0,
+                                    thrust_dir2 = (dirIdx == 2) ? initVal : 0.0,
+                                    thrust_dir3 = (dirIdx == 3) ? initVal : 0.0,
+                                    vary_dir1_enabled = (dirIdx == 1),
+                                    vary_dir2_enabled = (dirIdx == 2),
+                                    vary_dir3_enabled = (dirIdx == 3),
+                                    vary_dir1_lower = (dirIdx == 1) ? low : -1.0,
+                                    vary_dir1_upper = (dirIdx == 1) ? up : 1.0,
+                                    vary_dir1_max_step = (dirIdx == 1) ? maxStep : 0.05,
+                                    vary_dir2_lower = (dirIdx == 2) ? low : -1.0,
+                                    vary_dir2_upper = (dirIdx == 2) ? up : 1.0,
+                                    vary_dir2_max_step = (dirIdx == 2) ? maxStep : 0.05,
+                                    vary_dir3_lower = (dirIdx == 3) ? low : -1.0,
+                                    vary_dir3_upper = (dirIdx == 3) ? up : 1.0,
+                                    vary_dir3_max_step = (dirIdx == 3) ? maxStep : 0.05
+                                };
+                                result.sequence.Add(st);
+                            }
                         } else {
                             result.sequence.Add(new MissionStep {
                                 type = "Vary",
@@ -423,7 +465,37 @@ namespace KSPGMAT.Service {
                         }
                     }
 
-                    // 9. Equation / Assignment Command (e.g. Sat.DryMass = 1200 or burntime = 150)
+                    // 9. Direct Thrust Vector Assignment in Sequence (e.g. Sat.RL10.ThrustDirection1 = 1;)
+                    var directTvcMatch = Regex.Match(rawLine, @"(?:[A-Za-z0-9_]+\.)?([A-Za-z0-9_]+)\.ThrustDirection([123])\s*=\s*([-+]?[\d.]+)");
+                    if (directTvcMatch.Success) {
+                        string thrName = directTvcMatch.Groups[1].Value;
+                        int dirIdx = int.Parse(directTvcMatch.Groups[2].Value);
+                        double val = double.Parse(directTvcMatch.Groups[3].Value, NumberStyles.Any, CultureInfo.InvariantCulture);
+
+                        MissionStep existingTvc = (result.sequence.Count > 0 && result.sequence[result.sequence.Count - 1].type == "ThrustVectorControl" && (string.IsNullOrEmpty(thrName) || result.sequence[result.sequence.Count - 1].bound_thruster == thrName)) 
+                            ? result.sequence[result.sequence.Count - 1] 
+                            : null;
+
+                        if (existingTvc != null) {
+                            if (dirIdx == 1) existingTvc.thrust_dir1 = val;
+                            else if (dirIdx == 2) existingTvc.thrust_dir2 = val;
+                            else if (dirIdx == 3) existingTvc.thrust_dir3 = val;
+                        } else {
+                            var st = new MissionStep {
+                                type = "ThrustVectorControl",
+                                dc_name = currentDC,
+                                bound_thruster = thrName,
+                                label = $"推力矢量 ({thrName})",
+                                thrust_dir1 = (dirIdx == 1) ? val : 1.0,
+                                thrust_dir2 = (dirIdx == 2) ? val : 0.0,
+                                thrust_dir3 = (dirIdx == 3) ? val : 0.0
+                            };
+                            result.sequence.Add(st);
+                        }
+                        continue;
+                    }
+
+                    // 10. Equation / Assignment Command (e.g. Sat.DryMass = 1200 or burntime = 150)
                     if (rawLine.Contains("=") && 
                         !rawLine.StartsWith("Propagate", StringComparison.OrdinalIgnoreCase) && 
                         !rawLine.StartsWith("Vary", StringComparison.OrdinalIgnoreCase) && 

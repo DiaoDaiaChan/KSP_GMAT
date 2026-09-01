@@ -44,6 +44,7 @@ namespace KSPGMAT {
         public List<GMATUserArray> user_arrays = new List<GMATUserArray>();
         public List<GMATUserString> user_strings = new List<GMATUserString>();
         public List<string> solvers = new List<string>();
+        public List<Model.GMATSolverModel> solver_models = new List<Model.GMATSolverModel>();
         public List<Model.GMATTankModel> tanks = new List<Model.GMATTankModel>();
         public List<Model.GMATThrusterModel> thrusters = new List<Model.GMATThrusterModel>();
         public List<MissionStep> sequence = new List<MissionStep>();
