@@ -318,7 +318,7 @@ namespace KSPGMAT.Service {
                     }
 
                     if (!insideTarget) {
-                        if (trajectory != null && trajIdx < trajectory.Count && trajectory[trajIdx].t > cumTime) {
+                        if (trajectory != null && trajIdx < trajectory.Count) {
                             cumTime = trajectory[trajIdx].t;
                             trajIdx++;
                         } else {
