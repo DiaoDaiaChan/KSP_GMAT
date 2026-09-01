@@ -329,7 +329,13 @@ namespace KSPGMAT.Service {
                     }
                 }
                 else if (st.type == "FiniteBurn") {
-                    double burnStartTime = insideTarget ? targetStartCumTime : cumTime;
+                    double burnStartTime = (trajectory != null && trajIdx < trajectory.Count)
+                        ? trajectory[trajIdx].t
+                        : (insideTarget ? targetStartCumTime : cumTime);
+
+                    if (trajectory != null && trajIdx < trajectory.Count) {
+                        trajIdx++; // Consume Before-Burn report
+                    }
 
                     double dur = st.duration;
                     if (currentGroupDuration > 0) {
@@ -422,15 +428,27 @@ namespace KSPGMAT.Service {
                     };
                     burns.Add(sbEntry);
 
-                    if (insideTarget) {
-                        targetStartCumTime += dur;
+                    if (trajectory != null && trajIdx < trajectory.Count) {
+                        cumTime = trajectory[trajIdx].t;
+                        targetStartCumTime = cumTime;
+                        trajIdx++; // Consume After-Burn report
                     } else {
-                        cumTime += dur;
+                        if (insideTarget) {
+                            targetStartCumTime += dur;
+                        } else {
+                            cumTime += dur;
+                        }
                     }
                 }
                 else if (st.type == "ImpulsiveBurn" || st.type == "Maneuver") {
                     double mag = Math.Sqrt(st.dv_v * st.dv_v + st.dv_n * st.dv_n + st.dv_b * st.dv_b);
-                    double burnStartTime = insideTarget ? targetStartCumTime : cumTime;
+                    double burnStartTime = (trajectory != null && trajIdx < trajectory.Count)
+                        ? trajectory[trajIdx].t
+                        : (insideTarget ? targetStartCumTime : cumTime);
+
+                    if (trajectory != null && trajIdx < trajectory.Count) {
+                        trajIdx++; // Consume Before-Maneuver report
+                    }
 
                     burns.Add(new SolvedBurn {
                         type = "Impulsive",
@@ -448,11 +466,11 @@ namespace KSPGMAT.Service {
                         has_native_delta_v = true,
                         principia_writeable = true
                     });
-                    if (!insideTarget) {
-                        if (trajectory != null && trajIdx < trajectory.Count) {
-                            cumTime = trajectory[trajIdx].t;
-                            trajIdx++;
-                        }
+
+                    if (trajectory != null && trajIdx < trajectory.Count) {
+                        cumTime = trajectory[trajIdx].t;
+                        targetStartCumTime = cumTime;
+                        trajIdx++; // Consume After-Maneuver report
                     }
                 }
             }
