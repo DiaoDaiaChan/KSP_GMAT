@@ -1,0 +1,2404 @@
+{
+  "resources": {
+    "Spacecraft": {
+      "Covariance": {
+        "type": "Rmatrix",
+        "default": null
+      },
+      "J2000BodyName": {
+        "type": "String",
+        "default": "Earth"
+      },
+      "NAIFId": {
+        "type": "Integer",
+        "default": -10000001
+      },
+      "NAIFIdReferenceFrame": {
+        "type": "Integer",
+        "default": -9000001
+      },
+      "SpiceFrameId": {
+        "type": "String",
+        "default": ""
+      },
+      "OrbitSpiceKernelName": {
+        "type": "StringArray",
+        "default": []
+      },
+      "AttitudeSpiceKernelName": {
+        "type": "StringArray",
+        "default": []
+      },
+      "SCClockSpiceKernelName": {
+        "type": "StringArray",
+        "default": []
+      },
+      "FrameSpiceKernelName": {
+        "type": "StringArray",
+        "default": []
+      },
+      "A1Epoch": {
+        "type": "Real",
+        "default": 21545.000000397937
+      },
+      "OrbitColor": {
+        "type": "Color",
+        "default": null
+      },
+      "TargetColor": {
+        "type": "Color",
+        "default": null
+      },
+      "Epoch": {
+        "type": "String",
+        "default": "21545"
+      },
+      "X": {
+        "type": "Real",
+        "default": -999.999
+      },
+      "Y": {
+        "type": "Real",
+        "default": -999.999
+      },
+      "Z": {
+        "type": "Real",
+        "default": -999.999
+      },
+      "VX": {
+        "type": "Real",
+        "default": -999.999
+      },
+      "VY": {
+        "type": "Real",
+        "default": -999.999
+      },
+      "VZ": {
+        "type": "Real",
+        "default": -999.999
+      },
+      "Element1Units": {
+        "type": "String",
+        "default": "km"
+      },
+      "Element2Units": {
+        "type": "String",
+        "default": "km"
+      },
+      "Element3Units": {
+        "type": "String",
+        "default": "km"
+      },
+      "Element4Units": {
+        "type": "String",
+        "default": "km/s"
+      },
+      "Element5Units": {
+        "type": "String",
+        "default": "km/s"
+      },
+      "Element6Units": {
+        "type": "String",
+        "default": "km/s"
+      },
+      "StateType": {
+        "type": "Enumeration",
+        "default": "Cartesian"
+      },
+      "DisplayStateType": {
+        "type": "Enumeration",
+        "default": "Cartesian"
+      },
+      "AnomalyType": {
+        "type": "Enumeration",
+        "default": "TA"
+      },
+      "CoordinateSystem": {
+        "type": "Object",
+        "default": null
+      },
+      "DryMass": {
+        "type": "Real",
+        "default": 850.0
+      },
+      "DryCenterOfMassX": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "DryCenterOfMassY": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "DryCenterOfMassZ": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "DryMomentOfInertiaXX": {
+        "type": "Real",
+        "default": 999.0
+      },
+      "DryMomentOfInertiaXY": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "DryMomentOfInertiaXZ": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "DryMomentOfInertiaYY": {
+        "type": "Real",
+        "default": 999.0
+      },
+      "DryMomentOfInertiaYZ": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "DryMomentOfInertiaZZ": {
+        "type": "Real",
+        "default": 999.0
+      },
+      "DateFormat": {
+        "type": "Enumeration",
+        "default": "TAIModJulian"
+      },
+      "EstimationStateType": {
+        "type": "String",
+        "default": null
+      },
+      "OrbitErrorCovariance": {
+        "type": "Rmatrix",
+        "default": null
+      },
+      "ProcessNoiseModel": {
+        "type": "Object",
+        "default": null
+      },
+      "Cd": {
+        "type": "Real",
+        "default": 2.2
+      },
+      "Cr": {
+        "type": "Real",
+        "default": 1.8
+      },
+      "CdSigma": {
+        "type": "Real",
+        "default": 1e+70
+      },
+      "CrSigma": {
+        "type": "Real",
+        "default": 1e+70
+      },
+      "DragArea": {
+        "type": "Real",
+        "default": 15.0
+      },
+      "SRPArea": {
+        "type": "Real",
+        "default": 1.0
+      },
+      "Tanks": {
+        "type": "ObjectArray",
+        "default": []
+      },
+      "Thrusters": {
+        "type": "ObjectArray",
+        "default": []
+      },
+      "PowerSystem": {
+        "type": "Object",
+        "default": null
+      },
+      "TotalMass": {
+        "type": "Real",
+        "default": 850.0
+      },
+      "MassPropertiesTableFilePath": {
+        "type": "String",
+        "default": ""
+      },
+      "CenterOfMassTableFileName": {
+        "type": "String",
+        "default": ""
+      },
+      "MomentOfInertiaTableFileName": {
+        "type": "String",
+        "default": ""
+      },
+      "ExtendedMassPropertiesModelType": {
+        "type": "String",
+        "default": "Analytic"
+      },
+      "ExtendedMassPropertiesModel": {
+        "type": "String",
+        "default": "None"
+      },
+      "CenterOfMassOffsetX": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "CenterOfMassOffsetY": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "CenterOfMassOffsetZ": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "MomentOfInertiaOffsetXX": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "MomentOfInertiaOffsetYY": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "MomentOfInertiaOffsetZZ": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "MomentOfInertiaOffsetXY": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "MomentOfInertiaOffsetXZ": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "MomentOfInertiaOffsetYZ": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "SystemCenterOfMassX": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "SystemCenterOfMassY": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "SystemCenterOfMassZ": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "SystemMomentOfInertiaXX": {
+        "type": "Real",
+        "default": 1.0
+      },
+      "SystemMomentOfInertiaXY": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "SystemMomentOfInertiaXZ": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "SystemMomentOfInertiaYY": {
+        "type": "Real",
+        "default": 1.0
+      },
+      "SystemMomentOfInertiaYZ": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "SystemMomentOfInertiaZZ": {
+        "type": "Real",
+        "default": 1.0
+      },
+      "Id": {
+        "type": "String",
+        "default": "SatId"
+      },
+      "Attitude": {
+        "type": "Object",
+        "default": null
+      },
+      "OrbitSTM": {
+        "type": "Rmatrix",
+        "default": null
+      },
+      "OrbitAMatrix": {
+        "type": "Rmatrix",
+        "default": null
+      },
+      "FullSTM": {
+        "type": "Rmatrix",
+        "default": null
+      },
+      "FullAMatrix": {
+        "type": "Rmatrix",
+        "default": null
+      },
+      "FullSTMRowCount": {
+        "type": "Integer",
+        "default": 6
+      },
+      "EphemerisName": {
+        "type": "String",
+        "default": ""
+      },
+      "SPADSRPFile": {
+        "type": "Filename",
+        "default": ""
+      },
+      "SPADSRPFileFullPath": {
+        "type": "Filename",
+        "default": ""
+      },
+      "SPADSRPScaleFactor": {
+        "type": "Real",
+        "default": 1.0
+      },
+      "SPADSRPInterpolationMethod": {
+        "type": "Enumeration",
+        "default": "Bilinear"
+      },
+      "SPADSRPScaleFactorSigma": {
+        "type": "Real",
+        "default": 1e+70
+      },
+      "SPADDragFile": {
+        "type": "Filename",
+        "default": ""
+      },
+      "SPADDragFileFullPath": {
+        "type": "Filename",
+        "default": ""
+      },
+      "SPADDragScaleFactor": {
+        "type": "Real",
+        "default": 1.0
+      },
+      "SPADDragInterpolationMethod": {
+        "type": "Enumeration",
+        "default": "Bilinear"
+      },
+      "SPADDragScaleFactorSigma": {
+        "type": "Real",
+        "default": 1e+70
+      },
+      "AtmosDensityScaleFactor": {
+        "type": "Real",
+        "default": 1.0
+      },
+      "AtmosDensityScaleFactorSigma": {
+        "type": "Real",
+        "default": 1e+70
+      },
+      "AddPlates": {
+        "type": "ObjectArray",
+        "default": []
+      },
+      "CartesianX": {
+        "type": "Real",
+        "default": -999.999
+      },
+      "CartesianY": {
+        "type": "Real",
+        "default": -999.999
+      },
+      "CartesianZ": {
+        "type": "Real",
+        "default": -999.999
+      },
+      "CartesianVX": {
+        "type": "Real",
+        "default": -999.999
+      },
+      "CartesianVY": {
+        "type": "Real",
+        "default": -999.999
+      },
+      "CartesianVZ": {
+        "type": "Real",
+        "default": -999.999
+      },
+      "MassFlow": {
+        "type": "Real",
+        "default": 850.0
+      },
+      "AddHardware": {
+        "type": "ObjectArray",
+        "default": []
+      },
+      "SolveFors": {
+        "type": "StringArray",
+        "default": []
+      },
+      "StmElementNames": {
+        "type": "StringArray",
+        "default": []
+      },
+      "Cd_Epsilon": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "Cr_Epsilon": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "AtmosDensity_Epsilon": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "NPlateSRPAddEqualityConstraint": {
+        "type": "StringArray",
+        "default": []
+      },
+      "NPlateSRPEquateAreaCoefficients": {
+        "type": "StringArray",
+        "default": []
+      },
+      "ModelFile": {
+        "type": "Filename",
+        "default": "aura.3ds"
+      },
+      "ModelFileFullPath": {
+        "type": "Filename",
+        "default": "C:\\Users\\43701\\gmat-win-R2026a\\bin\\..\\data\\vehicle\\models\\aura.3ds"
+      },
+      "ModelOffsetX": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "ModelOffsetY": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "ModelOffsetZ": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "ModelRotationX": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "ModelRotationY": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "ModelRotationZ": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "ModelScale": {
+        "type": "Real",
+        "default": 1.0
+      }
+    },
+    "ChemicalTank": {
+      "Covariance": {
+        "type": "Rmatrix",
+        "default": null
+      },
+      "Coordinates": {
+        "type": "String",
+        "default": "SpacecraftOrigin"
+      },
+      "RotationOption": {
+        "type": "String",
+        "default": "Construct"
+      },
+      "DirectionX": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "DirectionY": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "DirectionZ": {
+        "type": "Real",
+        "default": 1.0
+      },
+      "SecondDirectionX": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "SecondDirectionY": {
+        "type": "Real",
+        "default": -1.0
+      },
+      "SecondDirectionZ": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "HWOriginInBCSX": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "HWOriginInBCSY": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "HWOriginInBCSZ": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "RotationMatrix": {
+        "type": "Rmatrix",
+        "default": null
+      },
+      "R_SB11": {
+        "type": "Real",
+        "default": 1.0
+      },
+      "R_SB12": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "R_SB13": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "R_SB21": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "R_SB22": {
+        "type": "Real",
+        "default": 1.0
+      },
+      "R_SB23": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "R_SB31": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "R_SB32": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "R_SB33": {
+        "type": "Real",
+        "default": 1.0
+      },
+      "AllowNegativeFuelMass": {
+        "type": "Boolean",
+        "default": false
+      },
+      "FuelMass": {
+        "type": "Real",
+        "default": 756.0
+      },
+      "FuelCenterOfMassX": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "FuelCenterOfMassY": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "FuelCenterOfMassZ": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "FuelMomentOfInertiaXX": {
+        "type": "Real",
+        "default": 99.0
+      },
+      "FuelMomentOfInertiaXY": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "FuelMomentOfInertiaXZ": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "FuelMomentOfInertiaYY": {
+        "type": "Real",
+        "default": 99.0
+      },
+      "FuelMomentOfInertiaYZ": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "FuelMomentOfInertiaZZ": {
+        "type": "Real",
+        "default": 99.0
+      },
+      "FuelCenterOfMassX_BCS": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "FuelCenterOfMassY_BCS": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "FuelCenterOfMassZ_BCS": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "FuelMomentOfInertiaXX_BCS": {
+        "type": "Real",
+        "default": 99.0
+      },
+      "FuelMomentOfInertiaXY_BCS": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "FuelMomentOfInertiaXZ_BCS": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "FuelMomentOfInertiaYY_BCS": {
+        "type": "Real",
+        "default": 99.0
+      },
+      "FuelMomentOfInertiaYZ_BCS": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "FuelMomentOfInertiaZZ_BCS": {
+        "type": "Real",
+        "default": 99.0
+      },
+      "Pressure": {
+        "type": "Real",
+        "default": 1500.0
+      },
+      "Temperature": {
+        "type": "Real",
+        "default": 20.0
+      },
+      "RefTemperature": {
+        "type": "Real",
+        "default": 20.0
+      },
+      "Volume": {
+        "type": "Real",
+        "default": 0.75
+      },
+      "FuelDensity": {
+        "type": "Real",
+        "default": 1260.0
+      },
+      "PressureModel": {
+        "type": "Enumeration",
+        "default": "PressureRegulated"
+      },
+      "PressureRegulated": {
+        "type": "Boolean",
+        "default": true
+      }
+    },
+    "ElectricTank": {
+      "Covariance": {
+        "type": "Rmatrix",
+        "default": null
+      },
+      "Coordinates": {
+        "type": "String",
+        "default": "SpacecraftOrigin"
+      },
+      "RotationOption": {
+        "type": "String",
+        "default": "Construct"
+      },
+      "DirectionX": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "DirectionY": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "DirectionZ": {
+        "type": "Real",
+        "default": 1.0
+      },
+      "SecondDirectionX": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "SecondDirectionY": {
+        "type": "Real",
+        "default": -1.0
+      },
+      "SecondDirectionZ": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "HWOriginInBCSX": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "HWOriginInBCSY": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "HWOriginInBCSZ": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "RotationMatrix": {
+        "type": "Rmatrix",
+        "default": null
+      },
+      "R_SB11": {
+        "type": "Real",
+        "default": 1.0
+      },
+      "R_SB12": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "R_SB13": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "R_SB21": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "R_SB22": {
+        "type": "Real",
+        "default": 1.0
+      },
+      "R_SB23": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "R_SB31": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "R_SB32": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "R_SB33": {
+        "type": "Real",
+        "default": 1.0
+      },
+      "AllowNegativeFuelMass": {
+        "type": "Boolean",
+        "default": false
+      },
+      "FuelMass": {
+        "type": "Real",
+        "default": 756.0
+      },
+      "FuelCenterOfMassX": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "FuelCenterOfMassY": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "FuelCenterOfMassZ": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "FuelMomentOfInertiaXX": {
+        "type": "Real",
+        "default": 99.0
+      },
+      "FuelMomentOfInertiaXY": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "FuelMomentOfInertiaXZ": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "FuelMomentOfInertiaYY": {
+        "type": "Real",
+        "default": 99.0
+      },
+      "FuelMomentOfInertiaYZ": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "FuelMomentOfInertiaZZ": {
+        "type": "Real",
+        "default": 99.0
+      },
+      "FuelCenterOfMassX_BCS": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "FuelCenterOfMassY_BCS": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "FuelCenterOfMassZ_BCS": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "FuelMomentOfInertiaXX_BCS": {
+        "type": "Real",
+        "default": 99.0
+      },
+      "FuelMomentOfInertiaXY_BCS": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "FuelMomentOfInertiaXZ_BCS": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "FuelMomentOfInertiaYY_BCS": {
+        "type": "Real",
+        "default": 99.0
+      },
+      "FuelMomentOfInertiaYZ_BCS": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "FuelMomentOfInertiaZZ_BCS": {
+        "type": "Real",
+        "default": 99.0
+      }
+    },
+    "ChemicalThruster": {
+      "Covariance": {
+        "type": "Rmatrix",
+        "default": null
+      },
+      "Coordinates": {
+        "type": "String",
+        "default": "SpacecraftOrigin"
+      },
+      "RotationOption": {
+        "type": "String",
+        "default": "Construct"
+      },
+      "ThrustDirection1": {
+        "type": "Real",
+        "default": 1.0
+      },
+      "ThrustDirection2": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "ThrustDirection3": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "SecondDirectionX": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "SecondDirectionY": {
+        "type": "Real",
+        "default": 1.0
+      },
+      "SecondDirectionZ": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "HWOriginInBCSX": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "HWOriginInBCSY": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "HWOriginInBCSZ": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "RotationMatrix": {
+        "type": "Rmatrix",
+        "default": null
+      },
+      "R_SB11": {
+        "type": "Real",
+        "default": 1.0
+      },
+      "R_SB12": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "R_SB13": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "R_SB21": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "R_SB22": {
+        "type": "Real",
+        "default": 1.0
+      },
+      "R_SB23": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "R_SB31": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "R_SB32": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "R_SB33": {
+        "type": "Real",
+        "default": 1.0
+      },
+      "IsFiring": {
+        "type": "Boolean",
+        "default": false
+      },
+      "CoordinateSystem": {
+        "type": "Object",
+        "default": null
+      },
+      "Origin": {
+        "type": "Object",
+        "default": null
+      },
+      "Axes": {
+        "type": "Enumeration",
+        "default": "VNB"
+      },
+      "DutyCycle": {
+        "type": "Real",
+        "default": 1.0
+      },
+      "ThrustScaleFactor": {
+        "type": "Real",
+        "default": 1.0
+      },
+      "DecrementMass": {
+        "type": "Boolean",
+        "default": false
+      },
+      "Tank": {
+        "type": "ObjectArray",
+        "default": []
+      },
+      "MixRatio": {
+        "type": "Rvector",
+        "default": null
+      },
+      "GravitationalAccel": {
+        "type": "Real",
+        "default": 9.81
+      },
+      "Thrust": {
+        "type": "Real",
+        "default": 500.0
+      },
+      "Isp": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "MassFlowRate": {
+        "type": "Real",
+        "default": 2150.0
+      },
+      "C1": {
+        "type": "Real",
+        "default": 10.0
+      },
+      "C2": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "C3": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "C4": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "C5": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "C6": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "C7": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "C8": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "C9": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "C10": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "C11": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "C12": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "C13": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "C14": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "C15": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "C16": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "K1": {
+        "type": "Real",
+        "default": 300.0
+      },
+      "K2": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "K3": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "K4": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "K5": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "K6": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "K7": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "K8": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "K9": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "K10": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "K11": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "K12": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "K13": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "K14": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "K15": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "K16": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "C_UNITS": {
+        "type": "StringArray",
+        "default": [
+          "N",
+          "N/kPa",
+          "N",
+          "N/kPa",
+          "N/kPa^2",
+          "N/kPa^C7",
+          "None",
+          "N/kPa^C9",
+          "None",
+          "N/kPa^C11",
+          "None",
+          "N",
+          "None",
+          "1/kPa",
+          "None",
+          "1/kPa"
+        ]
+      },
+      "K_UNITS": {
+        "type": "StringArray",
+        "default": [
+          "s",
+          "s/kPa",
+          "s",
+          "s/kPa",
+          "s/kPa^2",
+          "s/kPa^K7",
+          "None",
+          "s/kPa^K9",
+          "None",
+          "s/kPa^K11",
+          "None",
+          "s",
+          "None",
+          "1/kPa",
+          "None",
+          "1/kPa"
+        ]
+      }
+    },
+    "ElectricThruster": {
+      "Covariance": {
+        "type": "Rmatrix",
+        "default": null
+      },
+      "Coordinates": {
+        "type": "String",
+        "default": "SpacecraftOrigin"
+      },
+      "RotationOption": {
+        "type": "String",
+        "default": "Construct"
+      },
+      "ThrustDirection1": {
+        "type": "Real",
+        "default": 1.0
+      },
+      "ThrustDirection2": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "ThrustDirection3": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "SecondDirectionX": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "SecondDirectionY": {
+        "type": "Real",
+        "default": 1.0
+      },
+      "SecondDirectionZ": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "HWOriginInBCSX": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "HWOriginInBCSY": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "HWOriginInBCSZ": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "RotationMatrix": {
+        "type": "Rmatrix",
+        "default": null
+      },
+      "R_SB11": {
+        "type": "Real",
+        "default": 1.0
+      },
+      "R_SB12": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "R_SB13": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "R_SB21": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "R_SB22": {
+        "type": "Real",
+        "default": 1.0
+      },
+      "R_SB23": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "R_SB31": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "R_SB32": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "R_SB33": {
+        "type": "Real",
+        "default": 1.0
+      },
+      "IsFiring": {
+        "type": "Boolean",
+        "default": false
+      },
+      "CoordinateSystem": {
+        "type": "Object",
+        "default": null
+      },
+      "Origin": {
+        "type": "Object",
+        "default": null
+      },
+      "Axes": {
+        "type": "Enumeration",
+        "default": "VNB"
+      },
+      "DutyCycle": {
+        "type": "Real",
+        "default": 1.0
+      },
+      "ThrustScaleFactor": {
+        "type": "Real",
+        "default": 1.0
+      },
+      "DecrementMass": {
+        "type": "Boolean",
+        "default": false
+      },
+      "Tank": {
+        "type": "ObjectArray",
+        "default": []
+      },
+      "MixRatio": {
+        "type": "Rvector",
+        "default": null
+      },
+      "GravitationalAccel": {
+        "type": "Real",
+        "default": 9.81
+      },
+      "Thrust": {
+        "type": "Real",
+        "default": 500.0
+      },
+      "Isp": {
+        "type": "Real",
+        "default": 4200.0
+      },
+      "MassFlowRate": {
+        "type": "Real",
+        "default": 2150.0
+      },
+      "ThrustModel": {
+        "type": "Enumeration",
+        "default": "ThrustMassPolynomial"
+      },
+      "MaximumUsablePower": {
+        "type": "Real",
+        "default": 7.266
+      },
+      "MinimumUsablePower": {
+        "type": "Real",
+        "default": 0.638
+      },
+      "ThrustCoeff1": {
+        "type": "Real",
+        "default": -5.19082
+      },
+      "ThrustCoeff2": {
+        "type": "Real",
+        "default": 2.96519
+      },
+      "ThrustCoeff3": {
+        "type": "Real",
+        "default": -14.4789
+      },
+      "ThrustCoeff4": {
+        "type": "Real",
+        "default": 54.05382
+      },
+      "ThrustCoeff5": {
+        "type": "Real",
+        "default": -0.00100092
+      },
+      "MassFlowCoeff1": {
+        "type": "Real",
+        "default": -0.004776
+      },
+      "MassFlowCoeff2": {
+        "type": "Real",
+        "default": 0.05717
+      },
+      "MassFlowCoeff3": {
+        "type": "Real",
+        "default": -0.09956
+      },
+      "MassFlowCoeff4": {
+        "type": "Real",
+        "default": 0.03211
+      },
+      "MassFlowCoeff5": {
+        "type": "Real",
+        "default": 2.13781
+      },
+      "FixedEfficiency": {
+        "type": "Real",
+        "default": 0.7
+      },
+      "ConstantThrust": {
+        "type": "Real",
+        "default": 0.237
+      },
+      "T_UNITS": {
+        "type": "StringArray",
+        "default": [
+          "See Docs",
+          "See Docs",
+          "See Docs",
+          "See Docs",
+          "See Docs"
+        ]
+      },
+      "MF_UNITS": {
+        "type": "StringArray",
+        "default": [
+          "See Docs",
+          "See Docs",
+          "See Docs",
+          "See Docs",
+          "See Docs"
+        ]
+      }
+    },
+    "DifferentialCorrector": {
+      "Covariance": {
+        "type": "Rmatrix",
+        "default": null
+      },
+      "ShowProgress": {
+        "type": "Boolean",
+        "default": true
+      },
+      "ReportStyle": {
+        "type": "Enumeration",
+        "default": "Normal"
+      },
+      "ReportFile": {
+        "type": "Filename",
+        "default": "DifferentialCorrectorDefault_DifferentialCorrector.data"
+      },
+      "Variables": {
+        "type": "StringArray",
+        "default": []
+      },
+      "MaximumIterations": {
+        "type": "Integer",
+        "default": 25
+      },
+      "NumberOfVariables": {
+        "type": "Integer",
+        "default": 0
+      },
+      "RegisteredVariables": {
+        "type": "Integer",
+        "default": null
+      },
+      "RegisteredComponents": {
+        "type": "Integer",
+        "default": null
+      },
+      "AllowScaleSetting": {
+        "type": "Boolean",
+        "default": true
+      },
+      "AllowRangeSettings": {
+        "type": "Boolean",
+        "default": true
+      },
+      "AllowStepsizeSetting": {
+        "type": "Boolean",
+        "default": true
+      },
+      "AllowVariablePertSetting": {
+        "type": "Boolean",
+        "default": true
+      },
+      "SolverMode": {
+        "type": "String",
+        "default": null
+      },
+      "ExitMode": {
+        "type": "String",
+        "default": null
+      },
+      "IntegerSolverStatus": {
+        "type": "Integer",
+        "default": 0
+      },
+      "Nested": {
+        "type": "Boolean",
+        "default": false
+      },
+      "Goals": {
+        "type": "StringArray",
+        "default": []
+      },
+      "DerivativeMethod": {
+        "type": "Enumeration",
+        "default": "ForwardDifference"
+      },
+      "Algorithm": {
+        "type": "Enumeration",
+        "default": "NewtonRaphson"
+      }
+    },
+    "ImpulsiveBurn": {
+      "Covariance": {
+        "type": "Rmatrix",
+        "default": null
+      },
+      "CoordinateSystem": {
+        "type": "Object",
+        "default": null
+      },
+      "Origin": {
+        "type": "Object",
+        "default": null
+      },
+      "Axes": {
+        "type": "Enumeration",
+        "default": "VNB"
+      },
+      "VectorFormat": {
+        "type": "Enumeration",
+        "default": ""
+      },
+      "Element1": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "Element2": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "Element3": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "SpacecraftName": {
+        "type": "Object",
+        "default": null
+      },
+      "DecrementMass": {
+        "type": "Boolean",
+        "default": false
+      },
+      "Tank": {
+        "type": "ObjectArray",
+        "default": []
+      },
+      "Isp": {
+        "type": "Real",
+        "default": 300.0
+      },
+      "GravitationalAccel": {
+        "type": "Real",
+        "default": 9.81
+      },
+      "DeltaTankMass": {
+        "type": "Real",
+        "default": 0.0
+      }
+    },
+    "FiniteBurn": {
+      "Covariance": {
+        "type": "Rmatrix",
+        "default": null
+      },
+      "CoordinateSystem": {
+        "type": "Object",
+        "default": null
+      },
+      "Origin": {
+        "type": "Object",
+        "default": null
+      },
+      "Axes": {
+        "type": "Enumeration",
+        "default": "Deprecated"
+      },
+      "VectorFormat": {
+        "type": "Enumeration",
+        "default": ""
+      },
+      "Element1": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "Element2": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "Element3": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "SpacecraftName": {
+        "type": "Object",
+        "default": null
+      },
+      "Thrusters": {
+        "type": "ObjectArray",
+        "default": []
+      },
+      "Tanks": {
+        "type": "ObjectArray",
+        "default": []
+      },
+      "BurnScaleFactor": {
+        "type": "Real",
+        "default": -9.876543210123e-37
+      },
+      "ThrottleLogicAlgorithm": {
+        "type": "String",
+        "default": "MaxNumberOfThrusters"
+      }
+    },
+    "Propagator": {
+      "Covariance": {
+        "type": "Rmatrix",
+        "default": null
+      },
+      "FM": {
+        "type": "Object",
+        "default": null
+      },
+      "Type": {
+        "type": "Object",
+        "default": null
+      },
+      "InitialStepSize": {
+        "type": "Real",
+        "default": 60.0
+      },
+      "Accuracy": {
+        "type": "Real",
+        "default": 1e-11
+      },
+      "ErrorThreshold": {
+        "type": "Real",
+        "default": 0.1
+      },
+      "SmallestInterval": {
+        "type": "Real",
+        "default": 1e-12
+      },
+      "MinStep": {
+        "type": "Real",
+        "default": 0.001
+      },
+      "MaxStep": {
+        "type": "Real",
+        "default": 2700.0
+      },
+      "MaxStepAttempts": {
+        "type": "Integer",
+        "default": 50
+      },
+      "LowerError": {
+        "type": "Real",
+        "default": null
+      },
+      "TargetError": {
+        "type": "Real",
+        "default": null
+      },
+      "StopIfAccuracyIsViolated": {
+        "type": "Boolean",
+        "default": true
+      },
+      "StepSize": {
+        "type": "Real",
+        "default": null
+      },
+      "CentralBody": {
+        "type": "Object",
+        "default": null
+      },
+      "EpochFormat": {
+        "type": "String",
+        "default": null
+      },
+      "StartEpoch": {
+        "type": "String",
+        "default": null
+      },
+      "MinimumReduction": {
+        "type": "Real",
+        "default": null
+      },
+      "MaximumReduction": {
+        "type": "Real",
+        "default": null
+      },
+      "MinimumTolerance": {
+        "type": "Real",
+        "default": null
+      }
+    },
+    "ForceModel": {
+      "Covariance": {
+        "type": "Rmatrix",
+        "default": null
+      },
+      "Epoch": {
+        "type": "Real",
+        "default": 21545.0
+      },
+      "ElapsedSeconds": {
+        "type": "Real",
+        "default": 0.0
+      },
+      "BodyName": {
+        "type": "Object",
+        "default": null
+      },
+      "DerivativeID": {
+        "type": "Integer",
+        "default": null
+      },
+      "CentralBody": {
+        "type": "Object",
+        "default": null
+      },
+      "PrimaryBodies": {
+        "type": "ObjectArray",
+        "default": []
+      },
+      "PolyhedralBodies": {
+        "type": "ObjectArray",
+        "default": []
+      },
+      "PointMasses": {
+        "type": "ObjectArray",
+        "default": []
+      },
+      "Drag": {
+        "type": "Object",
+        "default": null
+      },
+      "SRP": {
+        "type": "OnOff",
+        "default": null
+      },
+      "RelativisticCorrection": {
+        "type": "OnOff",
+        "default": null
+      },
+      "ErrorControl": {
+        "type": "Enumeration",
+        "default": "RSSStep"
+      },
+      "CoordinateSystemList": {
+        "type": "ObjectArray",
+        "default": []
+      },
+      "CreateForceBody": {
+        "type": "Object",
+        "default": null
+      },
+      "ShapeFileName": {
+        "type": "Filename",
+        "default": null
+      },
+      "BodyDensity": {
+        "type": "Real",
+        "default": null
+      },
+      "UserDefined": {
+        "type": "ObjectArray",
+        "default": []
+      },
+      "External": {
+        "type": "String",
+        "default": "None"
+      }
+    },
+    "CoordinateSystem": {
+      "Covariance": {
+        "type": "Rmatrix",
+        "default": null
+      },
+      "Origin": {
+        "type": "Object",
+        "default": null
+      },
+      "J2000Body": {
+        "type": "Object",
+        "default": null
+      },
+      "Axes": {
+        "type": "Object",
+        "default": null
+      },
+      "UpdateInterval": {
+        "type": "Real",
+        "default": null
+      },
+      "OverrideOriginInterval": {
+        "type": "Boolean",
+        "default": false
+      },
+      "SpiceFrameId": {
+        "type": "String",
+        "default": ""
+      },
+      "Epoch": {
+        "type": "Real",
+        "default": null
+      }
+    },
+    "ReportFile": {
+      "Covariance": {
+        "type": "Rmatrix",
+        "default": null
+      },
+      "SolverIterations": {
+        "type": "Enumeration",
+        "default": "Current"
+      },
+      "TargetStatus": {
+        "type": "OnOff",
+        "default": null
+      },
+      "UpperLeft": {
+        "type": "Rvector",
+        "default": null
+      },
+      "Size": {
+        "type": "Rvector",
+        "default": null
+      },
+      "RelativeZOrder": {
+        "type": "Integer",
+        "default": 0
+      },
+      "Minimized": {
+        "type": "Boolean",
+        "default": false
+      },
+      "Maximized": {
+        "type": "Boolean",
+        "default": false
+      },
+      "Filename": {
+        "type": "Filename",
+        "default": "Default_ReportFile.txt"
+      },
+      "FullPathFileName": {
+        "type": "Filename",
+        "default": "C:\\Users\\43701\\gmat-win-R2026a\\bin\\..\\output\\Default_ReportFile.txt"
+      },
+      "Precision": {
+        "type": "Integer",
+        "default": 16
+      },
+      "Add": {
+        "type": "ObjectArray",
+        "default": []
+      },
+      "WriteHeaders": {
+        "type": "Boolean",
+        "default": true
+      },
+      "LeftJustify": {
+        "type": "OnOff",
+        "default": null
+      },
+      "ZeroFill": {
+        "type": "OnOff",
+        "default": null
+      },
+      "FixedWidth": {
+        "type": "Boolean",
+        "default": true
+      },
+      "Delimiter": {
+        "type": "String",
+        "default": " "
+      },
+      "ColumnWidth": {
+        "type": "Integer",
+        "default": 23
+      },
+      "WriteReport": {
+        "type": "Boolean",
+        "default": true
+      },
+      "AppendToExistingFile": {
+        "type": "Boolean",
+        "default": false
+      }
+    },
+    "EphemerisFile": {
+      "Covariance": {
+        "type": "Rmatrix",
+        "default": null
+      },
+      "SolverIterations": {
+        "type": "Enumeration",
+        "default": "Current"
+      },
+      "TargetStatus": {
+        "type": "OnOff",
+        "default": null
+      },
+      "UpperLeft": {
+        "type": "Rvector",
+        "default": null
+      },
+      "Size": {
+        "type": "Rvector",
+        "default": null
+      },
+      "RelativeZOrder": {
+        "type": "Integer",
+        "default": 0
+      },
+      "Minimized": {
+        "type": "Boolean",
+        "default": false
+      },
+      "Maximized": {
+        "type": "Boolean",
+        "default": false
+      },
+      "Spacecraft": {
+        "type": "Object",
+        "default": null
+      },
+      "Filename": {
+        "type": "Filename",
+        "default": "Default_EphemerisFile.oem"
+      },
+      "FullPathFileName": {
+        "type": "Filename",
+        "default": "C:\\Users\\43701\\gmat-win-R2026a\\bin\\..\\output\\Default_EphemerisFile.oem"
+      },
+      "FileFormat": {
+        "type": "Enumeration",
+        "default": "CCSDS-OEM"
+      },
+      "FileFormatVersion": {
+        "type": "String",
+        "default": "1.0"
+      },
+      "AddingAccelerationOption": {
+        "type": "Boolean",
+        "default": true
+      },
+      "AddingCovarianceOption": {
+        "type": "Boolean",
+        "default": true
+      },
+      "EpochFormat": {
+        "type": "Enumeration",
+        "default": "UTCGregorian"
+      },
+      "InitialEpoch": {
+        "type": "Enumeration",
+        "default": "InitialSpacecraftEpoch"
+      },
+      "FinalEpoch": {
+        "type": "Enumeration",
+        "default": "FinalSpacecraftEpoch"
+      },
+      "StepSize": {
+        "type": "Enumeration",
+        "default": "IntegratorSteps"
+      },
+      "Interpolator": {
+        "type": "Object",
+        "default": null
+      },
+      "InterpolationOrder": {
+        "type": "Integer",
+        "default": 7
+      },
+      "StateType": {
+        "type": "Enumeration",
+        "default": "Cartesian"
+      },
+      "CoordinateSystem": {
+        "type": "Object",
+        "default": null
+      },
+      "OutputFormat": {
+        "type": "Enumeration",
+        "default": "LittleEndian"
+      },
+      "IncludeCovariance": {
+        "type": "Enumeration",
+        "default": "None"
+      },
+      "WriteEphemeris": {
+        "type": "Boolean",
+        "default": true
+      },
+      "FileName": {
+        "type": "String",
+        "default": "Default_EphemerisFile.oem"
+      },
+      "DistanceUnit": {
+        "type": "Enumeration",
+        "default": "Kilometers"
+      },
+      "IncludeEventBoundaries": {
+        "type": "Boolean",
+        "default": true
+      }
+    }
+  },
+  "commands": {
+    "Vary": {
+      "Covariance": {
+        "type": "Rmatrix",
+        "default": null
+      },
+      "Comment": {
+        "type": "String",
+        "default": null
+      },
+      "Summary": {
+        "type": "String",
+        "default": "******  Changes made to the mission will not be reflected ******\n******  in the data displayed until the mission is rerun  ******\n\n        Vary Command: Unnamed\n        Command summary is not supported for Propagate (in Single Step Mode)\n        or when the command did not execute due to control logic statements.\n        Please see the next valid command.\n\n"
+      },
+      "MissionSummary": {
+        "type": "String",
+        "default": "******  Changes made to the mission will not be reflected ******\n******  in the data displayed until the mission is rerun  ******\n\n******  Changes made to the mission will not be reflected ******\n******  in the data displayed until the mission is rerun  ******\n\n        Vary Command: Unnamed\n        Command summary is not supported for Propagate (in Single Step Mode)\n        or when the command did not execute due to control logic statements.\n        Please see the next valid command.\n\n"
+      },
+      "SolverName": {
+        "type": "String",
+        "default": ""
+      },
+      "Variable": {
+        "type": "String",
+        "default": ""
+      },
+      "InitialValue": {
+        "type": "String",
+        "default": "0.0"
+      },
+      "Perturbation": {
+        "type": "String",
+        "default": "0.001"
+      },
+      "Lower": {
+        "type": "String",
+        "default": "-9.999999e300"
+      },
+      "Upper": {
+        "type": "String",
+        "default": "9.999999e300"
+      },
+      "MaxStep": {
+        "type": "String",
+        "default": "9.999999e300"
+      },
+      "AdditiveScaleFactor": {
+        "type": "String",
+        "default": "0.0"
+      },
+      "MultiplicativeScaleFactor": {
+        "type": "String",
+        "default": "1.0"
+      },
+      "CurrentValue": {
+        "type": "Real",
+        "default": 0.0
+      }
+    },
+    "Achieve": {
+      "Covariance": {
+        "type": "Rmatrix",
+        "default": null
+      },
+      "Comment": {
+        "type": "String",
+        "default": null
+      },
+      "Summary": {
+        "type": "String",
+        "default": "******  Changes made to the mission will not be reflected ******\n******  in the data displayed until the mission is rerun  ******\n\n        Achieve Command: Unnamed\n        Command summary is not supported for Propagate (in Single Step Mode)\n        or when the command did not execute due to control logic statements.\n        Please see the next valid command.\n\n"
+      },
+      "MissionSummary": {
+        "type": "String",
+        "default": "******  Changes made to the mission will not be reflected ******\n******  in the data displayed until the mission is rerun  ******\n\n******  Changes made to the mission will not be reflected ******\n******  in the data displayed until the mission is rerun  ******\n\n        Achieve Command: Unnamed\n        Command summary is not supported for Propagate (in Single Step Mode)\n        or when the command did not execute due to control logic statements.\n        Please see the next valid command.\n\n"
+      },
+      "SolverName": {
+        "type": "String",
+        "default": ""
+      },
+      "TargeterName": {
+        "type": "String",
+        "default": ""
+      },
+      "Goal": {
+        "type": "String",
+        "default": ""
+      },
+      "GoalValue": {
+        "type": "String",
+        "default": ""
+      },
+      "Tolerance": {
+        "type": "String",
+        "default": "0.1"
+      },
+      "AchievedValue": {
+        "type": "Real",
+        "default": null
+      }
+    },
+    "Propagate": {
+      "Covariance": {
+        "type": "Rmatrix",
+        "default": null
+      },
+      "Comment": {
+        "type": "String",
+        "default": null
+      },
+      "Summary": {
+        "type": "String",
+        "default": "******  Changes made to the mission will not be reflected ******\n******  in the data displayed until the mission is rerun  ******\n\n        Propagate Command: Unnamed\n        Command summary is not supported for Propagate (in Single Step Mode)\n        or when the command did not execute due to control logic statements.\n        Please see the next valid command.\n\n"
+      },
+      "MissionSummary": {
+        "type": "String",
+        "default": "******  Changes made to the mission will not be reflected ******\n******  in the data displayed until the mission is rerun  ******\n\n******  Changes made to the mission will not be reflected ******\n******  in the data displayed until the mission is rerun  ******\n\n        Propagate Command: Unnamed\n        Command summary is not supported for Propagate (in Single Step Mode)\n        or when the command did not execute due to control logic statements.\n        Please see the next valid command.\n\n"
+      },
+      "AvailablePropModes": {
+        "type": "StringArray",
+        "default": null
+      },
+      "PropagateMode": {
+        "type": "String",
+        "default": ""
+      },
+      "InterruptFrequency": {
+        "type": "Integer",
+        "default": null
+      },
+      "StopTolerance": {
+        "type": "Real",
+        "default": 1e-07
+      },
+      "Spacecraft": {
+        "type": "StringArray",
+        "default": null
+      },
+      "Propagator": {
+        "type": "String",
+        "default": null
+      },
+      "StopCondition": {
+        "type": "StringArray",
+        "default": null
+      },
+      "PropForward": {
+        "type": "Boolean",
+        "default": null
+      },
+      "AllSTMs": {
+        "type": "Boolean",
+        "default": null
+      },
+      "AllAMatrices": {
+        "type": "Boolean",
+        "default": null
+      },
+      "AllCovariances": {
+        "type": "Boolean",
+        "default": null
+      }
+    },
+    "Target": {
+      "Covariance": {
+        "type": "Rmatrix",
+        "default": null
+      },
+      "Comment": {
+        "type": "String",
+        "default": null
+      },
+      "Summary": {
+        "type": "String",
+        "default": "******  Changes made to the mission will not be reflected ******\n******  in the data displayed until the mission is rerun  ******\n\n        Target Command: Unnamed\n        Command summary is not supported for Propagate (in Single Step Mode)\n        or when the command did not execute due to control logic statements.\n        Please see the next valid command.\n\n"
+      },
+      "MissionSummary": {
+        "type": "String",
+        "default": "******  Changes made to the mission will not be reflected ******\n******  in the data displayed until the mission is rerun  ******\n\n******  Changes made to the mission will not be reflected ******\n******  in the data displayed until the mission is rerun  ******\n\n        Target Command: Unnamed\n        Command summary is not supported for Propagate (in Single Step Mode)\n        or when the command did not execute due to control logic statements.\n        Please see the next valid command.\n\n"
+      },
+      "Targeter": {
+        "type": "String",
+        "default": ""
+      },
+      "SolveMode": {
+        "type": "String",
+        "default": "Solve"
+      },
+      "ExitMode": {
+        "type": "Dec",
+        "default": "DiscardAndContinue"
+      },
+      "SolveModeOptions": {
+        "type": "StringArray",
+        "default": null
+      },
+      "ExitModeOptions": {
+        "type": "Dec",
+        "default": null
+      },
+      "ShowProgressWindow": {
+        "type": "Boolean",
+        "default": null
+      }
+    },
+    "Optimize": {
+      "Covariance": {
+        "type": "Rmatrix",
+        "default": null
+      },
+      "Comment": {
+        "type": "String",
+        "default": null
+      },
+      "Summary": {
+        "type": "String",
+        "default": "******  Changes made to the mission will not be reflected ******\n******  in the data displayed until the mission is rerun  ******\n\n        Optimize Command: Unnamed\n        Command summary is not supported for Propagate (in Single Step Mode)\n        or when the command did not execute due to control logic statements.\n        Please see the next valid command.\n\n"
+      },
+      "MissionSummary": {
+        "type": "String",
+        "default": "******  Changes made to the mission will not be reflected ******\n******  in the data displayed until the mission is rerun  ******\n\n******  Changes made to the mission will not be reflected ******\n******  in the data displayed until the mission is rerun  ******\n\n        Optimize Command: Unnamed\n        Command summary is not supported for Propagate (in Single Step Mode)\n        or when the command did not execute due to control logic statements.\n        Please see the next valid command.\n\n"
+      },
+      "SolverName": {
+        "type": "String",
+        "default": ""
+      },
+      "SolveMode": {
+        "type": "String",
+        "default": "Solve"
+      },
+      "ExitMode": {
+        "type": "Dec",
+        "default": "DiscardAndContinue"
+      },
+      "SolveModeOptions": {
+        "type": "StringArray",
+        "default": null
+      },
+      "ExitModeOptions": {
+        "type": "Dec",
+        "default": null
+      },
+      "ShowProgressWindow": {
+        "type": "Boolean",
+        "default": null
+      },
+      "OptimizerName": {
+        "type": "String",
+        "default": ""
+      },
+      "OptimizerConverged": {
+        "type": "Boolean",
+        "default": null
+      }
+    },
+    "BeginFiniteBurn": {
+      "Covariance": {
+        "type": "Rmatrix",
+        "default": null
+      },
+      "Comment": {
+        "type": "String",
+        "default": null
+      },
+      "Summary": {
+        "type": "String",
+        "default": "******  Changes made to the mission will not be reflected ******\n******  in the data displayed until the mission is rerun  ******\n\n        BeginFiniteBurn Command: Unnamed\n        Command summary is not supported for Propagate (in Single Step Mode)\n        or when the command did not execute due to control logic statements.\n        Please see the next valid command.\n\n"
+      },
+      "MissionSummary": {
+        "type": "String",
+        "default": "******  Changes made to the mission will not be reflected ******\n******  in the data displayed until the mission is rerun  ******\n\n******  Changes made to the mission will not be reflected ******\n******  in the data displayed until the mission is rerun  ******\n\n        BeginFiniteBurn Command: Unnamed\n        Command summary is not supported for Propagate (in Single Step Mode)\n        or when the command did not execute due to control logic statements.\n        Please see the next valid command.\n\n"
+      }
+    },
+    "EndFiniteBurn": {
+      "Covariance": {
+        "type": "Rmatrix",
+        "default": null
+      },
+      "Comment": {
+        "type": "String",
+        "default": null
+      },
+      "Summary": {
+        "type": "String",
+        "default": "******  Changes made to the mission will not be reflected ******\n******  in the data displayed until the mission is rerun  ******\n\n        EndFiniteBurn Command: Unnamed\n        Command summary is not supported for Propagate (in Single Step Mode)\n        or when the command did not execute due to control logic statements.\n        Please see the next valid command.\n\n"
+      },
+      "MissionSummary": {
+        "type": "String",
+        "default": "******  Changes made to the mission will not be reflected ******\n******  in the data displayed until the mission is rerun  ******\n\n******  Changes made to the mission will not be reflected ******\n******  in the data displayed until the mission is rerun  ******\n\n        EndFiniteBurn Command: Unnamed\n        Command summary is not supported for Propagate (in Single Step Mode)\n        or when the command did not execute due to control logic statements.\n        Please see the next valid command.\n\n"
+      }
+    },
+    "Maneuver": {
+      "Covariance": {
+        "type": "Rmatrix",
+        "default": null
+      },
+      "Comment": {
+        "type": "String",
+        "default": null
+      },
+      "Summary": {
+        "type": "String",
+        "default": "******  Changes made to the mission will not be reflected ******\n******  in the data displayed until the mission is rerun  ******\n\n        Maneuver Command: Unnamed\n        Command summary is not supported for Propagate (in Single Step Mode)\n        or when the command did not execute due to control logic statements.\n        Please see the next valid command.\n\n"
+      },
+      "MissionSummary": {
+        "type": "String",
+        "default": "******  Changes made to the mission will not be reflected ******\n******  in the data displayed until the mission is rerun  ******\n\n******  Changes made to the mission will not be reflected ******\n******  in the data displayed until the mission is rerun  ******\n\n        Maneuver Command: Unnamed\n        Command summary is not supported for Propagate (in Single Step Mode)\n        or when the command did not execute due to control logic statements.\n        Please see the next valid command.\n\n"
+      },
+      "Burn": {
+        "type": "String",
+        "default": ""
+      },
+      "Spacecraft": {
+        "type": "String",
+        "default": ""
+      },
+      "BackProp": {
+        "type": "Boolean",
+        "default": null
+      }
+    },
+    "Report": {
+      "Covariance": {
+        "type": "Rmatrix",
+        "default": null
+      },
+      "Comment": {
+        "type": "String",
+        "default": null
+      },
+      "Summary": {
+        "type": "String",
+        "default": "******  Changes made to the mission will not be reflected ******\n******  in the data displayed until the mission is rerun  ******\n\n        Report Command: Unnamed\n        Command summary is not supported for Propagate (in Single Step Mode)\n        or when the command did not execute due to control logic statements.\n        Please see the next valid command.\n\n"
+      },
+      "MissionSummary": {
+        "type": "String",
+        "default": "******  Changes made to the mission will not be reflected ******\n******  in the data displayed until the mission is rerun  ******\n\n******  Changes made to the mission will not be reflected ******\n******  in the data displayed until the mission is rerun  ******\n\n        Report Command: Unnamed\n        Command summary is not supported for Propagate (in Single Step Mode)\n        or when the command did not execute due to control logic statements.\n        Please see the next valid command.\n\n"
+      }
+    },
+    "Minimize": {
+      "Covariance": {
+        "type": "Rmatrix",
+        "default": null
+      },
+      "Comment": {
+        "type": "String",
+        "default": null
+      },
+      "Summary": {
+        "type": "String",
+        "default": "******  Changes made to the mission will not be reflected ******\n******  in the data displayed until the mission is rerun  ******\n\n        Minimize Command: Unnamed\n        Command summary is not supported for Propagate (in Single Step Mode)\n        or when the command did not execute due to control logic statements.\n        Please see the next valid command.\n\n"
+      },
+      "MissionSummary": {
+        "type": "String",
+        "default": "******  Changes made to the mission will not be reflected ******\n******  in the data displayed until the mission is rerun  ******\n\n******  Changes made to the mission will not be reflected ******\n******  in the data displayed until the mission is rerun  ******\n\n        Minimize Command: Unnamed\n        Command summary is not supported for Propagate (in Single Step Mode)\n        or when the command did not execute due to control logic statements.\n        Please see the next valid command.\n\n"
+      },
+      "SolverName": {
+        "type": "String",
+        "default": ""
+      },
+      "OptimizerName": {
+        "type": "String",
+        "default": ""
+      },
+      "ObjectiveName": {
+        "type": "String",
+        "default": "9.999999e300"
+      },
+      "Cost": {
+        "type": "Real",
+        "default": null
+      }
+    },
+    "NonlinearConstraint": {
+      "Covariance": {
+        "type": "Rmatrix",
+        "default": null
+      },
+      "Comment": {
+        "type": "String",
+        "default": null
+      },
+      "Summary": {
+        "type": "String",
+        "default": "******  Changes made to the mission will not be reflected ******\n******  in the data displayed until the mission is rerun  ******\n\n        NonlinearConstraint Command: Unnamed\n        Command summary is not supported for Propagate (in Single Step Mode)\n        or when the command did not execute due to control logic statements.\n        Please see the next valid command.\n\n"
+      },
+      "MissionSummary": {
+        "type": "String",
+        "default": "******  Changes made to the mission will not be reflected ******\n******  in the data displayed until the mission is rerun  ******\n\n******  Changes made to the mission will not be reflected ******\n******  in the data displayed until the mission is rerun  ******\n\n        NonlinearConstraint Command: Unnamed\n        Command summary is not supported for Propagate (in Single Step Mode)\n        or when the command did not execute due to control logic statements.\n        Please see the next valid command.\n\n"
+      },
+      "SolverName": {
+        "type": "String",
+        "default": ""
+      },
+      "OptimizerName": {
+        "type": "String",
+        "default": ""
+      },
+      "ConstraintArg1": {
+        "type": "String",
+        "default": ""
+      },
+      "LHSValue": {
+        "type": "Real",
+        "default": null
+      },
+      "Operator": {
+        "type": "String",
+        "default": "="
+      },
+      "ConstraintArg2": {
+        "type": "String",
+        "default": ""
+      },
+      "RHSValue": {
+        "type": "Real",
+        "default": null
+      },
+      "Tolerance": {
+        "type": "String",
+        "default": ""
+      }
+    }
+  }
+}
