@@ -434,8 +434,16 @@ namespace KSPGMAT.UI {
             }
 
             // 2. Strict Exact GMAT Mission Epoch Mapping (Zero hidden snapping, Zero period wrapping)
-            targetEpoch = anchorUT + burn.epoch_offset + globalTimeShift;
-            double initialTime = targetEpoch - centroidLead;
+            double initialTime;
+            if (burn.type == "FiniteBurn" || burn.type == "BeginFiniteBurn" || burn.type != "ImpulsiveBurn") {
+                // For GMAT FiniteBurn, epoch_offset is the exact instant of BeginFiniteBurn (Ignition Start)
+                initialTime = anchorUT + burn.epoch_offset + globalTimeShift;
+                targetEpoch = initialTime + centroidLead;
+            } else {
+                // For Impulsive Burn, epoch_offset is the geometric target impulse epoch
+                targetEpoch = anchorUT + burn.epoch_offset + globalTimeShift;
+                initialTime = targetEpoch - centroidLead;
+            }
             burn.computed_initial_time = initialTime;
             burn.centroid_lead_time = centroidLead;
             return initialTime;
