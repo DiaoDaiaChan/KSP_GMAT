@@ -164,7 +164,15 @@ namespace KSPGMAT.UI {
                         }
 
                         // Outer Maneuver Verification Container
-                        GUILayout.BeginVertical(targetGroupBoxStyle);
+                        bool isBurnHovered = (hoveredBurnIndex == i);
+                        GUILayout.BeginVertical(GetTargetGroupBoxStyle(i, isBurnHovered));
+                        if (Event.current.type == EventType.Repaint) {
+                            Rect br = GUILayoutUtility.GetLastRect();
+                            if (br.Contains(Event.current.mousePosition)) hoveredBurnIndex = i;
+                            if (isBurnHovered) {
+                                GUI.DrawTexture(new Rect(br.x + 1, br.y + 2, 4, br.height - 4), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, GetStepThemeColor("FiniteBurn"), 0, 0);
+                            }
+                        }
 
                         // Card Header
                         GUILayout.BeginHorizontal();

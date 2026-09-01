@@ -104,6 +104,8 @@ namespace KSPGMAT.UI {
         private string syncStatusMessage = "";
         private int ideViewMode = 0; // 0 = 高亮预览, 1 = 自由编辑, 2 = 分栏对照
         private string ideCustomBuffer = "";
+        private string ideLastLiveScriptSnapshot = "";
+        private bool ideHasUnsavedEdits = false;
         private GUIStyle ideEditorStyle;
         private Vector2 ideAutocompleteScroll = Vector2.zero;
         private string ideCurrentWordUnderCursor = "";
@@ -219,6 +221,7 @@ namespace KSPGMAT.UI {
         private GUIStyle stepSolvingBoxStyle;
         private GUIStyle stepDraggingBoxStyle;
         private int hoveredStepIndex = -1;
+        private int hoveredBurnIndex = -1;
         private GUIStyle labelValueStyle;
         private GUIStyle actionButtonStyle;
         private GUIStyle secondaryButtonStyle;
@@ -712,8 +715,13 @@ namespace KSPGMAT.UI {
             GUILayout.BeginHorizontal();
             for (int i = 0; i < tabs.Length; i++) {
                 bool isSelected = (activeTab == i);
-                if (GUILayout.Button(tabs[i], isSelected ? tabButtonActiveStyle : tabButtonStyle, GUILayout.Height(26))) {
+                if (GUILayout.Button(tabs[i], isSelected ? tabButtonActiveStyle : tabButtonStyle, GUILayout.Height(28))) {
                     activeTab = i;
+                }
+                if (Event.current.type == EventType.Repaint && isSelected) {
+                    Rect r = GUILayoutUtility.GetLastRect();
+                    // Draw sleek 2px neon cyan active bottom highlight
+                    GUI.DrawTexture(new Rect(r.x + 2, r.y + r.height - 2, r.width - 4, 2), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, new Color(0.22f, 0.74f, 0.97f, 1f), 0, 0);
                 }
             }
             GUILayout.EndHorizontal();

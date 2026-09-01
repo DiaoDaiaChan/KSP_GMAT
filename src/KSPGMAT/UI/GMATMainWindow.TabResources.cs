@@ -842,8 +842,38 @@ namespace KSPGMAT.UI {
             GUILayout.BeginVertical(cardBoxStyle, GUILayout.Width(rightW));
 
             // IDE Header & Mode Switcher
+            // Generate the live script based on active view mode
+            string liveScript = GenerateLiveGmatScript(ideScriptViewMode);
+
+            // Real-time synchronization check: if user hasn't made custom edits, automatically keep in sync with GUI sequence
+            if (string.IsNullOrEmpty(ideCustomBuffer) || ideCustomBuffer == ideLastLiveScriptSnapshot) {
+                ideCustomBuffer = liveScript;
+                ideLastLiveScriptSnapshot = liveScript;
+                ideHasUnsavedEdits = false;
+            } else if (ideCustomBuffer != liveScript) {
+                ideHasUnsavedEdits = true;
+            } else {
+                ideHasUnsavedEdits = false;
+            }
+
+            string currentScriptToUse = (ideViewMode != 0 && ideHasUnsavedEdits) ? ideCustomBuffer : liveScript;
+
             GUILayout.BeginHorizontal();
             GUILayout.Label("<color=#38bdf8><b>💻 GMAT 脚本 IDE 与代码编辑器</b></color>", headerStyle);
+            GUILayout.Space(8);
+
+            if (ideHasUnsavedEdits) {
+                GUILayout.Label("<color=#facc15><b>⚠️ [有未同步的编辑器修改]</b></color>", labelValueStyle);
+                if (GUILayout.Button("🔄 丢弃修改并拉取最新GUI", secondaryButtonStyle, GUILayout.Height(20))) {
+                    ideCustomBuffer = liveScript;
+                    ideLastLiveScriptSnapshot = liveScript;
+                    ideHasUnsavedEdits = false;
+                    ScreenMessages.PostScreenMessage("🔄 已重置为最新 GUI 任务序列！", 2.0f, ScreenMessageStyle.UPPER_CENTER);
+                }
+            } else {
+                GUILayout.Label("<color=#34d399><b>● 与 GUI 实时双向同步中</b></color>", labelValueStyle);
+            }
+
             GUILayout.FlexibleSpace();
 
             string[] ideModes = new string[] { "📄 全脚本", "📦 资源区", "🎯 任务区" };
@@ -851,8 +881,10 @@ namespace KSPGMAT.UI {
                 bool isM = (ideScriptViewMode == m);
                 if (GUILayout.Button(ideModes[m], isM ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
                     ideScriptViewMode = m;
-                    if (string.IsNullOrEmpty(ideCustomBuffer)) {
-                        ideCustomBuffer = GenerateLiveGmatScript(ideScriptViewMode);
+                    liveScript = GenerateLiveGmatScript(ideScriptViewMode);
+                    if (!ideHasUnsavedEdits) {
+                        ideCustomBuffer = liveScript;
+                        ideLastLiveScriptSnapshot = liveScript;
                     }
                 }
             }
@@ -864,16 +896,14 @@ namespace KSPGMAT.UI {
                 bool isVm = (ideViewMode == vm);
                 if (GUILayout.Button(viewModes[vm], isVm ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
                     ideViewMode = vm;
-                    if (string.IsNullOrEmpty(ideCustomBuffer)) {
-                        ideCustomBuffer = GenerateLiveGmatScript(ideScriptViewMode);
+                    if (!ideHasUnsavedEdits) {
+                        ideCustomBuffer = liveScript;
+                        ideLastLiveScriptSnapshot = liveScript;
                     }
                 }
             }
             GUILayout.EndHorizontal();
             GUILayout.Space(4);
-
-            string liveScript = GenerateLiveGmatScript(ideScriptViewMode);
-            string currentScriptToUse = (ideViewMode != 0 && !string.IsNullOrEmpty(ideCustomBuffer)) ? ideCustomBuffer : liveScript;
 
             // Action Toolbar (Save & Sync, Export, External IDE, Copy, Reset, Solve)
             GUILayout.BeginHorizontal(nestedCardBoxStyle);
@@ -931,6 +961,8 @@ namespace KSPGMAT.UI {
             if (ideViewMode != 0) {
                 if (GUILayout.Button("🔄 恢复自动生成", secondaryButtonStyle, GUILayout.Height(22))) {
                     ideCustomBuffer = GenerateLiveGmatScript(ideScriptViewMode);
+                    ideLastLiveScriptSnapshot = ideCustomBuffer;
+                    ideHasUnsavedEdits = false;
                     ScreenMessages.PostScreenMessage("🔄 已重置为实时自动生成脚本！", 2.0f, ScreenMessageStyle.UPPER_CENTER);
                 }
             }
@@ -955,13 +987,6 @@ namespace KSPGMAT.UI {
             GUILayout.EndHorizontal();
 
             GUILayout.Space(4);
-
-            // =========================================================================
-            // MAIN EDITOR / VIEWER AREA (Mode 0: Preview, Mode 1: Edit, Mode 2: Split)
-            // =========================================================================
-            if (string.IsNullOrEmpty(ideCustomBuffer)) {
-                ideCustomBuffer = liveScript;
-            }
 
             if (ideViewMode == 0) {
                 // 1. Full Syntax Highlighted Preview (Always real-time live script)
@@ -1183,9 +1208,13 @@ namespace KSPGMAT.UI {
                 // Ensure full script is passed to import
                 string fullScript = scriptContent;
                 if (ideScriptViewMode == 1) { // Resources only
-                    fullScript = scriptContent + "\nBeginMissionSequence;\n" + GenerateLiveGmatScript(2);
+                    fullScript = scriptContent.TrimEnd() + "\n\nBeginMissionSequence;\n" + GenerateLiveGmatScript(2);
                 } else if (ideScriptViewMode == 2) { // Sequence only
-                    fullScript = GenerateLiveGmatScript(1) + "\n" + scriptContent;
+                    string seqBody = scriptContent.Trim();
+                    if (!seqBody.StartsWith("BeginMissionSequence;", StringComparison.OrdinalIgnoreCase)) {
+                        seqBody = "BeginMissionSequence;\n" + seqBody;
+                    }
+                    fullScript = GenerateLiveGmatScript(1).TrimEnd() + "\n\n" + seqBody;
                 }
 
                 string tempScriptPath = Path.Combine(GMATClient.GetOutputDir(), "user_custom_edit.script");
@@ -1196,8 +1225,9 @@ namespace KSPGMAT.UI {
                     if (ok && result != null) {
                         ApplyImportResultToState(result);
 
-                        // Retain user edited buffer
-                        ideCustomBuffer = scriptContent;
+                        ideLastLiveScriptSnapshot = GenerateLiveGmatScript(ideScriptViewMode);
+                        ideCustomBuffer = ideLastLiveScriptSnapshot;
+                        ideHasUnsavedEdits = false;
 
                         ScreenMessages.PostScreenMessage($"✅ 脚本修改已保存！已同步至【资源管理】与【任务序列】({(result.sequence != null ? result.sequence.Count : 0)} 个步骤)。", 3.0f, ScreenMessageStyle.UPPER_CENTER);
                     } else {
