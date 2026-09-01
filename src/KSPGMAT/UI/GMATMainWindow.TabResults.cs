@@ -17,7 +17,6 @@ namespace KSPGMAT.UI {
         private IgnitionCorrectionMode currentIgnitionMode = IgnitionCorrectionMode.PrecisionDynamics;
         private bool isAutoClosedLoopRunning = false;
         private bool showTrajPointsList = false;
-        private double lastCalibrationFactor = 1.0;
         private List<PrincipiaInterop.FlightPlanNode> cachedFlightPlanNodes = null;
         private float lastFlightPlanReadTime = -999f;
         private void DrawTabResults() {
@@ -211,16 +210,23 @@ namespace KSPGMAT.UI {
                         GUILayout.BeginHorizontal();
 
                         // LEFT COLUMN: NASA GMAT Theoretical Solution
-                        GUILayout.BeginVertical(nestedCardBoxStyle, GUILayout.Width(340));
-                        GUILayout.Label("<color=#38bdf8><b>🛰️ NASA GMAT 理论求解</b></color>", labelValueStyle);
-                        GUILayout.Space(2);
-                        GUILayout.Label($"合速度增量 (ΔV): <b>{b.magnitude:F3} m/s</b>", labelValueStyle);
-                        GUILayout.Label($"分量: 顺行(V) {b.dv_v:F2} | 法向(N/变倾角) {b.dv_n:F2} | 径向(B/面内) {b.dv_b:F2} m/s", labelValueStyle);
-                        GUILayout.Label($"点火时长 (Duration): <color=#38bdf8><b>{b.duration:F2} s</b></color>", labelValueStyle);
+                        GUILayout.BeginVertical(nestedCardBoxStyle, GUILayout.Width(350));
+                        GUILayout.Label("<color=#38bdf8><b>🛰️ NASA GMAT 理论规划</b></color>", labelValueStyle);
+                        GUILayout.Space(4);
+
+                        // Hero Metric 1: Total Delta-V
+                        GUILayout.Label($"合速度增量 (ΔV): <color=#38bdf8><b><size=13>{b.magnitude:F3} m/s</size></b></color>", labelValueStyle);
+                        GUILayout.Label($"<color=#94a3b8>分量:</color> 顺行(V) <b>{b.dv_v:F2}</b> | 法向(N/变倾角) <b>{b.dv_n:F2}</b> | 径向(B/面内) <b>{b.dv_b:F2}</b> m/s", labelValueStyle);
+
+                        GUILayout.Space(4);
+                        // Hero Metric 2: Duration
+                        GUILayout.Label($"点火时长 (Duration): <color=#38bdf8><b><size=12>{b.duration:F2} s</size></b></color>", labelValueStyle);
                         GUILayout.Label($"预计消耗推进剂: <b>{b.fuel_burned:F2} kg</b>", labelValueStyle);
-                        GUILayout.Label($"动力学模型推力: {b.thrust_kn:F1} kN | 比冲: {b.isp:F1} s", labelValueStyle);
+                        GUILayout.Label($"动力学推力: <b>{b.thrust_kn:F1} kN</b> | 比冲: <b>{b.isp:F1} s</b>", labelValueStyle);
+
                         if (!string.IsNullOrEmpty(b.native_result_note)) {
-                            GUILayout.Label($"<color=#94a3b8><i>{b.native_result_note}</i></color>", labelValueStyle);
+                            GUILayout.Space(2);
+                            GUILayout.Label($"<color=#64748b><i>{b.native_result_note}</i></color>", labelValueStyle);
                         }
                         GUILayout.EndVertical();
 
@@ -229,14 +235,19 @@ namespace KSPGMAT.UI {
                         // RIGHT COLUMN: Principia Ground-Truth In-Game Node
                         GUILayout.BeginVertical(nestedCardBoxStyle, GUILayout.ExpandWidth(true));
                         if (pNode != null) {
-                            GUILayout.Label("<color=#34d399><b>🎮 Principia 游戏实机节点 (Ground Truth 真值)</b></color>", labelValueStyle);
-                            GUILayout.Space(2);
+                            GUILayout.Label("<color=#34d399><b>🎮 Principia 实机真值节点</b></color>", labelValueStyle);
+                            GUILayout.Space(4);
+
+                            // Hero Metric 1: Total Delta-V
                             double pDvMag = pNode.deltaV.magnitude;
-                            GUILayout.Label($"实机机动合 ΔV: <b>{pDvMag:F3} m/s</b>", labelValueStyle);
-                            GUILayout.Label($"Principia分量: 切向 {pNode.deltaV.x:F2} | 径向 {pNode.deltaV.y:F2} | 副法向(变倾角) {pNode.deltaV.z:F2} m/s", labelValueStyle);
-                            GUILayout.Label($"实机点火持续时间: <color=#34d399><b>{pNode.duration:F2} s</b></color>", labelValueStyle);
-                            GUILayout.Label($"节点初始总质量: <b>{pNode.initial_mass_tonnes:F3} t</b> (真实实时构型湿重)", labelValueStyle);
-                            GUILayout.Label($"发动机实测推力: {pNode.thrust_kn:F1} kN | 实测比冲: {pNode.isp:F1} s", labelValueStyle);
+                            GUILayout.Label($"实机机动合 ΔV: <color=#34d399><b><size=13>{pDvMag:F3} m/s</size></b></color>", labelValueStyle);
+                            GUILayout.Label($"<color=#94a3b8>Principia分量:</color> 切向 <b>{pNode.deltaV.x:F2}</b> | 径向 <b>{pNode.deltaV.y:F2}</b> | 副法向(变倾角) <b>{pNode.deltaV.z:F2}</b> m/s", labelValueStyle);
+
+                            GUILayout.Space(4);
+                            // Hero Metric 2: Duration & Mass
+                            GUILayout.Label($"实机点火持续时间: <color=#34d399><b><size=12>{pNode.duration:F2} s</size></b></color>", labelValueStyle);
+                            GUILayout.Label($"节点初始总质量: <b>{pNode.initial_mass_tonnes:F3} t</b> <color=#94a3b8>(真实实时构型湿重)</color>", labelValueStyle);
+                            GUILayout.Label($"发动机实测推力: <b>{pNode.thrust_kn:F1} kN</b> | 实测比冲: <b>{pNode.isp:F1} s</b>", labelValueStyle);
                         } else {
                             GUILayout.Label("<color=#94a3b8><b>🎮 Principia 游戏实机节点</b></color>", labelValueStyle);
                             GUILayout.Space(6);
@@ -315,58 +326,6 @@ namespace KSPGMAT.UI {
                         GUILayout.EndHorizontal();
 
                         GUILayout.EndVertical();
-
-                        // DISCREPANCY ANALYSIS & RECONCILIATION ACTIONS BAR
-                        if (pNode != null) {
-                            double dtDiff = pNode.duration - b.duration;
-                            double dtPercent = (b.duration > 0) ? (dtDiff / b.duration) * 100.0 : 0.0;
-                            double dvDiff = pNode.deltaV.magnitude - b.magnitude;
-                            double curRatio = (b.duration > 0) ? (pNode.duration / b.duration) : 1.0;
-
-                            GUILayout.Space(4);
-                            GUILayout.BeginVertical(nestedCardBoxStyle);
-                            GUILayout.BeginHorizontal();
-                            GUILayout.Label($"<b>动力学偏差:</b> 时长差 Δt: <b>{dtDiff:+0.00;-0.00;0.00} s ({dtPercent:+0.1;-0.1;0.1}%)</b> | 速度差 Δ(ΔV): <b>{dvDiff:+0.000;-0.000;0.000} m/s</b>", labelValueStyle);
-                            GUILayout.FlexibleSpace();
-                            GUILayout.Label("<color=#94a3b8><i>注: 偏差主要源于实时重力损耗微漂移</i></color>", labelValueStyle);
-                            GUILayout.EndHorizontal();
-
-                            GUILayout.Space(4);
-                            GUILayout.BeginHorizontal();
-                            GUILayout.Label("<color=#38bdf8><b>实机真值对齐处理:</b></color>", labelValueStyle, GUILayout.Width(130));
-
-                            // Action 1: Reconcile GMAT Variable with Principia Duration
-                            if (GUILayout.Button($"⚡ 以 Principia 实机时长 ({pNode.duration:F1}s) 校准 GMAT 变量初猜", successButtonStyle, GUILayout.Height(22))) {
-                                int reconciledCount = 0;
-                                for (int s = 0; s < missionSequence.Count; s++) {
-                                    var step = missionSequence[s];
-                                    if (step.type == "Vary" && (step.vary_variable.ToLower().Contains("burn") || step.vary_variable.ToLower().Contains("time") || step.vary_variable.ToLower().Contains("dur"))) {
-                                        step.vary_initial = pNode.duration;
-                                        reconciledCount++;
-                                    } else if (step.type == "FiniteBurn") {
-                                        step.duration = pNode.duration;
-                                        reconciledCount++;
-                                    }
-                                }
-                                lastCalibrationFactor = curRatio;
-                                ScreenMessages.PostScreenMessage($"✅ 成功将 GMAT 变量初猜与点火时长校准为 Principia 游戏实机真值: {pNode.duration:F2} s！", 4.0f, ScreenMessageStyle.UPPER_CENTER);
-                            }
-
-                            // Action 2: Calibrate Ratio
-                            if (GUILayout.Button("📐 记录推力修正比", secondaryButtonStyle, GUILayout.Width(130), GUILayout.Height(22))) {
-                                lastCalibrationFactor = curRatio;
-                                ScreenMessages.PostScreenMessage($"📐 已记录动力学校准系数: {lastCalibrationFactor:F4}", 3.0f, ScreenMessageStyle.UPPER_CENTER);
-                            }
-
-                            // Action 3: Re-apply to Principia
-                            if (GUILayout.Button("🔄 重新同步此节点", secondaryButtonStyle, GUILayout.Width(120), GUILayout.Height(22))) {
-                                WriteBurnsToPrincipia(vessel);
-                            }
-
-                            GUILayout.FlexibleSpace();
-                            GUILayout.EndHorizontal();
-                            GUILayout.EndVertical();
-                        }
 
                         GUILayout.EndVertical();
                         if (Event.current.type == EventType.Repaint) {
