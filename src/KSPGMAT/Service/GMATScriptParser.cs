@@ -329,16 +329,29 @@ namespace KSPGMAT.Service {
                         double initVal = 150.0;
                         double.TryParse(initValStr, NumberStyles.Any, CultureInfo.InvariantCulture, out initVal);
 
+                        string lowStr = "", upStr = "", stepStr = "", pertStr = "";
                         double low = 0.0, up = 1000.0, maxStep = 10.0, pert = 0.0001;
                         if (!string.IsNullOrEmpty(opts)) {
-                            var lowM = Regex.Match(opts, @"Lower\s*=\s*([-+]?[\d.]+)");
-                            if (lowM.Success) double.TryParse(lowM.Groups[1].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out low);
-                            var upM = Regex.Match(opts, @"Upper\s*=\s*([-+]?[\d.]+)");
-                            if (upM.Success) double.TryParse(upM.Groups[1].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out up);
-                            var stepM = Regex.Match(opts, @"MaxStep\s*=\s*([-+]?[\d.]+)");
-                            if (stepM.Success) double.TryParse(stepM.Groups[1].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out maxStep);
-                            var pertM = Regex.Match(opts, @"Perturbation\s*=\s*([-+]?[\d.]+)");
-                            if (pertM.Success) double.TryParse(pertM.Groups[1].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out pert);
+                            var lowM = Regex.Match(opts, @"Lower\s*=\s*([^,}]+)");
+                            if (lowM.Success) {
+                                lowStr = lowM.Groups[1].Value.Trim();
+                                double.TryParse(lowStr, NumberStyles.Any, CultureInfo.InvariantCulture, out low);
+                            }
+                            var upM = Regex.Match(opts, @"Upper\s*=\s*([^,}]+)");
+                            if (upM.Success) {
+                                upStr = upM.Groups[1].Value.Trim();
+                                double.TryParse(upStr, NumberStyles.Any, CultureInfo.InvariantCulture, out up);
+                            }
+                            var stepM = Regex.Match(opts, @"MaxStep\s*=\s*([^,}]+)");
+                            if (stepM.Success) {
+                                stepStr = stepM.Groups[1].Value.Trim();
+                                double.TryParse(stepStr, NumberStyles.Any, CultureInfo.InvariantCulture, out maxStep);
+                            }
+                            var pertM = Regex.Match(opts, @"Perturbation\s*=\s*([^,}]+)");
+                            if (pertM.Success) {
+                                pertStr = pertM.Groups[1].Value.Trim();
+                                double.TryParse(pertStr, NumberStyles.Any, CultureInfo.InvariantCulture, out pert);
+                            }
                         }
 
                         if (varExpr.Contains("ThrustDirection")) {
@@ -402,17 +415,22 @@ namespace KSPGMAT.Service {
                                 dc_name = dc,
                                 vary_variable = varExpr,
                                 vary_initial = initVal,
+                                vary_initial_str = initValStr,
                                 vary_lower = low,
+                                vary_lower_str = lowStr,
                                 vary_upper = up,
+                                vary_upper_str = upStr,
                                 vary_max_step = maxStep,
+                                vary_max_step_str = stepStr,
                                 vary_perturbation = pert,
+                                vary_perturbation_str = pertStr,
                                 label = $"Vary {varExpr}"
                             });
                         }
                     }
 
                     // 5. Achieve
-                    var achMatch = Regex.Match(rawLine, @"Achieve\s+([A-Za-z0-9_]+)\s*\(\s*([A-Za-z0-9_.]+)\s*=\s*([^,]+)(?:,\s*\{\s*Tolerance\s*=\s*([\d.]+)\s*\})?\s*\)", RegexOptions.IgnoreCase);
+                    var achMatch = Regex.Match(rawLine, @"Achieve\s+([A-Za-z0-9_]+)\s*\(\s*([A-Za-z0-9_.]+)\s*=\s*([^,]+)(?:,\s*\{\s*Tolerance\s*=\s*([^}]+)\s*\})?\s*\)", RegexOptions.IgnoreCase);
                     if (achMatch.Success) {
                         string dc = achMatch.Groups[1].Value;
                         string param = achMatch.Groups[2].Value.Trim();
@@ -420,8 +438,10 @@ namespace KSPGMAT.Service {
                         double val = 0.0;
                         double.TryParse(valStr, NumberStyles.Any, CultureInfo.InvariantCulture, out val);
                         double tol = 0.1;
+                        string tolStr = "";
                         if (achMatch.Groups.Count > 4 && !string.IsNullOrEmpty(achMatch.Groups[4].Value)) {
-                            double.TryParse(achMatch.Groups[4].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out tol);
+                            tolStr = achMatch.Groups[4].Value.Trim();
+                            double.TryParse(tolStr, NumberStyles.Any, CultureInfo.InvariantCulture, out tol);
                         }
 
                         result.sequence.Add(new MissionStep {
@@ -429,7 +449,9 @@ namespace KSPGMAT.Service {
                             dc_name = dc,
                             achieve_param = param,
                             achieve_val = val,
+                            achieve_val_str = valStr,
                             achieve_tolerance = tol,
+                            achieve_tolerance_str = tolStr,
                             label = $"Achieve {param}"
                         });
                     }

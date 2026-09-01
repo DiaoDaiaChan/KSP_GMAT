@@ -97,9 +97,13 @@ namespace KSPGMAT {
         public double vz_tolerance = 0.0; // km/s; zero uses GMAT numerical default
         public double stop_tolerance = 1e-5; // GMAT Propagate StopTolerance (e.g. 1e-5)
         public double vary_perturbation = 0.0;
+        public string vary_perturbation_str = "";
         public double vary_lower = 0.0;
+        public string vary_lower_str = "";
         public double vary_upper = 0.0;
+        public string vary_upper_str = "";
         public double vary_max_step = 0.0;
+        public string vary_max_step_str = "";
         public double vary_additive_scale = 0.0;
         public double vary_multiplicative_scale = 1.0;
         public string vary_solver = "DefaultDC";
@@ -128,6 +132,7 @@ namespace KSPGMAT {
         public double achieve_val = 40000.0;
         public string achieve_val_str = "";
         public double achieve_tolerance = 0.1;
+        public string achieve_tolerance_str = "";
         public string var_name = "burntime";
         public string var_expr = "150.0";
         public bool burn_use_vary_var = false;

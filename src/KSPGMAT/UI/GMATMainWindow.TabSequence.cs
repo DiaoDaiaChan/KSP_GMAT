@@ -1541,19 +1541,31 @@ namespace KSPGMAT.UI {
                 GUILayout.Space(3);
                 GUILayout.BeginHorizontal();
                 GUILayout.Label("<color=#94a3b8>初猜:</color>", gridLabelStyle, GUILayout.Width(35));
-                step.vary_initial = DrawDelayedNumericField($"vary_init_{i}", step.vary_initial, numericInputStyle, GUILayout.Width(75), "F2");
+                step.vary_initial_str = DrawDelayedSmartField($"Field_VaryInit_{i}", step.vary_initial_str, step.vary_initial, numericInputStyle, GUILayout.Width(75), "vary_init", i);
+                if (double.TryParse(step.vary_initial_str, NumberStyles.Any, CultureInfo.InvariantCulture, out double parsedVaryInit)) {
+                    step.vary_initial = parsedVaryInit;
+                }
 
                 GUILayout.Space(6);
                 GUILayout.Label("<color=#94a3b8>下界:</color>", gridLabelStyle, GUILayout.Width(35));
-                step.vary_lower = DrawDelayedNumericField($"vary_low_{i}", step.vary_lower, numericInputStyle, GUILayout.Width(60), "F2");
+                step.vary_lower_str = DrawDelayedSmartField($"vary_low_{i}", step.vary_lower_str, step.vary_lower, numericInputStyle, GUILayout.Width(60), null, i);
+                if (double.TryParse(step.vary_lower_str, NumberStyles.Any, CultureInfo.InvariantCulture, out double parsedVaryLow)) {
+                    step.vary_lower = parsedVaryLow;
+                }
 
                 GUILayout.Space(6);
                 GUILayout.Label("<color=#94a3b8>上界:</color>", gridLabelStyle, GUILayout.Width(35));
-                step.vary_upper = DrawDelayedNumericField($"vary_up_{i}", step.vary_upper, numericInputStyle, GUILayout.Width(60), "F2");
+                step.vary_upper_str = DrawDelayedSmartField($"vary_up_{i}", step.vary_upper_str, step.vary_upper, numericInputStyle, GUILayout.Width(60), null, i);
+                if (double.TryParse(step.vary_upper_str, NumberStyles.Any, CultureInfo.InvariantCulture, out double parsedVaryUp)) {
+                    step.vary_upper = parsedVaryUp;
+                }
 
                 GUILayout.Space(6);
                 GUILayout.Label("<color=#94a3b8>步长:</color>", gridLabelStyle, GUILayout.Width(35));
-                step.vary_max_step = DrawDelayedNumericField($"vary_step_{i}", (step.vary_max_step <= 0 ? 0.1 : step.vary_max_step), numericInputStyle, GUILayout.Width(55), "F2");
+                step.vary_max_step_str = DrawDelayedSmartField($"vary_step_{i}", step.vary_max_step_str, (step.vary_max_step <= 0 ? 0.1 : step.vary_max_step), numericInputStyle, GUILayout.Width(55), null, i);
+                if (double.TryParse(step.vary_max_step_str, NumberStyles.Any, CultureInfo.InvariantCulture, out double parsedVaryStep)) {
+                    step.vary_max_step = parsedVaryStep;
+                }
 
                 // Inline Solved Value
                 if (step.has_solved_value) {
@@ -1562,7 +1574,8 @@ namespace KSPGMAT.UI {
                     GUILayout.Label($"<color=#34d399><b>➔ 🎯 求解收敛解: {step.solved_value_str} {unitStr}</b></color>", labelValueStyle);
                     if (GUILayout.Button("📌 应用为初猜", secondaryButtonStyle, GUILayout.Height(20))) {
                         step.vary_initial = step.solved_value;
-                        inputStringCache[$"vary_init_{i}"] = step.solved_value_str;
+                        step.vary_initial_str = step.solved_value_str;
+                        inputStringCache[$"Field_VaryInit_{i}"] = step.solved_value_str;
                         ScreenMessages.PostScreenMessage($"📌 已将收敛解 {step.solved_value_str} 填入初猜！", 2.0f, ScreenMessageStyle.UPPER_CENTER);
                     }
                 } else if (latestResult != null && latestResult.success) {
@@ -1579,7 +1592,8 @@ namespace KSPGMAT.UI {
                         GUILayout.Label($"<color=#34d399><b>➔ 🎯 求解收敛解: {solvedVal:F4} {unitStr}</b></color>", labelValueStyle);
                         if (GUILayout.Button("📌 应用为初猜", secondaryButtonStyle, GUILayout.Height(20))) {
                             step.vary_initial = solvedVal;
-                            inputStringCache[$"vary_init_{i}"] = solvedVal.ToString("F4", System.Globalization.CultureInfo.InvariantCulture);
+                            step.vary_initial_str = solvedVal.ToString("F4", System.Globalization.CultureInfo.InvariantCulture);
+                            inputStringCache[$"Field_VaryInit_{i}"] = step.vary_initial_str;
                             ScreenMessages.PostScreenMessage($"📌 已将收敛解 {solvedVal:F4} 填入初猜！", 2.0f, ScreenMessageStyle.UPPER_CENTER);
                         }
                     }
@@ -1631,11 +1645,17 @@ namespace KSPGMAT.UI {
                 GUILayout.Space(3);
                 GUILayout.BeginHorizontal();
                 GUILayout.Label("<color=#94a3b8>期望目标值:</color>", gridLabelStyle, GUILayout.Width(75));
-                step.achieve_val = DrawDelayedNumericField($"ach_val_{i}", step.achieve_val, numericInputStyle, GUILayout.Width(95), "G");
+                step.achieve_val_str = DrawDelayedSmartField($"Field_AchVal_{i}", step.achieve_val_str, step.achieve_val, numericInputStyle, GUILayout.Width(95), "achieve_val", i);
+                if (double.TryParse(step.achieve_val_str, NumberStyles.Any, CultureInfo.InvariantCulture, out double parsedAchVal)) {
+                    step.achieve_val = parsedAchVal;
+                }
 
                 GUILayout.Space(8);
                 GUILayout.Label("<color=#94a3b8>容差: ±</color>", gridLabelStyle, GUILayout.Width(50));
-                step.achieve_tolerance = DrawDelayedNumericField($"ach_tol_{i}", step.achieve_tolerance, numericInputStyle, GUILayout.Width(65), "G4");
+                step.achieve_tolerance_str = DrawDelayedSmartField($"Field_AchTol_{i}", step.achieve_tolerance_str, step.achieve_tolerance, numericInputStyle, GUILayout.Width(65), null, i);
+                if (double.TryParse(step.achieve_tolerance_str, NumberStyles.Any, CultureInfo.InvariantCulture, out double parsedAchTol)) {
+                    step.achieve_tolerance = parsedAchTol;
+                }
 
                 // Inline Solved Result
                 if (step.has_achieve_result) {

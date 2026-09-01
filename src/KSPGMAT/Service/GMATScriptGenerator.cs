@@ -319,13 +319,13 @@ namespace KSPGMAT.Service {
                             string stripped = GMATParameterRegistry.StripCraftPrefix(vVar);
                             vVar = $"{satName}.{stripped}";
                         }
-                        double guess = st.vary_initial;
-                        double pert = st.vary_perturbation > 0.0 ? st.vary_perturbation : 0.0001;
-                        double low = st.vary_lower;
-                        double up = st.vary_upper;
-                        double maxStep = st.vary_max_step;
+                        string initExpr = !string.IsNullOrEmpty(st.vary_initial_str) ? st.vary_initial_str : st.vary_initial.ToString("G", CultureInfo.InvariantCulture);
+                        string pertExpr = !string.IsNullOrEmpty(st.vary_perturbation_str) ? st.vary_perturbation_str : (st.vary_perturbation > 0.0 ? st.vary_perturbation.ToString("G", CultureInfo.InvariantCulture) : "0.0001");
+                        string lowExpr = !string.IsNullOrEmpty(st.vary_lower_str) ? st.vary_lower_str : st.vary_lower.ToString("G", CultureInfo.InvariantCulture);
+                        string upExpr = !string.IsNullOrEmpty(st.vary_upper_str) ? st.vary_upper_str : st.vary_upper.ToString("G", CultureInfo.InvariantCulture);
+                        string maxStepExpr = !string.IsNullOrEmpty(st.vary_max_step_str) ? st.vary_max_step_str : (st.vary_max_step > 0.0 ? st.vary_max_step.ToString("G", CultureInfo.InvariantCulture) : "10");
                         sb.AppendLine($"   % Vary ({vVar})");
-                        sb.AppendLine($"   Vary {vDC}({vVar} = {guess.ToString("G", CultureInfo.InvariantCulture)}, {{Perturbation = {pert.ToString("G", CultureInfo.InvariantCulture)}, Lower = {low.ToString("G", CultureInfo.InvariantCulture)}, Upper = {up.ToString("G", CultureInfo.InvariantCulture)}, MaxStep = {maxStep.ToString("G", CultureInfo.InvariantCulture)}}});");
+                        sb.AppendLine($"   Vary {vDC}({vVar} = {initExpr}, {{Perturbation = {pertExpr}, Lower = {lowExpr}, Upper = {upExpr}, MaxStep = {maxStepExpr}}});");
                     }
                     else if (stype == "FiniteBurn") {
                         string fbName = GMATParameterRegistry.SanitizeGmatIdentifier(st.burn_name, $"Finite_{i + 1}");
@@ -377,10 +377,10 @@ namespace KSPGMAT.Service {
                                 goalParam = $"{cBody}.{goalParam}";
                             }
                         }
-                        double val = st.achieve_val;
-                        double tol = st.achieve_tolerance;
+                        string valExpr = !string.IsNullOrEmpty(st.achieve_val_str) ? st.achieve_val_str : st.achieve_val.ToString("G", CultureInfo.InvariantCulture);
+                        string tolExpr = !string.IsNullOrEmpty(st.achieve_tolerance_str) ? st.achieve_tolerance_str : (st.achieve_tolerance > 0.0 ? st.achieve_tolerance.ToString("G", CultureInfo.InvariantCulture) : "0.1");
                         sb.AppendLine($"   % Achieve ({satName}.{goalParam})");
-                        sb.AppendLine($"   Achieve {aDC}({satName}.{goalParam} = {val.ToString("G", CultureInfo.InvariantCulture)}, {{Tolerance = {tol.ToString("G", CultureInfo.InvariantCulture)}}});");
+                        sb.AppendLine($"   Achieve {aDC}({satName}.{goalParam} = {valExpr}, {{Tolerance = {tolExpr}}});");
                     }
                     else if (stype == "EndTarget") {
                         insideTarget = false;
