@@ -1,0 +1,103 @@
+import os
+import sys
+
+raw_script = """Create Spacecraft Sat;
+Sat.DateFormat = UTCGregorian;
+Sat.Epoch = '09 Mar 1960 02:17:59.931';
+Sat.CoordinateSystem = EarthMJ2000Eq;
+Sat.DisplayStateType = Cartesian;
+Sat.X = 1814.870912;
+Sat.Y = -6133.502988;
+Sat.Z = -1480.062968;
+Sat.VX = 6.522736;
+Sat.VY = 2.730007;
+Sat.VZ = -3.285493;
+Sat.DryMass = 1477.96;
+Sat.DragArea = 15.00;
+Sat.Cd = 2.20;
+Sat.Cr = 1.80;
+Sat.SRPArea = 15.00;
+
+Create ChemicalTank Tank1;
+Tank1.AllowNegativeFuelMass = true;
+Tank1.FuelMass = 6282.91;
+Tank1.Volume = 62.83;
+Tank1.PressureModel = 'PressureRegulated';
+
+Create ChemicalThruster RL10SeriesNonExtendableNozzle;
+RL10SeriesNonExtendableNozzle.CoordinateSystem = Local;
+RL10SeriesNonExtendableNozzle.Origin = Earth;
+RL10SeriesNonExtendableNozzle.Axes = VNB;
+RL10SeriesNonExtendableNozzle.ThrustDirection1 = 1;
+RL10SeriesNonExtendableNozzle.ThrustDirection2 = 0;
+RL10SeriesNonExtendableNozzle.ThrustDirection3 = 0;
+RL10SeriesNonExtendableNozzle.DecrementMass = true;
+RL10SeriesNonExtendableNozzle.Tank = {Tank1};
+RL10SeriesNonExtendableNozzle.C1 = 108100.00;
+RL10SeriesNonExtendableNozzle.K1 = 464.80;
+
+Sat.Tanks = {Tank1};
+Sat.Thrusters = {RL10SeriesNonExtendableNozzle};
+
+Create FiniteBurn GTO_Burn;
+GTO_Burn.Thrusters = {RL10SeriesNonExtendableNozzle};
+
+Create FiniteBurn GEO_Burn;
+GEO_Burn.Thrusters = {RL10SeriesNonExtendableNozzle};
+
+Create ForceModel LEOPropForceModel;
+LEOPropForceModel.CentralBody = Earth;
+LEOPropForceModel.PointMasses = {Earth, Luna, Sun};
+Create Propagator LEOProp;
+LEOProp.FM = LEOPropForceModel;
+LEOProp.Type = RungeKutta89;
+
+Create DifferentialCorrector DC_GTO;
+DC_GTO.ShowProgress = true;
+DC_GTO.DerivativeMethod = ForwardDifference;
+DC_GTO.Algorithm = NewtonRaphson;
+DC_GTO.MaximumIterations = 50;
+
+Create DifferentialCorrector DC_GEO;
+DC_GEO.ShowProgress = true;
+DC_GEO.DerivativeMethod = ForwardDifference;
+DC_GEO.Algorithm = NewtonRaphson;
+DC_GEO.MaximumIterations = 50;
+
+Create Variable GTO_Duration GEO_Duration;
+
+BeginMissionSequence;
+
+Propagate LEOProp(Sat) {Sat.Earth.Latitude = 0.0};
+
+Target DC_GTO {SolveMode = Solve, ExitMode = SaveAndContinue};
+   Vary DC_GTO(GTO_Duration = 120.0, {Perturbation = 0.0001, Lower = 10, Upper = 300, MaxStep = 10.0});
+   BeginFiniteBurn GTO_Burn(Sat);
+   Propagate LEOProp(Sat) {Sat.ElapsedSecs = GTO_Duration};
+   EndFiniteBurn GTO_Burn(Sat);
+   Propagate LEOProp(Sat) {Sat.Earth.Apoapsis};
+   Achieve DC_GTO(Sat.Earth.Altitude = 35786.0, {Tolerance = 1.0});
+EndTarget;
+
+Target DC_GEO {SolveMode = Solve, ExitMode = SaveAndContinue};
+   Vary DC_GEO(GEO_Duration = 70.0, {Perturbation = 0.0001, Lower = 10, Upper = 300, MaxStep = 5.0});
+   Sat.RL10SeriesNonExtendableNozzle.ThrustDirection1 = 1.0;
+   Vary DC_GEO(Sat.RL10SeriesNonExtendableNozzle.ThrustDirection2 = 0.5, {Perturbation = 0.0001, Lower = -3, Upper = 3, MaxStep = 0.1});
+   Sat.RL10SeriesNonExtendableNozzle.ThrustDirection3 = 0.0;
+   BeginFiniteBurn GEO_Burn(Sat);
+   Propagate LEOProp(Sat) {Sat.ElapsedSecs = GEO_Duration};
+   EndFiniteBurn GEO_Burn(Sat);
+   Achieve DC_GEO(Sat.Earth.SMA = 42164.14, {Tolerance = 5.0});
+   Achieve DC_GEO(Sat.EarthMJ2000Eq.VZ = 0.0, {Tolerance = 0.05});
+EndTarget;
+"""
+
+sys.path.insert(0, os.path.abspath(r"c:\Users\43701\gmat-win-R2026a\bin\KSP_GMAT\gmat_service"))
+import gmat_engine
+import gmatpy as gmat
+gmat_engine.init_gmat()
+script_file = os.path.abspath(r"c:\Users\43701\gmat-win-R2026a\bin\KSP_GMAT\scratch\test_clean_geo.script")
+with open(script_file, "w") as f: f.write(raw_script)
+gmat.LoadScript(script_file)
+ok = gmat.RunScript()
+print("Run Script Status:", ok)

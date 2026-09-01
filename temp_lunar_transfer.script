@@ -1,0 +1,128 @@
+
+Create Spacecraft Sat;
+Sat.DateFormat = UTCGregorian;
+Sat.Epoch = '01 Sep 2026 12:00:00.000';
+Sat.CoordinateSystem = EarthMJ2000Eq;
+Sat.DisplayStateType = Keplerian;
+Sat.SMA = 6578.14;
+Sat.ECC = 0.001;
+Sat.INC = 29.06;
+Sat.RAAN = 0.0;
+Sat.AOP = 0.0;
+Sat.TA = 0.0;
+Sat.DryMass = 2000.0;
+Sat.Cd = 2.2;
+Sat.Cr = 1.8;
+Sat.DragArea = 15.0;
+Sat.SRPArea = 10.0;
+
+Create ChemicalTank Tank0;
+Tank0.AllowNegativeFuelMass = true;
+Tank0.FuelMass = 8000.0;
+Tank0.Volume = 10.0;
+Tank0.FuelDensity = 1000.0;
+Tank0.PressureModel = 'PressureRegulated';
+
+Sat.Tanks = {Tank0};
+
+Create ImpulsiveBurn TLI_Burn;
+TLI_Burn.CoordinateSystem = Local;
+TLI_Burn.Origin = Earth;
+TLI_Burn.Axes = VNB;
+TLI_Burn.Element1 = 3.14;
+TLI_Burn.Element2 = 0.0;
+TLI_Burn.Element3 = 0.0;
+TLI_Burn.DecrementMass = true;
+TLI_Burn.Tank = {Tank0};
+TLI_Burn.Isp = 320;
+
+Create ImpulsiveBurn LOI_Burn;
+LOI_Burn.CoordinateSystem = Local;
+LOI_Burn.Origin = Luna;
+LOI_Burn.Axes = VNB;
+LOI_Burn.Element1 = -0.65;
+LOI_Burn.Element2 = 0.0;
+LOI_Burn.Element3 = 0.0;
+LOI_Burn.DecrementMass = true;
+LOI_Burn.Tank = {Tank0};
+LOI_Burn.Isp = 320;
+
+Create CoordinateSystem LunaMJ2000Eq;
+LunaMJ2000Eq.Origin = Luna;
+LunaMJ2000Eq.Axes = MJ2000Eq;
+
+Create ForceModel LEOProp_ForceModel;
+LEOProp_ForceModel.CentralBody = Earth;
+LEOProp_ForceModel.PrimaryBodies = {Earth};
+LEOProp_ForceModel.PointMasses = {Sun, Luna};
+LEOProp_ForceModel.SRP = On;
+
+Create Propagator LEOProp;
+LEOProp.FM = LEOProp_ForceModel;
+LEOProp.Type = RungeKutta89;
+LEOProp.InitialStepSize = 60;
+LEOProp.Accuracy = 1e-11;
+LEOProp.MinStep = 0.001;
+LEOProp.MaxStep = 300;
+
+Create ForceModel CislunarProp_ForceModel;
+CislunarProp_ForceModel.CentralBody = Earth;
+CislunarProp_ForceModel.PointMasses = {Earth, Luna, Sun};
+CislunarProp_ForceModel.SRP = On;
+
+Create Propagator CislunarProp;
+CislunarProp.FM = CislunarProp_ForceModel;
+CislunarProp.Type = RungeKutta89;
+CislunarProp.InitialStepSize = 60;
+CislunarProp.Accuracy = 1e-11;
+CislunarProp.MinStep = 0.001;
+CislunarProp.MaxStep = 2700;
+
+Create ForceModel LunarProp_ForceModel;
+LunarProp_ForceModel.CentralBody = Luna;
+LunarProp_ForceModel.PrimaryBodies = {Luna};
+LunarProp_ForceModel.PointMasses = {Earth, Sun};
+LunarProp_ForceModel.SRP = On;
+
+Create Propagator LunarProp;
+LunarProp.FM = LunarProp_ForceModel;
+LunarProp.Type = RungeKutta89;
+LunarProp.InitialStepSize = 10;
+LunarProp.Accuracy = 1e-11;
+LunarProp.MinStep = 0.001;
+LunarProp.MaxStep = 600;
+
+Create DifferentialCorrector DC_Moon;
+DC_Moon.Algorithm = NewtonRaphson;
+DC_Moon.MaximumIterations = 50;
+DC_Moon.DerivativeMethod = ForwardDifference;
+
+Create Variable Coast_Time;
+Coast_Time = 3441.0;
+
+Create ReportFile TrajReport;
+TrajReport.Filename = 'TrajReport.txt';
+TrajReport.WriteHeaders = true;
+
+BeginMissionSequence;
+
+Propagate LEOProp(Sat) {Sat.ElapsedSecs = Coast_Time};
+
+Target DC_Moon {SolveMode = Solve, ExitMode = DiscardAndContinue};
+    Vary DC_Moon(TLI_Burn.Element1 = 3.14, {Perturbation = 0.0001, Lower = 2.9, Upper = 3.3, MaxStep = 0.05});
+    Vary DC_Moon(TLI_Burn.Element2 = 0.0, {Perturbation = 0.0001, Lower = -0.3, Upper = 0.3, MaxStep = 0.05});
+    
+    Maneuver TLI_Burn(Sat);
+    Propagate CislunarProp(Sat) {Sat.Luna.Periapsis};
+    
+    Achieve DC_Moon(Sat.Luna.RadPer = 1838.0, {Tolerance = 50.0});
+EndTarget;
+
+Report TrajReport Sat.Luna.RadPer Sat.Luna.Altitude Sat.Luna.ECC;
+
+% Perform LOI Burn
+Maneuver LOI_Burn(Sat);
+Report TrajReport Sat.Luna.RadPer Sat.Luna.RadApo Sat.Luna.ECC;
+
+Propagate LunarProp(Sat) {Sat.ElapsedDays = 0.5};
+Report TrajReport Sat.Luna.RadPer Sat.Luna.RadApo Sat.Luna.ECC;

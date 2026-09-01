@@ -1,0 +1,190 @@
+% =========================================================================
+% NASA GMAT Mission Script: Earth-Moon Transfer & LOI (TLI + LOI)
+% Transfer Window: ~57m 21s (3441s) from current LEO Parking Orbit
+% Target: 100 km Circular Lunar Science Orbit (RadPer ~ 1838 km)
+% Flight Time: ~4.0 Days (96 Hours)
+% =========================================================================
+
+% -------------------------------------------------------------------------
+% 1. Spacecraft, Fuel Tank & Propulsion Hardware
+% -------------------------------------------------------------------------
+Create Spacecraft Sat;
+Sat.DateFormat = UTCGregorian;
+Sat.Epoch = '01 Sep 2026 12:00:00.000';
+Sat.CoordinateSystem = EarthMJ2000Eq;
+Sat.DisplayStateType = Keplerian;
+Sat.SMA = 6578.14;         % 200 km LEO Parking Orbit (6378.14 + 200)
+Sat.ECC = 0.0005;          % Circular parking orbit
+Sat.INC = 29.06;           % Launch inclination matching MechJeb window
+Sat.RAAN = 0.0;
+Sat.AOP = 0.0;
+Sat.TA = 0.0;
+Sat.DryMass = 2500.0;      % Dry mass 2500 kg
+Sat.Cd = 2.2;
+Sat.Cr = 1.8;
+Sat.DragArea = 15.0;       % Drag cross-section 15 m^2
+Sat.SRPArea = 12.0;        % SRP cross-section 12 m^2
+
+Create ChemicalTank Tank0;
+Tank0.AllowNegativeFuelMass = true;
+Tank0.FuelMass = 8500.0;   % Propellant mass 8500 kg
+Tank0.Volume = 10.0;
+Tank0.FuelDensity = 1000.0;
+Tank0.PressureModel = 'PressureRegulated';
+
+Sat.Tanks = {Tank0};
+
+Create ChemicalThruster MainEngine;
+MainEngine.CoordinateSystem = Local;
+MainEngine.Origin = Earth;
+MainEngine.Axes = VNB;
+MainEngine.ThrustDirection1 = 1; % Velocity-aligned +V
+MainEngine.ThrustDirection2 = 0; % Out-of-plane +N
+MainEngine.ThrustDirection3 = 0; % Radial +B
+MainEngine.DecrementMass = true;
+MainEngine.Tank = {Tank0};
+MainEngine.C1 = 60000.0;         % 60 kN Thrust
+MainEngine.K1 = 340.0;           % 340 s Isp
+
+% -------------------------------------------------------------------------
+% 2. Impulsive Maneuvers (TLI Injection & LOI Capture)
+% -------------------------------------------------------------------------
+Create ImpulsiveBurn TLI_Burn;
+TLI_Burn.CoordinateSystem = Local;
+TLI_Burn.Origin = Earth;
+TLI_Burn.Axes = VNB;
+TLI_Burn.Element1 = 3.145;       % Initial TLI prograde Delta-V ~ 3145 m/s
+TLI_Burn.Element2 = 0.0;
+TLI_Burn.Element3 = 0.0;
+TLI_Burn.DecrementMass = true;
+TLI_Burn.Tank = {Tank0};
+TLI_Burn.Isp = 340;
+
+Create ImpulsiveBurn LOI_Burn;
+LOI_Burn.CoordinateSystem = Local;
+LOI_Burn.Origin = Luna;
+LOI_Burn.Axes = VNB;
+LOI_Burn.Element1 = -0.835;      % Initial LOI retrograde capture Delta-V ~ -835 m/s
+LOI_Burn.Element2 = 0.0;
+LOI_Burn.Element3 = 0.0;
+LOI_Burn.DecrementMass = true;
+LOI_Burn.Tank = {Tank0};
+LOI_Burn.Isp = 340;
+
+% -------------------------------------------------------------------------
+% 3. Coordinate Systems
+% -------------------------------------------------------------------------
+Create CoordinateSystem LunaMJ2000Eq;
+LunaMJ2000Eq.Origin = Luna;
+LunaMJ2000Eq.Axes = MJ2000Eq;
+
+Create CoordinateSystem EarthMoonRot;
+EarthMoonRot.Origin = Earth;
+EarthMoonRot.Axes = ObjectReferenced;
+EarthMoonRot.XAxis = R;
+EarthMoonRot.ZAxis = N;
+EarthMoonRot.Primary = Earth;
+EarthMoonRot.Secondary = Luna;
+
+% -------------------------------------------------------------------------
+% 4. Propagators & Force Models
+% -------------------------------------------------------------------------
+Create ForceModel LEOProp_ForceModel;
+LEOProp_ForceModel.CentralBody = Earth;
+LEOProp_ForceModel.PrimaryBodies = {Earth};
+LEOProp_ForceModel.PointMasses = {Sun, Luna};
+LEOProp_ForceModel.SRP = On;
+LEOProp_ForceModel.GravityField.Earth.Degree = 4;
+LEOProp_ForceModel.GravityField.Earth.Order = 4;
+LEOProp_ForceModel.GravityField.Earth.PotentialFile = 'JGM2.cof';
+
+Create Propagator LEOProp;
+LEOProp.FM = LEOProp_ForceModel;
+LEOProp.Type = RungeKutta89;
+LEOProp.InitialStepSize = 60;
+LEOProp.Accuracy = 1e-11;
+LEOProp.MinStep = 0.001;
+LEOProp.MaxStep = 300;
+
+Create ForceModel CislunarProp_ForceModel;
+CislunarProp_ForceModel.CentralBody = Earth;
+CislunarProp_ForceModel.PointMasses = {Earth, Luna, Sun};
+CislunarProp_ForceModel.SRP = On;
+
+Create Propagator CislunarProp;
+CislunarProp.FM = CislunarProp_ForceModel;
+CislunarProp.Type = RungeKutta89;
+CislunarProp.InitialStepSize = 60;
+CislunarProp.Accuracy = 1e-11;
+CislunarProp.MinStep = 0.001;
+CislunarProp.MaxStep = 2700;
+
+Create ForceModel LunarProp_ForceModel;
+LunarProp_ForceModel.CentralBody = Luna;
+LunarProp_ForceModel.PrimaryBodies = {Luna};
+LunarProp_ForceModel.PointMasses = {Earth, Sun};
+LunarProp_ForceModel.SRP = On;
+
+Create Propagator LunarProp;
+LunarProp.FM = LunarProp_ForceModel;
+LunarProp.Type = RungeKutta89;
+LunarProp.InitialStepSize = 10;
+LunarProp.Accuracy = 1e-11;
+LunarProp.MinStep = 0.001;
+LunarProp.MaxStep = 600;
+
+% -------------------------------------------------------------------------
+% 5. Solvers & Variables
+% -------------------------------------------------------------------------
+Create DifferentialCorrector DC_TLI;
+DC_TLI.Algorithm = NewtonRaphson;
+DC_TLI.MaximumIterations = 50;
+DC_TLI.DerivativeMethod = ForwardDifference;
+DC_TLI.ShowProgress = true;
+DC_TLI.ReportStyle = Normal;
+
+Create DifferentialCorrector DC_LOI;
+DC_LOI.Algorithm = NewtonRaphson;
+DC_LOI.MaximumIterations = 50;
+DC_LOI.DerivativeMethod = ForwardDifference;
+
+Create Variable Coast_Time;
+Coast_Time = 3441.0; % 57m 21s first window prediction
+
+Create ReportFile LunarMissionReport;
+LunarMissionReport.Filename = 'LunarMissionReport.txt';
+LunarMissionReport.WriteHeaders = true;
+
+% -------------------------------------------------------------------------
+% 6. Mission Sequence Execution
+% -------------------------------------------------------------------------
+BeginMissionSequence;
+
+% Phase 1: Coast in LEO to TLI Window (57m 21s)
+Propagate LEOProp(Sat) {Sat.ElapsedSecs = Coast_Time};
+
+% Phase 2: Target Trans-Lunar Injection (TLI) to reach Moon Periapsis
+Target DC_TLI {SolveMode = Solve, ExitMode = DiscardAndContinue};
+    Vary DC_TLI(TLI_Burn.Element1 = 3.145, {Perturbation = 0.0001, Lower = 2.9, Upper = 3.3, MaxStep = 0.05});
+    Vary DC_TLI(TLI_Burn.Element2 = 0.0, {Perturbation = 0.0001, Lower = -0.3, Upper = 0.3, MaxStep = 0.05});
+    
+    Maneuver TLI_Burn(Sat);
+    Propagate CislunarProp(Sat) {Sat.Luna.Periapsis};
+    
+    % Target 100 km lunar periapsis (RadPer ~ 1838 km)
+    Achieve DC_TLI(Sat.Luna.RadPer = 1838.0, {Tolerance = 50.0});
+EndTarget;
+
+% Phase 3: Target Lunar Orbit Insertion (LOI) to capture into Moon circular orbit
+Target DC_LOI {SolveMode = Solve, ExitMode = DiscardAndContinue};
+    Vary DC_LOI(LOI_Burn.Element1 = -0.835, {Perturbation = 0.0001, Lower = -1.2, Upper = -0.4, MaxStep = 0.05});
+    
+    Maneuver LOI_Burn(Sat);
+    Achieve DC_LOI(Sat.Luna.RadApo = 1838.0, {Tolerance = 50.0});
+EndTarget;
+
+% Phase 4: Orbit around Moon for 1 Day
+Propagate LunarProp(Sat) {Sat.ElapsedDays = 1.0};
+
+% Output Final Mission Report
+Report LunarMissionReport Sat.Luna.RadPer Sat.Luna.RadApo Sat.Luna.Altitude Sat.TotalMass;

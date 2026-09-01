@@ -1,0 +1,143 @@
+% -------------------------------------------------------------
+% GMAT Spacecraft & Hardware Architecture (Mod-wide Sat)
+% -------------------------------------------------------------
+Create Spacecraft Sat;
+Sat.DateFormat = UTCGregorian;
+Sat.Epoch = '09 Mar 1960 00:48:55.971';
+Sat.CoordinateSystem = EarthMJ2000Eq;
+Sat.DisplayStateType = Cartesian;
+Sat.X = 3692.394120;
+Sat.Y = -5274.193392;
+Sat.Z = -1286.907146;
+Sat.VX = 5.327407;
+Sat.VY = 4.567268;
+Sat.VZ = -3.398585;
+Sat.DryMass = 1477.96;
+Sat.DragArea = 15.00;
+Sat.Cd = 2.20;
+Sat.Cr = 1.80;
+Sat.SRPArea = 15.00;
+
+Create ChemicalTank Tank0;
+Tank0.AllowNegativeFuelMass = true;
+Tank0.FuelMass = 61.32;
+Tank0.Volume = 10.00;
+Tank0.PressureModel = 'PressureRegulated';
+
+Create ChemicalTank Tank1;
+Tank1.AllowNegativeFuelMass = true;
+Tank1.FuelMass = 6282.92;
+Tank1.Volume = 62.83;
+Tank1.PressureModel = 'PressureRegulated';
+
+Create ChemicalThruster Engine11178kNThruster;
+Engine11178kNThruster.CoordinateSystem = Local;
+Engine11178kNThruster.Origin = Earth;
+Engine11178kNThruster.Axes = VNB;
+Engine11178kNThruster.ThrustDirection1 = 1;
+Engine11178kNThruster.ThrustDirection2 = 0;
+Engine11178kNThruster.ThrustDirection3 = 0;
+Engine11178kNThruster.DutyCycle = 1.0;
+Engine11178kNThruster.ThrustScaleFactor = 1.0;
+Engine11178kNThruster.DecrementMass = true;
+Engine11178kNThruster.Tank = {Tank0};
+Engine11178kNThruster.GravitationalAccel = 9.80665;
+Engine11178kNThruster.C1 = 2163.94;
+Engine11178kNThruster.C2 = 0.0;
+Engine11178kNThruster.K1 = 317.79;
+Engine11178kNThruster.K2 = 0.0;
+
+Create ChemicalThruster RL10SeriesNonExtendableNozzle;
+RL10SeriesNonExtendableNozzle.CoordinateSystem = Local;
+RL10SeriesNonExtendableNozzle.Origin = Earth;
+RL10SeriesNonExtendableNozzle.Axes = VNB;
+RL10SeriesNonExtendableNozzle.ThrustDirection1 = 1;
+RL10SeriesNonExtendableNozzle.ThrustDirection2 = 0;
+RL10SeriesNonExtendableNozzle.ThrustDirection3 = 0;
+RL10SeriesNonExtendableNozzle.DutyCycle = 1.0;
+RL10SeriesNonExtendableNozzle.ThrustScaleFactor = 1.0;
+RL10SeriesNonExtendableNozzle.DecrementMass = true;
+RL10SeriesNonExtendableNozzle.Tank = {Tank1};
+RL10SeriesNonExtendableNozzle.GravitationalAccel = 9.80665;
+RL10SeriesNonExtendableNozzle.C1 = 108100.00;
+RL10SeriesNonExtendableNozzle.C2 = 0.0;
+RL10SeriesNonExtendableNozzle.K1 = 464.80;
+RL10SeriesNonExtendableNozzle.K2 = 0.0;
+
+Sat.Tanks = {Tank0, Tank1};
+Sat.Thrusters = {Engine11178kNThruster, RL10SeriesNonExtendableNozzle};
+
+Create FiniteBurn GTOBurn;
+GTOBurn.Thrusters = {RL10SeriesNonExtendableNozzle};
+
+Create FiniteBurn GEOBurn;
+GEOBurn.Thrusters = {RL10SeriesNonExtendableNozzle};
+
+Create ForceModel LEOPropForceModel;
+LEOPropForceModel.CentralBody = Earth;
+LEOPropForceModel.PointMasses = {Earth, Luna, Sun};
+LEOPropForceModel.Drag = None;
+LEOPropForceModel.SRP = Off;
+
+Create Propagator LEOProp;
+LEOProp.FM = LEOPropForceModel;
+LEOProp.Type = RungeKutta89;
+LEOProp.InitialStepSize = 60.0;
+LEOProp.Accuracy = 1e-10;
+LEOProp.MinStep = 0.0;
+LEOProp.MaxStep = 2700.0;
+
+Create DifferentialCorrector DC_GTO;
+DC_GTO.ShowProgress = true;
+DC_GTO.DerivativeMethod = ForwardDifference;
+DC_GTO.Algorithm = NewtonRaphson;
+DC_GTO.MaximumIterations = 50;
+
+Create DifferentialCorrector DC_GEO;
+DC_GEO.ShowProgress = true;
+DC_GEO.DerivativeMethod = ForwardDifference;
+DC_GEO.Algorithm = NewtonRaphson;
+DC_GEO.MaximumIterations = 50;
+
+Create Variable GTO_Duration GEO_Duration;
+GTO_Duration = 120.0;
+GEO_Duration = 50.0;
+
+Create ReportFile TrajReport;
+TrajReport.Filename = 'TrajReport.txt';
+TrajReport.WriteHeaders = false;
+
+% -------------------------------------------------------------
+% GMAT Mission Sequence Execution Control
+% -------------------------------------------------------------
+BeginMissionSequence;
+
+% Step 1: Coast to Equator Ascending Node (Latitude = 0.0 deg)
+Propagate LEOProp(Sat) {Sat.Earth.Latitude = 0.0};
+
+% Step 2: Target GTO Insertion (Apoapsis Altitude = 35786 km)
+Target DC_GTO {SolveMode = Solve, ExitMode = SaveAndContinue};
+   Vary DC_GTO(GTO_Duration = 120.0, {Perturbation = 0.0001, Lower = 10.0, Upper = 500.0, MaxStep = 5.0});
+   BeginFiniteBurn GTOBurn(Sat);
+   Propagate LEOProp(Sat) {Sat.ElapsedSecs = GTO_Duration};
+   EndFiniteBurn GTOBurn(Sat);
+   Propagate LEOProp(Sat) {Sat.Earth.Apoapsis};
+   Achieve DC_GTO(Sat.Earth.Altitude = 35786.0, {Tolerance = 1.0});
+EndTarget;
+
+% Step 3: Target GEO Circularization & Plane Alignment
+Target DC_GEO {SolveMode = Solve, ExitMode = SaveAndContinue};
+   Vary DC_GEO(GEO_Duration = 50.0, {Perturbation = 0.0001, Lower = 5.0, Upper = 300.0, MaxStep = 5.0});
+   Sat.RL10SeriesNonExtendableNozzle.ThrustDirection1 = 1.0;
+   Vary DC_GEO(Sat.RL10SeriesNonExtendableNozzle.ThrustDirection2 = 0.5, {Perturbation = 0.0001, Lower = -3.0, Upper = 3.0, MaxStep = 0.1});
+   Sat.RL10SeriesNonExtendableNozzle.ThrustDirection3 = 0.0;
+   BeginFiniteBurn GEOBurn(Sat);
+   Propagate LEOProp(Sat) {Sat.ElapsedSecs = GEO_Duration};
+   EndFiniteBurn GEOBurn(Sat);
+   Achieve DC_GEO(Sat.Earth.SMA = 42164.14, {Tolerance = 1.0});
+   Achieve DC_GEO(Sat.EarthMJ2000Eq.VZ = 0.0, {Tolerance = 0.01});
+EndTarget;
+
+% Step 4: Final GEO Stationkeeping Orbit
+Propagate LEOProp(Sat) {Sat.ElapsedDays = 1.0};
+Report TrajReport Sat.UTCGregorian Sat.X Sat.Y Sat.Z Sat.VX Sat.VY Sat.VZ Sat.TotalMass;

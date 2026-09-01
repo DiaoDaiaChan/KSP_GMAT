@@ -1,0 +1,47 @@
+
+Create Spacecraft Sat;
+Sat.DateFormat = UTCGregorian;
+Sat.Epoch = '01 Jan 2000 12:00:00.000';
+Sat.CoordinateSystem = EarthMJ2000Eq;
+Sat.DisplayStateType = Cartesian;
+Sat.X = 7100;
+Sat.Y = 0;
+Sat.Z = 0;
+Sat.VX = 0;
+Sat.VY = 7.5;
+Sat.VZ = 0;
+Sat.DryMass = 1000;
+
+Create ForceModel EarthFM;
+EarthFM.CentralBody = Earth;
+EarthFM.PointMasses = {Earth};
+
+Create Propagator EarthProp;
+EarthProp.FM = EarthFM;
+EarthProp.Type = RungeKutta89;
+
+Create ChemicalTank Tank1;
+Tank1.FuelMass = 500;
+Create ChemicalThruster Thr1;
+Thr1.Tank = {Tank1};
+Thr1.Thrust = 1000;
+Thr1.Isp = 300;
+Sat.Tanks = {Tank1};
+Sat.Thrusters = {Thr1};
+
+Create FiniteBurn Burn1;
+Burn1.Thrusters = {Thr1};
+
+Create ReportFile Rep;
+Rep.Filename = 'scratch_report.txt';
+Rep.Precision = 16;
+Rep.WriteHeaders = false;
+
+BeginMissionSequence;
+Report Rep Sat.ElapsedSecs Sat.Epoch;
+Propagate EarthProp(Sat) {Sat.ElapsedSecs = 200};
+Report Rep Sat.ElapsedSecs Sat.Epoch;
+BeginFiniteBurn Burn1(Sat);
+Propagate EarthProp(Sat) {Sat.ElapsedSecs = 337.32};
+Report Rep Sat.ElapsedSecs Sat.Epoch;
+EndFiniteBurn Burn1(Sat);

@@ -1,0 +1,142 @@
+% -------------------------------------------------------------
+% NASA GMAT Mission Script - TLI Optimization for 46m Window
+% Vessel: RL-10 Upper Stage Centaur / Trans-Lunar Injection
+% Window: ~46 minutes (2760s) from LEO Parking Orbit
+% Target: Lunar Periapsis Radius ~1838 km (100 km Altitude)
+% -------------------------------------------------------------
+
+Create Spacecraft Sat;
+Sat.DateFormat = UTCGregorian;
+Sat.Epoch = '09 Mar 1960 15:31:53.718';
+Sat.CoordinateSystem = EarthMJ2000Eq;
+Sat.DisplayStateType = Cartesian;
+Sat.X = -6333.594893;
+Sat.Y = 475.232718;
+Sat.Z = -1664.300893;
+Sat.VX = 0.303173;
+Sat.VY = -7.121470;
+Sat.VZ = -3.158465;
+Sat.DryMass = 1477.955886;
+Sat.DragArea = 15;
+Sat.Cd = 2.2;
+Sat.Cr = 1.8;
+Sat.SRPArea = 12;
+
+Create ChemicalTank Tank0;
+Tank0.AllowNegativeFuelMass = true;
+Tank0.FuelMass = 61.324457;
+Tank0.Volume = 0.641302;
+Tank0.FuelDensity = 1000;
+Tank0.PressureModel = 'PressureRegulated';
+
+Create ChemicalTank Tank1;
+Tank1.AllowNegativeFuelMass = true;
+Tank1.FuelMass = 6282.721114;
+Tank1.Volume = 31.8086328;
+Tank1.FuelDensity = 1000;
+Tank1.PressureModel = 'PressureRegulated';
+
+Create ChemicalThruster Engine11178kNThruster;
+Engine11178kNThruster.CoordinateSystem = Local;
+Engine11178kNThruster.Origin = Earth;
+Engine11178kNThruster.Axes = VNB;
+Engine11178kNThruster.ThrustDirection1 = 1;
+Engine11178kNThruster.ThrustDirection2 = 0;
+Engine11178kNThruster.ThrustDirection3 = 0;
+Engine11178kNThruster.DecrementMass = true;
+Engine11178kNThruster.Tank = {Tank0};
+Engine11178kNThruster.C1 = 2163.938045;
+Engine11178kNThruster.K1 = 317.790985;
+
+Create ChemicalThruster RL10SeriesNonExtendableNozzle;
+RL10SeriesNonExtendableNozzle.CoordinateSystem = Local;
+RL10SeriesNonExtendableNozzle.Origin = Earth;
+RL10SeriesNonExtendableNozzle.Axes = VNB;
+RL10SeriesNonExtendableNozzle.ThrustDirection1 = 1;
+RL10SeriesNonExtendableNozzle.ThrustDirection2 = 0;
+RL10SeriesNonExtendableNozzle.ThrustDirection3 = 0;
+RL10SeriesNonExtendableNozzle.DecrementMass = true;
+RL10SeriesNonExtendableNozzle.Tank = {Tank1};
+RL10SeriesNonExtendableNozzle.C1 = 108099.998474;
+RL10SeriesNonExtendableNozzle.K1 = 464.799988;
+
+Sat.Tanks = {Tank0, Tank1};
+Sat.Thrusters = {Engine11178kNThruster, RL10SeriesNonExtendableNozzle};
+
+Create FiniteBurn FiniteBurn_7;
+FiniteBurn_7.Thrusters = {RL10SeriesNonExtendableNozzle};
+FiniteBurn_7.ThrottleLogicAlgorithm = 'MaxNumberOfThrusters';
+
+Create ForceModel LEOPropForceModel;
+LEOPropForceModel.CentralBody = Earth;
+LEOPropForceModel.PointMasses = {Earth, Luna, Sun, Jupiter};
+LEOPropForceModel.SRP = On;
+
+Create Propagator LEOProp;
+LEOProp.FM = LEOPropForceModel;
+LEOProp.Type = RungeKutta89;
+LEOProp.InitialStepSize = 30.0;
+LEOProp.Accuracy = 1E-11;
+LEOProp.MinStep = 0.001;
+LEOProp.MaxStep = 300.0;
+
+Create ForceModel CislunarPropForceModel;
+CislunarPropForceModel.CentralBody = Earth;
+CislunarPropForceModel.PointMasses = {Earth, Luna, Sun, Jupiter};
+CislunarPropForceModel.SRP = On;
+
+Create Propagator CislunarProp;
+CislunarProp.FM = CislunarPropForceModel;
+CislunarProp.Type = RungeKutta89;
+CislunarProp.InitialStepSize = 60.0;
+CislunarProp.Accuracy = 1E-11;
+CislunarProp.MinStep = 0.001;
+CislunarProp.MaxStep = 2700.0;
+
+Create DifferentialCorrector DC_2;
+DC_2.ShowProgress = true;
+DC_2.DerivativeMethod = ForwardDifference;
+DC_2.Algorithm = NewtonRaphson;
+DC_2.MaximumIterations = 50;
+
+% Variables for window & duration tuning
+Create Variable Coast_Time DC_2_Duration;
+Coast_Time = 2760.0;     % Nominal 46-minute window (2760s)
+DC_2_Duration = 165.0;  % Nominal ~165s burn for ~3150 m/s Delta-V
+
+Create ReportFile TrajReport;
+TrajReport.Filename = 'TrajReport.txt';
+TrajReport.WriteHeaders = false;
+
+% -------------------------------------------------------------
+% GMAT Mission Sequence Execution Control
+% -------------------------------------------------------------
+BeginMissionSequence;
+
+% Target Trans-Lunar Injection around the 46m Window
+Target DC_2 {SolveMode = Solve, ExitMode = SaveAndContinue};
+   % 1. Vary Coast Time around the 46m window [2400s ~ 3100s]
+   Vary DC_2(Coast_Time = 2760.0, {Perturbation = 1.0, Lower = 2400.0, Upper = 3100.0, MaxStep = 50.0});
+
+   % 2. Vary Burn Duration for RL-10 Engine [120s ~ 220s]
+   Vary DC_2(DC_2_Duration = 165.0, {Perturbation = 0.1, Lower = 120.0, Upper = 220.0, MaxStep = 5.0});
+
+   % 3. Thrust Vector Direction Tuning (VNB Axes)
+   Vary DC_2(Sat.RL10SeriesNonExtendableNozzle.ThrustDirection1 = 1.0, {Perturbation = 0.0001, Lower = 0.8, Upper = 1.0, MaxStep = 0.05});
+   Vary DC_2(Sat.RL10SeriesNonExtendableNozzle.ThrustDirection2 = 0.0, {Perturbation = 0.0001, Lower = -0.3, Upper = 0.3, MaxStep = 0.05});
+   Vary DC_2(Sat.RL10SeriesNonExtendableNozzle.ThrustDirection3 = 0.0, {Perturbation = 0.0001, Lower = -0.3, Upper = 0.3, MaxStep = 0.05});
+
+   % Execute LEO Coast to Window Point
+   Propagate LEOProp(Sat) {Sat.ElapsedSecs = Coast_Time};
+
+   % Execute TLI Finite Burn
+   BeginFiniteBurn FiniteBurn_7(Sat);
+   Propagate LEOProp(Sat) {Sat.ElapsedSecs = DC_2_Duration};
+   EndFiniteBurn FiniteBurn_7(Sat);
+
+   % Transfer Coast through Cislunar Space to Moon Closest Approach
+   Propagate CislunarProp(Sat) {Sat.Luna.Periapsis};
+
+   % Achieve Moon Periapsis Radius ~ 1838 km (100 km Altitude)
+   Achieve DC_2(Sat.Luna.RadPer = 1838.0, {Tolerance = 50.0});
+EndTarget;
