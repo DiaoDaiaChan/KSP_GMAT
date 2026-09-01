@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Collections.Generic;
 using UnityEngine;
+using KSPGMAT.Model;
 
 namespace KSPGMAT {
     [Serializable]
@@ -1131,8 +1132,24 @@ namespace KSPGMAT {
 
         public static List<string> GetAllSolvers() {
             List<string> list = new List<string>();
+            HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            if (GMATStateManager.Current != null && GMATStateManager.Current.Solvers != null) {
+                for (int i = 0; i < GMATStateManager.Current.Solvers.Count; i++) {
+                    var s = GMATStateManager.Current.Solvers[i];
+                    if (s != null && !string.IsNullOrEmpty(s.Name) && !seen.Contains(s.Name)) {
+                        list.Add(s.Name);
+                        seen.Add(s.Name);
+                    }
+                }
+            }
+
             for (int i = 0; i < AvailableSolvers.Count; i++) {
-                list.Add(AvailableSolvers[i]);
+                string slv = AvailableSolvers[i];
+                if (!seen.Contains(slv)) {
+                    list.Add(slv);
+                    seen.Add(slv);
+                }
             }
             return list;
         }
@@ -1140,6 +1157,49 @@ namespace KSPGMAT {
         public static List<string> GetAllVariables() {
             List<string> list = new List<string>();
             HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            if (GMATStateManager.Current != null) {
+                if (GMATStateManager.Current.Variables != null) {
+                    for (int i = 0; i < GMATStateManager.Current.Variables.Count; i++) {
+                        var v = GMATStateManager.Current.Variables[i];
+                        if (v != null && !string.IsNullOrEmpty(v.Name) && !seen.Contains(v.Name)) {
+                            list.Add(v.Name);
+                            seen.Add(v.Name);
+                        }
+                    }
+                }
+                if (GMATStateManager.Current.Arrays != null) {
+                    for (int i = 0; i < GMATStateManager.Current.Arrays.Count; i++) {
+                        var a = GMATStateManager.Current.Arrays[i];
+                        if (a != null && !string.IsNullOrEmpty(a.Name) && !seen.Contains(a.Name)) {
+                            list.Add(a.Name);
+                            seen.Add(a.Name);
+                        }
+                    }
+                }
+                if (GMATStateManager.Current.Strings != null) {
+                    for (int i = 0; i < GMATStateManager.Current.Strings.Count; i++) {
+                        var s = GMATStateManager.Current.Strings[i];
+                        if (s != null && !string.IsNullOrEmpty(s.Name) && !seen.Contains(s.Name)) {
+                            list.Add(s.Name);
+                            seen.Add(s.Name);
+                        }
+                    }
+                }
+                if (GMATStateManager.Current.Thrusters != null) {
+                    for (int i = 0; i < GMATStateManager.Current.Thrusters.Count; i++) {
+                        var thr = GMATStateManager.Current.Thrusters[i];
+                        if (thr != null && !string.IsNullOrEmpty(thr.Id)) {
+                            string d1 = $"Sat.{thr.Id}.ThrustDirection1";
+                            string d2 = $"Sat.{thr.Id}.ThrustDirection2";
+                            string d3 = $"Sat.{thr.Id}.ThrustDirection3";
+                            if (!seen.Contains(d1)) { list.Add(d1); seen.Add(d1); }
+                            if (!seen.Contains(d2)) { list.Add(d2); seen.Add(d2); }
+                            if (!seen.Contains(d3)) { list.Add(d3); seen.Add(d3); }
+                        }
+                    }
+                }
+            }
 
             // 1. Real-time user variables from sequence
             foreach (var kv in RealtimeUserVariables) {
