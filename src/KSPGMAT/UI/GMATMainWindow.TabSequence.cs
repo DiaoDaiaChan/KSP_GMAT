@@ -580,7 +580,7 @@ namespace KSPGMAT.UI {
 
                             GUILayout.Space(8);
                             GUILayout.Label("<color=#94a3b8>最大迭代:</color>", gridLabelStyle, GUILayout.Width(65));
-                            int newMaxIter = DrawDelayedIntField($"dc_iter_{i}", step.dc_max_iter, numericInputStyle, GUILayout.Width(50));
+                            int newMaxIter = DrawDelayedIntField($"dc_iter_{step.GetHashCode()}", step.dc_max_iter, numericInputStyle, GUILayout.Width(50));
                             if (newMaxIter != step.dc_max_iter) {
                                 step.dc_max_iter = newMaxIter;
                                 var sol = GMATStateManager.Current.Solvers.Find(s => s.Name == step.dc_name);
@@ -989,6 +989,10 @@ namespace KSPGMAT.UI {
             }
             if (GUILayout.Button(I18n.T("seq_clear"), deleteButtonStyle, GUILayout.Width(80), GUILayout.Height(20))) {
                 missionSequence.Clear();
+                latestResult = null;
+                solveProgress = 0.0f;
+                solveStageText = "就绪";
+                ClearInputStringCache();
             }
             GUILayout.EndHorizontal();
 
@@ -1502,7 +1506,7 @@ namespace KSPGMAT.UI {
                     GUILayout.Space(8);
                     GUILayout.Label("<color=#94a3b8>目标阈值:</color>", gridLabelStyle, GUILayout.Width(60));
                     double defTVal = step.target_val != 0.0 ? step.target_val : (step.duration > 0 ? (step.stop_type != null && step.stop_type.Contains("Days") ? (step.duration / 86400.0) : step.duration) : 0.0);
-                    step.target_val = DrawDelayedNumericField($"prop_tval_{i}", defTVal, numericInputStyle, GUILayout.Width(95), "G");
+                    step.target_val = DrawDelayedNumericField($"prop_tval_{step.GetHashCode()}", defTVal, numericInputStyle, GUILayout.Width(95), "G");
                     step.duration = step.target_val;
                 }
 
@@ -1555,19 +1559,19 @@ namespace KSPGMAT.UI {
                 GUILayout.Space(3);
                 GUILayout.BeginHorizontal();
                 GUILayout.Label("<color=#94a3b8>初猜:</color>", gridLabelStyle, GUILayout.Width(35));
-                step.vary_initial = DrawDelayedNumericField($"vary_init_{i}", step.vary_initial, numericInputStyle, GUILayout.Width(75), "F2");
+                step.vary_initial = DrawDelayedNumericField($"vary_init_{step.GetHashCode()}", step.vary_initial, numericInputStyle, GUILayout.Width(75), "F2");
 
                 GUILayout.Space(6);
                 GUILayout.Label("<color=#94a3b8>下界:</color>", gridLabelStyle, GUILayout.Width(35));
-                step.vary_lower = DrawDelayedNumericField($"vary_low_{i}", step.vary_lower, numericInputStyle, GUILayout.Width(60), "F2");
+                step.vary_lower = DrawDelayedNumericField($"vary_low_{step.GetHashCode()}", step.vary_lower, numericInputStyle, GUILayout.Width(60), "F2");
 
                 GUILayout.Space(6);
                 GUILayout.Label("<color=#94a3b8>上界:</color>", gridLabelStyle, GUILayout.Width(35));
-                step.vary_upper = DrawDelayedNumericField($"vary_up_{i}", step.vary_upper, numericInputStyle, GUILayout.Width(60), "F2");
+                step.vary_upper = DrawDelayedNumericField($"vary_up_{step.GetHashCode()}", step.vary_upper, numericInputStyle, GUILayout.Width(60), "F2");
 
                 GUILayout.Space(6);
                 GUILayout.Label("<color=#94a3b8>步长:</color>", gridLabelStyle, GUILayout.Width(35));
-                step.vary_max_step = DrawDelayedNumericField($"vary_step_{i}", (step.vary_max_step <= 0 ? 0.1 : step.vary_max_step), numericInputStyle, GUILayout.Width(55), "F2");
+                step.vary_max_step = DrawDelayedNumericField($"vary_step_{step.GetHashCode()}", (step.vary_max_step <= 0 ? 0.1 : step.vary_max_step), numericInputStyle, GUILayout.Width(55), "F2");
 
                 // Inline Solved Value
                 if (step.has_solved_value) {
@@ -1635,11 +1639,11 @@ namespace KSPGMAT.UI {
                 GUILayout.Space(3);
                 GUILayout.BeginHorizontal();
                 GUILayout.Label("<color=#94a3b8>期望目标值:</color>", gridLabelStyle, GUILayout.Width(75));
-                step.achieve_val = DrawDelayedNumericField($"ach_val_{i}", step.achieve_val, numericInputStyle, GUILayout.Width(95), "G");
+                step.achieve_val = DrawDelayedNumericField($"ach_val_{step.GetHashCode()}", step.achieve_val, numericInputStyle, GUILayout.Width(95), "G");
 
                 GUILayout.Space(8);
                 GUILayout.Label("<color=#94a3b8>容差: ±</color>", gridLabelStyle, GUILayout.Width(50));
-                step.achieve_tolerance = DrawDelayedNumericField($"ach_tol_{i}", step.achieve_tolerance, numericInputStyle, GUILayout.Width(65), "G4");
+                step.achieve_tolerance = DrawDelayedNumericField($"ach_tol_{step.GetHashCode()}", step.achieve_tolerance, numericInputStyle, GUILayout.Width(65), "G4");
 
                 // Inline Solved Result
                 if (step.has_achieve_result) {
@@ -1680,15 +1684,15 @@ namespace KSPGMAT.UI {
                 GUILayout.Space(2);
                 GUILayout.BeginHorizontal();
                 GUILayout.Label("<color=#94a3b8>切向 ΔV_V (m/s):</color>", gridLabelStyle, GUILayout.Width(105));
-                step.dv_v = DrawDelayedNumericField($"burn_v_{i}", step.dv_v, numericInputStyle, GUILayout.Width(70), "F2");
+                step.dv_v = DrawDelayedNumericField($"burn_v_{step.GetHashCode()}", step.dv_v, numericInputStyle, GUILayout.Width(70), "F2");
 
                 GUILayout.Space(8);
                 GUILayout.Label("<color=#94a3b8>法向 ΔV_N:</color>", gridLabelStyle, GUILayout.Width(70));
-                step.dv_n = DrawDelayedNumericField($"burn_n_{i}", step.dv_n, numericInputStyle, GUILayout.Width(65), "F2");
+                step.dv_n = DrawDelayedNumericField($"burn_n_{step.GetHashCode()}", step.dv_n, numericInputStyle, GUILayout.Width(65), "F2");
 
                 GUILayout.Space(8);
                 GUILayout.Label("<color=#94a3b8>径向 ΔV_B:</color>", gridLabelStyle, GUILayout.Width(70));
-                step.dv_b = DrawDelayedNumericField($"burn_b_{i}", step.dv_b, numericInputStyle, GUILayout.Width(65), "F2");
+                step.dv_b = DrawDelayedNumericField($"burn_b_{step.GetHashCode()}", step.dv_b, numericInputStyle, GUILayout.Width(65), "F2");
 
                 double totalDv = Math.Sqrt(step.dv_v * step.dv_v + step.dv_n * step.dv_n + step.dv_b * step.dv_b);
                 GUILayout.Space(12);
@@ -1772,7 +1776,7 @@ namespace KSPGMAT.UI {
                 step.burn_decrement_mass = GUILayout.Toggle(step.burn_decrement_mass, " 扣减消耗燃料质量", GUILayout.Width(140));
                 GUILayout.Label("比冲 Isp (s):", labelValueStyle, GUILayout.Width(80));
                 double curIsp = (step.burn_isp <= 0) ? 316.0 : step.burn_isp;
-                step.burn_isp = DrawDelayedNumericField($"burn_isp_{i}", curIsp, numericInputStyle ?? GUI.skin.textField, GUILayout.Width(60), "F1");
+                step.burn_isp = DrawDelayedNumericField($"burn_isp_{step.GetHashCode()}", curIsp, numericInputStyle ?? GUI.skin.textField, GUILayout.Width(60), "F1");
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
 
@@ -1805,7 +1809,7 @@ namespace KSPGMAT.UI {
                     step.burn_vary_var_name = GUILayout.TextField(string.IsNullOrEmpty(step.burn_vary_var_name) ? (!string.IsNullOrEmpty(step.duration_str) ? step.duration_str : "burntime") : step.burn_vary_var_name, stepLabelInputStyle ?? GUI.skin.textField, GUILayout.MinWidth(85), GUILayout.Width(110), GUILayout.Height(20));
                 } else {
                     GUILayout.Label("<color=#94a3b8>固定时长 (s):</color>", gridLabelStyle, GUILayout.Width(75));
-                    step.duration = DrawDelayedNumericField($"fburn_dur_{i}", step.duration, numericInputStyle, GUILayout.Width(80), "F1");
+                    step.duration = DrawDelayedNumericField($"fburn_dur_{step.GetHashCode()}", step.duration, numericInputStyle, GUILayout.Width(80), "F1");
                 }
 
                 GUILayout.FlexibleSpace();
@@ -1960,14 +1964,14 @@ namespace KSPGMAT.UI {
 
                 GUILayout.BeginHorizontal();
                 GUILayout.Label(I18n.T("vector_initial"), gridLabelStyle, GUILayout.Width(50));
-                step.thrust_dir1 = DrawDelayedNumericField($"tvc_dir1_{i}", step.thrust_dir1, numericInputStyle, GUILayout.Width(65), "F3");
+                step.thrust_dir1 = DrawDelayedNumericField($"tvc_dir1_{step.GetHashCode()}", step.thrust_dir1, numericInputStyle, GUILayout.Width(65), "F3");
                 if (step.is_vary_vector && step.vary_dir1_enabled) {
                     GUILayout.Label(I18n.T("vector_lower"), gridLabelStyle, GUILayout.Width(50));
-                    step.vary_dir1_lower = DrawDelayedNumericField($"tvc_dir1_low_{i}", step.vary_dir1_lower, numericInputStyle, GUILayout.Width(55), "F2");
+                    step.vary_dir1_lower = DrawDelayedNumericField($"tvc_dir1_low_{step.GetHashCode()}", step.vary_dir1_lower, numericInputStyle, GUILayout.Width(55), "F2");
                     GUILayout.Label(I18n.T("vector_upper"), gridLabelStyle, GUILayout.Width(50));
-                    step.vary_dir1_upper = DrawDelayedNumericField($"tvc_dir1_up_{i}", step.vary_dir1_upper, numericInputStyle, GUILayout.Width(55), "F2");
+                    step.vary_dir1_upper = DrawDelayedNumericField($"tvc_dir1_up_{step.GetHashCode()}", step.vary_dir1_upper, numericInputStyle, GUILayout.Width(55), "F2");
                     GUILayout.Label(I18n.T("vector_step"), gridLabelStyle, GUILayout.Width(50));
-                    step.vary_dir1_max_step = DrawDelayedNumericField($"tvc_dir1_step_{i}", step.vary_dir1_max_step, numericInputStyle, GUILayout.Width(55), "F2");
+                    step.vary_dir1_max_step = DrawDelayedNumericField($"tvc_dir1_step_{step.GetHashCode()}", step.vary_dir1_max_step, numericInputStyle, GUILayout.Width(55), "F2");
                 } else {
                     GUILayout.Label("<color=#64748b><i>[固定值设定，不作为求解变量]</i></color>", labelValueStyle);
                 }
@@ -1986,14 +1990,14 @@ namespace KSPGMAT.UI {
 
                 GUILayout.BeginHorizontal();
                 GUILayout.Label(I18n.T("vector_initial"), gridLabelStyle, GUILayout.Width(50));
-                step.thrust_dir2 = DrawDelayedNumericField($"tvc_dir2_{i}", step.thrust_dir2, numericInputStyle, GUILayout.Width(65), "F3");
+                step.thrust_dir2 = DrawDelayedNumericField($"tvc_dir2_{step.GetHashCode()}", step.thrust_dir2, numericInputStyle, GUILayout.Width(65), "F3");
                 if (step.is_vary_vector && step.vary_dir2_enabled) {
                     GUILayout.Label(I18n.T("vector_lower"), gridLabelStyle, GUILayout.Width(50));
-                    step.vary_dir2_lower = DrawDelayedNumericField($"tvc_dir2_low_{i}", step.vary_dir2_lower, numericInputStyle, GUILayout.Width(55), "F2");
+                    step.vary_dir2_lower = DrawDelayedNumericField($"tvc_dir2_low_{step.GetHashCode()}", step.vary_dir2_lower, numericInputStyle, GUILayout.Width(55), "F2");
                     GUILayout.Label(I18n.T("vector_upper"), gridLabelStyle, GUILayout.Width(50));
-                    step.vary_dir2_upper = DrawDelayedNumericField($"tvc_dir2_up_{i}", step.vary_dir2_upper, numericInputStyle, GUILayout.Width(55), "F2");
+                    step.vary_dir2_upper = DrawDelayedNumericField($"tvc_dir2_up_{step.GetHashCode()}", step.vary_dir2_upper, numericInputStyle, GUILayout.Width(55), "F2");
                     GUILayout.Label(I18n.T("vector_step"), gridLabelStyle, GUILayout.Width(50));
-                    step.vary_dir2_max_step = DrawDelayedNumericField($"tvc_dir2_step_{i}", step.vary_dir2_max_step, numericInputStyle, GUILayout.Width(55), "F2");
+                    step.vary_dir2_max_step = DrawDelayedNumericField($"tvc_dir2_step_{step.GetHashCode()}", step.vary_dir2_max_step, numericInputStyle, GUILayout.Width(55), "F2");
                 } else {
                     GUILayout.Label("<color=#64748b><i>[固定值设定，不作为求解变量]</i></color>", labelValueStyle);
                 }
@@ -2012,14 +2016,14 @@ namespace KSPGMAT.UI {
 
                 GUILayout.BeginHorizontal();
                 GUILayout.Label(I18n.T("vector_initial"), gridLabelStyle, GUILayout.Width(50));
-                step.thrust_dir3 = DrawDelayedNumericField($"tvc_dir3_{i}", step.thrust_dir3, numericInputStyle, GUILayout.Width(65), "F3");
+                step.thrust_dir3 = DrawDelayedNumericField($"tvc_dir3_{step.GetHashCode()}", step.thrust_dir3, numericInputStyle, GUILayout.Width(65), "F3");
                 if (step.is_vary_vector && step.vary_dir3_enabled) {
                     GUILayout.Label(I18n.T("vector_lower"), gridLabelStyle, GUILayout.Width(50));
-                    step.vary_dir3_lower = DrawDelayedNumericField($"tvc_dir3_low_{i}", step.vary_dir3_lower, numericInputStyle, GUILayout.Width(55), "F2");
+                    step.vary_dir3_lower = DrawDelayedNumericField($"tvc_dir3_low_{step.GetHashCode()}", step.vary_dir3_lower, numericInputStyle, GUILayout.Width(55), "F2");
                     GUILayout.Label(I18n.T("vector_upper"), gridLabelStyle, GUILayout.Width(50));
-                    step.vary_dir3_upper = DrawDelayedNumericField($"tvc_dir3_up_{i}", step.vary_dir3_upper, numericInputStyle, GUILayout.Width(55), "F2");
+                    step.vary_dir3_upper = DrawDelayedNumericField($"tvc_dir3_up_{step.GetHashCode()}", step.vary_dir3_upper, numericInputStyle, GUILayout.Width(55), "F2");
                     GUILayout.Label(I18n.T("vector_step"), gridLabelStyle, GUILayout.Width(50));
-                    step.vary_dir3_max_step = DrawDelayedNumericField($"tvc_dir3_step_{i}", step.vary_dir3_max_step, numericInputStyle, GUILayout.Width(55), "F2");
+                    step.vary_dir3_max_step = DrawDelayedNumericField($"tvc_dir3_step_{step.GetHashCode()}", step.vary_dir3_max_step, numericInputStyle, GUILayout.Width(55), "F2");
                 } else {
                     GUILayout.Label("<color=#64748b><i>[固定值设定，不作为求解变量]</i></color>", labelValueStyle);
                 }
@@ -2087,10 +2091,10 @@ namespace KSPGMAT.UI {
                 GUILayout.Space(2);
                 GUILayout.BeginHorizontal();
                 GUILayout.Label("抛离级段干重 (kg):", labelValueStyle, GUILayout.Width(120));
-                step.separated_mass = DrawDelayedNumericField($"stg_drop_{i}", step.separated_mass, numericInputStyle ?? GUI.skin.textField, GUILayout.Width(75), "F0");
+                step.separated_mass = DrawDelayedNumericField($"stg_drop_{step.GetHashCode()}", step.separated_mass, numericInputStyle ?? GUI.skin.textField, GUILayout.Width(75), "F0");
 
                 GUILayout.Label("分离后剩余飞船干重 (kg):", labelValueStyle, GUILayout.Width(160));
-                step.remaining_dry_mass = DrawDelayedNumericField($"stg_rem_{i}", step.remaining_dry_mass, numericInputStyle ?? GUI.skin.textField, GUILayout.Width(75), "F0");
+                step.remaining_dry_mass = DrawDelayedNumericField($"stg_rem_{step.GetHashCode()}", step.remaining_dry_mass, numericInputStyle ?? GUI.skin.textField, GUILayout.Width(75), "F0");
 
                 GUILayout.Label("<color=#94a3b8>(将在 GMAT 序列中输出 Sat.DryMass 动态扣减)</color>", labelValueStyle);
                 GUILayout.FlexibleSpace();
@@ -2704,22 +2708,26 @@ namespace KSPGMAT.UI {
 
         private static Dictionary<string, string> inputStringCache = new Dictionary<string, string>();
 
+        public static void ClearInputStringCache() {
+            inputStringCache.Clear();
+        }
+
         /// <summary>
-        /// 延迟格式化浮点数值输入框：当输入框聚焦编辑时保持用户原始输入，不重置光标或提前格式化；失焦后才格式化同步
+        /// 延迟格式化浮点数值输入框：当输入框聚焦编辑时保持用户原始输入，不重置光标或提前格式化；失焦后立即清除暂存缓存并同步规范格式
         /// </summary>
         private static double DrawDelayedNumericField(string controlId, double currentValue, GUIStyle style, GUILayoutOption widthOpt, string format = "G") {
             GUI.SetNextControlName(controlId);
             bool isFocused = (GUI.GetNameOfFocusedControl() == controlId);
 
             string displayStr;
-            if (!inputStringCache.TryGetValue(controlId, out displayStr)) {
+            if (isFocused) {
+                if (!inputStringCache.TryGetValue(controlId, out displayStr)) {
+                    displayStr = currentValue.ToString(format, System.Globalization.CultureInfo.InvariantCulture);
+                    inputStringCache[controlId] = displayStr;
+                }
+            } else {
+                inputStringCache.Remove(controlId);
                 displayStr = currentValue.ToString(format, System.Globalization.CultureInfo.InvariantCulture);
-                inputStringCache[controlId] = displayStr;
-            }
-
-            if (!isFocused) {
-                displayStr = currentValue.ToString(format, System.Globalization.CultureInfo.InvariantCulture);
-                inputStringCache[controlId] = displayStr;
             }
 
             string newStr = GUILayout.TextField(displayStr, style ?? GUI.skin.textField, widthOpt, GUILayout.Height(20));
@@ -2741,14 +2749,14 @@ namespace KSPGMAT.UI {
             bool isFocused = (GUI.GetNameOfFocusedControl() == controlId);
 
             string displayStr;
-            if (!inputStringCache.TryGetValue(controlId, out displayStr)) {
+            if (isFocused) {
+                if (!inputStringCache.TryGetValue(controlId, out displayStr)) {
+                    displayStr = currentValue.ToString();
+                    inputStringCache[controlId] = displayStr;
+                }
+            } else {
+                inputStringCache.Remove(controlId);
                 displayStr = currentValue.ToString();
-                inputStringCache[controlId] = displayStr;
-            }
-
-            if (!isFocused) {
-                displayStr = currentValue.ToString();
-                inputStringCache[controlId] = displayStr;
             }
 
             string newStr = GUILayout.TextField(displayStr, style ?? GUI.skin.textField, widthOpt, GUILayout.Height(20));

@@ -1134,8 +1134,18 @@ namespace KSPGMAT.UI {
         private void ApplyImportResultToState(GMATImportResult result) {
             if (result == null) return;
 
+            latestResult = null;
+            solveProgress = 0.0f;
+            solveStageText = "就绪";
+            ClearInputStringCache();
+
             if (result.sequence != null && result.sequence.Count > 0) {
                 missionSequence = result.sequence;
+                for (int s = 0; s < missionSequence.Count; s++) {
+                    missionSequence[s].has_solved_value = false;
+                    missionSequence[s].has_achieve_result = false;
+                    missionSequence[s].solved_value_str = "";
+                }
             }
 
             if (GMATStateManager.Current != null) {
