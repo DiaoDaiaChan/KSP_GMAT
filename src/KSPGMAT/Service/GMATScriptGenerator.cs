@@ -261,6 +261,24 @@ namespace KSPGMAT.Service {
             sb.AppendLine("Create ReportFile TrajReport;");
             sb.AppendLine("TrajReport.Filename = 'TrajReport.txt';");
             sb.AppendLine("TrajReport.WriteHeaders = false;");
+
+            // Custom Step Report Files
+            List<string> createdReportFiles = new List<string>();
+            if (steps != null) {
+                for (int i = 0; i < steps.Count; i++) {
+                    var st = steps[i];
+                    if (st.type == "Report") {
+                        string sub = GMATParameterRegistry.SanitizeGmatIdentifier(!string.IsNullOrEmpty(st.subscriber_name) ? st.subscriber_name : $"StepReport_{i + 1}", $"StepReport_{i + 1}");
+                        st.subscriber_name = sub;
+                        if (!createdReportFiles.Contains(sub) && !sub.Equals("TrajReport", StringComparison.OrdinalIgnoreCase)) {
+                            createdReportFiles.Add(sub);
+                            sb.AppendLine($"Create ReportFile {sub};");
+                            sb.AppendLine($"{sub}.Filename = '{sub}.txt';");
+                            sb.AppendLine($"{sub}.WriteHeaders = false;");
+                        }
+                    }
+                }
+            }
             sb.AppendLine();
 
             // Mission Sequence Execution Flow
@@ -380,10 +398,11 @@ namespace KSPGMAT.Service {
                         sb.AppendLine($"{vName} = {st.expression};");
                     }
                     else if (stype == "Report") {
-                        if (!string.IsNullOrWhiteSpace(st.expression)) {
-                            string sub = !string.IsNullOrEmpty(st.subscriber_name) ? st.subscriber_name : "TrajReport";
-                            sb.AppendLine($"Report {sub} {st.expression};");
-                        }
+                        string sub = GMATParameterRegistry.SanitizeGmatIdentifier(!string.IsNullOrEmpty(st.subscriber_name) ? st.subscriber_name : $"StepReport_{i + 1}", $"StepReport_{i + 1}");
+                        string standardReportCols = $"{satName}.ElapsedSecs {satName}.X {satName}.Y {satName}.Z {satName}.VX {satName}.VY {satName}.VZ {satName}.{cBody}.Altitude {satName}.SMA {satName}.ECC {satName}.INC {satName}.RAAN {satName}.AOP {satName}.TA {satName}.{cBody}.RMAG {satName}.TotalMass {satName}.FuelMass";
+                        string reportExpr = !string.IsNullOrWhiteSpace(st.expression) ? st.expression : standardReportCols;
+                        sb.AppendLine($"% Step Report ({sub})");
+                        sb.AppendLine($"Report {sub} {reportExpr};");
                     }
                 }
             }
