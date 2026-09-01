@@ -667,12 +667,21 @@ namespace KSPGMAT.UI {
 
         private void DrawTopBar() {
             GUILayout.BeginHorizontal();
-            GUILayout.Label("<color=#38bdf8><b>🚀 NASA GMAT</b></color> <color=#94a3b8>高精度轨道任务规划中枢</color>", headerStyle);
+            GUILayout.Label("<color=#38bdf8><b>🚀 NASA GMAT</b></color> <color=#94a3b8>高精度任务规划中枢</color>", headerStyle);
 
             Vessel v = FlightGlobals.ActiveVessel;
             if (v != null) {
-                GUILayout.Space(8);
+                GUILayout.Space(6);
                 GUILayout.Label($"<color=#7dd3fc>[🛰️ {v.vesselName} | {v.mainBody.name}]</color>", labelValueStyle);
+            }
+
+            GUILayout.Space(8);
+            double currentJd = 2433647.5 + (Planetarium.GetUniversalTime() / 86400.0);
+            bool isBefore1957 = currentJd < 2436116.0;
+            if (isBefore1957) {
+                GUILayout.Label("<color=#facc15><b>🕒 历元对齐:</b> 游戏时间 < 1957年 (已启用自动安全偏移 07 Mar 1960 对齐星历，任务相对时间 100% 完美保真)</color>", labelValueStyle);
+            } else {
+                GUILayout.Label("<color=#34d399><b>🕒 历元对齐:</b> 1957+ 真实星历直通 (零偏移完美对齐)</color>", labelValueStyle);
             }
 
             GUILayout.FlexibleSpace();
