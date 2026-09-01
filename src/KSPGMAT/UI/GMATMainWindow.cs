@@ -221,7 +221,9 @@ namespace KSPGMAT.UI {
         private GUIStyle stepSolvingBoxStyle;
         private GUIStyle stepDraggingBoxStyle;
         private int hoveredStepIndex = -1;
+        private int nextHoveredStepIndex = -1;
         private int hoveredBurnIndex = -1;
+        private int nextHoveredBurnIndex = -1;
         private GUIStyle labelValueStyle;
         private GUIStyle actionButtonStyle;
         private GUIStyle secondaryButtonStyle;

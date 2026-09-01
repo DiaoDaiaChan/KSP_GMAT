@@ -21,6 +21,9 @@ namespace KSPGMAT.UI {
         private List<PrincipiaInterop.FlightPlanNode> cachedFlightPlanNodes = null;
         private float lastFlightPlanReadTime = -999f;
         private void DrawTabResults() {
+            hoveredBurnIndex = nextHoveredBurnIndex;
+            nextHoveredBurnIndex = -1;
+
             Vessel vessel = FlightGlobals.ActiveVessel;
 
             scrollPosResults = GUILayout.BeginScrollView(scrollPosResults, GUILayout.ExpandHeight(true));
@@ -166,13 +169,6 @@ namespace KSPGMAT.UI {
                         // Outer Maneuver Verification Container
                         bool isBurnHovered = (hoveredBurnIndex == i);
                         GUILayout.BeginVertical(GetTargetGroupBoxStyle(i, isBurnHovered));
-                        if (Event.current.type == EventType.Repaint) {
-                            Rect br = GUILayoutUtility.GetLastRect();
-                            if (br.Contains(Event.current.mousePosition)) hoveredBurnIndex = i;
-                            if (isBurnHovered) {
-                                GUI.DrawTexture(new Rect(br.x + 1, br.y + 2, 4, br.height - 4), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, GetStepThemeColor("FiniteBurn"), 0, 0);
-                            }
-                        }
 
                         // Card Header
                         GUILayout.BeginHorizontal();
@@ -373,6 +369,22 @@ namespace KSPGMAT.UI {
                         }
 
                         GUILayout.EndVertical();
+                        if (Event.current.type == EventType.Repaint) {
+                            Rect cardRect = GUILayoutUtility.GetLastRect();
+                            if (cardRect.Contains(Event.current.mousePosition)) {
+                                nextHoveredBurnIndex = i;
+                            }
+                            Color themeColor = GetStepThemeColor("FiniteBurn");
+                            float stripW = isBurnHovered ? 5f : 3f;
+                            Color stripCol = isBurnHovered ? themeColor : new Color(themeColor.r, themeColor.g, themeColor.b, 0.65f);
+                            GUI.DrawTexture(new Rect(cardRect.x + 1, cardRect.y + 2, stripW, cardRect.height - 4), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, stripCol, 0, 0);
+
+                            if (isBurnHovered) {
+                                GUI.DrawTexture(new Rect(cardRect.x, cardRect.y, cardRect.width, 2), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, themeColor, 0, 0);
+                                GUI.DrawTexture(new Rect(cardRect.x, cardRect.y + cardRect.height - 2, cardRect.width, 2), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, themeColor, 0, 0);
+                                GUI.DrawTexture(new Rect(cardRect.x + cardRect.width - 2, cardRect.y, 2, cardRect.height), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, themeColor, 0, 0);
+                            }
+                        }
                         GUILayout.Space(6);
                     }
                 } else {

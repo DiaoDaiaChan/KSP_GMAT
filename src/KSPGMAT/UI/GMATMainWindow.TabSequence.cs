@@ -150,6 +150,9 @@ namespace KSPGMAT.UI {
         }
 
         void DrawTabMissionSequence(Vessel vessel) {
+            hoveredStepIndex = nextHoveredStepIndex;
+            nextHoveredStepIndex = -1;
+
             float totalW = windowRect.width - 36f;
             float rightColW = Mathf.Clamp(totalW * 0.32f, 310f, 420f);
             float leftColW = totalW - rightColW - 12f;
@@ -339,13 +342,6 @@ namespace KSPGMAT.UI {
 
                     // BEGIN PROMINENT OUTER GROUP BOUNDING BOX (Enclosing entire Target group with dynamic hover glow)
                     GUILayout.BeginVertical(GetTargetGroupBoxStyle(i, isTargetHovered));
-                    if (Event.current.type == EventType.Repaint) {
-                        Rect r = GUILayoutUtility.GetLastRect();
-                        if (r.Contains(Event.current.mousePosition)) hoveredStepIndex = i;
-                        if (isTargetHovered) {
-                            GUI.DrawTexture(new Rect(r.x + 1, r.y + 2, 4, r.height - 4), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, GetStepThemeColor("Target"), 0, 0);
-                        }
-                    }
 
                     int varyCount = 0;
                     int achieveCount = 0;
@@ -607,13 +603,6 @@ namespace KSPGMAT.UI {
                         string endTreeColor = isEndHovered ? "#38bdf8" : "#64748b";
                         GUILayout.Label($"<color={endTreeColor}><b>│ └─</b></color>", labelValueStyle, GUILayout.Width(24));
                         GUILayout.BeginVertical(GetStepBoxStyle("EndTarget", isEndHovered, false, isBeingDragged));
-                        if (Event.current.type == EventType.Repaint) {
-                            Rect r = GUILayoutUtility.GetLastRect();
-                            if (r.Contains(Event.current.mousePosition)) hoveredStepIndex = i;
-                            if (isEndHovered) {
-                                GUI.DrawTexture(new Rect(r.x + 1, r.y + 2, 3, r.height - 4), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, GetStepThemeColor("EndTarget"), 0, 0);
-                            }
-                        }
                         GUILayout.BeginHorizontal();
 
                         string foldIcon = step.is_collapsed ? "⊞" : "⊟";
@@ -644,12 +633,35 @@ namespace KSPGMAT.UI {
                         }
                         GUILayout.EndHorizontal();
                         GUILayout.EndVertical();
+
+                        if (Event.current.type == EventType.Repaint) {
+                            Rect cardRect = GUILayoutUtility.GetLastRect();
+                            if (cardRect.Contains(Event.current.mousePosition)) {
+                                nextHoveredStepIndex = i;
+                            }
+                            Color themeColor = GetStepThemeColor("EndTarget");
+                            float stripW = isEndHovered ? 5f : 3f;
+                            Color stripCol = isEndHovered ? themeColor : new Color(themeColor.r, themeColor.g, themeColor.b, 0.65f);
+                            GUI.DrawTexture(new Rect(cardRect.x + 1, cardRect.y + 2, stripW, cardRect.height - 4), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, stripCol, 0, 0);
+
+                            if (isEndHovered) {
+                                GUI.DrawTexture(new Rect(cardRect.x, cardRect.y, cardRect.width, 2), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, themeColor, 0, 0);
+                                GUI.DrawTexture(new Rect(cardRect.x, cardRect.y + cardRect.height - 2, cardRect.width, 2), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, themeColor, 0, 0);
+                                GUI.DrawTexture(new Rect(cardRect.x + cardRect.width - 2, cardRect.y, 2, cardRect.height), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, themeColor, 0, 0);
+                            }
+                        }
                         GUILayout.EndHorizontal();
                     }
 
                     // CLOSE THE PROMINENT OUTER GROUP BOUNDING BOX
                     if (insideTargetGroup) {
                         GUILayout.EndVertical();
+                        if (Event.current.type == EventType.Repaint) {
+                            Rect groupRect = GUILayoutUtility.GetLastRect();
+                            if (groupRect.Contains(Event.current.mousePosition) && nextHoveredStepIndex == -1) {
+                                nextHoveredStepIndex = i;
+                            }
+                        }
                         GUILayout.Space(8);
                         insideTargetGroup = false;
                         targetGroupCollapsed = false;
@@ -673,13 +685,6 @@ namespace KSPGMAT.UI {
                     string treeBranchColor = isChildHovered ? "#38bdf8" : "#64748b";
                     GUILayout.Label($"<color={treeBranchColor}><b>│ ├─</b></color>", labelValueStyle, GUILayout.Width(24));
                     GUILayout.BeginVertical(GetStepBoxStyle(step.type, isChildHovered, false, isBeingDragged));
-                    if (Event.current.type == EventType.Repaint) {
-                        Rect r = GUILayoutUtility.GetLastRect();
-                        if (r.Contains(Event.current.mousePosition)) hoveredStepIndex = i;
-                        if (isChildHovered) {
-                            GUI.DrawTexture(new Rect(r.x + 1, r.y + 2, 3, r.height - 4), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, GetStepThemeColor(step.type), 0, 0);
-                        }
-                    }
 
                     // Step Header Bar
                     GUILayout.BeginHorizontal();
@@ -744,6 +749,23 @@ namespace KSPGMAT.UI {
                     }
 
                     GUILayout.EndVertical();
+
+                    if (Event.current.type == EventType.Repaint) {
+                        Rect cardRect = GUILayoutUtility.GetLastRect();
+                        if (cardRect.Contains(Event.current.mousePosition)) {
+                            nextHoveredStepIndex = i;
+                        }
+                        Color themeColor = GetStepThemeColor(step.type);
+                        float stripW = isChildHovered ? 5f : 3f;
+                        Color stripCol = isChildHovered ? themeColor : new Color(themeColor.r, themeColor.g, themeColor.b, 0.65f);
+                        GUI.DrawTexture(new Rect(cardRect.x + 1, cardRect.y + 2, stripW, cardRect.height - 4), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, stripCol, 0, 0);
+
+                        if (isChildHovered) {
+                            GUI.DrawTexture(new Rect(cardRect.x, cardRect.y, cardRect.width, 2), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, themeColor, 0, 0);
+                            GUI.DrawTexture(new Rect(cardRect.x, cardRect.y + cardRect.height - 2, cardRect.width, 2), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, themeColor, 0, 0);
+                            GUI.DrawTexture(new Rect(cardRect.x + cardRect.width - 2, cardRect.y, 2, cardRect.height), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, themeColor, 0, 0);
+                        }
+                    }
                     GUILayout.EndHorizontal();
 
                     GUILayout.Space(4);
@@ -755,13 +777,6 @@ namespace KSPGMAT.UI {
                 // ==========================================
                 bool isRegularHovered = (hoveredStepIndex == i);
                 GUILayout.BeginVertical(GetStepBoxStyle(step.type, isRegularHovered, false, isBeingDragged));
-                if (Event.current.type == EventType.Repaint) {
-                    Rect r = GUILayoutUtility.GetLastRect();
-                    if (r.Contains(Event.current.mousePosition)) hoveredStepIndex = i;
-                    if (isRegularHovered) {
-                        GUI.DrawTexture(new Rect(r.x + 1, r.y + 2, 3, r.height - 4), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, GetStepThemeColor(step.type), 0, 0);
-                    }
-                }
                 GUILayout.BeginHorizontal();
 
                 string regularFoldIcon = step.is_collapsed ? "⊞" : "⊟";
@@ -823,6 +838,23 @@ namespace KSPGMAT.UI {
                 }
 
                 GUILayout.EndVertical();
+
+                if (Event.current.type == EventType.Repaint) {
+                    Rect cardRect = GUILayoutUtility.GetLastRect();
+                    if (cardRect.Contains(Event.current.mousePosition)) {
+                        nextHoveredStepIndex = i;
+                    }
+                    Color themeColor = GetStepThemeColor(step.type);
+                    float stripW = isRegularHovered ? 5f : 3f;
+                    Color stripCol = isRegularHovered ? themeColor : new Color(themeColor.r, themeColor.g, themeColor.b, 0.65f);
+                    GUI.DrawTexture(new Rect(cardRect.x + 1, cardRect.y + 2, stripW, cardRect.height - 4), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, stripCol, 0, 0);
+
+                    if (isRegularHovered) {
+                        GUI.DrawTexture(new Rect(cardRect.x, cardRect.y, cardRect.width, 2), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, themeColor, 0, 0);
+                        GUI.DrawTexture(new Rect(cardRect.x, cardRect.y + cardRect.height - 2, cardRect.width, 2), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, themeColor, 0, 0);
+                        GUI.DrawTexture(new Rect(cardRect.x + cardRect.width - 2, cardRect.y, 2, cardRect.height), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, themeColor, 0, 0);
+                    }
+                }
 
                 GUILayout.Space(4);
             }
