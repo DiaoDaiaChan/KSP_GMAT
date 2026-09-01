@@ -98,6 +98,7 @@ namespace KSPGMAT.Model {
         public int MaxIterations { get; set; } = 50;
         public bool ShowProgress { get; set; } = true;
         public string ReportStyle { get; set; } = "Normal";
+        public string ReportFile { get; set; } = "";
     }
 
     [Serializable]

@@ -185,6 +185,24 @@ namespace KSPGMAT.Service {
                             if (uVar != null && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double vVal)) {
                                 uVar.value = vVal;
                             }
+
+                            // DifferentialCorrector properties
+                            foreach (var dcName in result.solvers) {
+                                if (lhs.StartsWith(dcName + ".")) {
+                                    string prop = lhs.Substring(dcName.Length + 1);
+                                    var slv = GMATStateManager.Current.Solvers.Find(s => s.Name.Equals(dcName, StringComparison.OrdinalIgnoreCase));
+                                    if (slv == null) {
+                                        slv = new GMATSolverModel { Name = dcName };
+                                        GMATStateManager.Current.Solvers.Add(slv);
+                                    }
+                                    if (prop.Equals("Algorithm", StringComparison.OrdinalIgnoreCase)) slv.Algorithm = rhs;
+                                    else if (prop.Equals("DerivativeMethod", StringComparison.OrdinalIgnoreCase)) slv.DerivativeMethod = rhs;
+                                    else if (prop.Equals("MaximumIterations", StringComparison.OrdinalIgnoreCase) && int.TryParse(rhs, out int mi)) slv.MaxIterations = mi;
+                                    else if (prop.Equals("ShowProgress", StringComparison.OrdinalIgnoreCase) && bool.TryParse(rhs, out bool sp)) slv.ShowProgress = sp;
+                                    else if (prop.Equals("ReportStyle", StringComparison.OrdinalIgnoreCase)) slv.ReportStyle = rhs;
+                                    else if (prop.Equals("ReportFile", StringComparison.OrdinalIgnoreCase)) slv.ReportFile = rhs;
+                                }
+                            }
                         }
                     }
                 } else {

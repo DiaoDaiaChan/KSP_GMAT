@@ -571,7 +571,7 @@ namespace KSPGMAT.UI {
             }
 
             // -------------------------------------------------------------
-            // 5. SOLVERS
+            // 5. SOLVERS (DifferentialCorrectors)
             // -------------------------------------------------------------
             else if (selectedResourceCategory == 5) {
                 GUILayout.BeginVertical(cardBoxStyle);
@@ -579,12 +579,15 @@ namespace KSPGMAT.UI {
                 GUILayout.Label("<color=#38bdf8><b>⚡ Differential Correctors 差分修正求解器:</b></color>", headerStyle);
                 GUILayout.FlexibleSpace();
                 if (GUILayout.Button("➕ 新建差分求解器", actionButtonStyle, GUILayout.Height(20))) {
+                    string newName = $"DC_{GMATStateManager.Current.Solvers.Count + 1}";
                     GMATStateManager.Current.Solvers.Add(new Model.GMATSolverModel {
-                        Name = $"DC_{GMATStateManager.Current.Solvers.Count + 1}",
+                        Name = newName,
                         Algorithm = "NewtonRaphson",
                         MaxIterations = 50,
                         DerivativeMethod = "ForwardDifference",
-                        ReportStyle = "Normal"
+                        ShowProgress = true,
+                        ReportStyle = "Normal",
+                        ReportFile = $"DifferentialCorrector{newName}.data"
                     });
                 }
                 GUILayout.EndHorizontal();
@@ -594,9 +597,10 @@ namespace KSPGMAT.UI {
                 for (int d = 0; d < solvers.Count; d++) {
                     var sol = solvers[d];
                     GUILayout.BeginVertical(nestedCardBoxStyle);
+                    
+                    // Card Title Bar
                     GUILayout.BeginHorizontal();
-                    sol.Name = DrawTextField("<color=#f59e0b><b>求解器标识:</b></color>", sol.Name, 90, 120);
-                    sol.Algorithm = DrawTextField("核心算法:", sol.Algorithm, 70, 120);
+                    GUILayout.Label($"<color=#38bdf8><b>🌐 Create DifferentialCorrector {sol.Name};</b></color>", labelValueStyle);
                     GUILayout.FlexibleSpace();
                     if (solvers.Count > 1) {
                         if (GUILayout.Button("❌ 删除", deleteButtonStyle, GUILayout.Height(18), GUILayout.Width(50))) {
@@ -608,15 +612,96 @@ namespace KSPGMAT.UI {
                         }
                     }
                     GUILayout.EndHorizontal();
+                    GUILayout.Space(3);
 
+                    // --- Options Group Box ---
+                    GUILayout.BeginVertical(cardBoxStyle);
+                    GUILayout.Label("<color=#facc15><b>⚙️ Options 动力学校正内核设置:</b></color>", subHeaderStyle);
+                    GUILayout.Space(2);
+
+                    // 1. Algorithm Selector
                     GUILayout.BeginHorizontal();
-                    sol.MaxIterations = DrawIntField("最大迭代次数:", sol.MaxIterations, 100, 60);
-                    sol.DerivativeMethod = DrawTextField("求导差分法:", sol.DerivativeMethod, 90, 140);
-                    sol.ReportStyle = DrawTextField("报告详细度:", sol.ReportStyle, 80, 80);
+                    GUILayout.Label("寻优算法 (Algorithm):", labelValueStyle, GUILayout.Width(150));
+                    string[] algs = new string[] { "NewtonRaphson", "Broyden", "ModifiedBroyden" };
+                    for (int a = 0; a < algs.Length; a++) {
+                        bool isCur = (sol.Algorithm == algs[a]);
+                        if (GUILayout.Button(algs[a], isCur ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
+                            sol.Algorithm = algs[a];
+                        }
+                    }
+                    GUILayout.FlexibleSpace();
+                    GUILayout.EndHorizontal();
+
+                    // 2. Derivative Method Selector
+                    GUILayout.Space(2);
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label("差分求导 (Derivative Method):", labelValueStyle, GUILayout.Width(150));
+                    string[] dmList = new string[] { "ForwardDifference", "CentralDifference" };
+                    for (int m = 0; m < dmList.Length; m++) {
+                        bool isCur = (sol.DerivativeMethod == dmList[m]);
+                        string desc = (dmList[m] == "ForwardDifference") ? "ForwardDifference (前向单扰动)" : "CentralDifference (中心双扰动高精)";
+                        if (GUILayout.Button(desc, isCur ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
+                            sol.DerivativeMethod = dmList[m];
+                        }
+                    }
+                    GUILayout.FlexibleSpace();
+                    GUILayout.EndHorizontal();
+
+                    // 3. Max Iterations Field & Quick Presets
+                    GUILayout.Space(2);
+                    GUILayout.BeginHorizontal();
+                    sol.MaxIterations = DrawIntField("最大迭代 (Max Iterations):", sol.MaxIterations, 150, 60);
+                    GUILayout.Space(6);
+                    GUILayout.Label("<color=#64748b>预设:</color>", gridLabelStyle, GUILayout.Width(35));
+                    int[] iterPresets = new int[] { 25, 50, 100, 200 };
+                    for (int ip = 0; ip < iterPresets.Length; ip++) {
+                        if (GUILayout.Button(iterPresets[ip].ToString(), secondaryButtonStyle, GUILayout.Width(35), GUILayout.Height(18))) {
+                            sol.MaxIterations = iterPresets[ip];
+                        }
+                    }
                     GUILayout.FlexibleSpace();
                     GUILayout.EndHorizontal();
                     GUILayout.EndVertical();
+
+                    GUILayout.Space(3);
+
+                    // --- Output Group Box ---
+                    GUILayout.BeginVertical(cardBoxStyle);
+                    GUILayout.Label("<color=#38bdf8><b>📄 Output 数据输出与收敛报告设置:</b></color>", subHeaderStyle);
                     GUILayout.Space(2);
+
+                    // 1. Show Progress Toggle
+                    GUILayout.BeginHorizontal();
+                    sol.ShowProgress = GUILayout.Toggle(sol.ShowProgress, " 实时在控制台与输出窗口输出求解进度 (ShowProgress = true)", GUILayout.Height(18));
+                    GUILayout.FlexibleSpace();
+                    GUILayout.EndHorizontal();
+
+                    // 2. Report Style Selector
+                    GUILayout.Space(2);
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label("报告级别 (Report Style):", labelValueStyle, GUILayout.Width(150));
+                    string[] repStyles = new string[] { "Normal", "Concise", "Verbose", "Debug" };
+                    for (int rs = 0; rs < repStyles.Length; rs++) {
+                        bool isCur = (sol.ReportStyle == repStyles[rs]);
+                        if (GUILayout.Button(repStyles[rs], isCur ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
+                            sol.ReportStyle = repStyles[rs];
+                        }
+                    }
+                    GUILayout.FlexibleSpace();
+                    GUILayout.EndHorizontal();
+
+                    // 3. Report File Text Field
+                    GUILayout.Space(2);
+                    GUILayout.BeginHorizontal();
+                    string defRepFile = string.IsNullOrEmpty(sol.ReportFile) ? $"DifferentialCorrector{sol.Name}.data" : sol.ReportFile;
+                    sol.ReportFile = DrawTextField("数据报告文件 (Report File):", defRepFile, 150, 220);
+                    GUILayout.FlexibleSpace();
+                    GUILayout.EndHorizontal();
+
+                    GUILayout.EndVertical();
+
+                    GUILayout.EndVertical();
+                    GUILayout.Space(3);
                 }
                 GUILayout.EndVertical();
             }
