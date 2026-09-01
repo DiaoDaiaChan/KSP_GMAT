@@ -580,9 +580,8 @@ namespace KSPGMAT.UI {
 
                             GUILayout.Space(8);
                             GUILayout.Label("<color=#94a3b8>最大迭代:</color>", gridLabelStyle, GUILayout.Width(65));
-                            string sIter = GUILayout.TextField(step.dc_max_iter.ToString(), numericInputStyle, GUILayout.Width(50));
-                            int newMaxIter;
-                            if (int.TryParse(sIter, out newMaxIter) && newMaxIter != step.dc_max_iter) {
+                            int newMaxIter = DrawDelayedIntField($"dc_iter_{i}", step.dc_max_iter, numericInputStyle, GUILayout.Width(50));
+                            if (newMaxIter != step.dc_max_iter) {
                                 step.dc_max_iter = newMaxIter;
                                 var sol = GMATStateManager.Current.Solvers.Find(s => s.Name == step.dc_name);
                                 if (sol != null) sol.MaxIterations = newMaxIter;
@@ -1502,16 +1501,9 @@ namespace KSPGMAT.UI {
                 } else {
                     GUILayout.Space(8);
                     GUILayout.Label("<color=#94a3b8>目标阈值:</color>", gridLabelStyle, GUILayout.Width(60));
-                    string curTVal = !string.IsNullOrEmpty(step.target_val_str) ? step.target_val_str : (step.target_val != 0.0 ? step.target_val.ToString("F3") : (step.duration > 0 ? (step.stop_type != null && step.stop_type.Contains("Days") ? (step.duration / 86400.0).ToString("F1") : step.duration.ToString("F1")) : "0.000"));
-                    string sTVal = GUILayout.TextField(curTVal, numericInputStyle, GUILayout.MinWidth(75), GUILayout.Width(95), GUILayout.Height(20));
-                    if (sTVal != curTVal) {
-                        step.target_val_str = sTVal;
-                        double parsedT;
-                        if (double.TryParse(sTVal, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out parsedT)) {
-                            step.target_val = parsedT;
-                            step.duration = parsedT;
-                        }
-                    }
+                    double defTVal = step.target_val != 0.0 ? step.target_val : (step.duration > 0 ? (step.stop_type != null && step.stop_type.Contains("Days") ? (step.duration / 86400.0) : step.duration) : 0.0);
+                    step.target_val = DrawDelayedNumericField($"prop_tval_{i}", defTVal, numericInputStyle, GUILayout.Width(95), "G");
+                    step.duration = step.target_val;
                 }
 
                 GUILayout.FlexibleSpace();
@@ -1563,31 +1555,19 @@ namespace KSPGMAT.UI {
                 GUILayout.Space(3);
                 GUILayout.BeginHorizontal();
                 GUILayout.Label("<color=#94a3b8>初猜:</color>", gridLabelStyle, GUILayout.Width(35));
-                string curVaryInit = !string.IsNullOrEmpty(step.vary_initial_str) ? step.vary_initial_str : step.vary_initial.ToString("F2");
-                string sInit = GUILayout.TextField(curVaryInit, numericInputStyle, GUILayout.MinWidth(55), GUILayout.Width(75), GUILayout.Height(20));
-                if (sInit != curVaryInit) {
-                    step.vary_initial_str = sInit;
-                    double parsedInit;
-                    if (double.TryParse(sInit, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out parsedInit)) {
-                        step.vary_initial = parsedInit;
-                    }
-                }
+                step.vary_initial = DrawDelayedNumericField($"vary_init_{i}", step.vary_initial, numericInputStyle, GUILayout.Width(75), "F2");
 
                 GUILayout.Space(6);
                 GUILayout.Label("<color=#94a3b8>下界:</color>", gridLabelStyle, GUILayout.Width(35));
-                string sLow = GUILayout.TextField(step.vary_lower.ToString("F2"), numericInputStyle, GUILayout.Width(60));
-                double.TryParse(sLow, out step.vary_lower);
+                step.vary_lower = DrawDelayedNumericField($"vary_low_{i}", step.vary_lower, numericInputStyle, GUILayout.Width(60), "F2");
 
                 GUILayout.Space(6);
                 GUILayout.Label("<color=#94a3b8>上界:</color>", gridLabelStyle, GUILayout.Width(35));
-                string sUp = GUILayout.TextField(step.vary_upper.ToString("F2"), numericInputStyle, GUILayout.Width(60));
-                double.TryParse(sUp, out step.vary_upper);
+                step.vary_upper = DrawDelayedNumericField($"vary_up_{i}", step.vary_upper, numericInputStyle, GUILayout.Width(60), "F2");
 
                 GUILayout.Space(6);
                 GUILayout.Label("<color=#94a3b8>步长:</color>", gridLabelStyle, GUILayout.Width(35));
-                double mStep = (step.vary_max_step <= 0) ? 0.1 : step.vary_max_step;
-                string sStep = GUILayout.TextField(mStep.ToString("F2"), numericInputStyle, GUILayout.Width(55));
-                if (double.TryParse(sStep, out mStep)) step.vary_max_step = mStep;
+                step.vary_max_step = DrawDelayedNumericField($"vary_step_{i}", (step.vary_max_step <= 0 ? 0.1 : step.vary_max_step), numericInputStyle, GUILayout.Width(55), "F2");
 
                 // Inline Solved Value
                 if (step.has_solved_value) {
@@ -1655,20 +1635,11 @@ namespace KSPGMAT.UI {
                 GUILayout.Space(3);
                 GUILayout.BeginHorizontal();
                 GUILayout.Label("<color=#94a3b8>期望目标值:</color>", gridLabelStyle, GUILayout.Width(75));
-                string curAchVal = !string.IsNullOrEmpty(step.achieve_val_str) ? step.achieve_val_str : step.achieve_val.ToString("F3");
-                string sGVal = GUILayout.TextField(curAchVal, numericInputStyle, GUILayout.MinWidth(75), GUILayout.Width(95), GUILayout.Height(20));
-                if (sGVal != curAchVal) {
-                    step.achieve_val_str = sGVal;
-                    double parsedAch;
-                    if (double.TryParse(sGVal, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out parsedAch)) {
-                        step.achieve_val = parsedAch;
-                    }
-                }
+                step.achieve_val = DrawDelayedNumericField($"ach_val_{i}", step.achieve_val, numericInputStyle, GUILayout.Width(95), "G");
 
                 GUILayout.Space(8);
                 GUILayout.Label("<color=#94a3b8>容差: ±</color>", gridLabelStyle, GUILayout.Width(50));
-                string sGTol = GUILayout.TextField(step.achieve_tolerance.ToString("G4"), numericInputStyle, GUILayout.Width(65));
-                double.TryParse(sGTol, out step.achieve_tolerance);
+                step.achieve_tolerance = DrawDelayedNumericField($"ach_tol_{i}", step.achieve_tolerance, numericInputStyle, GUILayout.Width(65), "G4");
 
                 // Inline Solved Result
                 if (step.has_achieve_result) {
@@ -1709,18 +1680,15 @@ namespace KSPGMAT.UI {
                 GUILayout.Space(2);
                 GUILayout.BeginHorizontal();
                 GUILayout.Label("<color=#94a3b8>切向 ΔV_V (m/s):</color>", gridLabelStyle, GUILayout.Width(105));
-                string sV = GUILayout.TextField(step.dv_v.ToString("F2"), numericInputStyle, GUILayout.Width(70));
-                double.TryParse(sV, out step.dv_v);
+                step.dv_v = DrawDelayedNumericField($"burn_v_{i}", step.dv_v, numericInputStyle, GUILayout.Width(70), "F2");
 
                 GUILayout.Space(8);
                 GUILayout.Label("<color=#94a3b8>法向 ΔV_N:</color>", gridLabelStyle, GUILayout.Width(70));
-                string sN = GUILayout.TextField(step.dv_n.ToString("F2"), numericInputStyle, GUILayout.Width(65));
-                double.TryParse(sN, out step.dv_n);
+                step.dv_n = DrawDelayedNumericField($"burn_n_{i}", step.dv_n, numericInputStyle, GUILayout.Width(65), "F2");
 
                 GUILayout.Space(8);
                 GUILayout.Label("<color=#94a3b8>径向 ΔV_B:</color>", gridLabelStyle, GUILayout.Width(70));
-                string sB = GUILayout.TextField(step.dv_b.ToString("F2"), numericInputStyle, GUILayout.Width(65));
-                double.TryParse(sB, out step.dv_b);
+                step.dv_b = DrawDelayedNumericField($"burn_b_{i}", step.dv_b, numericInputStyle, GUILayout.Width(65), "F2");
 
                 double totalDv = Math.Sqrt(step.dv_v * step.dv_v + step.dv_n * step.dv_n + step.dv_b * step.dv_b);
                 GUILayout.Space(12);
@@ -1804,8 +1772,7 @@ namespace KSPGMAT.UI {
                 step.burn_decrement_mass = GUILayout.Toggle(step.burn_decrement_mass, " 扣减消耗燃料质量", GUILayout.Width(140));
                 GUILayout.Label("比冲 Isp (s):", labelValueStyle, GUILayout.Width(80));
                 double curIsp = (step.burn_isp <= 0) ? 316.0 : step.burn_isp;
-                string sIsp = GUILayout.TextField(curIsp.ToString("F1"), GUILayout.Width(60));
-                if (double.TryParse(sIsp, out curIsp)) step.burn_isp = curIsp;
+                step.burn_isp = DrawDelayedNumericField($"burn_isp_{i}", curIsp, numericInputStyle ?? GUI.skin.textField, GUILayout.Width(60), "F1");
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
 
@@ -1838,18 +1805,7 @@ namespace KSPGMAT.UI {
                     step.burn_vary_var_name = GUILayout.TextField(string.IsNullOrEmpty(step.burn_vary_var_name) ? (!string.IsNullOrEmpty(step.duration_str) ? step.duration_str : "burntime") : step.burn_vary_var_name, stepLabelInputStyle ?? GUI.skin.textField, GUILayout.MinWidth(85), GUILayout.Width(110), GUILayout.Height(20));
                 } else {
                     GUILayout.Label("<color=#94a3b8>固定时长 (s):</color>", gridLabelStyle, GUILayout.Width(75));
-                    string curDur = !string.IsNullOrEmpty(step.duration_str) ? step.duration_str : step.duration.ToString("F1");
-                    string sDur = GUILayout.TextField(curDur, numericInputStyle, GUILayout.MinWidth(65), GUILayout.Width(80), GUILayout.Height(20));
-                    if (sDur != curDur) {
-                        step.duration_str = sDur;
-                        double parsedD;
-                        if (double.TryParse(sDur, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out parsedD)) {
-                            step.duration = parsedD;
-                        } else {
-                            step.burn_use_vary_var = true;
-                            step.burn_vary_var_name = sDur;
-                        }
-                    }
+                    step.duration = DrawDelayedNumericField($"fburn_dur_{i}", step.duration, numericInputStyle, GUILayout.Width(80), "F1");
                 }
 
                 GUILayout.FlexibleSpace();
@@ -2004,18 +1960,14 @@ namespace KSPGMAT.UI {
 
                 GUILayout.BeginHorizontal();
                 GUILayout.Label(I18n.T("vector_initial"), gridLabelStyle, GUILayout.Width(50));
-                string sV = GUILayout.TextField(step.thrust_dir1.ToString("F3"), numericInputStyle, GUILayout.Width(65), GUILayout.Height(20));
-                double.TryParse(sV, out step.thrust_dir1);
+                step.thrust_dir1 = DrawDelayedNumericField($"tvc_dir1_{i}", step.thrust_dir1, numericInputStyle, GUILayout.Width(65), "F3");
                 if (step.is_vary_vector && step.vary_dir1_enabled) {
                     GUILayout.Label(I18n.T("vector_lower"), gridLabelStyle, GUILayout.Width(50));
-                    string sVLow = GUILayout.TextField(step.vary_dir1_lower.ToString("F2"), numericInputStyle, GUILayout.Width(55), GUILayout.Height(20));
-                    double.TryParse(sVLow, out step.vary_dir1_lower);
+                    step.vary_dir1_lower = DrawDelayedNumericField($"tvc_dir1_low_{i}", step.vary_dir1_lower, numericInputStyle, GUILayout.Width(55), "F2");
                     GUILayout.Label(I18n.T("vector_upper"), gridLabelStyle, GUILayout.Width(50));
-                    string sVUp = GUILayout.TextField(step.vary_dir1_upper.ToString("F2"), numericInputStyle, GUILayout.Width(55), GUILayout.Height(20));
-                    double.TryParse(sVUp, out step.vary_dir1_upper);
+                    step.vary_dir1_upper = DrawDelayedNumericField($"tvc_dir1_up_{i}", step.vary_dir1_upper, numericInputStyle, GUILayout.Width(55), "F2");
                     GUILayout.Label(I18n.T("vector_step"), gridLabelStyle, GUILayout.Width(50));
-                    string sVStep = GUILayout.TextField(step.vary_dir1_max_step.ToString("F2"), numericInputStyle, GUILayout.Width(55), GUILayout.Height(20));
-                    double.TryParse(sVStep, out step.vary_dir1_max_step);
+                    step.vary_dir1_max_step = DrawDelayedNumericField($"tvc_dir1_step_{i}", step.vary_dir1_max_step, numericInputStyle, GUILayout.Width(55), "F2");
                 } else {
                     GUILayout.Label("<color=#64748b><i>[固定值设定，不作为求解变量]</i></color>", labelValueStyle);
                 }
@@ -2034,18 +1986,14 @@ namespace KSPGMAT.UI {
 
                 GUILayout.BeginHorizontal();
                 GUILayout.Label(I18n.T("vector_initial"), gridLabelStyle, GUILayout.Width(50));
-                string sN = GUILayout.TextField(step.thrust_dir2.ToString("F3"), numericInputStyle, GUILayout.Width(65), GUILayout.Height(20));
-                double.TryParse(sN, out step.thrust_dir2);
+                step.thrust_dir2 = DrawDelayedNumericField($"tvc_dir2_{i}", step.thrust_dir2, numericInputStyle, GUILayout.Width(65), "F3");
                 if (step.is_vary_vector && step.vary_dir2_enabled) {
                     GUILayout.Label(I18n.T("vector_lower"), gridLabelStyle, GUILayout.Width(50));
-                    string sNLow = GUILayout.TextField(step.vary_dir2_lower.ToString("F2"), numericInputStyle, GUILayout.Width(55), GUILayout.Height(20));
-                    double.TryParse(sNLow, out step.vary_dir2_lower);
+                    step.vary_dir2_lower = DrawDelayedNumericField($"tvc_dir2_low_{i}", step.vary_dir2_lower, numericInputStyle, GUILayout.Width(55), "F2");
                     GUILayout.Label(I18n.T("vector_upper"), gridLabelStyle, GUILayout.Width(50));
-                    string sNUp = GUILayout.TextField(step.vary_dir2_upper.ToString("F2"), numericInputStyle, GUILayout.Width(55), GUILayout.Height(20));
-                    double.TryParse(sNUp, out step.vary_dir2_upper);
+                    step.vary_dir2_upper = DrawDelayedNumericField($"tvc_dir2_up_{i}", step.vary_dir2_upper, numericInputStyle, GUILayout.Width(55), "F2");
                     GUILayout.Label(I18n.T("vector_step"), gridLabelStyle, GUILayout.Width(50));
-                    string sNStep = GUILayout.TextField(step.vary_dir2_max_step.ToString("F2"), numericInputStyle, GUILayout.Width(55), GUILayout.Height(20));
-                    double.TryParse(sNStep, out step.vary_dir2_max_step);
+                    step.vary_dir2_max_step = DrawDelayedNumericField($"tvc_dir2_step_{i}", step.vary_dir2_max_step, numericInputStyle, GUILayout.Width(55), "F2");
                 } else {
                     GUILayout.Label("<color=#64748b><i>[固定值设定，不作为求解变量]</i></color>", labelValueStyle);
                 }
@@ -2064,18 +2012,14 @@ namespace KSPGMAT.UI {
 
                 GUILayout.BeginHorizontal();
                 GUILayout.Label(I18n.T("vector_initial"), gridLabelStyle, GUILayout.Width(50));
-                string sB = GUILayout.TextField(step.thrust_dir3.ToString("F3"), numericInputStyle, GUILayout.Width(65), GUILayout.Height(20));
-                double.TryParse(sB, out step.thrust_dir3);
+                step.thrust_dir3 = DrawDelayedNumericField($"tvc_dir3_{i}", step.thrust_dir3, numericInputStyle, GUILayout.Width(65), "F3");
                 if (step.is_vary_vector && step.vary_dir3_enabled) {
                     GUILayout.Label(I18n.T("vector_lower"), gridLabelStyle, GUILayout.Width(50));
-                    string sBLow = GUILayout.TextField(step.vary_dir3_lower.ToString("F2"), numericInputStyle, GUILayout.Width(55), GUILayout.Height(20));
-                    double.TryParse(sBLow, out step.vary_dir3_lower);
+                    step.vary_dir3_lower = DrawDelayedNumericField($"tvc_dir3_low_{i}", step.vary_dir3_lower, numericInputStyle, GUILayout.Width(55), "F2");
                     GUILayout.Label(I18n.T("vector_upper"), gridLabelStyle, GUILayout.Width(50));
-                    string sBUp = GUILayout.TextField(step.vary_dir3_upper.ToString("F2"), numericInputStyle, GUILayout.Width(55), GUILayout.Height(20));
-                    double.TryParse(sBUp, out step.vary_dir3_upper);
+                    step.vary_dir3_upper = DrawDelayedNumericField($"tvc_dir3_up_{i}", step.vary_dir3_upper, numericInputStyle, GUILayout.Width(55), "F2");
                     GUILayout.Label(I18n.T("vector_step"), gridLabelStyle, GUILayout.Width(50));
-                    string sBStep = GUILayout.TextField(step.vary_dir3_max_step.ToString("F2"), numericInputStyle, GUILayout.Width(55), GUILayout.Height(20));
-                    double.TryParse(sBStep, out step.vary_dir3_max_step);
+                    step.vary_dir3_max_step = DrawDelayedNumericField($"tvc_dir3_step_{i}", step.vary_dir3_max_step, numericInputStyle, GUILayout.Width(55), "F2");
                 } else {
                     GUILayout.Label("<color=#64748b><i>[固定值设定，不作为求解变量]</i></color>", labelValueStyle);
                 }
@@ -2143,12 +2087,10 @@ namespace KSPGMAT.UI {
                 GUILayout.Space(2);
                 GUILayout.BeginHorizontal();
                 GUILayout.Label("抛离级段干重 (kg):", labelValueStyle, GUILayout.Width(120));
-                string sDrop = GUILayout.TextField(step.separated_mass.ToString("F0"), numericInputStyle ?? GUI.skin.textField, GUILayout.Width(75), GUILayout.Height(20));
-                double.TryParse(sDrop, out step.separated_mass);
+                step.separated_mass = DrawDelayedNumericField($"stg_drop_{i}", step.separated_mass, numericInputStyle ?? GUI.skin.textField, GUILayout.Width(75), "F0");
 
                 GUILayout.Label("分离后剩余飞船干重 (kg):", labelValueStyle, GUILayout.Width(160));
-                string sRem = GUILayout.TextField(step.remaining_dry_mass.ToString("F0"), numericInputStyle ?? GUI.skin.textField, GUILayout.Width(75), GUILayout.Height(20));
-                double.TryParse(sRem, out step.remaining_dry_mass);
+                step.remaining_dry_mass = DrawDelayedNumericField($"stg_rem_{i}", step.remaining_dry_mass, numericInputStyle ?? GUI.skin.textField, GUILayout.Width(75), "F0");
 
                 GUILayout.Label("<color=#94a3b8>(将在 GMAT 序列中输出 Sat.DryMass 动态扣减)</color>", labelValueStyle);
                 GUILayout.FlexibleSpace();
@@ -2758,6 +2700,66 @@ namespace KSPGMAT.UI {
                 GUILayout.Space(8);
                 GUILayout.Label($"<color=#34d399><b>➔ 🚀 抛离: {step.separated_mass:F0} kg</b></color>", labelValueStyle);
             }
+        }
+
+        private static Dictionary<string, string> inputStringCache = new Dictionary<string, string>();
+
+        /// <summary>
+        /// 延迟格式化浮点数值输入框：当输入框聚焦编辑时保持用户原始输入，不重置光标或提前格式化；失焦后才格式化同步
+        /// </summary>
+        private static double DrawDelayedNumericField(string controlId, double currentValue, GUIStyle style, GUILayoutOption widthOpt, string format = "G") {
+            GUI.SetNextControlName(controlId);
+            bool isFocused = (GUI.GetNameOfFocusedControl() == controlId);
+
+            string displayStr;
+            if (!inputStringCache.TryGetValue(controlId, out displayStr)) {
+                displayStr = currentValue.ToString(format, System.Globalization.CultureInfo.InvariantCulture);
+                inputStringCache[controlId] = displayStr;
+            }
+
+            if (!isFocused) {
+                displayStr = currentValue.ToString(format, System.Globalization.CultureInfo.InvariantCulture);
+                inputStringCache[controlId] = displayStr;
+            }
+
+            string newStr = GUILayout.TextField(displayStr, style ?? GUI.skin.textField, widthOpt, GUILayout.Height(20));
+            if (newStr != displayStr) {
+                inputStringCache[controlId] = newStr;
+                double parsed;
+                if (double.TryParse(newStr, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out parsed)) {
+                    currentValue = parsed;
+                }
+            }
+            return currentValue;
+        }
+
+        /// <summary>
+        /// 延迟格式化整型输入框
+        /// </summary>
+        private static int DrawDelayedIntField(string controlId, int currentValue, GUIStyle style, GUILayoutOption widthOpt) {
+            GUI.SetNextControlName(controlId);
+            bool isFocused = (GUI.GetNameOfFocusedControl() == controlId);
+
+            string displayStr;
+            if (!inputStringCache.TryGetValue(controlId, out displayStr)) {
+                displayStr = currentValue.ToString();
+                inputStringCache[controlId] = displayStr;
+            }
+
+            if (!isFocused) {
+                displayStr = currentValue.ToString();
+                inputStringCache[controlId] = displayStr;
+            }
+
+            string newStr = GUILayout.TextField(displayStr, style ?? GUI.skin.textField, widthOpt, GUILayout.Height(20));
+            if (newStr != displayStr) {
+                inputStringCache[controlId] = newStr;
+                int parsed;
+                if (int.TryParse(newStr, out parsed)) {
+                    currentValue = parsed;
+                }
+            }
+            return currentValue;
         }
     }
 }
