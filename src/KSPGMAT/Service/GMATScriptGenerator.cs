@@ -399,7 +399,7 @@ namespace KSPGMAT.Service {
                     }
                     else if (stype == "Report") {
                         string sub = GMATParameterRegistry.SanitizeGmatIdentifier(!string.IsNullOrEmpty(st.subscriber_name) ? st.subscriber_name : $"StepReport_{i + 1}", $"StepReport_{i + 1}");
-                        string standardReportCols = $"{satName}.ElapsedSecs {satName}.X {satName}.Y {satName}.Z {satName}.VX {satName}.VY {satName}.VZ {satName}.{cBody}.Altitude {satName}.SMA {satName}.ECC {satName}.INC {satName}.RAAN {satName}.AOP {satName}.TA {satName}.{cBody}.RMAG {satName}.TotalMass {satName}.FuelMass";
+                        string standardReportCols = $"{satName}.ElapsedSecs {satName}.X {satName}.Y {satName}.Z {satName}.VX {satName}.VY {satName}.VZ {satName}.{cBody}.Altitude {satName}.SMA {satName}.ECC {satName}.INC {satName}.RAAN {satName}.AOP {satName}.TA {satName}.{cBody}.RMAG {satName}.TotalMass {satName}.DryMass";
                         string reportExpr = !string.IsNullOrWhiteSpace(st.expression) ? st.expression : standardReportCols;
                         sb.AppendLine($"% Step Report ({sub})");
                         sb.AppendLine($"Report {sub} {reportExpr};");
