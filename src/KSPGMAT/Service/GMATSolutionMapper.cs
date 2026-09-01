@@ -206,7 +206,6 @@ namespace KSPGMAT.Service {
                         }
                     }
                 }
-
                 result.final_sma = finalSma;
                 result.final_ecc = finalEcc;
                 result.final_inc = finalInc;
@@ -223,16 +222,15 @@ namespace KSPGMAT.Service {
         /// 基于模型推进器与多级质量递推构建高精度机动列表
         /// </summary>
         public static List<SolvedBurn> BuildSolvedBurns(
-            List<MissionStep> originalSteps,
-            Dictionary<string, DCSummary> dcSummaries,
+            List<MissionStep> originalSteps, 
+            Dictionary<string, DCSummary> dcSummaries, 
             Dictionary<string, double> globalSolvedVars,
             List<TrajectoryPoint> trajectory = null) 
         {
             var burns = new List<SolvedBurn>();
             if (originalSteps == null || originalSteps.Count == 0) return burns;
 
-            double cumTime = 0;
-            int trajIdx = 0;
+            double simClock = 0.0;
             double currentRunningMass = GMATStateManager.Current.Spacecraft.TotalMassKg > 0 
                 ? GMATStateManager.Current.Spacecraft.TotalMassKg 
                 : (FlightGlobals.ActiveVessel != null ? FlightGlobals.ActiveVessel.GetTotalMass() * 1000.0 : 1000.0);
@@ -242,14 +240,12 @@ namespace KSPGMAT.Service {
             double currentGroupDir1 = 1.0, currentGroupDir2 = 0.0, currentGroupDir3 = 0.0;
             bool currentGroupHasTVC = false;
             bool insideTarget = false;
-            double targetStartCumTime = 0.0;
 
             for (int i = 0; i < originalSteps.Count; i++) {
                 var st = originalSteps[i];
 
                 if (st.type == "Target") {
                     insideTarget = true;
-                    targetStartCumTime = cumTime;
                     currentDC = st.dc_name ?? "";
                     currentGroupDuration = 0;
                     currentGroupDir1 = 1.0; currentGroupDir2 = 0.0; currentGroupDir3 = 0.0;
@@ -257,10 +253,6 @@ namespace KSPGMAT.Service {
                 }
                 else if (st.type == "EndTarget") {
                     insideTarget = false;
-                    if (trajectory != null && trajIdx < trajectory.Count) {
-                        cumTime = trajectory[trajIdx].t;
-                        trajIdx++;
-                    }
                 }
                 else if (st.type == "Vary") {
                     string vVar = st.vary_variable ?? "";
@@ -315,27 +307,19 @@ namespace KSPGMAT.Service {
                         } else if (st.duration > 0) {
                             pDur = st.duration * scale;
                         }
-                    }
-
-                    if (!insideTarget) {
-                        if (trajectory != null && trajIdx < trajectory.Count) {
-                            cumTime = trajectory[trajIdx].t;
-                            trajIdx++;
-                        } else {
-                            cumTime += pDur;
-                        }
+                        simClock += pDur;
                     } else {
-                        targetStartCumTime += pDur;
+                        // Non-elapsed event condition (e.g. Apoapsis, Periapsis, Latitude, RMAG...)
+                        if (trajectory != null && trajectory.Count > 0) {
+                            var nextPt = trajectory.Find(p => p.t > simClock + 0.1);
+                            if (nextPt != null) {
+                                simClock = nextPt.t;
+                            }
+                        }
                     }
                 }
                 else if (st.type == "FiniteBurn") {
-                    double burnStartTime = (trajectory != null && trajIdx < trajectory.Count)
-                        ? trajectory[trajIdx].t
-                        : (insideTarget ? targetStartCumTime : cumTime);
-
-                    if (trajectory != null && trajIdx < trajectory.Count) {
-                        trajIdx++; // Consume Before-Burn report
-                    }
+                    double burnStartTime = simClock;
 
                     double dur = st.duration;
                     if (currentGroupDuration > 0) {
@@ -429,27 +413,11 @@ namespace KSPGMAT.Service {
                     };
                     burns.Add(sbEntry);
 
-                    if (trajectory != null && trajIdx < trajectory.Count) {
-                        cumTime = trajectory[trajIdx].t;
-                        targetStartCumTime = cumTime;
-                        trajIdx++; // Consume After-Burn report
-                    } else {
-                        if (insideTarget) {
-                            targetStartCumTime += dur;
-                        } else {
-                            cumTime += dur;
-                        }
-                    }
+                    simClock += dur;
                 }
                 else if (st.type == "ImpulsiveBurn" || st.type == "Maneuver") {
                     double mag = Math.Sqrt(st.dv_v * st.dv_v + st.dv_n * st.dv_n + st.dv_b * st.dv_b);
-                    double burnStartTime = (trajectory != null && trajIdx < trajectory.Count)
-                        ? trajectory[trajIdx].t
-                        : (insideTarget ? targetStartCumTime : cumTime);
-
-                    if (trajectory != null && trajIdx < trajectory.Count) {
-                        trajIdx++; // Consume Before-Maneuver report
-                    }
+                    double burnStartTime = simClock;
 
                     burns.Add(new SolvedBurn {
                         type = "Impulsive",
@@ -468,12 +436,6 @@ namespace KSPGMAT.Service {
                         principia_writeable = true,
                         enable_timing_optimization = true
                     });
-
-                    if (trajectory != null && trajIdx < trajectory.Count) {
-                        cumTime = trajectory[trajIdx].t;
-                        targetStartCumTime = cumTime;
-                        trajIdx++; // Consume After-Maneuver report
-                    }
                 }
             }
 
