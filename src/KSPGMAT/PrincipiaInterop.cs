@@ -29,6 +29,8 @@ namespace KSPGMAT {
         private static MethodInfo mVesselFromParent;
         private static MethodInfo mFlightPlanExists;
         private static MethodInfo mFlightPlanCreate;
+        private static MethodInfo mFlightPlanDelete;
+        private static MethodInfo mFlightPlanRemove;
         private static MethodInfo mFlightPlanSetDesiredFinalTime;
         private static MethodInfo mFlightPlanGetDesiredFinalTime;
         private static MethodInfo mFlightPlanNumberOfManoeuvres;
@@ -77,6 +79,8 @@ namespace KSPGMAT {
                     mVesselFromParent = tInterface.GetMethod("VesselFromParent", flags);
                     mFlightPlanExists = tInterface.GetMethod("FlightPlanExists", flags);
                     mFlightPlanCreate = tInterface.GetMethod("FlightPlanCreate", flags);
+                    mFlightPlanDelete = tInterface.GetMethod("FlightPlanDelete", flags);
+                    mFlightPlanRemove = tInterface.GetMethod("FlightPlanRemove", flags);
                     mFlightPlanSetDesiredFinalTime = tInterface.GetMethod("FlightPlanSetDesiredFinalTime", flags);
                     mFlightPlanGetDesiredFinalTime = tInterface.GetMethod("FlightPlanGetDesiredFinalTime", flags);
                     mFlightPlanNumberOfManoeuvres = tInterface.GetMethod("FlightPlanNumberOfManoeuvres", flags);
@@ -252,6 +256,38 @@ namespace KSPGMAT {
                 Debug.Log($"[KSPGMAT] Created new FlightPlan for vessel {vessel.vesselName} (mass: {massTonnes}t, finalTime: {finalTime})");
             }
             return true;
+        }
+
+        /// <summary>
+        /// Clears all manoeuvre nodes from the Principia flight plan.
+        /// </summary>
+        public static bool ClearAllFlightPlanNodes(Vessel vessel) {
+            if (vessel == null || !HasVessel(vessel)) return false;
+            EnsureInitialized();
+            IntPtr plugin = GetPlugin();
+            if (plugin == IntPtr.Zero) return false;
+            string guid = vessel.id.ToString();
+            try {
+                if (mFlightPlanNumberOfManoeuvres != null && mFlightPlanRemove != null && HasFlightPlan(vessel)) {
+                    int count = (int)mFlightPlanNumberOfManoeuvres.Invoke(null, new object[] { plugin, guid });
+                    for (int i = count - 1; i >= 0; i--) {
+                        try {
+                            mFlightPlanRemove.Invoke(null, new object[] { plugin, guid, i });
+                        } catch {}
+                    }
+                }
+                if (mFlightPlanDelete != null && HasFlightPlan(vessel)) {
+                    try {
+                        mFlightPlanDelete.Invoke(null, new object[] { plugin, guid });
+                    } catch {}
+                }
+                EnsureFlightPlanExists(vessel);
+                Debug.Log($"[KSPGMAT] Cleared all Principia FlightPlan nodes for vessel {vessel.vesselName}");
+                return true;
+            } catch (Exception ex) {
+                KSPGMATLog.Warn("[PrincipiaInterop] Error clearing FlightPlan: " + ex.Message);
+                return false;
+            }
         }
 
         public static bool SetFlightPlanFinalTime(Vessel vessel, double finalTime) {

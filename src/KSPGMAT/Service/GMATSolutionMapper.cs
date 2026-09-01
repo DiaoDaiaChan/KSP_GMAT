@@ -424,6 +424,7 @@ namespace KSPGMAT.Service {
                         epoch_offset = burnStartTime,
                         has_native_delta_v = true,
                         principia_writeable = true,
+                        enable_timing_optimization = true,
                         native_result_note = $"NASA GMAT 收敛解 (所属DC: {(string.IsNullOrEmpty(currentDC) ? "默认" : currentDC)})"
                     };
                     burns.Add(sbEntry);
@@ -464,7 +465,8 @@ namespace KSPGMAT.Service {
                         magnitude = mag,
                         epoch_offset = burnStartTime,
                         has_native_delta_v = true,
-                        principia_writeable = true
+                        principia_writeable = true,
+                        enable_timing_optimization = true
                     });
 
                     if (trajectory != null && trajIdx < trajectory.Count) {

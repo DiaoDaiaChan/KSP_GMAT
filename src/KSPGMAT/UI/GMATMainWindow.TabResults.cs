@@ -56,6 +56,18 @@ namespace KSPGMAT.UI {
                 }
             }
 
+            if (GUILayout.Button("🧹 一键清空实机节点", secondaryButtonStyle, GUILayout.Width(130), GUILayout.Height(22))) {
+                if (vessel != null) {
+                    PrincipiaInterop.ClearAllFlightPlanNodes(vessel);
+                    lastFlightPlanReadTime = Time.realtimeSinceStartup;
+                    string pMsg = "";
+                    PrincipiaInterop.TryReadFlightPlanNodes(vessel, out cachedFlightPlanNodes, out pMsg);
+                    pNodes = cachedFlightPlanNodes;
+                    hasPrincipiaNodes = (pNodes != null && pNodes.Count > 0);
+                    ScreenMessages.PostScreenMessage("🧹 已彻底清空 Principia 飞行计划中的全部机动节点！", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                }
+            }
+
             if (GUILayout.Button("🚀 写入 Principia", actionButtonStyle, GUILayout.Width(130), GUILayout.Height(22))) {
                 WriteBurnsToPrincipia(vessel);
                 if (vessel != null) {
@@ -91,14 +103,37 @@ namespace KSPGMAT.UI {
 
             if (GUILayout.Button("⚪ 1. 原生未修正", isRaw ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(22))) {
                 currentIgnitionMode = IgnitionCorrectionMode.RawUnmodified;
-                ScreenMessages.PostScreenMessage("已切换至「1. GMAT 原生未修正模式」(直接采用理论几何折半点火)", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                if (latestResult != null && latestResult.solved_burns != null) {
+                    foreach (var b in latestResult.solved_burns) b.enable_timing_optimization = false;
+                }
+                if (vessel != null) {
+                    PrincipiaInterop.ClearAllFlightPlanNodes(vessel);
+                    WriteBurnsToPrincipia(vessel);
+                    lastFlightPlanReadTime = Time.realtimeSinceStartup;
+                    string pMsg = "";
+                    PrincipiaInterop.TryReadFlightPlanNodes(vessel, out cachedFlightPlanNodes, out pMsg);
+                }
+                ScreenMessages.PostScreenMessage("✅ 已切换至「1. 原生未修正」并自动刷新 Principia 节点", 3.0f, ScreenMessageStyle.UPPER_CENTER);
             }
             if (GUILayout.Button("🔵 2. 单系统高精动力学修正", isPrec ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(22))) {
                 currentIgnitionMode = IgnitionCorrectionMode.PrecisionDynamics;
-                ScreenMessages.PostScreenMessage("已切换至「2. 单系统高精动力学修正模式」(集成 Principia 原生变质量质心 + 开普勒锁相)", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                if (latestResult != null && latestResult.solved_burns != null) {
+                    foreach (var b in latestResult.solved_burns) b.enable_timing_optimization = true;
+                }
+                if (vessel != null) {
+                    PrincipiaInterop.ClearAllFlightPlanNodes(vessel);
+                    WriteBurnsToPrincipia(vessel);
+                    lastFlightPlanReadTime = Time.realtimeSinceStartup;
+                    string pMsg = "";
+                    PrincipiaInterop.TryReadFlightPlanNodes(vessel, out cachedFlightPlanNodes, out pMsg);
+                }
+                ScreenMessages.PostScreenMessage("✅ 已切换至「2. 单系统高精动力学修正」并自动刷新 Principia 节点", 3.0f, ScreenMessageStyle.UPPER_CENTER);
             }
             if (GUILayout.Button(isAutoClosedLoopRunning ? "⏳ 正在闭环二次求解..." : "✨ 3. 闭环自适应二次优化 (一键无感)", isLoop ? tabButtonActiveStyle : successButtonStyle, GUILayout.Height(22))) {
                 currentIgnitionMode = IgnitionCorrectionMode.ClosedLoopAuto;
+                if (latestResult != null && latestResult.solved_burns != null) {
+                    foreach (var b in latestResult.solved_burns) b.enable_timing_optimization = true;
+                }
                 ExecuteClosedLoopAutoRefinement(vessel);
             }
             GUILayout.FlexibleSpace();
@@ -178,6 +213,13 @@ namespace KSPGMAT.UI {
                         bool newOpt = GUILayout.Toggle(b.enable_timing_optimization, " ⚡ 启用点火时相优化", GUILayout.Height(20));
                         if (newOpt != b.enable_timing_optimization) {
                             b.enable_timing_optimization = newOpt;
+                            if (vessel != null) {
+                                PrincipiaInterop.ClearAllFlightPlanNodes(vessel);
+                                WriteBurnsToPrincipia(vessel);
+                                lastFlightPlanReadTime = Time.realtimeSinceStartup;
+                                string pMsg = "";
+                                PrincipiaInterop.TryReadFlightPlanNodes(vessel, out cachedFlightPlanNodes, out pMsg);
+                            }
                         }
 
                         GUILayout.Space(6);
@@ -562,6 +604,9 @@ namespace KSPGMAT.UI {
                 ScreenMessages.PostScreenMessage("❌ 无可用机动数据", 3.0f, ScreenMessageStyle.UPPER_CENTER);
                 return;
             }
+
+            // Always clear existing flight plan nodes first so new burns are cleanly written to indexes 0, 1, 2...
+            PrincipiaInterop.ClearAllFlightPlanNodes(vessel);
 
             double solveUT = (latestResult.solve_ut > 0) ? latestResult.solve_ut : Planetarium.GetUniversalTime();
             double currentUT = Planetarium.GetUniversalTime();
