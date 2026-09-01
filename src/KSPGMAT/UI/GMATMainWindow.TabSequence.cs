@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Text;
 using UnityEngine;
 using KSPGMAT.Model;
@@ -166,36 +167,102 @@ namespace KSPGMAT.UI {
 
             // Presets & Import Header
             GUILayout.BeginVertical(cardBoxStyle);
+            
+            var allTemplates = GMATTemplateManager.GetTemplates();
+            
             GUILayout.BeginHorizontal();
-            GUILayout.Label("任务队列预设模板 (官方工业标准向导)", headerStyle);
+            GUILayout.Label($"<b>📚 任务队列预设模板库</b> <color=#94a3b8>({allTemplates.Count} 个可用脚本)</color>", headerStyle);
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button("📝 审查/推送脚本 (IDE)...", secondaryButtonStyle, GUILayout.Height(20))) {
+            
+            if (GUILayout.Button("🔄 刷新", secondaryButtonStyle, GUILayout.Height(20))) {
+                GMATTemplateManager.RefreshTemplates();
+                allTemplates = GMATTemplateManager.GetTemplates(true);
+            }
+            GUILayout.Space(3);
+            if (GUILayout.Button("📁 打开目录...", secondaryButtonStyle, GUILayout.Height(20))) {
+                GMATTemplateManager.OpenTemplatesFolder();
+            }
+            GUILayout.Space(3);
+            if (GUILayout.Button("📝 IDE...", secondaryButtonStyle, GUILayout.Height(20))) {
                 activeTab = 1; ideScriptViewMode = 0;
             }
-            GUILayout.Space(4);
-            if (GUILayout.Button(showCustomScriptInput ? "▲ 收起自定义" : "📜 快速脚本输入...", secondaryButtonStyle, GUILayout.Height(20))) {
+            GUILayout.Space(3);
+            if (GUILayout.Button(showCustomScriptInput ? "▲ 收起" : "📜 导入/导出...", secondaryButtonStyle, GUILayout.Height(20))) {
                 showCustomScriptInput = !showCustomScriptInput;
             }
             GUILayout.EndHorizontal();
 
-            // Dynamic Script Template Loader & Preset Buttons (NASA/CNSA Official Standards)
-            GUILayout.BeginHorizontal();
-            if (GUILayout.Button("🚀 28.6° LEO ➔ GTO ➔ 0° GEO", actionButtonStyle, GUILayout.Height(24))) {
-                LoadScriptTemplate("01_LEO_to_GEO_FiniteBurn.script", vessel);
+            // Filter & Search bar (if templates > 3)
+            if (allTemplates.Count > 3) {
+                GUILayout.Space(2);
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("<color=#94a3b8>分类:</color>", labelValueStyle, GUILayout.Width(35));
+                string[] categories = new string[] { "全部", "近地/地球", "地月系", "深空/行星际", "测试/验证" };
+                for (int c = 0; c < categories.Length; c++) {
+                    string cat = categories[c];
+                    bool isSelectedCat = (templateSelectedCategory == cat);
+                    GUIStyle catStyle = isSelectedCat ? actionButtonStyle : secondaryButtonStyle;
+                    if (GUILayout.Button(cat, catStyle, GUILayout.Height(18))) {
+                        templateSelectedCategory = cat;
+                    }
+                    GUILayout.Space(2);
+                }
+                GUILayout.FlexibleSpace();
+                GUILayout.Label("<color=#94a3b8>🔍</color>", labelValueStyle, GUILayout.Width(15));
+                templateSearchQuery = GUILayout.TextField(templateSearchQuery, stepLabelInputStyle ?? GUI.skin.textField, GUILayout.Width(130), GUILayout.Height(18));
+                if (!string.IsNullOrEmpty(templateSearchQuery) && GUILayout.Button("✖", secondaryButtonStyle, GUILayout.Width(18), GUILayout.Height(18))) {
+                    templateSearchQuery = "";
+                }
+                GUILayout.EndHorizontal();
             }
-            if (GUILayout.Button("🌕 阿波罗地月 TLI+LOI", secondaryButtonStyle, GUILayout.Height(24))) {
-                LoadScriptTemplate("02_Apollo_Cislunar_TLI_LOI.script", vessel);
+
+            // Filtered Templates List
+            var filtered = allTemplates.Where(t => {
+                if (templateSelectedCategory != "全部" && t.Category != templateSelectedCategory) return false;
+                if (!string.IsNullOrEmpty(templateSearchQuery)) {
+                    string q = templateSearchQuery.Trim().ToLowerInvariant();
+                    if (!t.DisplayTitle.ToLowerInvariant().Contains(q) && !t.FileName.ToLowerInvariant().Contains(q) && !t.Description.ToLowerInvariant().Contains(q)) {
+                        return false;
+                    }
+                }
+                return true;
+            }).ToList();
+
+            GUILayout.Space(4);
+
+            // ELASTIC DYNAMIC FLOW/GRID LAYOUT (Multi-row dynamic auto-wrap)
+            if (filtered.Count > 0) {
+                int columns = 3; // 3 elastic buttons per row
+                int rowCount = (filtered.Count + columns - 1) / columns;
+
+                for (int r = 0; r < rowCount; r++) {
+                    GUILayout.BeginHorizontal();
+                    for (int col = 0; col < columns; col++) {
+                        int index = r * columns + col;
+                        if (index < filtered.Count) {
+                            var tpl = filtered[index];
+                            bool isCurrent = !string.IsNullOrEmpty(currentLoadedTemplateName) && 
+                                (currentLoadedTemplateName.Equals(tpl.FileName, StringComparison.OrdinalIgnoreCase) || currentLoadedTemplateName.Equals(tpl.FullPath, StringComparison.OrdinalIgnoreCase));
+                            
+                            GUIStyle btnStyle = isCurrent ? actionButtonStyle : secondaryButtonStyle;
+                            string btnText = $"{tpl.Icon} {tpl.DisplayTitle}";
+
+                            if (GUILayout.Button(new GUIContent(btnText, $"{tpl.FileName}\n{tpl.Description}\n路径: {tpl.FullPath}"), btnStyle, GUILayout.Height(24), GUILayout.ExpandWidth(true))) {
+                                currentLoadedTemplateName = tpl.FileName;
+                                LoadScriptTemplate(tpl.FullPath, vessel);
+                            }
+                        } else {
+                            GUILayout.FlexibleSpace();
+                        }
+                    }
+                    GUILayout.EndHorizontal();
+                    if (r < rowCount - 1) GUILayout.Space(3);
+                }
+            } else {
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("<color=#64748b>没有找到匹配的模板脚本。可点击上方「📁 打开目录」放入自定义 .script 脚本文件后点击刷新。</color>", labelValueStyle);
+                GUILayout.EndHorizontal();
             }
-            if (GUILayout.Button("🌖 嫦娥六号 3次近月制动", secondaryButtonStyle, GUILayout.Height(24))) {
-                LoadScriptTemplate("03_ChangE6_Lunar_Orbit_Insertion_3Burns.script", vessel);
-            }
-            if (GUILayout.Button("🛰️ 地月中继 NRHO Halo", secondaryButtonStyle, GUILayout.Height(24))) {
-                LoadScriptTemplate("04_Earth_Moon_NRHO_Halo_Orbit.script", vessel);
-            }
-            if (GUILayout.Button("🔴 地火霍曼转移", secondaryButtonStyle, GUILayout.Height(24))) {
-                LoadScriptTemplate("05_Earth_Mars_Hohmann_Transfer.script", vessel);
-            }
-            GUILayout.EndHorizontal();
 
             if (showCustomScriptInput) {
                 GUILayout.Space(4);
@@ -2437,24 +2504,36 @@ namespace KSPGMAT.UI {
             }
         }
 
-        private void LoadScriptTemplate(string templateFileName, Vessel vessel) {
-            string[] searchPaths = new string[] {
-                Path.Combine(KSPUtil.ApplicationRootPath, "GameData", "KSPGMAT", "templates", templateFileName),
-                Path.Combine(GMATClient.GmatBinPath, "KSP_GMAT", "GameData", "KSPGMAT", "templates", templateFileName),
-                Path.Combine(GMATClient.GmatBinPath, "KSP_GMAT", "scripts", "templates", templateFileName),
-                Path.Combine(KSPUtil.ApplicationRootPath, "GameData", "KSPGMAT", "scripts", templateFileName),
-                Path.Combine(GMATClient.GmatBinPath, "KSP_GMAT", "scripts", templateFileName)
-            };
-
+        private void LoadScriptTemplate(string templatePathOrFileName, Vessel vessel) {
             string foundPath = null;
-            for (int i = 0; i < searchPaths.Length; i++) {
-                if (File.Exists(searchPaths[i])) { foundPath = searchPaths[i]; break; }
+            if (File.Exists(templatePathOrFileName)) {
+                foundPath = templatePathOrFileName;
+            } else {
+                string fileName = Path.GetFileName(templatePathOrFileName);
+                string[] searchPaths = new string[] {
+                    Path.Combine(KSPUtil.ApplicationRootPath, "GameData", "KSPGMAT", "templates", fileName),
+                    Path.Combine(GMATClient.GmatBinPath, "KSP_GMAT", "GameData", "KSPGMAT", "templates", fileName),
+                    Path.Combine(GMATClient.GmatBinPath, "KSP_GMAT", "scripts", "templates", fileName),
+                    Path.Combine(KSPUtil.ApplicationRootPath, "GameData", "KSPGMAT", "scripts", fileName),
+                    Path.Combine(GMATClient.GmatBinPath, "KSP_GMAT", "scripts", fileName),
+                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "KSPGMAT", "templates", fileName)
+                };
+
+                for (int i = 0; i < searchPaths.Length; i++) {
+                    if (File.Exists(searchPaths[i])) { foundPath = searchPaths[i]; break; }
+                }
             }
 
             if (!string.IsNullOrEmpty(foundPath)) {
+                currentLoadedTemplateName = Path.GetFileName(foundPath);
                 GMATClient.ImportScript(foundPath, vessel, (ok, res, msg) => {
                     if (ok && res != null) {
                         ApplyImportResultToState(res);
+
+                        // Clear old solution state
+                        latestResult = null;
+                        solveStageText = "就绪";
+                        solveProgress = 0f;
 
                         // Instantly synchronize IDE buffer with the loaded script template
                         try {
@@ -2464,13 +2543,13 @@ namespace KSPGMAT.UI {
                             ideCustomBuffer = GenerateLiveGmatScript(ideScriptViewMode);
                         }
 
-                        ScreenMessages.PostScreenMessage($"✅ 成功从标准模板文件导入: {templateFileName} ({res.sequence.Count} 个步骤)", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                        ScreenMessages.PostScreenMessage($"✅ 成功从标准模板库导入: {Path.GetFileName(foundPath)} ({res.sequence?.Count ?? 0} 个任务步骤)", 3.0f, ScreenMessageStyle.UPPER_CENTER);
                     } else {
                         ScreenMessages.PostScreenMessage($"❌ 解析脚本模板失败: {msg}", 3.0f, ScreenMessageStyle.UPPER_CENTER);
                     }
                 });
             } else {
-                ScreenMessages.PostScreenMessage($"❌ 未在模板库中找到文件: {templateFileName}", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                ScreenMessages.PostScreenMessage($"❌ 未在模板库中找到文件: {templatePathOrFileName}", 3.0f, ScreenMessageStyle.UPPER_CENTER);
             }
         }
 

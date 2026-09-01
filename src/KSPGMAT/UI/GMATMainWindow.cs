@@ -190,6 +190,10 @@ namespace KSPGMAT.UI {
         private string customScriptPath = "";
         private string exportTemplateName = "custom_mission_preset.script";
         private bool showCustomScriptInput = false;
+        private string templateSearchQuery = "";
+        private string templateSelectedCategory = "全部";
+        private string currentLoadedTemplateName = "";
+        private Vector2 templateScrollPos = Vector2.zero;
         private int draggedStepIndex = -1;
         private int stepToMoveUp = -1;
         private int stepToMoveDown = -1;
