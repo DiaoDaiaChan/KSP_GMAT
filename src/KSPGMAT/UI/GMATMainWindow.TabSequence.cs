@@ -641,14 +641,15 @@ namespace KSPGMAT.UI {
                                 nextHoveredStepIndex = i;
                             }
                             Color themeColor = GetStepThemeColor("EndTarget");
-                            float stripW = isHoveredNow ? 6f : 3.5f;
-                            Color stripCol = isHoveredNow ? themeColor : new Color(themeColor.r, themeColor.g, themeColor.b, 0.75f);
+                            float stripW = isHoveredNow ? 3.5f : 2.0f;
+                            Color stripCol = isHoveredNow ? themeColor : new Color(themeColor.r, themeColor.g, themeColor.b, 0.70f);
                             GUI.DrawTexture(new Rect(cardRect.x + 1, cardRect.y + 2, stripW, cardRect.height - 4), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, stripCol, 0, 0);
 
                             if (isHoveredNow) {
-                                GUI.DrawTexture(new Rect(cardRect.x, cardRect.y, cardRect.width, 2), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, themeColor, 0, 0);
-                                GUI.DrawTexture(new Rect(cardRect.x, cardRect.y + cardRect.height - 2, cardRect.width, 2), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, themeColor, 0, 0);
-                                GUI.DrawTexture(new Rect(cardRect.x + cardRect.width - 2, cardRect.y, 2, cardRect.height), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, themeColor, 0, 0);
+                                Color glowBorder = new Color(themeColor.r, themeColor.g, themeColor.b, 0.85f);
+                                GUI.DrawTexture(new Rect(cardRect.x, cardRect.y, cardRect.width, 1), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, glowBorder, 0, 0);
+                                GUI.DrawTexture(new Rect(cardRect.x, cardRect.y + cardRect.height - 1, cardRect.width, 1), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, glowBorder, 0, 0);
+                                GUI.DrawTexture(new Rect(cardRect.x + cardRect.width - 1, cardRect.y, 1, cardRect.height), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, glowBorder, 0, 0);
                             }
                         }
                         GUILayout.EndHorizontal();

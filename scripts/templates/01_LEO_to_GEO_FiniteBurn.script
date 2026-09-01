@@ -123,7 +123,7 @@ Target DC_GEO {SolveMode = Solve, ExitMode = SaveAndContinue};
   EndFiniteBurn GEO_Burn(Sat);
   Propagate LEOProp(Sat) {Sat.Earth.Periapsis};
   Achieve DC_GEO(Sat.Earth.SMA = 42164.14, {Tolerance = 0.5});
-  Achieve DC_GEO(Sat.Earth.INC = 0.0, {Tolerance = 0.01});
+  Achieve DC_GEO(Sat.EarthMJ2000Eq.VZ = 0.0, {Tolerance = 0.001});
 EndTarget;
 
 % Step 4: 24-Hour GEO Stationkeeping Cruise & Final Report
