@@ -294,14 +294,38 @@ namespace KSPGMAT.Service {
                     }
                 }
                 else if (st.type == "Propagate") {
+                    double pDur = 0.0;
+                    string sType = (st.stop_type ?? "").Trim();
+                    bool isElapsed = sType.EndsWith("ElapsedSecs", StringComparison.OrdinalIgnoreCase) 
+                                  || sType.EndsWith("Time", StringComparison.OrdinalIgnoreCase)
+                                  || sType.EndsWith("ElapsedDays", StringComparison.OrdinalIgnoreCase);
+
+                    if (isElapsed) {
+                        double scale = sType.EndsWith("ElapsedDays", StringComparison.OrdinalIgnoreCase) ? 86400.0 : 1.0;
+                        string vName = !string.IsNullOrEmpty(st.target_val_str) ? st.target_val_str.Trim() : "";
+                        Dictionary<string, double> activeVars = (!string.IsNullOrEmpty(currentDC) && dcSummaries != null && dcSummaries.ContainsKey(currentDC))
+                            ? dcSummaries[currentDC].final_variables : globalSolvedVars;
+
+                        if (!string.IsNullOrEmpty(vName) && activeVars != null && activeVars.ContainsKey(vName)) {
+                            pDur = activeVars[vName] * scale;
+                        } else if (!string.IsNullOrEmpty(vName) && globalSolvedVars != null && globalSolvedVars.ContainsKey(vName)) {
+                            pDur = globalSolvedVars[vName] * scale;
+                        } else if (st.target_val > 0) {
+                            pDur = st.target_val * scale;
+                        } else if (st.duration > 0) {
+                            pDur = st.duration * scale;
+                        }
+                    }
+
                     if (!insideTarget) {
-                        if (trajectory != null && trajIdx < trajectory.Count) {
+                        if (trajectory != null && trajIdx < trajectory.Count && trajectory[trajIdx].t > cumTime) {
                             cumTime = trajectory[trajIdx].t;
                             trajIdx++;
                         } else {
-                            if (st.stop_type == "Time" || st.stop_type == "ElapsedSecs") cumTime += st.duration;
-                            else if (st.stop_type == "Days" || st.stop_type == "ElapsedDays") cumTime += st.duration * 86400.0;
+                            cumTime += pDur;
                         }
+                    } else {
+                        targetStartCumTime += pDur;
                     }
                 }
                 else if (st.type == "FiniteBurn") {
