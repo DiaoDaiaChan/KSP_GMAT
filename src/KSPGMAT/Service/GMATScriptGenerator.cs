@@ -345,7 +345,10 @@ namespace KSPGMAT.Service {
                             goalParam = GMATParameterRegistry.StripCraftPrefix(goalParam.Split('=')[0].Trim());
                         }
                         if (!goalParam.Contains(".")) {
-                            string[] craftDirect = new string[] { "TotalMass", "DryMass", "FuelMass", "ElapsedSecs", "ElapsedDays", "A1ModJulian" };
+                            string[] craftDirect = new string[] { 
+                                "TotalMass", "DryMass", "FuelMass", "ElapsedSecs", "ElapsedDays", "A1ModJulian",
+                                "SMA", "ECC", "INC", "RAAN", "AOP", "TA", "EA", "MA", "RadPer", "RadApo"
+                            };
                             bool isCraftDirect = Array.Exists(craftDirect, p => p.Equals(goalParam, StringComparison.OrdinalIgnoreCase));
                             if (!isCraftDirect) {
                                 goalParam = $"{cBody}.{goalParam}";
@@ -406,7 +409,7 @@ namespace KSPGMAT.Service {
                 var p = cond.Split('=');
                 string lhs = GMATParameterRegistry.StripCraftPrefix(p[0].Trim());
                 string rhs = p[1].Trim();
-                if (!lhs.Contains(".") && !lhs.StartsWith("Elapsed", StringComparison.OrdinalIgnoreCase) && !lhs.StartsWith("TA", StringComparison.OrdinalIgnoreCase)) {
+                if (!lhs.Contains(".") && !GMATParameterRegistry.IsSpacecraftDirectProperty(lhs)) {
                     lhs = $"{centralBody}.{lhs}";
                 }
                 return $"{satName}.{lhs} = {rhs}";
@@ -445,7 +448,7 @@ namespace KSPGMAT.Service {
 
             // 4. Value-based Numerical Stop Conditions (e.g. Altitude, RMAG, Latitude, TA, RAAN, AOP, FPA, etc.)
             string rhsVal = !string.IsNullOrEmpty(st.target_val_str) ? st.target_val_str : st.target_val.ToString("G", CultureInfo.InvariantCulture);
-            if (!cond.Contains(".") && !cond.StartsWith("Elapsed", StringComparison.OrdinalIgnoreCase)) {
+            if (!cond.Contains(".") && !GMATParameterRegistry.IsSpacecraftDirectProperty(cond)) {
                 cond = $"{centralBody}.{cond}";
             }
             return $"{satName}.{cond} = {rhsVal}";

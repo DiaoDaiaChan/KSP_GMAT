@@ -304,6 +304,16 @@ namespace KSPGMAT {
             return param;
         }
 
+        public static bool IsSpacecraftDirectProperty(string paramName) {
+            if (string.IsNullOrEmpty(paramName)) return false;
+            string[] direct = new string[] {
+                "SMA", "ECC", "INC", "RAAN", "AOP", "TA", "EA", "MA", "RadPer", "RadApo",
+                "TotalMass", "DryMass", "FuelMass", "ElapsedSecs", "ElapsedDays",
+                "A1ModJulian", "TAIModJulian", "UTCModJulian", "C3Energy", "Energy"
+            };
+            return Array.Exists(direct, p => p.Equals(paramName, StringComparison.OrdinalIgnoreCase));
+        }
+
         private static string GetUserCoordsSavePath() {
             try {
                 string root = KSPUtil.ApplicationRootPath;
@@ -1371,24 +1381,37 @@ namespace KSPGMAT {
                         }
                     }
 
-                    // 1b. TOP PRIORITY: Active Central Body Direct Orbit Parameters (e.g. Sat.Earth.SMA, Sat.Earth.Altitude)
-                    string[] coreOrbParams = new string[] { "SMA", "Altitude", "Apoapsis", "Periapsis", "ECC", "INC", "RAAN", "AOP", "TA", "RMAG", "VMAG", "Energy" };
-                    string[] coreOrbUnits = new string[] { "[Km]", "[Km]", "[Event]", "[Event]", "[Unitless]", "[Deg]", "[Deg]", "[Deg]", "[Deg]", "[Km]", "[Km/s]", "[Km²/s²]" };
-                    string[] coreOrbDocsZh = new string[] { "轨道半长轴", "海平面高度", "远地点极值点", "近地点极值点", "轨道偏心率", "轨道倾角", "升交点赤经", "近地点幅角", "真近点角", "地心距离模长", "空间速度模长", "比轨道能量" };
-                    double[] coreOrbDefs = new double[] { 42164.14, 35786.0, 0.0, 0.0, 0.001, 0.0, 0.0, 180.0, 0.0, 42164.0, 3.07, -4.7 };
+                    // 1b. TOP PRIORITY: Spacecraft Direct Keplerian Elements (Official NASA GMAT standard: Sat.SMA, Sat.ECC, Sat.INC...)
+                    string[] directKeplerParams = new string[] { "SMA", "ECC", "INC", "RAAN", "AOP", "TA", "EA", "MA", "RadPer", "RadApo" };
+                    string[] directKeplerUnits = new string[] { "[Km]", "[Unitless]", "[Deg]", "[Deg]", "[Deg]", "[Deg]", "[Deg]", "[Deg]", "[Km]", "[Km]" };
+                    string[] directKeplerDocsZh = new string[] { "轨道半长轴", "轨道偏心率 (圆化目标 ECC=0)", "轨道倾角 (消除倾角目标 INC=0)", "升交点赤经", "近地点幅角", "真近点角", "偏近点角", "平近点角", "近心点半径", "远心点半径" };
+                    double[] directKeplerDefs = new double[] { 42164.14, 0.001, 0.0, 0.0, 180.0, 0.0, 0.0, 0.0, 6578.0, 42164.0 };
 
-                    for (int op = 0; op < coreOrbParams.Length; op++) {
-                        string opName = coreOrbParams[op];
-                        if (string.IsNullOrEmpty(rhsSingle) || opName.ToLowerInvariant().StartsWith(rhsSingle) || rhsSingle.Equals(actBody.ToLowerInvariant())) {
-                            items.Add(new IntelliSenseItem($"{cr}.{actBody}.{opName}", $"{actBody}.{opName}", coreOrbUnits[op], $"{actBody} {coreOrbDocsZh[op]}", IntelliSenseKind.Parameter, coreOrbDefs[op], 0.1));
+                    for (int op = 0; op < directKeplerParams.Length; op++) {
+                        string opName = directKeplerParams[op];
+                        if (string.IsNullOrEmpty(rhsSingle) || opName.ToLowerInvariant().StartsWith(rhsSingle)) {
+                            items.Add(new IntelliSenseItem($"{cr}.{opName}", opName, directKeplerUnits[op], $"{cr}: {directKeplerDocsZh[op]} (官方直接属性)", IntelliSenseKind.Parameter, directKeplerDefs[op], 0.1));
                         }
                     }
 
-                    // 1c. Coordinate System Cartesian Parameters (e.g. Sat.EarthMJ2000Eq.VZ)
-                    items.Add(new IntelliSenseItem($"{cr}.EarthMJ2000Eq.VZ", "EarthMJ2000Eq.VZ", "[Km/s]", "J2000赤道惯性系法向/垂向速度 (消除倾角目标 VZ=0)", IntelliSenseKind.Parameter, 0.0, 0.001));
-                    items.Add(new IntelliSenseItem($"{cr}.EarthMJ2000Eq.Z", "EarthMJ2000Eq.Z", "[Km]", "J2000赤道面垂直位置 (赤道交点 Z=0)", IntelliSenseKind.Parameter, 0.0, 0.01));
+                    // 1c. Celestial Body Dependent Orbit Properties (e.g. Sat.Earth.Altitude, Sat.Earth.RMAG)
+                    string[] bodyDepParams = new string[] { "Altitude", "Apoapsis", "Periapsis", "RMAG", "Latitude", "Longitude", "VMAG", "Energy" };
+                    string[] bodyDepUnits = new string[] { "[Km]", "[Event]", "[Event]", "[Km]", "[Deg]", "[Deg]", "[Km/s]", "[Km²/s²]" };
+                    string[] bodyDepDocsZh = new string[] { "海平面高度", "远拱点事件极值", "近拱点事件极值", "天体质心半径模长", "天体地理纬度 (赤道交点 Latitude=0)", "天体地理经度", "相对天体速度模长", "比轨道能量" };
+                    double[] bodyDepDefs = new double[] { 35786.0, 0.0, 0.0, 42164.0, 0.0, 0.0, 3.07, -4.7 };
 
-                    // 1d. Spacecraft Direct Physical Properties (Mass, Time)
+                    for (int bp = 0; bp < bodyDepParams.Length; bp++) {
+                        string bpName = bodyDepParams[bp];
+                        if (string.IsNullOrEmpty(rhsSingle) || bpName.ToLowerInvariant().StartsWith(rhsSingle) || rhsSingle.Equals(actBody.ToLowerInvariant())) {
+                            items.Add(new IntelliSenseItem($"{cr}.{actBody}.{bpName}", $"{actBody}.{bpName}", bodyDepUnits[bp], $"{actBody} {bodyDepDocsZh[bp]}", IntelliSenseKind.Parameter, bodyDepDefs[bp], 0.1));
+                        }
+                    }
+
+                    // 1d. Coordinate System Cartesian Parameters (e.g. Sat.EarthMJ2000Eq.VZ)
+                    items.Add(new IntelliSenseItem($"{cr}.EarthMJ2000Eq.VZ", "EarthMJ2000Eq.VZ", "[Km/s]", "J2000赤道惯性系法向/垂向速度 (VZ)", IntelliSenseKind.Parameter, 0.0, 0.001));
+                    items.Add(new IntelliSenseItem($"{cr}.EarthMJ2000Eq.Z", "EarthMJ2000Eq.Z", "[Km]", "J2000赤道面垂直位置 (Z=0)", IntelliSenseKind.Parameter, 0.0, 0.01));
+
+                    // 1e. Spacecraft Direct Physical Properties (Mass, Time)
                     string[] craftDirectProps = new string[] { "TotalMass", "DryMass", "FuelMass", "ElapsedSecs", "A1ModJulian" };
                     string[] craftUnits = new string[] { "[kg]", "[kg]", "[kg]", "[s]", "[Day]" };
                     string[] craftDocsZh = new string[] { "航天器当前总湿重", "航天器结构干重", "可用推进剂质量", "任务运行秒数", "A1修正儒略日历元" };
@@ -1400,7 +1423,7 @@ namespace KSPGMAT {
                         }
                     }
 
-                    // 1e. Main Celestial Bodies (Sorted: Active Body, Earth, Luna, Sun, Jupiter...)
+                    // 1f. Main Celestial Bodies (Sorted: Active Body, Earth, Luna, Sun, Jupiter...)
                     List<string> sortedBodies = new List<string> { actBody };
                     if (!sortedBodies.Contains("Earth")) sortedBodies.Add("Earth");
                     if (!sortedBodies.Contains("Luna")) sortedBodies.Add("Luna");
@@ -1411,7 +1434,7 @@ namespace KSPGMAT {
                     for (int b = 0; b < sortedBodies.Count; b++) {
                         string bd = sortedBodies[b];
                         if (string.IsNullOrEmpty(rhsSingle) || bd.ToLowerInvariant().StartsWith(rhsSingle)) {
-                            items.Add(new IntelliSenseItem($"{cr}.{bd}.", $"{bd}...", "[Body]", $"相对 {bd} 的轨道根数 (继续键入点号以选择 SMA, ECC, 高度...)", IntelliSenseKind.CelestialBody));
+                            items.Add(new IntelliSenseItem($"{cr}.{bd}.", $"{bd}...", "[Body]", $"相对 {bd} 的轨道属性 (继续键入点号以选择 Altitude, RMAG, 拱点...)", IntelliSenseKind.CelestialBody));
                         }
                     }
 
