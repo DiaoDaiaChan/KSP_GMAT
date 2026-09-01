@@ -69,7 +69,9 @@ namespace KSPGMAT.Service {
                 string outputDir = Path.Combine(gmatRootDir, "output");
                 if (!Directory.Exists(outputDir)) Directory.CreateDirectory(outputDir);
 
-                string scriptFile = Path.Combine(outputDir, "mission_run.script");
+                string timestamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss_fff");
+                string scriptFile = Path.Combine(outputDir, $"mission_{timestamp}.script");
+                string latestScriptFile = Path.Combine(outputDir, "mission_latest.script");
                 string reportFile = Path.Combine(outputDir, "TrajReport.txt");
 
                 try {
@@ -79,8 +81,9 @@ namespace KSPGMAT.Service {
                         try { File.Delete(df); } catch {}
                     }
 
-                    // Write UTF-8 No BOM script
+                    // Write UTF-8 No BOM timestamped script & latest copy
                     File.WriteAllText(scriptFile, scriptContent, new UTF8Encoding(false));
+                    try { File.WriteAllText(latestScriptFile, scriptContent, new UTF8Encoding(false)); } catch {}
 
                     string stdout = "";
                     string stderr = "";
@@ -112,9 +115,9 @@ namespace KSPGMAT.Service {
                         }
 
                         sw.Stop();
-                        KSPGMATLog.Info($"⚡ GmatConsole finished in {sw.ElapsedMilliseconds} ms (ExitCode: {exitCode}, Script size: {scriptContent.Length} bytes)");
+                        KSPGMATLog.Info($"⚡ GmatConsole finished in {sw.ElapsedMilliseconds} ms (ExitCode: {exitCode}, Script: mission_{timestamp}.script)");
 
-                        var result = GMATSolutionMapper.ParseAndMapResult(stdout, stderr, exitCode, reportFile, outputDir, originalSteps, scriptContent);
+                        var result = GMATSolutionMapper.ParseAndMapResult(stdout, stderr, exitCode, reportFile, outputDir, originalSteps, scriptContent, scriptFile);
 
                         // Error formatting and diagnostics extraction
                         bool hasTargetFail = stdout.Contains("Targeting failed to converge");
