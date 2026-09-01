@@ -937,8 +937,10 @@ namespace KSPGMAT.UI {
             if (stepToInsertThrustVector >= 0) {
                 var curThruster = GMATStateManager.Current.GetSelectedThruster();
                 string engName = curThruster != null ? curThruster.Id : "MainEngine";
+                string parentDc = GetParentTargetDcName(stepToInsertThrustVector);
                 missionSequence.Insert(stepToInsertThrustVector, new MissionStep {
                     type = "ThrustVectorControl",
+                    dc_name = parentDc,
                     bound_thruster = engName,
                     thrust_dir1 = 1.0,
                     thrust_dir2 = 0.0,

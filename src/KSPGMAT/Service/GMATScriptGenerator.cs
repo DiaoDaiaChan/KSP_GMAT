@@ -215,7 +215,7 @@ namespace KSPGMAT.Service {
             if (steps != null) {
                 for (int i = 0; i < steps.Count; i++) {
                     var st = steps[i];
-                    if ((st.type == "Target" || st.type == "Vary" || st.type == "Achieve") && !string.IsNullOrEmpty(st.dc_name)) {
+                    if (!string.IsNullOrEmpty(st.dc_name)) {
                         string sName = GMATParameterRegistry.SanitizeGmatIdentifier(st.dc_name, "DC");
                         if (!declaredSolvers.Contains(sName)) {
                             declaredSolvers.Add(sName);
@@ -223,7 +223,7 @@ namespace KSPGMAT.Service {
                             sb.AppendLine($"{sName}.ShowProgress = true;");
                             sb.AppendLine($"{sName}.DerivativeMethod = ForwardDifference;");
                             sb.AppendLine($"{sName}.Algorithm = NewtonRaphson;");
-                            sb.AppendLine($"{sName}.MaximumIterations = 25;");
+                            sb.AppendLine($"{sName}.MaximumIterations = 50;");
                             sb.AppendLine();
                         }
                     }
@@ -313,7 +313,7 @@ namespace KSPGMAT.Service {
                         sb.AppendLine($"Target {currentDC} {{SolveMode = {st.solve_mode ?? "Solve"}, ExitMode = {st.exit_mode ?? "SaveAndContinue"}}};");
                     }
                     else if (stype == "Vary") {
-                        string vDC = GMATParameterRegistry.SanitizeGmatIdentifier(st.dc_name ?? currentDC, "DC");
+                        string vDC = (insideTarget && !string.IsNullOrEmpty(currentDC)) ? currentDC : GMATParameterRegistry.SanitizeGmatIdentifier(st.dc_name ?? currentDC, "DC");
                         string vVar = st.vary_variable ?? "";
                         if (vVar.Contains(".")) {
                             string stripped = GMATParameterRegistry.StripCraftPrefix(vVar);
@@ -343,7 +343,7 @@ namespace KSPGMAT.Service {
                     }
                     else if (stype == "ThrustVectorControl" || stype == "VaryThrustDirection") {
                         string eng = !string.IsNullOrEmpty(st.bound_thruster) && thrusterNames.Contains(st.bound_thruster) ? st.bound_thruster : (thrusterNames.Count > 1 ? thrusterNames[1] : thrusterNames[0]);
-                        string tvcDC = GMATParameterRegistry.SanitizeGmatIdentifier(st.dc_name ?? currentDC, "DC");
+                        string tvcDC = (insideTarget && !string.IsNullOrEmpty(currentDC)) ? currentDC : GMATParameterRegistry.SanitizeGmatIdentifier(st.dc_name ?? currentDC, "DC");
                         sb.AppendLine($"   % Thrust Vector Configuration: {eng} (VNB Axes)");
                         if (st.vary_dir1_enabled && insideTarget) {
                             sb.AppendLine($"   Vary {tvcDC}({satName}.{eng}.ThrustDirection1 = {st.thrust_dir1.ToString("G", CultureInfo.InvariantCulture)}, {{Perturbation = 0.0001, Lower = {st.vary_dir1_lower.ToString("G", CultureInfo.InvariantCulture)}, Upper = {st.vary_dir1_upper.ToString("G", CultureInfo.InvariantCulture)}, MaxStep = {st.vary_dir1_max_step.ToString("G", CultureInfo.InvariantCulture)}}});");
@@ -362,7 +362,7 @@ namespace KSPGMAT.Service {
                         }
                     }
                     else if (stype == "Achieve") {
-                        string aDC = GMATParameterRegistry.SanitizeGmatIdentifier(st.dc_name ?? currentDC, "DC");
+                        string aDC = (insideTarget && !string.IsNullOrEmpty(currentDC)) ? currentDC : GMATParameterRegistry.SanitizeGmatIdentifier(st.dc_name ?? currentDC, "DC");
                         string rawGoal = st.achieve_param ?? "";
                         string goalParam = GMATParameterRegistry.StripCraftPrefix(rawGoal);
                         if (goalParam.Contains("=")) {
