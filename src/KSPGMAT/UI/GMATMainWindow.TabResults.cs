@@ -521,14 +521,21 @@ namespace KSPGMAT.UI {
 
             string scriptText = GMATScriptGenerator.GenerateScript(vessel, missionSequence);
             GMATConsoleRunner.ExecuteScriptAsync(scriptText, missionSequence, (success, result) => {
-                isAutoClosedLoopRunning = false;
-                if (success && result != null && result.success) {
-                    latestResult = result;
-                    // Auto-sync the new refined solution into Principia
-                    WriteBurnsToPrincipia(vessel);
-                    ScreenMessages.PostScreenMessage("✨ 闭环二次自适应优化完成！理论与实机高阶残差已清零！", 4.0f, ScreenMessageStyle.UPPER_CENTER);
-                } else {
-                    ScreenMessages.PostScreenMessage("⚠️ 闭环二次求解未完全收敛，已维持当前高精解", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                lock (mainThreadQueue) {
+                    mainThreadQueue.Enqueue(() => {
+                        isAutoClosedLoopRunning = false;
+                        if (success && result != null && result.success) {
+                            latestResult = result;
+                            // Auto-sync the new refined solution into Principia on the Unity Main Thread
+                            Vessel activeV = FlightGlobals.ActiveVessel;
+                            if (activeV != null) {
+                                WriteBurnsToPrincipia(activeV);
+                            }
+                            ScreenMessages.PostScreenMessage("✨ 闭环二次自适应优化完成！理论与实机高阶残差已清零！", 4.0f, ScreenMessageStyle.UPPER_CENTER);
+                        } else {
+                            ScreenMessages.PostScreenMessage("⚠️ 闭环二次求解未完全收敛，已维持当前高精解", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                        }
+                    });
                 }
             });
         }
