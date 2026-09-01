@@ -109,8 +109,47 @@ namespace KSPGMAT.UI {
                 ? "<color=#38bdf8>• <b>模式 2 (单系统高精动力学修正):</b> 采用 Principia C++ 原生变质量冲量一阶矩质心与初轨开普勒实机时钟锁相，误差稳定在 1 秒以内（$< 0.1\\text{s}$）。</color>"
                 : "<color=#34d399>• <b>模式 3 (闭环自适应二次优化):</b> 一键无感将 Principia 实机消耗与轨道残差反哺回 GMAT，二次微调求解后极速同步，误差归零。</color>";
             GUILayout.Label(modeDesc, labelValueStyle);
-            GUILayout.EndVertical();
 
+            // Summary Evaluation Strip across all burns
+            if (latestResult != null && latestResult.solved_burns != null && latestResult.solved_burns.Count > 0) {
+                double solveEpochUT = (latestResult.solve_ut > 0) ? latestResult.solve_ut : Planetarium.GetUniversalTime();
+                double totalCentroidShift = 0.0;
+                double totalPhaseShift = 0.0;
+                double totalIgnitionDelta = 0.0;
+
+                for (int sbI = 0; sbI < latestResult.solved_burns.Count; sbI++) {
+                    var sb = latestResult.solved_burns[sbI];
+                    double rawTargetEpoch = solveEpochUT + sb.epoch_offset;
+                    double rawLead = (sb.duration > 0) ? (sb.duration * 0.5) : 0.0;
+                    double rawInit = rawTargetEpoch - rawLead;
+
+                    double tgtEpoch, leadSec;
+                    double compInit = ComputeBurnInitialTime(vessel, sb, solveEpochUT, out tgtEpoch, out leadSec);
+
+                    totalCentroidShift += (leadSec - rawLead);
+                    if (sbI == 0) totalPhaseShift = (tgtEpoch - rawTargetEpoch);
+                    totalIgnitionDelta += (compInit - rawInit);
+                }
+
+                GUILayout.Space(4);
+                GUILayout.BeginHorizontal();
+                string statusColor = isRaw ? "#94a3b8" : "#34d399";
+                string tag = isRaw ? "基准基线 (无修正)" : "动力学修正已生效";
+                GUILayout.Label($"<color={statusColor}><b>📊 修正效果与未修正基线对比评估 [{tag}]:</b></color>", labelValueStyle);
+                GUILayout.EndHorizontal();
+
+                GUILayout.Space(2);
+                GUILayout.BeginHorizontal();
+                if (isRaw) {
+                    GUILayout.Label("<color=#94a3b8>当前处于原生未修正基准状态。切换至模式 2 或 3 可自动激活变质量质心与开普勒特征点锁相补偿。</color>", labelValueStyle);
+                } else {
+                    GUILayout.Label($"冲量质心提前量补偿: <color=#38bdf8><b>{totalCentroidShift:+0.00;-0.00;0.00}s</b></color> | 轨道特征点锁相时移: <color=#facc15><b>{totalPhaseShift:+0.00;-0.00;0.00}s</b></color> | 净点火时刻校准偏差: <color=#34d399><b>{totalIgnitionDelta:+0.00;-0.00;0.00}s</b></color>", labelValueStyle);
+                }
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+            }
+
+            GUILayout.EndVertical();
             GUILayout.EndVertical();
 
             GUILayout.Space(6);
@@ -202,6 +241,14 @@ namespace KSPGMAT.UI {
                         double solveEpochUT = (latestResult != null && latestResult.solve_ut > 0) ? latestResult.solve_ut : Planetarium.GetUniversalTime();
                         double compInitial = ComputeBurnInitialTime(vessel, b, solveEpochUT, out tgtEpoch, out leadSec);
 
+                        double rawTargetEpoch = solveEpochUT + b.epoch_offset;
+                        double rawLead = (b.duration > 0) ? (b.duration * 0.5) : 0.0;
+                        double rawInit = rawTargetEpoch - rawLead;
+
+                        double centroidShift = leadSec - rawLead;
+                        double phaseShift = tgtEpoch - rawTargetEpoch;
+                        double totalBurnShift = compInitial - rawInit;
+
                         GUILayout.Space(4);
                         GUILayout.BeginVertical(nestedCardBoxStyle);
                         GUILayout.BeginHorizontal();
@@ -215,9 +262,22 @@ namespace KSPGMAT.UI {
                         double dtToTarget = tgtEpoch - utNow;
                         double dtToIgnition = compInitial - utNow;
 
-                        GUILayout.Label($"GMAT数值事件时刻: <b>+{dtToTarget:F1}s</b> | 冲量质心提前量: <color=#f59e0b><b>-{leadSec:F1}s</b></color> (半点火时长) | Principia点火起始时刻: <color=#34d399><b>+{dtToIgnition:F1}s (T-{dtToIgnition / 60.0:F1}min)</b></color>", labelValueStyle);
+                        GUILayout.Label($"GMAT数值事件时刻: <b>+{dtToTarget:F1}s</b> | 冲量质心提前量: <color=#f59e0b><b>-{leadSec:F2}s</b></color> | Principia点火起始时刻: <color=#34d399><b>+{dtToIgnition:F1}s (T-{dtToIgnition / 60.0:F1}min)</b></color>", labelValueStyle);
                         GUILayout.FlexibleSpace();
                         GUILayout.EndHorizontal();
+
+                        // EVALUATION ROW: Deviation against raw unmodified baseline
+                        GUILayout.Space(2);
+                        GUILayout.BeginHorizontal();
+                        if (currentIgnitionMode == IgnitionCorrectionMode.RawUnmodified) {
+                            GUILayout.Label("<color=#94a3b8>⚖️ <b>未修正基线:</b> 简单几何折半 (-" + rawLead.ToString("F2") + "s) | 无变质量质心后移补偿与开普勒实机时钟锁相</color>", labelValueStyle);
+                        } else {
+                            string evalGrade = (Math.Abs(centroidShift) > 0.05 || Math.Abs(phaseShift) > 0.5) ? "<color=#34d399>🌟 修正有效 (消除非线性重心漂移)</color>" : "<color=#38bdf8>ℹ️ 微小扰动修正</color>";
+                            GUILayout.Label($"⚖️ <b>与未修正基准误差对比:</b> 质心补偿: <color=#38bdf8><b>{centroidShift:+0.00;-0.00;0.00}s</b></color> (vs 原生对半 -{rawLead:F2}s) | 锁相平移: <color=#facc15><b>{phaseShift:+0.00;-0.00;0.00}s</b></color> | 净点火修正: <color=#34d399><b>{totalBurnShift:+0.00;-0.00;0.00}s</b></color> | {evalGrade}", labelValueStyle);
+                        }
+                        GUILayout.FlexibleSpace();
+                        GUILayout.EndHorizontal();
+
                         GUILayout.EndVertical();
 
                         // DISCREPANCY ANALYSIS & RECONCILIATION ACTIONS BAR
