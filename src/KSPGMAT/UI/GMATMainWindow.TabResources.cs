@@ -167,6 +167,23 @@ namespace KSPGMAT.UI {
 
             EnsureDefaultResourceState();
 
+            var valAlerts = GMATStateManager.Current.ValidationAlerts;
+            if (valAlerts != null && valAlerts.Count > 0) {
+                GUILayout.BeginVertical(nestedCardBoxStyle);
+                GUILayout.BeginHorizontal();
+                GUILayout.Label($"<color=#f87171><b>🛡️ GMAT 状态校验器检测到 {valAlerts.Count} 处无效参数并已自动恢复缺省值:</b></color>", labelValueStyle);
+                GUILayout.FlexibleSpace();
+                if (GUILayout.Button("✕ 忽略", secondaryButtonStyle, GUILayout.Width(50), GUILayout.Height(18))) {
+                    valAlerts.Clear();
+                }
+                GUILayout.EndHorizontal();
+                for (int a = 0; a < valAlerts.Count; a++) {
+                    GUILayout.Label($"<color=#fca5a5>• {valAlerts[a]}</color>", labelValueStyle);
+                }
+                GUILayout.EndVertical();
+                GUILayout.Space(4);
+            }
+
             scrollPosResources = GUILayout.BeginScrollView(scrollPosResources, GUILayout.ExpandHeight(true));
 
             // -------------------------------------------------------------

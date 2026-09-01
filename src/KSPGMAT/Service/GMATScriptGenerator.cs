@@ -9,6 +9,7 @@ namespace KSPGMAT.Service {
         public static string GenerateScript(Vessel vessel, List<MissionStep> steps, string centralBodyOverride = null, Dictionary<string, PropagatorConfig> propConfigsOverride = null) {
             var sb = new StringBuilder();
             var state = GMATStateManager.Current;
+            state.ValidateAndSanitizeState(propConfigsOverride, steps);
             var sc = state.Spacecraft;
             string satName = "Sat";
             string cBody = !string.IsNullOrEmpty(centralBodyOverride) ? centralBodyOverride : (!string.IsNullOrEmpty(sc.CentralBody) ? sc.CentralBody : "Earth");
@@ -178,8 +179,7 @@ namespace KSPGMAT.Service {
                     sb.AppendLine($"{pName}.FM = {fmName};");
                     sb.AppendLine($"{pName}.Type = {pCfg.integratorType ?? "RungeKutta89"};");
                     sb.AppendLine($"{pName}.InitialStepSize = {pCfg.initialStepSize.ToString("F1", CultureInfo.InvariantCulture)};");
-                    double safeAcc = (pCfg.accuracy > 1e-20) ? pCfg.accuracy : 1e-11;
-                    sb.AppendLine($"{pName}.Accuracy = {safeAcc.ToString("G", CultureInfo.InvariantCulture)};");
+                    sb.AppendLine($"{pName}.Accuracy = {pCfg.accuracy.ToString("G", CultureInfo.InvariantCulture)};");
                     sb.AppendLine($"{pName}.MinStep = {pCfg.minStep.ToString("G", CultureInfo.InvariantCulture)};");
                     sb.AppendLine($"{pName}.MaxStep = {pCfg.maxStep.ToString("F1", CultureInfo.InvariantCulture)};");
                     sb.AppendLine();
@@ -191,7 +191,7 @@ namespace KSPGMAT.Service {
                 sb.AppendLine("Create Propagator LEOProp;");
                 sb.AppendLine("LEOProp.FM = LEOPropForceModel;");
                 sb.AppendLine("LEOProp.Type = RungeKutta89;");
-                sb.AppendLine("LEOProp.Accuracy = 1E-11;");
+                sb.AppendLine($"LEOProp.Accuracy = {GMATDefaults.Propagator.Accuracy.ToString("G", CultureInfo.InvariantCulture)};");
                 sb.AppendLine();
             }
 

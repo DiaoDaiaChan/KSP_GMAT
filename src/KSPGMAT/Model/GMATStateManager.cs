@@ -138,6 +138,66 @@ namespace KSPGMAT.Model {
     }
 
     /// <summary>
+    /// NASA GMAT API 官方参数标准缺省值字典 (Single Source of Default Values)
+    /// </summary>
+    public static class GMATDefaults {
+        public static class Spacecraft {
+            public const double DryMassKg = 850.0;
+            public const double TotalMassKg = 5000.0;
+            public const double DragArea = 15.0;
+            public const double Cd = 2.2;
+            public const double Cr = 1.8;
+            public const double SRPArea = 1.0;
+            public const string DateFormat = "UTCGregorian";
+            public const string CoordinateSystem = "EarthMJ2000Eq";
+            public const string DisplayStateType = "Cartesian";
+        }
+
+        public static class Tank {
+            public const double VolumeM3 = 10.0;
+            public const double FuelDensityKgM3 = 1000.0;
+            public const double FuelMassKg = 1000.0;
+            public const double DryMassKg = 100.0;
+            public const string PressureModel = "PressureRegulated";
+        }
+
+        public static class Thruster {
+            public const double ThrustKN = 100.0;
+            public const double IspVac = 300.0;
+            public const double GravitationalAccel = 9.80665;
+            public const double DutyCycle = 1.0;
+            public const double ThrustScaleFactor = 1.0;
+            public const string CoordinateSystem = "Local";
+            public const string Axes = "VNB";
+        }
+
+        public static class Propagator {
+            public const double Accuracy = 1e-11;
+            public const double InitialStepSize = 60.0;
+            public const double MinStep = 0.001;
+            public const double MaxStep = 2700.0;
+            public const int MaxStepAttempts = 50;
+            public const string IntegratorType = "RungeKutta89";
+            public const string ErrorControl = "RSSStep";
+        }
+
+        public static class Solver {
+            public const int MaxIterations = 50;
+            public const string Algorithm = "NewtonRaphson";
+            public const string DerivativeMethod = "ForwardDifference";
+            public const double Perturbation = 0.0001;
+            public const double MaxStep = 10.0;
+        }
+
+        public static class Step {
+            public const double AchieveTolerance = 0.1;
+            public const double VaryPerturbation = 0.0001;
+            public const double VaryMaxStep = 10.0;
+            public const double StopTolerance = 1e-5;
+        }
+    }
+
+    /// <summary>
     /// 全局底层状态管理核心引擎 (Single Source of Truth)
     /// </summary>
     public class GMATStateManager {
@@ -156,6 +216,123 @@ namespace KSPGMAT.Model {
         public List<StageData> Stages { get; private set; } = new List<StageData>();
         public int SelectedEngineIndex { get; set; } = 0;
         public List<int> SelectedStageIndices { get; set; } = new List<int>();
+
+        public List<string> ValidationAlerts { get; } = new List<string>();
+
+        /// <summary>
+        /// 针对整个动力学与硬件状态执行非零与合法性校验，自动恢复 GMAT 官方缺省值并记录警告
+        /// </summary>
+        public bool ValidateAndSanitizeState(Dictionary<string, PropagatorConfig> propConfigs = null, List<MissionStep> steps = null) {
+            ValidationAlerts.Clear();
+            bool hasAutoFixed = false;
+
+            // 1. Spacecraft Validation (DryMass 必须 > 0; 迎风面积/光压/阻力系数可为 0)
+            if (Spacecraft != null) {
+                if (Spacecraft.DryMassKg <= 0.0) {
+                    Spacecraft.DryMassKg = GMATDefaults.Spacecraft.DryMassKg;
+                    ValidationAlerts.Add($"⚠️ 航天器干重 (DryMass) 必须大于 0，已自动恢复 GMAT 官方缺省值 {GMATDefaults.Spacecraft.DryMassKg} kg");
+                    hasAutoFixed = true;
+                }
+                if (Spacecraft.TotalMassKg <= 0.0) {
+                    Spacecraft.TotalMassKg = Math.Max(Spacecraft.DryMassKg + 100.0, GMATDefaults.Spacecraft.TotalMassKg);
+                }
+            }
+
+            // 2. Tanks Validation (Volume/FuelDensity 必须 > 0; 燃料量 FuelMass 可为 0)
+            if (Tanks != null) {
+                for (int i = 0; i < Tanks.Count; i++) {
+                    var tk = Tanks[i];
+                    if (tk.VolumeM3 <= 0.0) {
+                        tk.VolumeM3 = GMATDefaults.Tank.VolumeM3;
+                        ValidationAlerts.Add($"⚠️ 储罐 {tk.Id} 容积 (Volume) 必须大于 0，已自动恢复 GMAT 官方缺省值 {GMATDefaults.Tank.VolumeM3} m³");
+                        hasAutoFixed = true;
+                    }
+                    if (tk.FuelDensityKgM3 <= 0.0) {
+                        tk.FuelDensityKgM3 = GMATDefaults.Tank.FuelDensityKgM3;
+                        ValidationAlerts.Add($"⚠️ 储罐 {tk.Id} 燃料密度 (FuelDensity) 必须大于 0，已自动恢复 GMAT 官方缺省值 {GMATDefaults.Tank.FuelDensityKgM3} kg/m³");
+                        hasAutoFixed = true;
+                    }
+                }
+            }
+
+            // 3. Thrusters Validation (Isp 必须 > 0; 推力 ThrustKN 可为 0)
+            if (Thrusters != null) {
+                for (int i = 0; i < Thrusters.Count; i++) {
+                    var thr = Thrusters[i];
+                    if (thr.IspVac <= 0.0) {
+                        thr.IspVac = GMATDefaults.Thruster.IspVac;
+                        ValidationAlerts.Add($"⚠️ 推力器 {thr.Id} 真空比冲 (Isp) 必须大于 0，已自动恢复 GMAT 官方缺省值 {GMATDefaults.Thruster.IspVac} s");
+                        hasAutoFixed = true;
+                    }
+                    if (thr.GravitationalAccel <= 0.0) {
+                        thr.GravitationalAccel = GMATDefaults.Thruster.GravitationalAccel;
+                    }
+                    double dirMag = Math.Sqrt(thr.ThrustDirection1 * thr.ThrustDirection1 + thr.ThrustDirection2 * thr.ThrustDirection2 + thr.ThrustDirection3 * thr.ThrustDirection3);
+                    if (dirMag < 1e-6) {
+                        thr.ThrustDirection1 = 1.0;
+                        thr.ThrustDirection2 = 0.0;
+                        thr.ThrustDirection3 = 0.0;
+                        ValidationAlerts.Add($"⚠️ 推力器 {thr.Id} 推力方向矢量不能全为 0，已自动重置为默认切向 (1.0, 0.0, 0.0)");
+                        hasAutoFixed = true;
+                    }
+                }
+            }
+
+            // 4. Propagators Validation (Accuracy/MinStep/MaxStep/InitialStepSize 必须 > 0)
+            if (propConfigs != null && propConfigs.Count > 0) {
+                foreach (var kvp in propConfigs) {
+                    var p = kvp.Value;
+                    if (p.accuracy <= 0.0) {
+                        p.accuracy = GMATDefaults.Propagator.Accuracy;
+                        ValidationAlerts.Add($"⚠️ 传播子 {p.name} 精度容差 (Accuracy) 不能为 0，已自动恢复 GMAT 官方缺省值 {GMATDefaults.Propagator.Accuracy:E2}");
+                        hasAutoFixed = true;
+                    }
+                    if (p.minStep <= 0.0) {
+                        p.minStep = GMATDefaults.Propagator.MinStep;
+                        ValidationAlerts.Add($"⚠️ 传播子 {p.name} 最小步长 (MinStep) 必须大于 0，已自动恢复 GMAT 官方缺省值 {GMATDefaults.Propagator.MinStep} s");
+                        hasAutoFixed = true;
+                    }
+                    if (p.maxStep <= 0.0 || p.maxStep < p.minStep) {
+                        p.maxStep = Math.Max(GMATDefaults.Propagator.MaxStep, p.minStep * 10.0);
+                        ValidationAlerts.Add($"⚠️ 传播子 {p.name} 最大步长 (MaxStep) 无效，已自动恢复 GMAT 官方缺省值 {p.maxStep} s");
+                        hasAutoFixed = true;
+                    }
+                    if (p.initialStepSize <= 0.0) {
+                        p.initialStepSize = GMATDefaults.Propagator.InitialStepSize;
+                        ValidationAlerts.Add($"⚠️ 传播子 {p.name} 初始步长 (InitialStepSize) 必须大于 0，已自动恢复 GMAT 官方缺省值 {GMATDefaults.Propagator.InitialStepSize} s");
+                        hasAutoFixed = true;
+                    }
+                    if (p.maxStepAttempts < 1) {
+                        p.maxStepAttempts = GMATDefaults.Propagator.MaxStepAttempts;
+                    }
+                }
+            }
+
+            // 5. Mission Steps Validation (Tolerance / Perturbation 必须 > 0; InitialValue/Upper/Lower 可为 0)
+            if (steps != null && steps.Count > 0) {
+                for (int s = 0; s < steps.Count; s++) {
+                    var st = steps[s];
+                    if (st.type == "Achieve") {
+                        if (st.achieve_tolerance <= 0.0) {
+                            st.achieve_tolerance = GMATDefaults.Step.AchieveTolerance;
+                            ValidationAlerts.Add($"⚠️ 步骤 #{s + 1} Achieve 容差不能为 0，已自动恢复 GMAT 官方缺省值 {GMATDefaults.Step.AchieveTolerance}");
+                            hasAutoFixed = true;
+                        }
+                    } else if (st.type == "Vary") {
+                        if (st.vary_perturbation == 0.0) {
+                            st.vary_perturbation = GMATDefaults.Step.VaryPerturbation;
+                            ValidationAlerts.Add($"⚠️ 步骤 #{s + 1} Vary 扰动步长 (Perturbation) 不能为 0，已自动恢复 GMAT 官方缺省值 {GMATDefaults.Step.VaryPerturbation}");
+                            hasAutoFixed = true;
+                        }
+                        if (st.vary_max_step <= 0.0) {
+                            st.vary_max_step = GMATDefaults.Step.VaryMaxStep;
+                        }
+                    }
+                }
+            }
+
+            return hasAutoFixed;
+        }
 
         private GMATStateManager() {
             EnsureDefaultResources();
