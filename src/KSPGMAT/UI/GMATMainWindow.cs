@@ -190,6 +190,7 @@ namespace KSPGMAT.UI {
         private string customScriptPath = "";
         private string exportTemplateName = "custom_mission_preset.script";
         private bool showCustomScriptInput = false;
+        private bool showTemplatesFoldout = true;
         private string templateSearchQuery = "";
         private string templateSelectedCategory = "全部";
         private string currentLoadedTemplateName = "";

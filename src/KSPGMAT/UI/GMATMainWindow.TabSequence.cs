@@ -165,13 +165,22 @@ namespace KSPGMAT.UI {
             // ==========================================
             GUILayout.BeginVertical(GUILayout.Width(leftColW));
 
-            // Presets & Import Header
+            // Presets & Import Header (Collapsible & Elastic)
             GUILayout.BeginVertical(cardBoxStyle);
             
             var allTemplates = GMATTemplateManager.GetTemplates();
             
             GUILayout.BeginHorizontal();
-            GUILayout.Label($"<b>📚 任务队列预设模板库</b> <color=#94a3b8>({allTemplates.Count} 个可用脚本)</color>", headerStyle);
+            string foldoutArrow = showTemplatesFoldout ? "▼" : "▶";
+            if (GUILayout.Button($"<b>{foldoutArrow} 📚 任务预设模板库</b> <color=#94a3b8>({allTemplates.Count} 个可用脚本)</color>", headerStyle, GUILayout.ExpandWidth(false))) {
+                showTemplatesFoldout = !showTemplatesFoldout;
+            }
+
+            if (!showTemplatesFoldout && !string.IsNullOrEmpty(currentLoadedTemplateName)) {
+                GUILayout.Space(8);
+                GUILayout.Label($"<color=#38bdf8>当前已载入:</color> <color=#94a3b8>{currentLoadedTemplateName}</color>", labelValueStyle);
+            }
+
             GUILayout.FlexibleSpace();
             
             if (GUILayout.Button("🔄 刷新", secondaryButtonStyle, GUILayout.Height(20))) {
@@ -187,81 +196,94 @@ namespace KSPGMAT.UI {
                 activeTab = 1; ideScriptViewMode = 0;
             }
             GUILayout.Space(3);
-            if (GUILayout.Button(showCustomScriptInput ? "▲ 收起" : "📜 导入/导出...", secondaryButtonStyle, GUILayout.Height(20))) {
+            if (GUILayout.Button(showCustomScriptInput ? "▲ 脚本入/出" : "📜 脚本入/出...", secondaryButtonStyle, GUILayout.Height(20))) {
                 showCustomScriptInput = !showCustomScriptInput;
             }
             GUILayout.EndHorizontal();
 
-            // Filter & Search bar (if templates > 3)
-            if (allTemplates.Count > 3) {
-                GUILayout.Space(2);
-                GUILayout.BeginHorizontal();
-                GUILayout.Label("<color=#94a3b8>分类:</color>", labelValueStyle, GUILayout.Width(35));
-                string[] categories = new string[] { "全部", "近地/地球", "地月系", "深空/行星际", "测试/验证" };
-                for (int c = 0; c < categories.Length; c++) {
-                    string cat = categories[c];
-                    bool isSelectedCat = (templateSelectedCategory == cat);
-                    GUIStyle catStyle = isSelectedCat ? actionButtonStyle : secondaryButtonStyle;
-                    if (GUILayout.Button(cat, catStyle, GUILayout.Height(18))) {
-                        templateSelectedCategory = cat;
-                    }
+            // EXPANDED TEMPLATE BROWSER
+            if (showTemplatesFoldout) {
+                // Filter & Search bar (if templates > 3)
+                if (allTemplates.Count > 3) {
                     GUILayout.Space(2);
-                }
-                GUILayout.FlexibleSpace();
-                GUILayout.Label("<color=#94a3b8>🔍</color>", labelValueStyle, GUILayout.Width(15));
-                templateSearchQuery = GUILayout.TextField(templateSearchQuery, stepLabelInputStyle ?? GUI.skin.textField, GUILayout.Width(130), GUILayout.Height(18));
-                if (!string.IsNullOrEmpty(templateSearchQuery) && GUILayout.Button("✖", secondaryButtonStyle, GUILayout.Width(18), GUILayout.Height(18))) {
-                    templateSearchQuery = "";
-                }
-                GUILayout.EndHorizontal();
-            }
-
-            // Filtered Templates List
-            var filtered = allTemplates.Where(t => {
-                if (templateSelectedCategory != "全部" && t.Category != templateSelectedCategory) return false;
-                if (!string.IsNullOrEmpty(templateSearchQuery)) {
-                    string q = templateSearchQuery.Trim().ToLowerInvariant();
-                    if (!t.DisplayTitle.ToLowerInvariant().Contains(q) && !t.FileName.ToLowerInvariant().Contains(q) && !t.Description.ToLowerInvariant().Contains(q)) {
-                        return false;
-                    }
-                }
-                return true;
-            }).ToList();
-
-            GUILayout.Space(4);
-
-            // ELASTIC DYNAMIC FLOW/GRID LAYOUT (Multi-row dynamic auto-wrap)
-            if (filtered.Count > 0) {
-                int columns = 3; // 3 elastic buttons per row
-                int rowCount = (filtered.Count + columns - 1) / columns;
-
-                for (int r = 0; r < rowCount; r++) {
                     GUILayout.BeginHorizontal();
-                    for (int col = 0; col < columns; col++) {
-                        int index = r * columns + col;
-                        if (index < filtered.Count) {
-                            var tpl = filtered[index];
-                            bool isCurrent = !string.IsNullOrEmpty(currentLoadedTemplateName) && 
-                                (currentLoadedTemplateName.Equals(tpl.FileName, StringComparison.OrdinalIgnoreCase) || currentLoadedTemplateName.Equals(tpl.FullPath, StringComparison.OrdinalIgnoreCase));
-                            
-                            GUIStyle btnStyle = isCurrent ? actionButtonStyle : secondaryButtonStyle;
-                            string btnText = $"{tpl.Icon} {tpl.DisplayTitle}";
-
-                            if (GUILayout.Button(new GUIContent(btnText, $"{tpl.FileName}\n{tpl.Description}\n路径: {tpl.FullPath}"), btnStyle, GUILayout.Height(24), GUILayout.ExpandWidth(true))) {
-                                currentLoadedTemplateName = tpl.FileName;
-                                LoadScriptTemplate(tpl.FullPath, vessel);
-                            }
-                        } else {
-                            GUILayout.FlexibleSpace();
+                    GUILayout.Label("<color=#94a3b8>分类:</color>", labelValueStyle, GUILayout.Width(35));
+                    string[] categories = new string[] { "全部", "近地/地球", "地月系", "深空/行星际", "测试/验证" };
+                    for (int c = 0; c < categories.Length; c++) {
+                        string cat = categories[c];
+                        bool isSelectedCat = (templateSelectedCategory == cat);
+                        GUIStyle catStyle = isSelectedCat ? actionButtonStyle : secondaryButtonStyle;
+                        if (GUILayout.Button(cat, catStyle, GUILayout.Height(18))) {
+                            templateSelectedCategory = cat;
                         }
+                        GUILayout.Space(2);
+                    }
+                    GUILayout.FlexibleSpace();
+                    GUILayout.Label("<color=#94a3b8>🔍</color>", labelValueStyle, GUILayout.Width(15));
+                    templateSearchQuery = GUILayout.TextField(templateSearchQuery, stepLabelInputStyle ?? GUI.skin.textField, GUILayout.Width(130), GUILayout.Height(18));
+                    if (!string.IsNullOrEmpty(templateSearchQuery) && GUILayout.Button("✖", secondaryButtonStyle, GUILayout.Width(18), GUILayout.Height(18))) {
+                        templateSearchQuery = "";
                     }
                     GUILayout.EndHorizontal();
-                    if (r < rowCount - 1) GUILayout.Space(3);
                 }
-            } else {
-                GUILayout.BeginHorizontal();
-                GUILayout.Label("<color=#64748b>没有找到匹配的模板脚本。可点击上方「📁 打开目录」放入自定义 .script 脚本文件后点击刷新。</color>", labelValueStyle);
-                GUILayout.EndHorizontal();
+
+                // Filtered Templates List
+                var filtered = allTemplates.Where(t => {
+                    if (templateSelectedCategory != "全部" && t.Category != templateSelectedCategory) return false;
+                    if (!string.IsNullOrEmpty(templateSearchQuery)) {
+                        string q = templateSearchQuery.Trim().ToLowerInvariant();
+                        if (!t.DisplayTitle.ToLowerInvariant().Contains(q) && !t.FileName.ToLowerInvariant().Contains(q) && !t.Description.ToLowerInvariant().Contains(q)) {
+                            return false;
+                        }
+                    }
+                    return true;
+                }).ToList();
+
+                GUILayout.Space(4);
+
+                // ELASTIC DYNAMIC FLOW/GRID LAYOUT (With adaptive capped height scroll if many templates)
+                if (filtered.Count > 0) {
+                    int columns = 3; // 3 elastic buttons per row
+                    int rowCount = (filtered.Count + columns - 1) / columns;
+
+                    // If more than 2 rows (6 templates), wrap in a capped scroll view to save vertical space
+                    bool needsScroll = rowCount > 2;
+                    if (needsScroll) {
+                        templateScrollPos = GUILayout.BeginScrollView(templateScrollPos, GUILayout.MaxHeight(130));
+                    }
+
+                    for (int r = 0; r < rowCount; r++) {
+                        GUILayout.BeginHorizontal();
+                        for (int col = 0; col < columns; col++) {
+                            int index = r * columns + col;
+                            if (index < filtered.Count) {
+                                var tpl = filtered[index];
+                                bool isCurrent = !string.IsNullOrEmpty(currentLoadedTemplateName) && 
+                                    (currentLoadedTemplateName.Equals(tpl.FileName, StringComparison.OrdinalIgnoreCase) || currentLoadedTemplateName.Equals(tpl.FullPath, StringComparison.OrdinalIgnoreCase));
+                                
+                                GUIStyle btnStyle = isCurrent ? actionButtonStyle : secondaryButtonStyle;
+                                string btnText = $"{tpl.Icon} {tpl.DisplayTitle}";
+
+                                if (GUILayout.Button(new GUIContent(btnText, $"{tpl.FileName}\n{tpl.Description}\n路径: {tpl.FullPath}"), btnStyle, GUILayout.Height(24), GUILayout.ExpandWidth(true))) {
+                                    currentLoadedTemplateName = tpl.FileName;
+                                    LoadScriptTemplate(tpl.FullPath, vessel);
+                                }
+                            } else {
+                                GUILayout.FlexibleSpace();
+                            }
+                        }
+                        GUILayout.EndHorizontal();
+                        if (r < rowCount - 1) GUILayout.Space(3);
+                    }
+
+                    if (needsScroll) {
+                        GUILayout.EndScrollView();
+                    }
+                } else {
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label("<color=#64748b>没有找到匹配的模板脚本。可点击上方「📁 打开目录」放入自定义 .script 脚本文件后点击刷新。</color>", labelValueStyle);
+                    GUILayout.EndHorizontal();
+                }
             }
 
             if (showCustomScriptInput) {
