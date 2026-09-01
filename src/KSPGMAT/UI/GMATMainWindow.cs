@@ -63,6 +63,9 @@ namespace KSPGMAT.UI {
         private Vector2 scrollPosResources = Vector2.zero;
         private Vector2 scrollPosSequence = Vector2.zero;
         private Vector2 scrollPosResults = Vector2.zero;
+        private Vector2 rightColScrollPos = Vector2.zero;
+        private Vector2 rightErrorScrollPos = Vector2.zero;
+        private bool showFullErrorLog = false;
 
         // Custom GMAT User Variables, Arrays & Strings pool
         private List<GMATUserVariable> userVariables = new List<GMATUserVariable>();

@@ -1100,9 +1100,10 @@ namespace KSPGMAT.UI {
             GUILayout.Space(12);
 
             // =======================================================
-            // RIGHT COLUMN: Pinned Execution & Live Results (Responsive)
+            // RIGHT COLUMN: Pinned Execution & Live Results (Responsive Scrollable)
             // =======================================================
             GUILayout.BeginVertical(GUILayout.Width(rightColW));
+            rightColScrollPos = GUILayout.BeginScrollView(rightColScrollPos, GUILayout.ExpandWidth(true), GUILayout.ExpandHeight(true));
 
             // Pinned Execution Box (with Live Progress Bar & Step Flow HUD)
             GUILayout.BeginVertical(cardBoxStyle);
@@ -1323,18 +1324,30 @@ namespace KSPGMAT.UI {
                 string shortError = (latestResult.error ?? "求解未收敛").Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)[0].Trim();
                 GUILayout.Label($"<color=#f87171><b>❌ GMAT 求解失败:</b> {shortError}</color>", labelValueStyle);
                 
-                // Detailed Error Diagnostic Box
+                // Detailed Error Diagnostic Box (Constrained & Scrollable)
                 string errDetails = !string.IsNullOrEmpty(latestResult.error_details) ? latestResult.error_details : latestResult.error;
                 if (!string.IsNullOrEmpty(errDetails)) {
                     GUILayout.Space(2);
+                    GUILayout.BeginHorizontal();
                     GUILayout.Label("<color=#94a3b8><b>📋 详细错误诊断与引擎日志:</b></color>", labelValueStyle);
-                    GUILayout.BeginVertical(nestedCardBoxStyle);
-                    GUILayout.Label($"<color=#fca5a5><size=11>{errDetails}</size></color>", labelValueStyle);
-                    GUILayout.EndVertical();
+                    GUILayout.FlexibleSpace();
+                    string foldTxt = showFullErrorLog ? "▾ 收起日志" : "▸ 展开日志";
+                    if (GUILayout.Button(foldTxt, secondaryButtonStyle, GUILayout.Height(18))) {
+                        showFullErrorLog = !showFullErrorLog;
+                    }
+                    GUILayout.EndHorizontal();
 
-                    if (GUILayout.Button("📋 复制完整报错日志", secondaryButtonStyle, GUILayout.Height(22))) {
-                        GUIUtility.systemCopyBuffer = $"[GMAT Error]\nSummary: {shortError}\nDetails:\n{errDetails}\nScript: {latestResult.script_path}";
-                        ScreenMessages.PostScreenMessage("📋 完整报错日志已复制至系统剪贴板！", 2.5f, ScreenMessageStyle.UPPER_CENTER);
+                    if (showFullErrorLog) {
+                        GUILayout.BeginVertical(nestedCardBoxStyle);
+                        rightErrorScrollPos = GUILayout.BeginScrollView(rightErrorScrollPos, GUILayout.Height(110));
+                        GUILayout.Label($"<color=#fca5a5><size=11>{errDetails}</size></color>", labelValueStyle);
+                        GUILayout.EndScrollView();
+                        GUILayout.EndVertical();
+
+                        if (GUILayout.Button("📋 复制完整报错日志", secondaryButtonStyle, GUILayout.Height(22))) {
+                            GUIUtility.systemCopyBuffer = $"[GMAT Error]\nSummary: {shortError}\nDetails:\n{errDetails}\nScript: {latestResult.script_path}";
+                            ScreenMessages.PostScreenMessage("📋 完整报错日志已复制至系统剪贴板！", 2.5f, ScreenMessageStyle.UPPER_CENTER);
+                        }
                     }
                 }
             } else {
@@ -1421,7 +1434,8 @@ namespace KSPGMAT.UI {
 
             GUILayout.EndVertical();
 
-            GUILayout.EndVertical();
+            GUILayout.EndScrollView(); // Closes rightColScrollPos
+            GUILayout.EndVertical();   // Closes right column
 
             GUILayout.EndHorizontal();
         }
