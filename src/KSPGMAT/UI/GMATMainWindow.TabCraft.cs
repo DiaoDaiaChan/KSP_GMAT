@@ -202,25 +202,21 @@ namespace KSPGMAT.UI {
 
                     GUILayout.BeginHorizontal();
                     GUILayout.Label("推进剂质量:", labelValueStyle, GUILayout.Width(75));
-                    string sMass = GUILayout.TextField(curEng.fuelMassKg.ToString("F1"), GUILayout.Width(70));
-                    double.TryParse(sMass, out curEng.fuelMassKg);
+                    curEng.fuelMassKg = DrawDelayedNumericField($"craft_fuel_mass_{selectedEngineIndex}", curEng.fuelMassKg, numericInputStyle ?? GUI.skin.textField, GUILayout.Width(70), "F1");
                     GUILayout.Label("kg", labelValueStyle, GUILayout.Width(25));
 
                     GUILayout.Label("推进剂密度:", labelValueStyle, GUILayout.Width(75));
-                    string sRho = GUILayout.TextField(curEng.fuelDensityKgM3.ToString("F1"), GUILayout.Width(70));
-                    double.TryParse(sRho, out curEng.fuelDensityKgM3);
+                    curEng.fuelDensityKgM3 = DrawDelayedNumericField($"craft_fuel_rho_{selectedEngineIndex}", curEng.fuelDensityKgM3, numericInputStyle ?? GUI.skin.textField, GUILayout.Width(70), "F1");
                     GUILayout.Label("kg/m³", labelValueStyle, GUILayout.Width(40));
                     GUILayout.EndHorizontal();
 
                     GUILayout.BeginHorizontal();
                     GUILayout.Label("储罐容积:", labelValueStyle, GUILayout.Width(75));
-                    string sVol = GUILayout.TextField(curEng.tankVolumeM3.ToString("F3"), GUILayout.Width(70));
-                    double.TryParse(sVol, out curEng.tankVolumeM3);
+                    curEng.tankVolumeM3 = DrawDelayedNumericField($"craft_tank_vol_{selectedEngineIndex}", curEng.tankVolumeM3, numericInputStyle ?? GUI.skin.textField, GUILayout.Width(70), "F3");
                     GUILayout.Label("m³", labelValueStyle, GUILayout.Width(25));
 
                     GUILayout.Label("调节压力:", labelValueStyle, GUILayout.Width(75));
-                    string sPres = GUILayout.TextField(curEng.tankPressureKPa.ToString("F0"), GUILayout.Width(70));
-                    double.TryParse(sPres, out curEng.tankPressureKPa);
+                    curEng.tankPressureKPa = DrawDelayedNumericField($"craft_tank_pres_{selectedEngineIndex}", curEng.tankPressureKPa, numericInputStyle ?? GUI.skin.textField, GUILayout.Width(70), "F0");
                     GUILayout.Label("kPa", labelValueStyle, GUILayout.Width(40));
                     GUILayout.EndHorizontal();
 

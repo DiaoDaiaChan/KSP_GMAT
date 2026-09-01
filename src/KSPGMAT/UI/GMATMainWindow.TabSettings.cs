@@ -32,12 +32,12 @@ namespace KSPGMAT.UI {
 
             GUILayout.BeginHorizontal();
             GUILayout.Label("GMAT Bin 路径:", labelValueStyle, GUILayout.Width(120));
-            GMATClient.GmatBinPath = GUILayout.TextField(GMATClient.GmatBinPath);
+            GMATClient.GmatBinPath = DrawDelayedTextField("settings_gmat_bin", GMATClient.GmatBinPath, stepLabelInputStyle ?? GUI.skin.textField, GUILayout.ExpandWidth(true));
             GUILayout.EndHorizontal();
 
             GUILayout.BeginHorizontal();
             GUILayout.Label("Python 解释器:", labelValueStyle, GUILayout.Width(120));
-            GMATClient.CustomPythonPath = GUILayout.TextField(GMATClient.CustomPythonPath);
+            GMATClient.CustomPythonPath = DrawDelayedTextField("settings_python_bin", GMATClient.CustomPythonPath, stepLabelInputStyle ?? GUI.skin.textField, GUILayout.ExpandWidth(true));
             GUILayout.EndHorizontal();
 
             GUILayout.Space(6);

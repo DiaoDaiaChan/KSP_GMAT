@@ -611,8 +611,7 @@ namespace KSPGMAT.UI {
             GUILayout.Space(4);
             GUILayout.BeginHorizontal();
             GUILayout.Label("最大迭代次数 (MaxIterations):", labelValueStyle, GUILayout.Width(190));
-            string sMaxIter = GUILayout.TextField(activeSolver.maxIterations.ToString(), GUILayout.Width(70));
-            int.TryParse(sMaxIter, out activeSolver.maxIterations);
+            activeSolver.maxIterations = DrawDelayedIntField("modal_solver_max_iter", activeSolver.maxIterations, numericInputStyle ?? GUI.skin.textField, GUILayout.Width(70));
 
             GUILayout.Space(15);
             activeSolver.showProgress = GUILayout.Toggle(activeSolver.showProgress, "控制台显示收敛进度", GUILayout.Width(160));
@@ -877,22 +876,16 @@ namespace KSPGMAT.UI {
             GUILayout.Space(4);
             GUILayout.BeginHorizontal();
             GUILayout.Label("初始步长 (InitialStepSize):", labelValueStyle, GUILayout.Width(170));
-            string sInitStep = GUILayout.TextField(cfg.initialStepSize.ToString("F1"), GUILayout.Width(70));
-            double.TryParse(sInitStep, out cfg.initialStepSize);
+            cfg.initialStepSize = DrawDelayedNumericField("modal_prop_init_step", cfg.initialStepSize, numericInputStyle ?? GUI.skin.textField, GUILayout.Width(70), "F1");
 
             GUILayout.Label("数值精度 (Accuracy):", labelValueStyle, GUILayout.Width(140));
-            string sAcc = GUILayout.TextField((cfg.accuracy > 1e-20 ? cfg.accuracy : 1e-11).ToString("E2", System.Globalization.CultureInfo.InvariantCulture), GUILayout.Width(80));
-            if (double.TryParse(sAcc, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double parsedAcc)) {
-                if (parsedAcc > 0.0) cfg.accuracy = parsedAcc;
-            }
+            cfg.accuracy = DrawDelayedNumericField("modal_prop_acc", (cfg.accuracy > 1e-20 ? cfg.accuracy : 1e-11), numericInputStyle ?? GUI.skin.textField, GUILayout.Width(80), "E2");
 
             GUILayout.Label("最小步长 (MinStep):", labelValueStyle, GUILayout.Width(130));
-            string sMinStep = GUILayout.TextField(cfg.minStep.ToString("F3"), GUILayout.Width(60));
-            double.TryParse(sMinStep, out cfg.minStep);
+            cfg.minStep = DrawDelayedNumericField("modal_prop_min_step", cfg.minStep, numericInputStyle ?? GUI.skin.textField, GUILayout.Width(60), "F3");
 
             GUILayout.Label("最大步长 (MaxStep):", labelValueStyle, GUILayout.Width(130));
-            string sMaxStep = GUILayout.TextField(cfg.maxStep.ToString("F1"), GUILayout.Width(70));
-            double.TryParse(sMaxStep, out cfg.maxStep);
+            cfg.maxStep = DrawDelayedNumericField("modal_prop_max_step", cfg.maxStep, numericInputStyle ?? GUI.skin.textField, GUILayout.Width(70), "F1");
             GUILayout.EndHorizontal();
 
             GUILayout.Space(8);

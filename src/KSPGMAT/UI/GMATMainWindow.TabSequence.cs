@@ -2132,13 +2132,15 @@ namespace KSPGMAT.UI {
             else if (step.type == "Equation") {
                 GUILayout.BeginHorizontal();
                 GUILayout.Label("赋值变量: Sat.", labelValueStyle, GUILayout.Width(95));
-                step.variable = GUILayout.TextField(step.variable ?? "", stepLabelInputStyle ?? GUI.skin.textField, GUILayout.Width(130), GUILayout.Height(20));
+                step.variable = DrawDelayedSmartField($"eq_var_{i}", step.variable, 0.0, stepLabelInputStyle ?? GUI.skin.textField, GUILayout.Width(130), "vary", i);
                 GUILayout.Label("=", labelValueStyle, GUILayout.Width(15));
-                step.expression = GUILayout.TextField(step.expression ?? "0.0", numericInputStyle ?? GUI.skin.textField, GUILayout.Width(80), GUILayout.Height(20));
+                step.expression = DrawDelayedSmartField($"eq_exp_{i}", step.expression, 0.0, numericInputStyle ?? GUI.skin.textField, GUILayout.Width(110), "prop_val", i);
 
                 if (GUILayout.Button("📋 参数库...", secondaryButtonStyle, GUILayout.Width(80), GUILayout.Height(20))) {
                     OpenParamPicker(i, "variable");
                 }
+                
+                DrawVariableBadge(step.variable);
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
             }
@@ -2157,7 +2159,7 @@ namespace KSPGMAT.UI {
                 GUILayout.Label("<color=#38bdf8><b>🧾 瞬时状态报告 (Report File):</b></color>", labelValueStyle, GUILayout.Width(185));
 
                 GUILayout.Label("<color=#94a3b8>对象名:</color>", gridLabelStyle, GUILayout.Width(45));
-                step.subscriber_name = GUILayout.TextField(string.IsNullOrEmpty(step.subscriber_name) ? $"StepReport_{i + 1}" : step.subscriber_name, GUILayout.Width(110), GUILayout.Height(20));
+                step.subscriber_name = DrawDelayedTextField($"rep_sub_{i}", string.IsNullOrEmpty(step.subscriber_name) ? $"StepReport_{i + 1}" : step.subscriber_name, stepLabelInputStyle ?? GUI.skin.textField, GUILayout.Width(110));
 
                 GUILayout.Space(6);
                 step.is_expanded = GUILayout.Toggle(step.is_expanded, step.is_expanded ? " ▾ 收起数据明细" : " ▸ 展开详细数据报表", secondaryButtonStyle, GUILayout.Height(20));
