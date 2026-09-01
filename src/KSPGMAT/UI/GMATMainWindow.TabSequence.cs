@@ -2686,19 +2686,28 @@ namespace KSPGMAT.UI {
 
         private void DrawStepCollapsedResultBadge(MissionStep step) {
             if (step == null) return;
-            if (step.type == "Vary" && step.has_solved_value) {
+            if (step.type == "Vary" && (step.has_solved_value || step.solved_value != 0)) {
                 GUILayout.Space(8);
                 string unitStr = (step.vary_variable != null && (step.vary_variable.Contains("Direction") || step.vary_variable.Contains("Thrust"))) ? "" : ((step.vary_variable != null && step.vary_variable.Contains("Element")) ? "km/s" : "s");
-                GUILayout.Label($"<color=#34d399><b>➔ 求解值: {step.solved_value_str} {unitStr}</b></color>", labelValueStyle);
+                string sVal = !string.IsNullOrEmpty(step.solved_value_str) ? step.solved_value_str : step.solved_value.ToString("F4");
+                GUILayout.Label($"<color=#34d399><b>➔ 🎯 求解值: {sVal} {unitStr}</b></color>", labelValueStyle);
             } else if (step.type == "Achieve" && step.has_achieve_result) {
                 GUILayout.Space(8);
                 string col = step.achieve_passed ? "#34d399" : "#f87171";
                 string icon = step.achieve_passed ? "🎯" : "⚠️";
                 GUILayout.Label($"<color={col}><b>➔ {icon} 达成值: {step.achieved_value:F3} (残差: {step.achieved_variance:F4})</b></color>", labelValueStyle);
-            } else if ((step.type == "FiniteBurn" || step.type == "ImpulsiveBurn") && (step.dv_v != 0 || step.dv_n != 0 || step.dv_b != 0)) {
+            } else if ((step.type == "FiniteBurn" || step.type == "ImpulsiveBurn" || step.type == "Maneuver") && (step.dv_v != 0 || step.dv_n != 0 || step.dv_b != 0 || step.has_solved_value)) {
                 GUILayout.Space(8);
                 double tot = Math.Sqrt(step.dv_v * step.dv_v + step.dv_n * step.dv_n + step.dv_b * step.dv_b);
-                GUILayout.Label($"<color=#34d399><b>➔ ΔV: {tot:F1} m/s (顺行: {step.dv_v:F1}, 法向: {step.dv_n:F1}, 径向: {step.dv_b:F1})</b></color>", labelValueStyle);
+                if (tot > 0) {
+                    GUILayout.Label($"<color=#34d399><b>➔ 🎯 ΔV: {tot:F1} m/s (切向: {step.dv_v:F1}, 法向: {step.dv_n:F1}, 变面: {step.dv_b:F1})</b></color>", labelValueStyle);
+                }
+            } else if (step.type == "ThrustVectorControl" || step.type == "VaryThrustDirection") {
+                GUILayout.Space(8);
+                GUILayout.Label($"<color=#38bdf8><b>➔ 🧭 矢量: ({step.thrust_dir1:F2}, {step.thrust_dir2:F2}, {step.thrust_dir3:F2})</b></color>", labelValueStyle);
+            } else if (step.type == "StageSeparation") {
+                GUILayout.Space(8);
+                GUILayout.Label($"<color=#34d399><b>➔ 🚀 抛离: {step.separated_mass:F0} kg</b></color>", labelValueStyle);
             }
         }
     }
