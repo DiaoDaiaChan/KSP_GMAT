@@ -145,6 +145,27 @@ namespace KSPGMAT.UI {
             targetGroupBoxStyle.border = new RectOffset(3, 3, 3, 3);
             targetGroupBoxStyle.padding = new RectOffset(8, 8, 8, 8);
 
+            // Dynamic Interactive Glow Styles for Step Cards
+            Texture2D groupHoverBg = MakeBoxTex(8, 8, new Color(0.045f, 0.070f, 0.115f, 0.98f), new Color(0.38f, 0.75f, 1.0f, 1.0f), 2);
+            targetGroupHoverBoxStyle = new GUIStyle(targetGroupBoxStyle);
+            targetGroupHoverBoxStyle.normal.background = groupHoverBg;
+            targetGroupHoverBoxStyle.hover.background = groupHoverBg;
+
+            Texture2D stepHoverBg = MakeBoxTex(8, 8, new Color(0.055f, 0.085f, 0.135f, 0.98f), new Color(0.22f, 0.74f, 0.97f, 0.95f), 1);
+            stepHoverBoxStyle = new GUIStyle(nestedCardBoxStyle);
+            stepHoverBoxStyle.normal.background = stepHoverBg;
+            stepHoverBoxStyle.hover.background = stepHoverBg;
+
+            Texture2D stepSolvingBg = MakeBoxTex(8, 8, new Color(0.04f, 0.10f, 0.07f, 0.98f), new Color(0.20f, 0.85f, 0.55f, 0.95f), 1);
+            stepSolvingBoxStyle = new GUIStyle(nestedCardBoxStyle);
+            stepSolvingBoxStyle.normal.background = stepSolvingBg;
+            stepSolvingBoxStyle.hover.background = stepSolvingBg;
+
+            Texture2D stepDraggingBg = MakeBoxTex(8, 8, new Color(0.12f, 0.09f, 0.03f, 0.98f), new Color(0.98f, 0.80f, 0.12f, 0.95f), 2);
+            stepDraggingBoxStyle = new GUIStyle(nestedCardBoxStyle);
+            stepDraggingBoxStyle.normal.background = stepDraggingBg;
+            stepDraggingBoxStyle.hover.background = stepDraggingBg;
+
             // 4. Tab Button Style
             tabButtonStyle = new GUIStyle(GUI.skin.button);
             tabButtonStyle.normal.background = cardBg;
@@ -428,12 +449,45 @@ namespace KSPGMAT.UI {
             stylesInitialized = true;
         }
 
-        private GUIStyle GetTargetGroupBoxStyle(int groupIndex) {
+        private GUIStyle GetTargetGroupBoxStyle(int groupIndex, bool isHovered = false) {
+            if (isHovered && targetGroupHoverBoxStyle != null) return targetGroupHoverBoxStyle;
             return targetGroupBoxStyle ?? cardBoxStyle;
         }
 
-        private GUIStyle GetStepBoxStyle(string stepType) {
+        private GUIStyle GetStepBoxStyle(string stepType, bool isHovered = false, bool isSolving = false, bool isBeingDragged = false) {
+            if (isBeingDragged && stepDraggingBoxStyle != null) return stepDraggingBoxStyle;
+            if (isSolving && stepSolvingBoxStyle != null) return stepSolvingBoxStyle;
+            if (isHovered && stepHoverBoxStyle != null) return stepHoverBoxStyle;
             return nestedCardBoxStyle;
+        }
+
+        public static Color GetStepThemeColor(string stepType) {
+            if (string.IsNullOrEmpty(stepType)) return new Color(0.58f, 0.64f, 0.72f, 1f);
+            switch (stepType) {
+                case "Target":
+                case "EndTarget":
+                    return new Color(0.39f, 0.40f, 0.95f, 1f); // #6366f1 Indigo
+                case "Vary":
+                case "VaryThrustDirection":
+                    return new Color(0.22f, 0.74f, 0.97f, 1f); // #38bdf8 Sky Blue
+                case "Achieve":
+                    return new Color(0.20f, 0.83f, 0.60f, 1f); // #34d399 Emerald
+                case "FiniteBurn":
+                case "BeginFiniteBurn":
+                case "EndFiniteBurn":
+                    return new Color(0.96f, 0.62f, 0.04f, 1f); // #f59e0b Amber Flame
+                case "Propagate":
+                    return new Color(0.66f, 0.33f, 0.97f, 1f); // #a855f7 Purple
+                case "ImpulsiveBurn":
+                case "Maneuver":
+                    return new Color(0.96f, 0.25f, 0.37f, 1f); // #f43f5e Rose
+                case "ThrustVectorControl":
+                    return new Color(0.14f, 0.65f, 0.96f, 1f); // #0284c7 Ocean
+                case "StageSeparation":
+                    return new Color(0.58f, 0.64f, 0.72f, 1f); // #94a3b8 Slate
+                default:
+                    return new Color(0.38f, 0.82f, 1.0f, 1f);
+            }
         }
 
         private Texture2D MakeBoxTex(int width, int height, Color fill, Color border, int borderWidth = 1) {

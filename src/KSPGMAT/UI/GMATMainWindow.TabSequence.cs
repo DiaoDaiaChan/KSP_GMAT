@@ -335,9 +335,17 @@ namespace KSPGMAT.UI {
 
                     insideTargetGroup = true;
                     targetGroupCollapsed = step.is_collapsed;
+                    bool isTargetHovered = (hoveredStepIndex == i);
 
-                    // BEGIN PROMINENT OUTER GROUP BOUNDING BOX (Enclosing entire Target group)
-                    GUILayout.BeginVertical(targetGroupBoxStyle);
+                    // BEGIN PROMINENT OUTER GROUP BOUNDING BOX (Enclosing entire Target group with dynamic hover glow)
+                    GUILayout.BeginVertical(GetTargetGroupBoxStyle(i, isTargetHovered));
+                    if (Event.current.type == EventType.Repaint) {
+                        Rect r = GUILayoutUtility.GetLastRect();
+                        if (r.Contains(Event.current.mousePosition)) hoveredStepIndex = i;
+                        if (isTargetHovered) {
+                            GUI.DrawTexture(new Rect(r.x + 1, r.y + 2, 4, r.height - 4), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, GetStepThemeColor("Target"), 0, 0);
+                        }
+                    }
 
                     int varyCount = 0;
                     int achieveCount = 0;
@@ -592,11 +600,20 @@ namespace KSPGMAT.UI {
                 // ==========================================
                 if (step.type == "EndTarget") {
                     if (!targetGroupCollapsed) {
+                        bool isEndHovered = (hoveredStepIndex == i);
                         // Render EndTarget footer inside the group container with visual hierarchy guide
                         GUILayout.BeginHorizontal();
                         GUILayout.Space(6);
-                        GUILayout.Label("<color=#64748b>│ └─</color>", labelValueStyle, GUILayout.Width(24));
-                        GUILayout.BeginVertical(GetStepBoxStyle("EndTarget"));
+                        string endTreeColor = isEndHovered ? "#38bdf8" : "#64748b";
+                        GUILayout.Label($"<color={endTreeColor}><b>│ └─</b></color>", labelValueStyle, GUILayout.Width(24));
+                        GUILayout.BeginVertical(GetStepBoxStyle("EndTarget", isEndHovered, false, isBeingDragged));
+                        if (Event.current.type == EventType.Repaint) {
+                            Rect r = GUILayoutUtility.GetLastRect();
+                            if (r.Contains(Event.current.mousePosition)) hoveredStepIndex = i;
+                            if (isEndHovered) {
+                                GUI.DrawTexture(new Rect(r.x + 1, r.y + 2, 3, r.height - 4), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, GetStepThemeColor("EndTarget"), 0, 0);
+                            }
+                        }
                         GUILayout.BeginHorizontal();
 
                         string foldIcon = step.is_collapsed ? "⊞" : "⊟";
@@ -648,11 +665,21 @@ namespace KSPGMAT.UI {
                         continue; // Skip rendering children when Target group is folded
                     }
 
+                    bool isChildHovered = (hoveredStepIndex == i);
+
                     // Render inner step nested neatly inside the prominent group box with typed colored border
                     GUILayout.BeginHorizontal();
                     GUILayout.Space(6); // Inner margin from outer group
-                    GUILayout.Label("<color=#64748b>│ ├─</color>", labelValueStyle, GUILayout.Width(24));
-                    GUILayout.BeginVertical(GetStepBoxStyle(step.type));
+                    string treeBranchColor = isChildHovered ? "#38bdf8" : "#64748b";
+                    GUILayout.Label($"<color={treeBranchColor}><b>│ ├─</b></color>", labelValueStyle, GUILayout.Width(24));
+                    GUILayout.BeginVertical(GetStepBoxStyle(step.type, isChildHovered, false, isBeingDragged));
+                    if (Event.current.type == EventType.Repaint) {
+                        Rect r = GUILayoutUtility.GetLastRect();
+                        if (r.Contains(Event.current.mousePosition)) hoveredStepIndex = i;
+                        if (isChildHovered) {
+                            GUI.DrawTexture(new Rect(r.x + 1, r.y + 2, 3, r.height - 4), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, GetStepThemeColor(step.type), 0, 0);
+                        }
+                    }
 
                     // Step Header Bar
                     GUILayout.BeginHorizontal();
@@ -726,7 +753,15 @@ namespace KSPGMAT.UI {
                 // ==========================================
                 // CASE 4: REGULAR STANDALONE STEPS OUTSIDE GROUPS
                 // ==========================================
-                GUILayout.BeginVertical(GetStepBoxStyle(step.type));
+                bool isRegularHovered = (hoveredStepIndex == i);
+                GUILayout.BeginVertical(GetStepBoxStyle(step.type, isRegularHovered, false, isBeingDragged));
+                if (Event.current.type == EventType.Repaint) {
+                    Rect r = GUILayoutUtility.GetLastRect();
+                    if (r.Contains(Event.current.mousePosition)) hoveredStepIndex = i;
+                    if (isRegularHovered) {
+                        GUI.DrawTexture(new Rect(r.x + 1, r.y + 2, 3, r.height - 4), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, GetStepThemeColor(step.type), 0, 0);
+                    }
+                }
                 GUILayout.BeginHorizontal();
 
                 string regularFoldIcon = step.is_collapsed ? "⊞" : "⊟";

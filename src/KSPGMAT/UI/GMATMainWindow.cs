@@ -214,6 +214,11 @@ namespace KSPGMAT.UI {
         private GUIStyle cardBoxStyle;
         private GUIStyle nestedCardBoxStyle;
         private GUIStyle targetGroupBoxStyle;
+        private GUIStyle targetGroupHoverBoxStyle;
+        private GUIStyle stepHoverBoxStyle;
+        private GUIStyle stepSolvingBoxStyle;
+        private GUIStyle stepDraggingBoxStyle;
+        private int hoveredStepIndex = -1;
         private GUIStyle labelValueStyle;
         private GUIStyle actionButtonStyle;
         private GUIStyle secondaryButtonStyle;
