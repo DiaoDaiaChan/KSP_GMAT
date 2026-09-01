@@ -113,23 +113,17 @@ namespace KSPGMAT.UI {
             // Summary Evaluation Strip across all burns
             if (latestResult != null && latestResult.solved_burns != null && latestResult.solved_burns.Count > 0) {
                 double solveEpochUT = (latestResult.solve_ut > 0) ? latestResult.solve_ut : Planetarium.GetUniversalTime();
-                double totalCentroidShift = 0.0;
-                double totalPhaseShift = 0.0;
-                double totalIgnitionDelta = 0.0;
+                var firstBurn = latestResult.solved_burns[0];
+                double rawTgt1 = solveEpochUT + firstBurn.epoch_offset;
+                double rawLead1 = (firstBurn.duration > 0) ? (firstBurn.duration * 0.5) : 0.0;
+                double rawInit1 = rawTgt1 - rawLead1;
 
-                for (int sbI = 0; sbI < latestResult.solved_burns.Count; sbI++) {
-                    var sb = latestResult.solved_burns[sbI];
-                    double rawTargetEpoch = solveEpochUT + sb.epoch_offset;
-                    double rawLead = (sb.duration > 0) ? (sb.duration * 0.5) : 0.0;
-                    double rawInit = rawTargetEpoch - rawLead;
+                double tgtEpoch1, leadSec1;
+                double compInit1 = ComputeBurnInitialTime(vessel, firstBurn, solveEpochUT, out tgtEpoch1, out leadSec1);
 
-                    double tgtEpoch, leadSec;
-                    double compInit = ComputeBurnInitialTime(vessel, sb, solveEpochUT, out tgtEpoch, out leadSec);
-
-                    totalCentroidShift += (leadSec - rawLead);
-                    if (sbI == 0) totalPhaseShift = (tgtEpoch - rawTargetEpoch);
-                    totalIgnitionDelta += (compInit - rawInit);
-                }
+                double b1CentroidShift = leadSec1 - rawLead1;
+                double b1PhaseShift = tgtEpoch1 - rawTgt1;
+                double b1IgnitionDelta = compInit1 - rawInit1;
 
                 GUILayout.Space(4);
                 GUILayout.BeginHorizontal();
@@ -143,7 +137,8 @@ namespace KSPGMAT.UI {
                 if (isRaw) {
                     GUILayout.Label("<color=#94a3b8>当前处于原生未修正基准状态。切换至模式 2 或 3 可自动激活变质量质心与开普勒特征点锁相补偿。</color>", labelValueStyle);
                 } else {
-                    GUILayout.Label($"冲量质心提前量补偿: <color=#38bdf8><b>{totalCentroidShift:+0.00;-0.00;0.00}s</b></color> | 轨道特征点锁相时移: <color=#facc15><b>{totalPhaseShift:+0.00;-0.00;0.00}s</b></color> | 净点火时刻校准偏差: <color=#34d399><b>{totalIgnitionDelta:+0.00;-0.00;0.00}s</b></color>", labelValueStyle);
+                    string multiBurnTag = (latestResult.solved_burns.Count > 1) ? $" (全序列共 {latestResult.solved_burns.Count} 个机动协同锚定)" : "";
+                    GUILayout.Label($"首发机动 #1: 冲量质心提前: <color=#38bdf8><b>+{b1CentroidShift:F2}s</b></color> | 轨道特征点锁相: <color=#facc15><b>{b1PhaseShift:+0.00;-0.00;0.00}s</b></color> | 净点火时刻校准: <color=#34d399><b>{b1IgnitionDelta:+0.00;-0.00;0.00}s</b></color>{multiBurnTag}", labelValueStyle);
                 }
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
