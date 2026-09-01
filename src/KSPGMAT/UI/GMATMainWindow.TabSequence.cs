@@ -1511,42 +1511,26 @@ namespace KSPGMAT.UI {
                     GUILayout.Space(8);
                     GUILayout.Label("<color=#94a3b8>目标阈值 / 变量:</color>", gridLabelStyle, GUILayout.Width(95));
 
-                    GUI.SetNextControlName($"Field_PropVal_{i}");
-                    string prevValStr = !string.IsNullOrEmpty(step.target_val_str) 
-                        ? step.target_val_str 
-                        : (!string.IsNullOrEmpty(step.duration_str) 
-                            ? step.duration_str 
-                            : (step.target_val != 0.0 
-                                ? step.target_val.ToString("G", CultureInfo.InvariantCulture) 
-                                : (step.duration > 0.0 ? step.duration.ToString("G", CultureInfo.InvariantCulture) : "3600")));
+                    string curRaw = !string.IsNullOrEmpty(step.target_val_str) ? step.target_val_str : (!string.IsNullOrEmpty(step.duration_str) ? step.duration_str : null);
+                    double defNum = step.target_val != 0.0 ? step.target_val : (step.duration > 0.0 ? step.duration : 3600.0);
 
-                    string newValStr = GUILayout.TextField(prevValStr, GUILayout.MinWidth(100), GUILayout.Width(130), GUILayout.Height(20));
-
-                    if (Event.current.type == EventType.Repaint) {
-                        if (GUI.GetNameOfFocusedControl() == $"Field_PropVal_{i}") {
-                            Rect r = GUILayoutUtility.GetLastRect();
-                            Vector2 sp = GUIUtility.GUIToScreenPoint(new Vector2(r.x, r.y));
-                            intelliSenseAnchorRect = new Rect(sp.x, sp.y, r.width, r.height);
-                        }
-                    }
-
-                    if (newValStr != prevValStr || (GUI.GetNameOfFocusedControl() == $"Field_PropVal_{i}" && !intelliSenseOpen && !intelliSenseDismissed)) {
-                        step.target_val_str = newValStr;
-                        step.duration_str = newValStr;
-                        if (double.TryParse(newValStr, NumberStyles.Any, CultureInfo.InvariantCulture, out double dVal)) {
+                    string newRaw = DrawDelayedSmartField($"prop_tval_{i}", curRaw, defNum, numericInputStyle, GUILayout.Width(130), "prop_val", i);
+                    if (newRaw != curRaw) {
+                        step.target_val_str = newRaw;
+                        step.duration_str = newRaw;
+                        if (double.TryParse(newRaw, NumberStyles.Any, CultureInfo.InvariantCulture, out double dVal)) {
                             step.target_val = dVal;
                             step.duration = dVal;
                             step.burn_use_vary_var = false;
                         } else {
                             step.burn_use_vary_var = true;
-                            step.burn_vary_var_name = newValStr;
+                            step.burn_vary_var_name = newRaw;
                         }
-                        TriggerIntelliSense(newValStr, "prop_val", i);
                     }
 
                     // Variable Name Reference Badge
                     if (GMATStateManager.Current != null && GMATStateManager.Current.Variables != null) {
-                        var matchedVar = GMATStateManager.Current.Variables.Find(v => v.Name.Equals(newValStr, StringComparison.OrdinalIgnoreCase));
+                        var matchedVar = GMATStateManager.Current.Variables.Find(v => v.Name.Equals(step.target_val_str, StringComparison.OrdinalIgnoreCase));
                         if (matchedVar != null) {
                             GUILayout.Label($"<color=#facc15><b>[变量: {matchedVar.Name} = {matchedVar.InitialValue}]</b></color>", labelValueStyle);
                         }
@@ -1859,25 +1843,15 @@ namespace KSPGMAT.UI {
                 step.burn_use_vary_var = GUILayout.Toggle(step.burn_use_vary_var, " 使用 Vary 变量控制时长", GUILayout.Width(160));
                 if (step.burn_use_vary_var) {
                     GUILayout.Label("<color=#94a3b8>变量名:</color>", gridLabelStyle, GUILayout.Width(45));
-                    GUI.SetNextControlName($"Field_FBurnVar_{i}");
-                    string prevVarName = string.IsNullOrEmpty(step.burn_vary_var_name) ? (!string.IsNullOrEmpty(step.duration_str) ? step.duration_str : "burntime") : step.burn_vary_var_name;
-                    string newVarName = GUILayout.TextField(prevVarName, stepLabelInputStyle ?? GUI.skin.textField, GUILayout.MinWidth(85), GUILayout.Width(110), GUILayout.Height(20));
-
-                    if (Event.current.type == EventType.Repaint) {
-                        if (GUI.GetNameOfFocusedControl() == $"Field_FBurnVar_{i}") {
-                            Rect r = GUILayoutUtility.GetLastRect();
-                            Vector2 sp = GUIUtility.GUIToScreenPoint(new Vector2(r.x, r.y));
-                            intelliSenseAnchorRect = new Rect(sp.x, sp.y, r.width, r.height);
-                        }
-                    }
-                    if (newVarName != prevVarName || (GUI.GetNameOfFocusedControl() == $"Field_FBurnVar_{i}" && !intelliSenseOpen && !intelliSenseDismissed)) {
-                        step.burn_vary_var_name = newVarName;
-                        step.duration_str = newVarName;
-                        TriggerIntelliSense(newVarName, "fburn_var", i);
+                    string curVName = !string.IsNullOrEmpty(step.burn_vary_var_name) ? step.burn_vary_var_name : (!string.IsNullOrEmpty(step.duration_str) ? step.duration_str : "burntime");
+                    string newVName = DrawDelayedSmartField($"fburn_var_{i}", curVName, 0.0, stepLabelInputStyle ?? GUI.skin.textField, GUILayout.Width(110), "fburn_var", i);
+                    if (newVName != curVName) {
+                        step.burn_vary_var_name = newVName;
+                        step.duration_str = newVName;
                     }
 
                     if (GMATStateManager.Current != null && GMATStateManager.Current.Variables != null) {
-                        var matchedVar = GMATStateManager.Current.Variables.Find(v => v.Name.Equals(newVarName, StringComparison.OrdinalIgnoreCase));
+                        var matchedVar = GMATStateManager.Current.Variables.Find(v => v.Name.Equals(step.burn_vary_var_name, StringComparison.OrdinalIgnoreCase));
                         if (matchedVar != null) {
                             GUILayout.Label($"<color=#facc15><b>[变量: {matchedVar.Name} = {matchedVar.InitialValue}]</b></color>", labelValueStyle);
                         }
@@ -2870,6 +2844,45 @@ namespace KSPGMAT.UI {
                 }
             }
             return currentValue;
+        }
+
+        /// <summary>
+        /// 统一智能延迟输入框：支持变量名/表达式/数值双模态输入，编辑时防焦点跳变，失焦保持原始内容，深度集成智能补全与锚点定位
+        /// </summary>
+        private string DrawDelayedSmartField(string controlId, string rawValue, double fallbackNumericValue, GUIStyle style, GUILayoutOption widthOpt, string intelliSenseContextMode = null, int stepIndex = -1) {
+            GUI.SetNextControlName(controlId);
+            bool isFocused = (GUI.GetNameOfFocusedControl() == controlId);
+
+            string displayStr;
+            if (!inputStringCache.TryGetValue(controlId, out displayStr)) {
+                displayStr = !string.IsNullOrEmpty(rawValue) 
+                    ? rawValue 
+                    : (fallbackNumericValue != 0.0 ? fallbackNumericValue.ToString("G", CultureInfo.InvariantCulture) : "0");
+                inputStringCache[controlId] = displayStr;
+            }
+
+            if (!isFocused && !string.IsNullOrEmpty(rawValue)) {
+                displayStr = rawValue;
+                inputStringCache[controlId] = displayStr;
+            }
+
+            string newStr = GUILayout.TextField(displayStr, style ?? GUI.skin.textField, widthOpt, GUILayout.Height(20));
+
+            if (Event.current.type == EventType.Repaint && isFocused) {
+                Rect r = GUILayoutUtility.GetLastRect();
+                Vector2 sp = GUIUtility.GUIToScreenPoint(new Vector2(r.x, r.y));
+                intelliSenseAnchorRect = new Rect(sp.x, sp.y, r.width, r.height);
+            }
+
+            if (newStr != displayStr || (isFocused && !intelliSenseOpen && !intelliSenseDismissed && !string.IsNullOrEmpty(intelliSenseContextMode))) {
+                inputStringCache[controlId] = newStr;
+                if (!string.IsNullOrEmpty(intelliSenseContextMode) && stepIndex >= 0) {
+                    TriggerIntelliSense(newStr, intelliSenseContextMode, stepIndex);
+                }
+                return newStr;
+            }
+
+            return displayStr;
         }
 
         /// <summary>
