@@ -834,8 +834,15 @@ namespace KSPGMAT.UI {
             }
             if (GUILayout.Button("💾 导出脚本...", secondaryButtonStyle, GUILayout.Height(22))) {
                 try {
-                    string expPath = Path.Combine(GMATClient.GetOutputDir(), "mission_run.script");
-                    File.WriteAllText(expPath, GMATClient.SanitizeGmatScript(currentScriptToUse), new System.Text.UTF8Encoding(false));
+                    string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss_fff");
+                    string outputDir = GMATClient.GetOutputDir();
+                    if (!Directory.Exists(outputDir)) Directory.CreateDirectory(outputDir);
+                    string fullScript = (ideViewMode == 1) ? currentScriptToUse : GenerateLiveGmatScript(0);
+                    string expPath = Path.Combine(outputDir, $"mission_{timestamp}.script");
+                    string sanitized = GMATClient.SanitizeGmatScript(fullScript);
+                    File.WriteAllText(expPath, sanitized, new System.Text.UTF8Encoding(false));
+                    File.WriteAllText(Path.Combine(outputDir, "mission_latest.script"), sanitized, new System.Text.UTF8Encoding(false));
+                    File.WriteAllText(Path.Combine(outputDir, "mission_run.script"), sanitized, new System.Text.UTF8Encoding(false));
                     ScreenMessages.PostScreenMessage("✅ GMAT 标准合规脚本已导出至: " + expPath, 3.0f, ScreenMessageStyle.UPPER_CENTER);
                 } catch (Exception ex) {
                     ScreenMessages.PostScreenMessage("❌ 导出失败: " + ex.Message, 3.0f, ScreenMessageStyle.UPPER_CENTER);
@@ -843,10 +850,17 @@ namespace KSPGMAT.UI {
             }
             if (GUILayout.Button("🚀 推送至 GMAT", actionButtonStyle, GUILayout.Height(22))) {
                 try {
-                    string expPath = Path.Combine(GMATClient.GetOutputDir(), "mission_run.script");
-                    File.WriteAllText(expPath, GMATClient.SanitizeGmatScript(currentScriptToUse), new System.Text.UTF8Encoding(false));
+                    string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss_fff");
+                    string outputDir = GMATClient.GetOutputDir();
+                    if (!Directory.Exists(outputDir)) Directory.CreateDirectory(outputDir);
+                    string fullScript = (ideViewMode == 1) ? currentScriptToUse : GenerateLiveGmatScript(0);
+                    string expPath = Path.Combine(outputDir, $"mission_{timestamp}.script");
+                    string sanitized = GMATClient.SanitizeGmatScript(fullScript);
+                    File.WriteAllText(expPath, sanitized, new System.Text.UTF8Encoding(false));
+                    File.WriteAllText(Path.Combine(outputDir, "mission_latest.script"), sanitized, new System.Text.UTF8Encoding(false));
+                    File.WriteAllText(Path.Combine(outputDir, "mission_run.script"), sanitized, new System.Text.UTF8Encoding(false));
                     GMATClient.OpenGmatDesktop(expPath);
-                    ScreenMessages.PostScreenMessage("🚀 已推送合规脚本至 GMAT 桌面端！", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                    ScreenMessages.PostScreenMessage($"🚀 已推送合规脚本 ({Path.GetFileName(expPath)}) 至 GMAT 桌面端！", 3.0f, ScreenMessageStyle.UPPER_CENTER);
                 } catch (Exception ex) {
                     ScreenMessages.PostScreenMessage("❌ 推送失败: " + ex.Message, 3.0f, ScreenMessageStyle.UPPER_CENTER);
                 }
