@@ -177,13 +177,25 @@ namespace KSPGMAT.UI {
                         // Card Header
                         GUILayout.BeginHorizontal();
                         GUILayout.Label($"<b>🎯 机动 #{i + 1}: {(string.IsNullOrEmpty(b.name) ? "变轨机动" : b.name)}</b> <color=#94a3b8>({b.type})</color>", headerStyle);
-                        GUILayout.Space(12);
+                        GUILayout.Space(10);
 
                         // Per-Burn Checkbox: If checked, apply ignition timing optimization (mode selected on top)
-                        bool newOpt = GUILayout.Toggle(b.enable_timing_optimization, " ⚡ 启用点火时相优化 (应用上方模式)", GUILayout.Height(20));
+                        bool newOpt = GUILayout.Toggle(b.enable_timing_optimization, " ⚡ 启用点火时相优化", GUILayout.Height(20));
                         if (newOpt != b.enable_timing_optimization) {
                             b.enable_timing_optimization = newOpt;
                         }
+
+                        GUILayout.Space(6);
+                        // Smart Recommendation Badge
+                        string recText;
+                        if (b.duration < 20.0) {
+                            recText = "<color=#94a3b8>[💡 短点火: 推荐1:1直通]</color>";
+                        } else if (b.duration < 60.0) {
+                            recText = "<color=#facc15>[💡 中等机动: 可按需开启]</color>";
+                        } else {
+                            recText = "<color=#38bdf8>[💡 长时间机动: 推荐开启质心优化]</color>";
+                        }
+                        GUILayout.Label(recText, labelValueStyle);
 
                         GUILayout.FlexibleSpace();
 
@@ -287,6 +299,21 @@ namespace KSPGMAT.UI {
                         } else {
                             string evalGrade = (Math.Abs(centroidShift) > 0.05 || Math.Abs(phaseShift) > 0.5) ? "<color=#34d399>🌟 修正有效 (消除非线性重心漂移)</color>" : "<color=#38bdf8>ℹ️ 微小扰动修正</color>";
                             GUILayout.Label($"⚖️ <b>时相优化生效中:</b> 质心补偿: <color=#38bdf8><b>{centroidShift:+0.00;-0.00;0.00}s</b></color> (vs 原生对半 -{rawLead:F2}s) | 锁相平移: <color=#facc15><b>{phaseShift:+0.00;-0.00;0.00}s</b></color> | 净点火修正: <color=#34d399><b>{totalBurnShift:+0.00;-0.00;0.00}s</b></color> | {evalGrade}", labelValueStyle);
+                        }
+                        GUILayout.FlexibleSpace();
+                        GUILayout.EndHorizontal();
+
+                        // DYNAMIC INTERACTIVE TIMELINE STRIP
+                        GUILayout.Space(2);
+                        GUILayout.BeginHorizontal();
+                        double tIgnRel = compInitial - solveEpochUT;
+                        double tCentroidRel = compInitial + leadSec - solveEpochUT;
+                        double tCutoffRel = compInitial + b.duration - solveEpochUT;
+
+                        if (!b.enable_timing_optimization) {
+                            GUILayout.Label($"📊 <b>时间轴:</b> <color=#34d399><b>[🔥 点火起始: T+{tIgnRel:F1}s]</b></color> ─── <color=#94a3b8>[⚖️ 冲量质心: T+{tCentroidRel:F1}s]</color> ─── <color=#f87171>[🛑 关机: T+{tCutoffRel:F1}s]</color>", labelValueStyle);
+                        } else {
+                            GUILayout.Label($"📊 <b>时间轴:</b> <color=#38bdf8><b>[🔥 优化提前点火: T+{tIgnRel:F1}s (-{leadSec:F1}s)]</b></color> ─── <color=#facc15><b>[🎯 质心对齐目标: T+{tCentroidRel:F1}s]</b></color> ─── <color=#f87171>[🛑 关机: T+{tCutoffRel:F1}s]</color>", labelValueStyle);
                         }
                         GUILayout.FlexibleSpace();
                         GUILayout.EndHorizontal();
@@ -551,7 +578,8 @@ namespace KSPGMAT.UI {
 
             bool ok = PrincipiaInterop.InsertOrUpdateBurn(vessel, burnInitialTime, dv, thrust, isp, burnIndex, isFrenet: true, originBodyName: b.origin);
             if (ok) {
-                ScreenMessages.PostScreenMessage($"✅ 成功将机动 #{burnIndex + 1} ({b.name}) 写入 Principia（冲量质心物理对齐）！", 4.0f, ScreenMessageStyle.UPPER_CENTER);
+                string optMsg = b.enable_timing_optimization ? $" (质心时相优化提前 -{centroidLead:F1}s)" : " (1:1 原生标称直通点火)";
+                ScreenMessages.PostScreenMessage($"✅ 成功将机动 #{burnIndex + 1} ({b.name}) 写入 Principia{optMsg}！", 4.0f, ScreenMessageStyle.UPPER_CENTER);
             } else {
                 ScreenMessages.PostScreenMessage($"⚠️ 机动 #{burnIndex + 1} 写入被拒绝或 Principia 未就绪", 4.0f, ScreenMessageStyle.UPPER_CENTER);
             }
@@ -585,7 +613,7 @@ namespace KSPGMAT.UI {
             }
 
             if (writtenCount > 0) {
-                ScreenMessages.PostScreenMessage($"✅ 成功将 {writtenCount} 个机动写入 Principia 飞行计划（齐奥尔科夫斯基冲量质心物理对齐）！", 4.0f, ScreenMessageStyle.UPPER_CENTER);
+                ScreenMessages.PostScreenMessage($"✅ 成功将 {writtenCount} 个机动写入 Principia 飞行计划！", 4.0f, ScreenMessageStyle.UPPER_CENTER);
             } else {
                 ScreenMessages.PostScreenMessage("⚠️ 机动写入被拒绝或 Principia 未就绪", 4.0f, ScreenMessageStyle.UPPER_CENTER);
             }
