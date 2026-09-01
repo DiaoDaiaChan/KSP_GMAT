@@ -2043,6 +2043,26 @@ namespace KSPGMAT.UI {
                 GUILayout.EndHorizontal();
                 GUILayout.EndVertical();
 
+                // GMAT Solved Vector Banner
+                if (step.has_solved_value) {
+                    GUILayout.Space(3);
+                    GUILayout.BeginVertical(nestedCardBoxStyle);
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label($"<color=#34d399><b>🎯 GMAT 求解收敛推力矢量: ({step.solved_dir1:F4}, {step.solved_dir2:F4}, {step.solved_dir3:F4})</b></color>", labelValueStyle);
+                    GUILayout.FlexibleSpace();
+                    if (GUILayout.Button("📌 应用收敛解为初猜", actionButtonStyle, GUILayout.Width(130), GUILayout.Height(20))) {
+                        step.thrust_dir1 = step.solved_dir1;
+                        step.thrust_dir2 = step.solved_dir2;
+                        step.thrust_dir3 = step.solved_dir3;
+                        inputStringCache[$"tvc_dir1_{i}"] = step.thrust_dir1.ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
+                        inputStringCache[$"tvc_dir2_{i}"] = step.thrust_dir2.ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
+                        inputStringCache[$"tvc_dir3_{i}"] = step.thrust_dir3.ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
+                        ScreenMessages.PostScreenMessage("✅ 已将 GMAT 收敛推力矢量应用为输入初猜！", 2.5f, ScreenMessageStyle.UPPER_CENTER);
+                    }
+                    GUILayout.EndHorizontal();
+                    GUILayout.EndVertical();
+                }
+
                 // Principia Maneuver Sync
                 if (cachedFlightPlanNodes != null && cachedFlightPlanNodes.Count > 0) {
                     int fbIdx = 0;
@@ -2724,7 +2744,11 @@ namespace KSPGMAT.UI {
                 }
             } else if (step.type == "ThrustVectorControl" || step.type == "VaryThrustDirection") {
                 GUILayout.Space(8);
-                GUILayout.Label($"<color=#38bdf8><b>➔ 🧭 矢量: ({step.thrust_dir1:F2}, {step.thrust_dir2:F2}, {step.thrust_dir3:F2})</b></color>", labelValueStyle);
+                if (step.has_solved_value) {
+                    GUILayout.Label($"<color=#34d399><b>➔ 🧭 求解矢量: ({step.solved_dir1:F2}, {step.solved_dir2:F2}, {step.solved_dir3:F2})</b></color>", labelValueStyle);
+                } else {
+                    GUILayout.Label($"<color=#38bdf8><b>➔ 🧭 初始矢量: ({step.thrust_dir1:F2}, {step.thrust_dir2:F2}, {step.thrust_dir3:F2})</b></color>", labelValueStyle);
+                }
             } else if (step.type == "StageSeparation") {
                 GUILayout.Space(8);
                 GUILayout.Label($"<color=#34d399><b>➔ 🚀 抛离: {step.separated_mass:F0} kg</b></color>", labelValueStyle);

@@ -150,6 +150,9 @@ namespace KSPGMAT {
         public double solved_value = 0.0;
         public string solved_value_str = "";
         public bool has_solved_value = false;
+        public double solved_dir1 = 1.0;
+        public double solved_dir2 = 0.0;
+        public double solved_dir3 = 0.0;
         public double achieved_value = 0.0;
         public double achieved_variance = 0.0;
         public bool achieve_passed = false;
