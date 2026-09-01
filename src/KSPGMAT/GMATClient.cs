@@ -296,6 +296,43 @@ namespace KSPGMAT {
         public string raw_report_text;
     }
 
+    public enum MilestoneType {
+        MissionStart,
+        CoastStart,
+        IgnitionStart,
+        EngineCutoff,
+        ApoapsisPassage,
+        PeriapsisPassage,
+        EquatorialNodePassage,
+        TargetBlockStart,
+        TargetBlockEnd,
+        StageSeparation,
+        MissionEnd,
+        CustomEvent
+    }
+
+    [Serializable]
+    public class MissionMilestoneNode {
+        public int milestone_index;
+        public int step_index;
+        public string label;
+        public MilestoneType type;
+        public double elapsed_sim_secs;
+        public double ut_epoch;
+        public double duration_secs;
+        public double delta_v;
+        public double dv_v;
+        public double dv_n;
+        public double dv_b;
+        public double centroid_lead_secs;
+        public double altitude_km;
+        public double sma_km;
+        public double ecc;
+        public double inc_deg;
+        public double mass_kg;
+        public string details;
+    }
+
     [Serializable]
     public class MissionResult {
         public bool success;
@@ -325,6 +362,7 @@ namespace KSPGMAT {
         public bool all_solvers_converged = true;
         public List<string> unconverged_solvers = new List<string>();
         public List<StepReportData> step_reports = new List<StepReportData>();
+        public List<MissionMilestoneNode> milestones = new List<MissionMilestoneNode>();
     }
 
     public static class GMATClient {

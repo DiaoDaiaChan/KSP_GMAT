@@ -289,6 +289,10 @@ namespace KSPGMAT.Service {
             sb.AppendLine("% -------------------------------------------------------------");
             sb.AppendLine("BeginMissionSequence;\n");
 
+            // Initial State Epoch Report
+            sb.AppendLine("% Initial State Epoch Report (T=0)");
+            sb.AppendLine($"Report TrajReport {satName}.ElapsedSecs {satName}.X {satName}.Y {satName}.Z {satName}.VX {satName}.VY {satName}.VZ {satName}.{cBody}.Altitude {satName}.SMA {satName}.ECC {satName}.INC {satName}.RAAN {satName}.AOP {satName}.TA {satName}.TotalMass;");
+
             if (steps != null && steps.Count > 0) {
                 string currentDC = "DC";
                 bool insideTarget = false;

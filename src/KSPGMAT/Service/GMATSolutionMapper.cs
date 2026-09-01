@@ -69,6 +69,16 @@ namespace KSPGMAT.Service {
             // 5. 解析各个自定义瞬时状态报告 (StepReport)
             ParseStepReports(outputDir, originalSteps, result);
 
+            // 6. 提取全任务关键里程碑时序 (Milestone Timeline)
+            result.milestones = GMATTimelineExtractor.ExtractMilestones(
+                originalSteps, 
+                dcSummaries, 
+                globalSolvedVars, 
+                result.trajectory, 
+                result.step_reports, 
+                result.solve_ut
+            );
+
             return result;
         }
 
