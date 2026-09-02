@@ -33,12 +33,12 @@ namespace KSPGMAT {
             var startNode = new MissionMilestoneNode {
                 milestone_index = mIndex++,
                 step_index = 0,
-                label = "🚀 任务纪元起点 (Mission Epoch Start)",
+                label = I18n.T("tl_mission_start_label"),
                 type = MilestoneType.MissionStart,
                 elapsed_sim_secs = 0.0,
                 ut_epoch = anchorUT,
                 duration_secs = 0.0,
-                details = "初始星历时刻，航天器状态积分开始"
+                details = I18n.T("tl_mission_start_details")
             };
             if (trajectory != null && trajectory.Count > 0) {
                 var p0 = trajectory[0];
@@ -50,7 +50,6 @@ namespace KSPGMAT {
             string currentDC = "";
             double currentGroupDuration = 0;
             double currentGroupDir1 = 1.0, currentGroupDir2 = 0.0, currentGroupDir3 = 0.0;
-            bool currentGroupHasTVC = false;
 
             for (int i = 0; i < steps.Count; i++) {
                 var st = steps[i];
@@ -59,27 +58,26 @@ namespace KSPGMAT {
                     currentDC = st.dc_name ?? "DC";
                     currentGroupDuration = 0;
                     currentGroupDir1 = 1.0; currentGroupDir2 = 0.0; currentGroupDir3 = 0.0;
-                    currentGroupHasTVC = false;
 
                     milestones.Add(new MissionMilestoneNode {
                         milestone_index = mIndex++,
                         step_index = i,
-                        label = $"🎯 打靶求解器起点 [{currentDC}]",
+                        label = I18n.Format("tl_target_start_label", currentDC),
                         type = MilestoneType.TargetBlockStart,
                         elapsed_sim_secs = simClock,
                         ut_epoch = anchorUT + simClock,
-                        details = $"进入微分修正打靶闭环控制 ({currentDC})"
+                        details = I18n.Format("tl_target_start_details", currentDC)
                     });
                 }
                 else if (st.type == "EndTarget") {
                     milestones.Add(new MissionMilestoneNode {
                         milestone_index = mIndex++,
                         step_index = i,
-                        label = $"🏁 打靶求解器收敛结束 [{currentDC}]",
+                        label = I18n.Format("tl_target_end_label", currentDC),
                         type = MilestoneType.TargetBlockEnd,
                         elapsed_sim_secs = simClock,
                         ut_epoch = anchorUT + simClock,
-                        details = $"打靶目标已达成并保存状态"
+                        details = I18n.T("tl_target_end_details")
                     });
                     currentDC = "";
                 }
@@ -97,7 +95,6 @@ namespace KSPGMAT {
                     }
                 }
                 else if (st.type == "ThrustVectorControl") {
-                    currentGroupHasTVC = true;
                     currentGroupDir1 = st.thrust_dir1;
                     currentGroupDir2 = st.thrust_dir2;
                     currentGroupDir3 = st.thrust_dir3;
@@ -142,29 +139,29 @@ namespace KSPGMAT {
                         milestones.Add(new MissionMilestoneNode {
                             milestone_index = mIndex++,
                             step_index = i,
-                            label = $"⏱️ 定时无动力滑行 (Coast {pDur:F1}s)",
+                            label = I18n.Format("tl_coast_label", pDur),
                             type = MilestoneType.CoastStart,
                             elapsed_sim_secs = simClock,
                             ut_epoch = anchorUT + simClock,
                             duration_secs = pDur,
-                            details = $"自由惯性滑行 {pDur:F1} 秒"
+                            details = I18n.Format("tl_coast_details", pDur)
                         });
 
                         simClock += pDur;
                     } else {
                         // Celestial / orbital feature event (Apoapsis, Periapsis, Latitude...)
                         MilestoneType mType = MilestoneType.CustomEvent;
-                        string eDesc = $"轨道特征事件: {sType}";
+                        string eDesc = I18n.Format("tl_evt_custom", sType);
 
                         if (sType.IndexOf("Apoapsis", StringComparison.OrdinalIgnoreCase) >= 0) {
                             mType = MilestoneType.ApoapsisPassage;
-                            eDesc = "到达轨道远地点 (Apoapsis Passage)";
+                            eDesc = I18n.T("tl_evt_apoapsis");
                         } else if (sType.IndexOf("Periapsis", StringComparison.OrdinalIgnoreCase) >= 0) {
                             mType = MilestoneType.PeriapsisPassage;
-                            eDesc = "到达轨道近地点 (Periapsis Passage)";
+                            eDesc = I18n.T("tl_evt_periapsis");
                         } else if (sType.IndexOf("Latitude", StringComparison.OrdinalIgnoreCase) >= 0 || sType.IndexOf("Node", StringComparison.OrdinalIgnoreCase) >= 0) {
                             mType = MilestoneType.EquatorialNodePassage;
-                            eDesc = "过赤道面/交点 (Equatorial Node Passage)";
+                            eDesc = I18n.T("tl_evt_node");
                         }
 
                         if (trajectory != null && trajectory.Count > 0) {
@@ -177,7 +174,7 @@ namespace KSPGMAT {
                         milestones.Add(new MissionMilestoneNode {
                             milestone_index = mIndex++,
                             step_index = i,
-                            label = $"🌐 {eDesc}",
+                            label = eDesc,
                             type = mType,
                             elapsed_sim_secs = simClock,
                             ut_epoch = anchorUT + simClock,
@@ -206,12 +203,12 @@ namespace KSPGMAT {
                     milestones.Add(new MissionMilestoneNode {
                         milestone_index = mIndex++,
                         step_index = i,
-                        label = $"🔥 主发动机点火起燃 [{burnName}]",
+                        label = I18n.Format("tl_ignition_label", burnName),
                         type = MilestoneType.IgnitionStart,
                         elapsed_sim_secs = burnStart,
                         ut_epoch = anchorUT + burnStart,
                         duration_secs = dur,
-                        details = $"点火时长: {dur:F2}s, 预期起燃时刻: T+{burnStart:F1}s"
+                        details = I18n.Format("tl_ignition_details", dur, burnStart)
                     });
 
                     simClock += dur;
@@ -220,12 +217,12 @@ namespace KSPGMAT {
                     milestones.Add(new MissionMilestoneNode {
                         milestone_index = mIndex++,
                         step_index = i,
-                        label = $"🛑 主发动机关机 (MECO) [{burnName}]",
+                        label = I18n.Format("tl_meco_label", burnName),
                         type = MilestoneType.EngineCutoff,
                         elapsed_sim_secs = simClock,
                         ut_epoch = anchorUT + simClock,
                         duration_secs = 0.0,
-                        details = $"机动关机时刻: T+{simClock:F1}s"
+                        details = I18n.Format("tl_meco_details", simClock)
                     });
                 }
                 else if (st.type == "ImpulsiveBurn" || st.type == "Maneuver") {
@@ -235,7 +232,7 @@ namespace KSPGMAT {
                     milestones.Add(new MissionMilestoneNode {
                         milestone_index = mIndex++,
                         step_index = i,
-                        label = $"⚡ 瞬时脉冲机动 [{bName}]",
+                        label = I18n.Format("tl_impulse_label", bName),
                         type = MilestoneType.IgnitionStart,
                         elapsed_sim_secs = simClock,
                         ut_epoch = anchorUT + simClock,
@@ -243,18 +240,18 @@ namespace KSPGMAT {
                         dv_v = st.dv_v,
                         dv_n = st.dv_n,
                         dv_b = st.dv_b,
-                        details = $"合ΔV: {mag:F2} m/s (V={st.dv_v:F1}, N={st.dv_n:F1}, B={st.dv_b:F1})"
+                        details = I18n.Format("tl_impulse_details", mag, st.dv_v, st.dv_n, st.dv_b)
                     });
                 }
                 else if (st.type == "StageSeparation") {
                     milestones.Add(new MissionMilestoneNode {
                         milestone_index = mIndex++,
                         step_index = i,
-                        label = "🚀 级间分离 / 抛罩 (Stage Separation)",
+                        label = I18n.T("tl_sep_label"),
                         type = MilestoneType.StageSeparation,
                         elapsed_sim_secs = simClock,
                         ut_epoch = anchorUT + simClock,
-                        details = "级间钝化与级间分离完成"
+                        details = I18n.T("tl_sep_details")
                     });
                 }
             }
@@ -263,11 +260,11 @@ namespace KSPGMAT {
             milestones.Add(new MissionMilestoneNode {
                 milestone_index = mIndex++,
                 step_index = steps.Count,
-                label = "🏁 任务规划终点 (Mission Terminal)",
+                label = I18n.T("tl_mission_end_label"),
                 type = MilestoneType.MissionEnd,
                 elapsed_sim_secs = simClock,
                 ut_epoch = anchorUT + simClock,
-                details = $"规划总耗时: {simClock:F1}s ({simClock / 60.0:F1} min / {simClock / 3600.0:F2} h)"
+                details = I18n.Format("tl_mission_end_details", simClock, simClock / 60.0, simClock / 3600.0)
             });
 
             return milestones;
@@ -277,11 +274,11 @@ namespace KSPGMAT {
         /// 格式化全任务时序报告为结构化清晰文本
         /// </summary>
         public static string FormatTimelineReport(List<MissionMilestoneNode> milestones) {
-            if (milestones == null || milestones.Count == 0) return "暂无时序里程碑节点。";
+            if (milestones == null || milestones.Count == 0) return I18n.T("tl_empty");
 
             var sb = new System.Text.StringBuilder();
             sb.AppendLine("================================================================");
-            sb.AppendLine("           NASA GMAT 任务关键节点全时序明细 (Timeline Milestones)         ");
+            sb.AppendLine(I18n.T("tl_report_title"));
             sb.AppendLine("================================================================");
 
             foreach (var m in milestones) {

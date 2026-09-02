@@ -51,6 +51,11 @@ namespace KSPGMAT {
             return (PropagatorConfig)this.MemberwiseClone();
         }
 
+        /// <summary>
+        /// 生成默认传播子预设。
+        /// 基线 7 说明: 此处为引导期兜底预设 (RungeKutta89 为 GMAT 原生积分器)，
+        /// 权威积分器/大气模型清单以 gmat_capabilities.json 动态加载为准 (见 GMATParameterRegistry.AvailableIntegrators)。
+        /// </summary>
         public static Dictionary<string, PropagatorConfig> CreateDefaultPresets() {
             var dict = new Dictionary<string, PropagatorConfig>();
 

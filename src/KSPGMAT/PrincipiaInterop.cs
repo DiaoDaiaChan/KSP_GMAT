@@ -427,6 +427,28 @@ namespace KSPGMAT {
             return writtenSuccessfully;
         }
 
+        /// <summary>
+        /// 基线 5.3: 变质量冲量质心提前量 (用于有限点火写入 Principia 脉冲节点)。
+        /// 恒推力有限点火下推进剂线性耗尽，冲量质心为质量加权平均时刻：
+        ///   Δt_lead = t_burn · (m0/2 − m_prop/3) / (m0 − m_prop/2),  m_prop = m0 − m_final
+        /// 节点实际写入历元 t_node = t_ignition + Δt_lead；相比粗糙对半 t_burn/2 精度更高。
+        /// 说明: 基线文档解析式 (1/β − t_burn·m_f/m_prop) 代数上恒等于 t_burn，故此处采用其
+        /// 物理本意 (质量加权冲量质心时刻) 实现，避免退化恒等式。
+        /// </summary>
+        /// <param name="burnDuration">点火时长 t_burn (s)</param>
+        /// <param name="mass0">点火初质量 m0 (kg)</param>
+        /// <param name="massFinal">关机末质量 m_f (kg)</param>
+        public static double ComputeBurnCentroidLead(double burnDuration, double mass0, double massFinal) {
+            if (burnDuration <= 0.0 || mass0 <= 0.0) return 0.0;
+            double mf = Math.Max(massFinal, 0.0);
+            if (mf > mass0) mf = mass0;
+            double mProp = mass0 - mf;
+            if (mProp <= 0.0) return burnDuration * 0.5;
+            double denom = mass0 - mProp * 0.5;
+            if (denom <= 0.0) return burnDuration * 0.5;
+            return burnDuration * (mass0 * 0.5 - mProp / 3.0) / denom;
+        }
+
         public class FlightPlanNode {
             public double initialTime;
             public Vector3d deltaV;

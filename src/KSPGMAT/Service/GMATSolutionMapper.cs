@@ -241,28 +241,37 @@ namespace KSPGMAT.Service {
             if (originalSteps == null || originalSteps.Count == 0) return burns;
 
             double simClock = 0.0;
-            double currentRunningMass = GMATStateManager.Current.Spacecraft.TotalMassKg > 0 
-                ? GMATStateManager.Current.Spacecraft.TotalMassKg 
-                : (FlightGlobals.ActiveVessel != null ? FlightGlobals.ActiveVessel.GetTotalMass() * 1000.0 : 1000.0);
+            // 基线 0 (SSOT): 质量基准一律取自 GMATStateManager；缺失时经唯一同步入口 SyncFromVessel 回填，
+            // 严禁绕过 SSOT 直接读取活动飞船。
+            double currentRunningMass;
+            if (GMATStateManager.Current.Spacecraft.TotalMassKg > 0) {
+                currentRunningMass = GMATStateManager.Current.Spacecraft.TotalMassKg;
+            } else if (FlightGlobals.ActiveVessel != null) {
+                GMATStateManager.Current.SyncFromVessel(FlightGlobals.ActiveVessel);
+                currentRunningMass = GMATStateManager.Current.Spacecraft.TotalMassKg > 0
+                    ? GMATStateManager.Current.Spacecraft.TotalMassKg
+                    : GMATStateManager.Current.Spacecraft.DryMassKg;
+            } else {
+                currentRunningMass = GMATStateManager.Current.Spacecraft.DryMassKg > 0
+                    ? GMATStateManager.Current.Spacecraft.DryMassKg
+                    : 0.0;
+            }
 
             string currentDC = "";
             double currentGroupDuration = 0;
             double currentGroupDir1 = 1.0, currentGroupDir2 = 0.0, currentGroupDir3 = 0.0;
             bool currentGroupHasTVC = false;
-            bool insideTarget = false;
 
             for (int i = 0; i < originalSteps.Count; i++) {
                 var st = originalSteps[i];
 
                 if (st.type == "Target") {
-                    insideTarget = true;
                     currentDC = st.dc_name ?? "";
                     currentGroupDuration = 0;
                     currentGroupDir1 = 1.0; currentGroupDir2 = 0.0; currentGroupDir3 = 0.0;
                     currentGroupHasTVC = false;
                 }
                 else if (st.type == "EndTarget") {
-                    insideTarget = false;
                 }
                 else if (st.type == "Vary") {
                     string vVar = st.vary_variable ?? "";
@@ -380,17 +389,15 @@ namespace KSPGMAT.Service {
                         }
                     }
 
+                    // 基线 0 (SSOT): 推力器参数一律取自 GMATStateManager，严禁绕过 SSOT 反射活动飞船引擎
                     if (matchedThr != null) {
                         thrustKN = matchedThr.ThrustKN;
                         ispVac = matchedThr.IspVac > 0 ? matchedThr.IspVac : 300.0;
-                    } else if (FlightGlobals.ActiveVessel != null) {
-                        var engs = FlightGlobals.ActiveVessel.FindPartModulesImplementing<ModuleEngines>();
-                        if (engs != null && engs.Count > 0) {
-                            thrustKN = engs.Max(e => (double)e.maxThrust);
-                            ispVac = engs.Max(e => (double)e.atmosphereCurve.Evaluate(0));
-                        }
                     }
 
+                    // 基线 7 (零托管计算): 本机动矢量由已收敛的 GMAT 打靶变量(时长/方向) + SSOT 推进器参数，
+                    // 经标准火箭方程在托管层估算，供 Principia 节点写入；并非 GMAT 原生输出的机动矢量。
+                    // 故 has_native_delta_v=false 并如实标注来源，严禁冒充 "NASA GMAT 收敛解"。
                     const double standardG0 = 9.80665;
                     double m0 = currentRunningMass;
                     double mFlow = (thrustKN > 0 && ispVac > 0) ? (thrustKN * 1000.0) / (ispVac * standardG0) : 0.0;
@@ -416,10 +423,10 @@ namespace KSPGMAT.Service {
                         dv_b = dvB,
                         magnitude = totalDv,
                         epoch_offset = burnStartTime,
-                        has_native_delta_v = true,
+                        has_native_delta_v = false,
                         principia_writeable = true,
                         enable_timing_optimization = true,
-                        native_result_note = $"NASA GMAT 收敛解 (所属DC: {(string.IsNullOrEmpty(currentDC) ? "默认" : currentDC)})"
+                        native_result_note = I18n.T("sm_native_managed_note")
                     };
                     burns.Add(sbEntry);
 
@@ -442,9 +449,10 @@ namespace KSPGMAT.Service {
                         dv_b = st.dv_b,
                         magnitude = mag,
                         epoch_offset = burnStartTime,
-                        has_native_delta_v = true,
+                        has_native_delta_v = false,
                         principia_writeable = true,
-                        enable_timing_optimization = true
+                        enable_timing_optimization = true,
+                        native_result_note = I18n.T("sm_mission_design_note")
                     });
                 }
             }
@@ -666,8 +674,13 @@ namespace KSPGMAT.Service {
                                     rep.fuel_mass_kg = rep.total_mass_kg > dryMass ? (rep.total_mass_kg - dryMass) : 0.0;
 
                                     rep.vmag_km_s = Math.Sqrt(rep.vx * rep.vx + rep.vy * rep.vy + rep.vz * rep.vz);
+                                    // 基线 7 说明: SMA/ECC 为 GMAT 原生报告值；近/远心点距为展示用途的代数推导。
+                                    // 天体半径优先取 GMAT 报告数据驱动 (RMAG−Altitude，对任何中心天体均正确)；
+                                    // 报告不可用时回退 SolarSystemCatalog 中心天体半径，避免硬编码地球半径。
                                     if (rep.sma_km > 0) {
-                                        double rBody = rep.rmag_km > rep.altitude_km ? (rep.rmag_km - rep.altitude_km) : 6378.137;
+                                        double rBody = (rep.rmag_km > rep.altitude_km && rep.rmag_km - rep.altitude_km > 0.0)
+                                            ? (rep.rmag_km - rep.altitude_km)
+                                            : GetCentralBodyRadiusKm(GMATStateManager.Current.Spacecraft.CentralBody ?? "Earth");
                                         rep.periapsis_km = rep.sma_km * (1.0 - rep.ecc) - rBody;
                                         rep.apoapsis_km = rep.sma_km * (1.0 + rep.ecc) - rBody;
                                     }
@@ -681,6 +694,23 @@ namespace KSPGMAT.Service {
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// 获取 SSOT 中心天体半径 (km)，用于报告缺失 RMAG/Altitude 时的兜底。
+        /// Luna/Moon 双向映射；后台线程安全 (GetPlanet 内部已 try/catch 兜底)。
+        /// </summary>
+        private static double GetCentralBodyRadiusKm(string centralBody) {
+            const double earthRadiusKm = 6378.14;
+            if (string.IsNullOrEmpty(centralBody)) return earthRadiusKm;
+            try {
+                string lookup = centralBody;
+                if (lookup.Equals("Luna", StringComparison.OrdinalIgnoreCase)) lookup = "Moon";
+                else if (lookup.Equals("Moon", StringComparison.OrdinalIgnoreCase)) lookup = "Luna";
+                var bodyInfo = KSPGMAT.MGA.SolarSystemCatalog.GetPlanet(lookup);
+                if (bodyInfo != null && bodyInfo.RadiusKm > 0) return bodyInfo.RadiusKm;
+            } catch { /* 保持默认地球半径 */ }
+            return earthRadiusKm;
         }
     }
 }

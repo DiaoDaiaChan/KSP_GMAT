@@ -15,7 +15,6 @@ namespace KSPGMAT.Service {
             string q = (input ?? "").Trim();
             string qLower = q.ToLowerInvariant();
             var state = GMATStateManager.Current;
-            var lang = I18n.Current;
 
             List<string> allBodies = GMATParameterRegistry.GetAllBodies(vessel);
             List<string> allCoords = GMATParameterRegistry.GetAllCoordinateSystems();
@@ -47,7 +46,7 @@ namespace KSPGMAT.Service {
                                        p1.IndexOf("ICRF", StringComparison.OrdinalIgnoreCase) >= 0;
 
                         if (isCoord) {
-                            AddMatchingParams(items, GMATParamCatalog.CoordinateCartesian, $"{p0}.{p1}", rhs, filterFlags, lang, IntelliSenseKind.CoordinateSystem);
+                            AddMatchingParams(items, GMATParamCatalog.CoordinateCartesian, $"{p0}.{p1}", rhs, filterFlags, IntelliSenseKind.CoordinateSystem);
                             return items;
                         }
 
@@ -57,7 +56,7 @@ namespace KSPGMAT.Service {
                             matchedThruster = state.Thrusters.Find(t => t.Id.Equals(p1, StringComparison.OrdinalIgnoreCase));
                         }
                         if (matchedThruster != null || p1.StartsWith("Engine", StringComparison.OrdinalIgnoreCase) || p1.StartsWith("Burn", StringComparison.OrdinalIgnoreCase) || p1.Equals("MainEngine", StringComparison.OrdinalIgnoreCase)) {
-                            AddMatchingParams(items, GMATParamCatalog.ThrusterProperties, $"{p0}.{p1}", rhs, filterFlags, lang, IntelliSenseKind.Parameter);
+                            AddMatchingParams(items, GMATParamCatalog.ThrusterProperties, $"{p0}.{p1}", rhs, filterFlags, IntelliSenseKind.Parameter);
                             return items;
                         }
 
@@ -67,22 +66,22 @@ namespace KSPGMAT.Service {
                             matchedTank = state.Tanks.Find(t => t.Id.Equals(p1, StringComparison.OrdinalIgnoreCase));
                         }
                         if (matchedTank != null || p1.StartsWith("Tank", StringComparison.OrdinalIgnoreCase)) {
-                            AddMatchingParams(items, GMATParamCatalog.TankProperties, $"{p0}.{p1}", rhs, filterFlags, lang, IntelliSenseKind.Parameter);
+                            AddMatchingParams(items, GMATParamCatalog.TankProperties, $"{p0}.{p1}", rhs, filterFlags, IntelliSenseKind.Parameter);
                             return items;
                         }
 
                         // Sub-case A4: p1 is a Celestial Body (e.g. "Sat.Earth.SMA", "Sat.Luna.RadApo", "Sat.Earth.IncomingDHA")
                         bool isBody = allBodies.Exists(b => b.Equals(p1, StringComparison.OrdinalIgnoreCase));
                         if (isBody) {
-                            AddMatchingParams(items, GMATParamCatalog.DirectKeplerian, $"{p0}.{p1}", rhs, filterFlags, lang, IntelliSenseKind.Parameter);
-                            AddMatchingParams(items, GMATParamCatalog.SphericalAndPlanetodetic, $"{p0}.{p1}", rhs, filterFlags, lang, IntelliSenseKind.Parameter);
-                            AddMatchingParams(items, GMATParamCatalog.HyperbolicAndBPlane, $"{p0}.{p1}", rhs, filterFlags, lang, IntelliSenseKind.Parameter);
-                            AddMatchingParams(items, GMATParamCatalog.EquinoctialAndDelaunay, $"{p0}.{p1}", rhs, filterFlags, lang, IntelliSenseKind.Parameter);
-                            AddMatchingParams(items, GMATParamCatalog.BrouwerMeanElements, $"{p0}.{p1}", rhs, filterFlags, lang, IntelliSenseKind.Parameter);
+                            AddMatchingParams(items, GMATParamCatalog.DirectKeplerian, $"{p0}.{p1}", rhs, filterFlags, IntelliSenseKind.Parameter);
+                            AddMatchingParams(items, GMATParamCatalog.SphericalAndPlanetodetic, $"{p0}.{p1}", rhs, filterFlags, IntelliSenseKind.Parameter);
+                            AddMatchingParams(items, GMATParamCatalog.HyperbolicAndBPlane, $"{p0}.{p1}", rhs, filterFlags, IntelliSenseKind.Parameter);
+                            AddMatchingParams(items, GMATParamCatalog.EquinoctialAndDelaunay, $"{p0}.{p1}", rhs, filterFlags, IntelliSenseKind.Parameter);
+                            AddMatchingParams(items, GMATParamCatalog.BrouwerMeanElements, $"{p0}.{p1}", rhs, filterFlags, IntelliSenseKind.Parameter);
 
                             // Extremum events (ONLY if filterFlags allows ExtremumEvents, e.g. Propagate Stop)
                             if ((filterFlags & ParamCapability.DiscontinuousExtremumEvent) != 0) {
-                                AddMatchingParams(items, GMATParamCatalog.ExtremumEvents, $"{p0}.{p1}", rhs, filterFlags, lang, IntelliSenseKind.Parameter);
+                                AddMatchingParams(items, GMATParamCatalog.ExtremumEvents, $"{p0}.{p1}", rhs, filterFlags, IntelliSenseKind.Parameter);
                             }
                             return items;
                         }
@@ -108,44 +107,44 @@ namespace KSPGMAT.Service {
                             string thName = thr.Id;
                             string thLower = thName.ToLowerInvariant();
                             if (string.IsNullOrEmpty(rhsSingle) || thLower.StartsWith(rhsSingle) || thLower.Contains(rhsSingle)) {
-                                items.Add(new IntelliSenseItem($"{cr}.{thName}.ThrustDirection1", $"{thName}.ThrustDirection1 [切向 V]", "[切向 +V/-V]", $"{thName}: 切向推力分量 (顺行+1/逆行-1 主推进)", IntelliSenseKind.Parameter, 1.0, 0.05));
-                                items.Add(new IntelliSenseItem($"{cr}.{thName}.ThrustDirection2", $"{thName}.ThrustDirection2 [副法向 N]", "[副法向 +N/-N]", $"{thName}: 副法向推力偏转 (变倾角打靶变量)", IntelliSenseKind.Parameter, 0.0, 0.05));
-                                items.Add(new IntelliSenseItem($"{cr}.{thName}.ThrustDirection3", $"{thName}.ThrustDirection3 [法向 B]", "[法向 +B/-B]", $"{thName}: 法向/径向推力偏转 (高度与偏心率微调)", IntelliSenseKind.Parameter, 0.0, 0.05));
-                                items.Add(new IntelliSenseItem($"{cr}.{thName}.", $"{thName}...", "[推力器对象]", $"{thName} 硬件推力器", IntelliSenseKind.Spacecraft));
+                                items.Add(new IntelliSenseItem($"{cr}.{thName}.ThrustDirection1", I18n.Format("ns_tdir1_label", thName), I18n.T("ns_tdir1_unit"), I18n.Format("ns_tdir1_doc", thName), IntelliSenseKind.Parameter, 1.0, 0.05));
+                                items.Add(new IntelliSenseItem($"{cr}.{thName}.ThrustDirection2", I18n.Format("ns_tdir2_label", thName), I18n.T("ns_tdir2_unit"), I18n.Format("ns_tdir2_doc", thName), IntelliSenseKind.Parameter, 0.0, 0.05));
+                                items.Add(new IntelliSenseItem($"{cr}.{thName}.ThrustDirection3", I18n.Format("ns_tdir3_label", thName), I18n.T("ns_tdir3_unit"), I18n.Format("ns_tdir3_doc", thName), IntelliSenseKind.Parameter, 0.0, 0.05));
+                                items.Add(new IntelliSenseItem($"{cr}.{thName}.", I18n.Format("ns_thruster_obj_label", thName), I18n.T("ns_thruster_obj_tag"), I18n.Format("ns_thruster_obj_doc", thName), IntelliSenseKind.Spacecraft));
                             }
                         }
                     }
 
                     // B2. Direct Keplerian Orbit Elements (Sat.SMA, Sat.INC, Sat.ECC...)
-                    AddMatchingParams(items, GMATParamCatalog.DirectKeplerian, cr, rhsSingle, filterFlags, lang, IntelliSenseKind.Parameter);
+                    AddMatchingParams(items, GMATParamCatalog.DirectKeplerian, cr, rhsSingle, filterFlags, IntelliSenseKind.Parameter);
 
                     // B3. Active Central Body Relative Properties (Sat.Earth.Altitude, Sat.Earth.IncomingDHA, Sat.Earth.BdotT...)
-                    AddMatchingParams(items, GMATParamCatalog.SphericalAndPlanetodetic, $"{cr}.{actBody}", rhsSingle, filterFlags, lang, IntelliSenseKind.Parameter);
-                    AddMatchingParams(items, GMATParamCatalog.HyperbolicAndBPlane, $"{cr}.{actBody}", rhsSingle, filterFlags, lang, IntelliSenseKind.Parameter);
-                    AddMatchingParams(items, GMATParamCatalog.EquinoctialAndDelaunay, $"{cr}.{actBody}", rhsSingle, filterFlags, lang, IntelliSenseKind.Parameter);
-                    AddMatchingParams(items, GMATParamCatalog.BrouwerMeanElements, $"{cr}.{actBody}", rhsSingle, filterFlags, lang, IntelliSenseKind.Parameter);
+                    AddMatchingParams(items, GMATParamCatalog.SphericalAndPlanetodetic, $"{cr}.{actBody}", rhsSingle, filterFlags, IntelliSenseKind.Parameter);
+                    AddMatchingParams(items, GMATParamCatalog.HyperbolicAndBPlane, $"{cr}.{actBody}", rhsSingle, filterFlags, IntelliSenseKind.Parameter);
+                    AddMatchingParams(items, GMATParamCatalog.EquinoctialAndDelaunay, $"{cr}.{actBody}", rhsSingle, filterFlags, IntelliSenseKind.Parameter);
+                    AddMatchingParams(items, GMATParamCatalog.BrouwerMeanElements, $"{cr}.{actBody}", rhsSingle, filterFlags, IntelliSenseKind.Parameter);
 
                     // B4. Extremum Events (ONLY if filterFlags allows ExtremumEvents, e.g. Propagate Stop)
                     if ((filterFlags & ParamCapability.DiscontinuousExtremumEvent) != 0) {
-                        AddMatchingParams(items, GMATParamCatalog.ExtremumEvents, $"{cr}.{actBody}", rhsSingle, filterFlags, lang, IntelliSenseKind.Parameter);
+                        AddMatchingParams(items, GMATParamCatalog.ExtremumEvents, $"{cr}.{actBody}", rhsSingle, filterFlags, IntelliSenseKind.Parameter);
                     }
 
                     // B5. Coordinate System Cartesian Parameters (Sat.EarthMJ2000Eq.Z, Sat.EarthMoonRot.Z)
-                    items.Add(new IntelliSenseItem($"{cr}.EarthMJ2000Eq.VZ", "EarthMJ2000Eq.VZ", "[Km/s]", "J2000赤道惯性系法向/垂向速度 (VZ)", IntelliSenseKind.Parameter, 0.0, 0.001));
-                    items.Add(new IntelliSenseItem($"{cr}.EarthMJ2000Eq.Z", "EarthMJ2000Eq.Z", "[Km]", "J2000赤道面垂直位置 (Z=0)", IntelliSenseKind.Parameter, 0.0, 0.01));
-                    items.Add(new IntelliSenseItem($"{cr}.EarthMoonRot.Z", "EarthMoonRot.Z", "[Km]", "地月旋转系垂向位置 (NRHO / 晕轨道穿过点)", IntelliSenseKind.Parameter, 0.0, 0.01));
+                    items.Add(new IntelliSenseItem($"{cr}.EarthMJ2000Eq.VZ", "EarthMJ2000Eq.VZ", "[Km/s]", I18n.T("ns_j2000_vz_doc"), IntelliSenseKind.Parameter, 0.0, 0.001));
+                    items.Add(new IntelliSenseItem($"{cr}.EarthMJ2000Eq.Z", "EarthMJ2000Eq.Z", "[Km]", I18n.T("ns_j2000_z_doc"), IntelliSenseKind.Parameter, 0.0, 0.01));
+                    items.Add(new IntelliSenseItem($"{cr}.EarthMoonRot.Z", "EarthMoonRot.Z", "[Km]", I18n.T("ns_emr_z_doc"), IntelliSenseKind.Parameter, 0.0, 0.01));
 
                     // B6. Spacecraft Direct Physical Hardware Properties (Mass, Cd, Cr, Time)
-                    AddMatchingParams(items, GMATParamCatalog.SpacecraftHardware, cr, rhsSingle, filterFlags, lang, IntelliSenseKind.Parameter);
+                    AddMatchingParams(items, GMATParamCatalog.SpacecraftHardware, cr, rhsSingle, filterFlags, IntelliSenseKind.Parameter);
 
                     // B7. Attitude & Orientation (Q1~Q4, Euler)
-                    AddMatchingParams(items, GMATParamCatalog.AttitudeAndOrientation, cr, rhsSingle, filterFlags, lang, IntelliSenseKind.Parameter);
+                    AddMatchingParams(items, GMATParamCatalog.AttitudeAndOrientation, cr, rhsSingle, filterFlags, IntelliSenseKind.Parameter);
 
                     // B8. Celestial Body Names Namespace Expanders
                     for (int b = 0; b < allBodies.Count; b++) {
                         string bd = allBodies[b];
                         if (string.IsNullOrEmpty(rhsSingle) || bd.ToLowerInvariant().StartsWith(rhsSingle)) {
-                            items.Add(new IntelliSenseItem($"{cr}.{bd}.", $"{bd}...", "[天体命名空间]", $"{bd} 天体相关轨道参数 (支持 SMA, Altitude, IncomingDHA, BdotT...)", IntelliSenseKind.CelestialBody));
+                            items.Add(new IntelliSenseItem($"{cr}.{bd}.", $"{bd}...", I18n.T("ns_body_ns_tag"), I18n.Format("ns_body_ns_doc", bd), IntelliSenseKind.CelestialBody));
                         }
                     }
 
@@ -153,7 +152,7 @@ namespace KSPGMAT.Service {
                     for (int c = 0; c < allCoords.Count; c++) {
                         string cs = allCoords[c];
                         if (string.IsNullOrEmpty(rhsSingle) || cs.ToLowerInvariant().StartsWith(rhsSingle)) {
-                            items.Add(new IntelliSenseItem($"{cr}.{cs}.", $"{cs}...", "[坐标系命名空间]", $"{cs} 空间状态分量 (Z, X, Y, VZ...)", IntelliSenseKind.CoordinateSystem));
+                            items.Add(new IntelliSenseItem($"{cr}.{cs}.", $"{cs}...", I18n.T("ns_coord_ns_tag"), I18n.Format("ns_coord_ns_doc", cs), IntelliSenseKind.CoordinateSystem));
                         }
                     }
 
@@ -170,7 +169,7 @@ namespace KSPGMAT.Service {
                 for (int i = 0; i < state.Variables.Count; i++) {
                     var v = state.Variables[i];
                     if (string.IsNullOrEmpty(q) || v.Name.ToLowerInvariant().Contains(qLower)) {
-                        items.Add(new IntelliSenseItem(v.Name, v.Name, "[Variable]", $"全局标量变量 (当前值: {v.InitialValue})", IntelliSenseKind.Variable, v.InitialValue, 1.0));
+                        items.Add(new IntelliSenseItem(v.Name, v.Name, I18n.T("ns_var_tag"), I18n.Format("ns_var_doc", v.InitialValue), IntelliSenseKind.Variable, v.InitialValue, 1.0));
                     }
                 }
             }
@@ -180,7 +179,7 @@ namespace KSPGMAT.Service {
                 for (int i = 0; i < state.Solvers.Count; i++) {
                     var slv = state.Solvers[i];
                     if (string.IsNullOrEmpty(q) || slv.Name.ToLowerInvariant().Contains(qLower)) {
-                        items.Add(new IntelliSenseItem(slv.Name, slv.Name, "[Solver]", $"差分修正求解器 ({slv.Algorithm}, 最大迭代: {slv.MaxIterations})", IntelliSenseKind.Solver));
+                        items.Add(new IntelliSenseItem(slv.Name, slv.Name, I18n.T("ns_solver_tag"), I18n.Format("ns_solver_doc", slv.Algorithm, slv.MaxIterations), IntelliSenseKind.Solver));
                     }
                 }
             }
@@ -189,26 +188,28 @@ namespace KSPGMAT.Service {
             for (int i = 0; i < allCraft.Count; i++) {
                 string cr = allCraft[i];
                 if (string.IsNullOrEmpty(q) || cr.ToLowerInvariant().StartsWith(qLower)) {
-                    items.Add(new IntelliSenseItem($"{cr}.", $"{cr}...", "[航天器对象]", $"主航天器实例 ({cr})", IntelliSenseKind.Spacecraft));
+                    items.Add(new IntelliSenseItem($"{cr}.", $"{cr}...", I18n.T("ns_sc_obj_tag"), I18n.Format("ns_sc_obj_doc", cr), IntelliSenseKind.Spacecraft));
                 }
             }
 
-            // 2d. Direct Keplerian Elements if partially matching (SMA, INC, ECC...)
-            AddMatchingParams(items, GMATParamCatalog.DirectKeplerian, "Sat", qLower, filterFlags, lang, IntelliSenseKind.Parameter);
-            AddMatchingParams(items, GMATParamCatalog.SphericalAndPlanetodetic, "Sat.Earth", qLower, filterFlags, lang, IntelliSenseKind.Parameter);
-            AddMatchingParams(items, GMATParamCatalog.HyperbolicAndBPlane, "Sat.Earth", qLower, filterFlags, lang, IntelliSenseKind.Parameter);
+            // 2d. Direct Keplerian Elements if partially matching (SMA, INC, ECC...) 基线1.3: 前缀经 SSOT 动态获取
+            string craft = GMATStateManager.Current.GetSpacecraftName();
+            string craftEarth = GMATStateManager.Current.GetQualifiedSpacecraftProperty("Earth");
+            AddMatchingParams(items, GMATParamCatalog.DirectKeplerian, craft, qLower, filterFlags, IntelliSenseKind.Parameter);
+            AddMatchingParams(items, GMATParamCatalog.SphericalAndPlanetodetic, craftEarth, qLower, filterFlags, IntelliSenseKind.Parameter);
+            AddMatchingParams(items, GMATParamCatalog.HyperbolicAndBPlane, craftEarth, qLower, filterFlags, IntelliSenseKind.Parameter);
 
             return items;
         }
 
-        private static void AddMatchingParams(List<IntelliSenseItem> items, List<GMATParamDefinition> catalog, string prefix, string rhs, ParamCapability filterFlags, I18n.Lang lang, IntelliSenseKind kind) {
+        private static void AddMatchingParams(List<IntelliSenseItem> items, List<GMATParamDefinition> catalog, string prefix, string rhs, ParamCapability filterFlags, IntelliSenseKind kind) {
             for (int i = 0; i < catalog.Count; i++) {
                 var def = catalog[i];
                 if ((def.Capability & filterFlags) != 0) {
                     if (string.IsNullOrEmpty(rhs) || def.Name.ToLowerInvariant().StartsWith(rhs) || def.Name.ToLowerInvariant().Contains(rhs)) {
-                        string doc = def.GetDoc(lang);
+                        string doc = def.GetDoc();
                         string fullPath = $"{prefix}.{def.Name}";
-                        items.Add(new IntelliSenseItem(fullPath, def.Name, def.Unit, doc, kind, def.DefaultValue, def.TypicalStep));
+                        items.Add(new IntelliSenseItem(fullPath, def.Name, def.GetUnit(), doc, kind, def.DefaultValue, def.TypicalStep));
                     }
                 }
             }

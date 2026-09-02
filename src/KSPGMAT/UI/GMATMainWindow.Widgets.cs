@@ -177,7 +177,7 @@ namespace KSPGMAT.UI {
         /// <param name="step">当前任务节点对象</param>
         /// <param name="stepIndex">节点索引</param>
         private void DrawInlineSolverPicker(MissionStep step, int stepIndex) {
-            GUILayout.Label("<color=#94a3b8>绑定求解器:</color>", gridLabelStyle, GUILayout.Width(75));
+            GUILayout.Label(I18n.T("widget_bind_solver"), gridLabelStyle, GUILayout.Width(75));
             List<string> availSolvers = GetAvailableSolverList();
             if (availSolvers == null || availSolvers.Count == 0) availSolvers = new List<string> { "DefaultDC" };
 
@@ -199,13 +199,17 @@ namespace KSPGMAT.UI {
         /// <param name="step">当前任务节点对象</param>
         /// <param name="stepIndex">节点索引</param>
         private void DrawInlinePropagatorPicker(MissionStep step, int stepIndex) {
-            GUILayout.Label("<color=#94a3b8>动力学传播子:</color>", gridLabelStyle, GUILayout.Width(80));
-            List<string> props = new List<string> { "LEOProp", "CislunarProp", "LunarNRHOProp", "DefaultProp" };
+            GUILayout.Label(I18n.T("widget_dyn_propagator"), gridLabelStyle, GUILayout.Width(80));
+            // 基线 7: 传播子清单以 GMAT 注册表 (JSON 动态加载) 为唯一真值源，杜绝 C# 层写死清单；
+            // 仅当注册表为空时回退引导默认项。
+            List<string> props = new List<string>();
             var regProps = GMATParameterRegistry.GetAllPropagatorConfigs();
-            if (regProps != null) {
+            if (regProps != null && regProps.Count > 0) {
                 foreach (var kvp in regProps) {
                     if (!props.Contains(kvp.Key)) props.Add(kvp.Key);
                 }
+            } else {
+                props.Add("DefaultProp");
             }
 
             string curProp = !string.IsNullOrEmpty(step.propagator) ? step.propagator : "LEOProp";
@@ -271,7 +275,7 @@ namespace KSPGMAT.UI {
             if (GMATStateManager.Current != null && GMATStateManager.Current.Variables != null) {
                 var matchedVar = GMATStateManager.Current.Variables.Find(v => v.Name.Equals(varName, StringComparison.OrdinalIgnoreCase));
                 if (matchedVar != null) {
-                    GUILayout.Label($"<color=#facc15><b>[变量: {matchedVar.Name} = {matchedVar.InitialValue}]</b></color>", labelValueStyle);
+                    GUILayout.Label(I18n.ColorFormat("widget_var_badge", matchedVar.Name, matchedVar.InitialValue), labelValueStyle);
                 }
             }
         }
@@ -404,7 +408,7 @@ namespace KSPGMAT.UI {
 
             // Header with Pagination Status & Quick Page Buttons
             GUILayout.BeginHorizontal();
-            GUILayout.Label("<color=#38bdf8><b>⚡ GMAT IntelliSense</b></color>", labelValueStyle, GUILayout.Width(130));
+            GUILayout.Label(I18n.T("intellisense_title"), labelValueStyle, GUILayout.Width(130));
             GUILayout.Label($"<color=#38bdf8>[ {intelliSenseSelectedIndex + 1} / {intelliSenseItems.Count} ]</color> <color=#64748b>↑↓/PgUp/PgDn/Tab</color>", labelValueStyle);
             GUILayout.FlexibleSpace();
 
@@ -456,7 +460,7 @@ namespace KSPGMAT.UI {
                 var cur = intelliSenseItems[intelliSenseSelectedIndex];
                 GUILayout.Space(2);
                 GUILayout.BeginHorizontal();
-                GUILayout.Label($"<color=#94a3b8>📖 {cur.Doc}</color>", labelValueStyle);
+                GUILayout.Label($"<color=#94a3b8>{cur.Doc}</color>", labelValueStyle);
                 GUILayout.EndHorizontal();
             }
 
@@ -477,9 +481,9 @@ namespace KSPGMAT.UI {
             // Row 1: Entity Category Tabs
             GUILayout.BeginHorizontal();
             GUILayout.Space(75);
-            GUILayout.Label("<color=#64748b>对象类型:</color>", labelValueStyle, GUILayout.Width(60));
+            GUILayout.Label(I18n.T("widget_obj_type"), labelValueStyle, GUILayout.Width(60));
 
-            string[] catTabs = new string[] { "🪐 天体", "📐 坐标系", "🛰️ 航天器" };
+            string[] catTabs = new string[] { I18n.T("cat_body"), I18n.T("cat_coord"), I18n.T("cat_craft") };
             for (int t = 0; t < catTabs.Length; t++) {
                 bool isSel = (propCategoryTab == t);
                 GUI.backgroundColor = isSel ? new Color(0.2f, 0.7f, 0.9f) : Color.white;
@@ -494,40 +498,39 @@ namespace KSPGMAT.UI {
             // Row 2: Selected Category's Chips
             GUILayout.BeginHorizontal();
             GUILayout.Space(75);
-            GUILayout.Label("<color=#64748b>补全对象:</color>", labelValueStyle, GUILayout.Width(60));
+            GUILayout.Label(I18n.T("widget_completion_obj"), labelValueStyle, GUILayout.Width(60));
 
-            if (propCategoryTab == 0) { // 🪐 天体
+            if (propCategoryTab == 0) { // 天体
                 int chipLimit = Math.Min(6, allBodies.Count);
                 for (int b = 0; b < chipLimit; b++) {
                     string bName = allBodies[b];
-                    string icon = (bName == "Earth") ? "🌍 " : (bName == "Luna" || bName == "Moon") ? "🌙 " : (bName == "Sun") ? "☀️ " : (bName == "Mars") ? "🔴 " : (bName == "Venus") ? "🟡 " : (bName == "Jupiter") ? "⚡ " : "🪐 ";
                     bool hasPrefix = !string.IsNullOrEmpty(step.stop_type) && step.stop_type.StartsWith(bName + ".");
                     GUI.backgroundColor = hasPrefix ? new Color(0.2f, 0.7f, 0.9f) : Color.white;
-                    if (GUILayout.Button(icon + bName + ".", secondaryButtonStyle, GUILayout.Height(18))) {
+                    if (GUILayout.Button(bName + ".", secondaryButtonStyle, GUILayout.Height(18))) {
                         ApplyPropStopPrefix(step, bName);
                         pendingFocusControl = $"Field_PropStop_{stepIndex}";
                         GUI.FocusControl(pendingFocusControl);
                     }
                     GUI.backgroundColor = Color.white;
                 }
-            } else if (propCategoryTab == 1) { // 📐 坐标系
+            } else if (propCategoryTab == 1) { // 坐标系
                 for (int c = 0; c < Math.Min(5, allCoords.Count); c++) {
                     string cName = allCoords[c];
                     bool hasPrefix = !string.IsNullOrEmpty(step.stop_type) && step.stop_type.StartsWith(cName + ".");
                     GUI.backgroundColor = hasPrefix ? new Color(0.2f, 0.7f, 0.9f) : Color.white;
-                    if (GUILayout.Button("📐 " + cName + ".", secondaryButtonStyle, GUILayout.Height(18))) {
+                    if (GUILayout.Button(cName + ".", secondaryButtonStyle, GUILayout.Height(18))) {
                         ApplyPropStopPrefix(step, cName);
                         pendingFocusControl = $"Field_PropStop_{stepIndex}";
                         GUI.FocusControl(pendingFocusControl);
                     }
                     GUI.backgroundColor = Color.white;
                 }
-            } else if (propCategoryTab == 2) { // 🛰️ 航天器
+            } else if (propCategoryTab == 2) { // 航天器
                 for (int sc = 0; sc < allCraft.Count; sc++) {
                     string scName = allCraft[sc];
                     bool hasPrefix = !string.IsNullOrEmpty(step.stop_type) && step.stop_type.StartsWith(scName + ".");
                     GUI.backgroundColor = hasPrefix ? new Color(0.2f, 0.7f, 0.9f) : Color.white;
-                    if (GUILayout.Button("🛰️ " + scName + ".", secondaryButtonStyle, GUILayout.Height(18))) {
+                    if (GUILayout.Button(scName + ".", secondaryButtonStyle, GUILayout.Height(18))) {
                         ApplyPropStopPrefix(step, scName);
                         pendingFocusControl = $"Field_PropStop_{stepIndex}";
                         GUI.FocusControl(pendingFocusControl);
@@ -545,10 +548,10 @@ namespace KSPGMAT.UI {
                 GUILayout.Space(1);
                 GUILayout.BeginHorizontal();
                 GUILayout.Space(75);
-                GUILayout.Label("<color=#38bdf8>智能推荐:</color>", labelValueStyle, GUILayout.Width(60));
+                GUILayout.Label(I18n.T("widget_smart_suggest"), labelValueStyle, GUILayout.Width(60));
                 for (int s = 0; s < Math.Min(6, suggestions.Count); s++) {
                     var sug = suggestions[s];
-                    if (GUILayout.Button(sug.GetIcon() + " " + sug.InsertText, secondaryButtonStyle, GUILayout.Height(18))) {
+                    if (GUILayout.Button(sug.InsertText, secondaryButtonStyle, GUILayout.Height(18))) {
                         step.stop_type = sug.InsertText;
                         if (sug.RecommendedValue != 0) {
                             step.target_val = sug.RecommendedValue;

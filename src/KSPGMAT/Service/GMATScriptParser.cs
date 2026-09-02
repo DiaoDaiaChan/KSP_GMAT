@@ -226,7 +226,8 @@ namespace KSPGMAT.Service {
                     if (bfbMatch.Success) {
                         string fbName = bfbMatch.Groups[1].Value;
                         string boundEng = finiteBurnsDict.ContainsKey(fbName) ? finiteBurnsDict[fbName] : "";
-                        string propName = "LEOProp";
+                        // 基线 7: 缺省传播子从 GMAT 注册表获取，杜绝 C# 层硬编码 "LEOProp"
+                        string propName = GetDefaultPropagatorName();
                         double dur = 120.0;
                         string durVar = "";
                         bool useVar = false;
@@ -390,7 +391,7 @@ namespace KSPGMAT.Service {
                                     type = "ThrustVectorControl",
                                     dc_name = !string.IsNullOrEmpty(dc) ? dc : currentDC,
                                     bound_thruster = thrName,
-                                    label = $"推力矢量 ({thrName})",
+                                    label = I18n.Format("sp_thrust_vector_label", thrName),
                                     thrust_dir1 = (dirIdx == 1) ? initVal : 1.0,
                                     thrust_dir2 = (dirIdx == 2) ? initVal : 0.0,
                                     thrust_dir3 = (dirIdx == 3) ? initVal : 0.0,
@@ -511,7 +512,7 @@ namespace KSPGMAT.Service {
                                 type = "ThrustVectorControl",
                                 dc_name = currentDC,
                                 bound_thruster = thrName,
-                                label = $"推力矢量 ({thrName})",
+                                label = I18n.Format("sp_thrust_vector_label", thrName),
                                 thrust_dir1 = (dirIdx == 1) ? val : 1.0,
                                 thrust_dir2 = (dirIdx == 2) ? val : 0.0,
                                 thrust_dir3 = (dirIdx == 3) ? val : 0.0
@@ -550,6 +551,25 @@ namespace KSPGMAT.Service {
             result.craft_fuel_mass = totalFuel;
 
             return result;
+        }
+
+        /// <summary>
+        /// 获取缺省传播子名称：优先取注册表中 isDefault 或首个传播子；注册表为空时回退 "DefaultProp"。
+        /// 基线 7: 杜绝 C# 层硬编码动力学清单。
+        /// </summary>
+        private static string GetDefaultPropagatorName() {
+            try {
+                var reg = GMATParameterRegistry.GetAllPropagatorConfigs();
+                if (reg != null && reg.Count > 0) {
+                    foreach (var kvp in reg) {
+                        if (kvp.Value != null && kvp.Value.isDefault) return kvp.Key;
+                    }
+                    using (var e = reg.GetEnumerator()) {
+                        if (e.MoveNext()) return e.Current.Key;
+                    }
+                }
+            } catch { /* 注册表异常时回退默认名 */ }
+            return "DefaultProp";
         }
     }
 }

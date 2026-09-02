@@ -434,3 +434,153 @@ $$\Delta t_{\text{lead}} = \frac{1}{\beta} - \frac{t_{\text{burn}} \cdot m_f}{m_
 1. **零警告编译**：任何新增功能必须通过 `deploy.ps1` 编译构建，确保 **0 警告 0 错误**；
 2. **文档同步更新**：新增数据模型字段、UI 控件或 i18n 词条时，必须同步在本基线文档及对应子规范中登记；
 3. **SSOT 守护**：严禁在任何地方绕过 `GMATStateManager` 读写孤立变量。
+
+---
+
+# 7. ESA PyKEP / keplerian_toolbox 官方原生动力学引擎与真实太阳系 MGA Planner 基线
+
+> [!IMPORTANT]
+> **绝对计算基线准则（Zero-Managed-Math Mandate）**：
+> 1. **PyKEP 负责全部动力学计算**：所有的单星直达转移、多段引力助推（MGA）、深空机动（DSM）、飞掠双曲偏转角 $\delta$、近心高度 $r_p$、猪排图（Porkchop）网格以及 3 轴 Frenet/VNC 机动矢量，**必须 100% 由 ESA 官方原生 PyKEP C++ 核心库（`keplerian_toolbox.dll` / `pykep_native.bin`）负责计算**；
+> 2. **Mod C# 托管层仅做数据中继与桥接**：C# 层严禁自编任何开普勒推导、二体近似公式或经验补丁。Mod 仅负责读取 KSP/RSS 天体星历打包为标准结构体、UI 视觉呈现以及 GMAT 脚本 / Principia 飞行计划节点映射；
+> 3. **彻底弃用 TWP 遗留近似算法**：旧版 TWP 的单中心简化公式在 RSS 太阳系与多段 MGA 下存在严重数值奇异点，本项目全量使用 PyKEP 原生解算。
+
+## 7.1 架构设计理念与双核动力学闭环
+针对深空多重引力助推（Multiple Gravity Assist, MGA）的轨道设计，本项目直接编译并链接 **ESA 欧洲航天局先进概念团队（ESA ACT）官方 C++ 核心库（`keplerian_toolbox.dll` / `pykep_native.bin`） + NASA GMAT 高精微分修正打靶 + Principia 实机执行** 的工业级闭环架构：
+
+```
+ ┌─────────────────────────────────────────────────────────────┐
+ │ 1. ESA 官方原生 C++ 核心库 (keplerian_toolbox / pykep_native)│
+ │    • 100% 接管全部航天动力学、兰伯特转移与飞掠机动计算      │
+ │    • pykep_lambert_solve: 官方 Dario Izzo 高阶兰伯特求解    │
+ │    • pykep_flyby_con / fb_vel: 官方双曲飞掠与动力助推模型   │
+ │    • pykep_mga_evaluate: 原生多段 MGA 全流程与 3 轴 VNC 投影│
+ ├─────────────────────────────────────────────────────────────┤
+ │ 2. C# 纯数据中继桥接层 (PykepBridge.cs)                      │
+ │    • 仅负责天体星历数据封送 (NativePlanetState[]) 与数据转换 │
+ │    • 维护 DTO 数据对象与全局差分进化搜索流程                │
+ ├─────────────────────────────────────────────────────────────┤
+ │ 3. GMAT 太阳系 B-Plane 打靶脚本一键自动编译 (MGAScriptGen)  │
+ │    • 自动配置 DeepSpace_ForceModel (太阳中心引力+多体摄动)   │
+ │    • 自动将 MGA 解映射为 B-Plane 初猜 (BdotT, BdotR)        │
+ ├─────────────────────────────────────────────────────────────┤
+ │ 4. UI 交互界面 (Tab 4: 🪐 深空借力 MGA)                     │
+ │    • 一键载入任务控制序列 / 导出为 GMAT 脚本模板 / 写入计划  │
+ └─────────────────────────────────────────────────────────────┘
+```
+
+## 7.2 原生 C-API 接口规范 (`pykep_native.dll` / `pykep_native.bin`)
+- 源码位置：`src/native/pykep_native/pykep_bridge.cpp`
+- 编译脚本：`src/native/build_native.bat` (MSVC x64 Release /O2 /LD /std:c++17 链接 `keplerian_toolbox.lib`, `boost_serialization.lib`)
+- 导出符号：
+  - `pykep_get_version()`: 获取原生核心版本号及官方标识；
+  - `pykep_lambert_solve(...)`: 官方双精度 Izzo 兰伯特转移求解 (`kep_toolbox::lambert_problem`)；
+  - `pykep_flyby_con(...)`: 官方双曲借力偏转角 $\delta$、近拱点半径 $r_p$ 与约束可行性 (`kep_toolbox::fb_con`)；
+  - `pykep_flyby_dv(...)`: 官方有动力辅助借力近拱点速度增量 $\Delta V_{\text{flyby}}$ (`kep_toolbox::fb_vel`)；
+  - `pykep_mga_evaluate(...)`: 官方原生多段 MGA 轨迹全流程解算与三维 Frenet/VNC 机动矢量投影；
+  - `pykep_propagate_lagrangian(...)`: 官方拉格朗日通用双体积分 (`kep_toolbox::propagate_lagrangian`)。
+
+## 7.3 核心文件索引
+- 原生 C++ 桥接核心：`src/native/pykep_native/pykep_bridge.cpp`
+- 原生非托管加载器：[`src/KSPGMAT/MGA/PykepNative.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/PykepNative.cs)
+- 纯数据桥接与 DTO：[`src/KSPGMAT/MGA/PykepBridge.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/PykepBridge.cs)
+- 太阳系常数与星历：[`src/KSPGMAT/MGA/SolarSystemBodies.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/SolarSystemBodies.cs)
+- 脚本编译器：[`src/KSPGMAT/Service/GMATMGAScriptGenerator.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/Service/GMATMGAScriptGenerator.cs)
+- 界面集成：[`src/KSPGMAT/UI/GMATMainWindow.TabMGA.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/UI/GMATMainWindow.TabMGA.cs)
+
+## 7.4 原生非托管 DLL 隔离部署规范 (Prevent AssemblyLoader Crash)
+- **核心规约**：KSP 引擎的 `AssemblyLoader` 会扫描所有 `Plugins/` 目录下的 `.dll` 文件并尝试解析 .NET 版本元数据。对于 C++ 编译的非托管 DLL（如 `pykep_native.dll`, `keplerian_toolbox.dll`, `boost_serialization.dll`），此行为会触发 `ArgumentNullException: Value cannot be null (System.Version.Parse)` 导致 KSP 游戏加载进度条永久卡死！
+- **标准解决架构**：
+  1. 所有 C++ 原生动态库必须以 `.bin` 格式独立存放于 `GameData/KSPGMAT/native/` 目录中，**严禁放入 `Plugins/`**；
+  2. C# 端在 `PykepNative` 静态构造函数中调用 `SetDllDirectory(".../native")` 并通过 Win32 API `kernel32.dll!LoadLibrary` 依序预加载 `boost_serialization.bin` -> `keplerian_toolbox.bin` -> `pykep_native.bin`；
+  3. `deploy.ps1` 自动清理 `Plugins/` 中的任何非托管二进制并同步至 `native/`。
+
+## 7.5 双通道历元架构规范 (Dual-Channel Epoch Architecture)
+- **业务需求**：
+  1. **游戏内物理与交互通道 (`FormatUtcGregorian`)**：100% 真实反映游戏内部 UT 历元（如 RP-1 真实 1951 年开局 `01 Jan 1951 00:00:00`），确保行星日心位置 `body.orbit.getRelativePositionAtUT(ut)`、MGA 借力星历与 UI 视觉完全 1:1 精确锁相，杜绝任何人工年份偏移；
+  2. **GMAT 后端脚本输出通道 (`FormatGmatSafeEpoch`)**：NASA GMAT 官方 DE405 行星历表硬性要求历元 $\ge \text{1957-10-04}$（Sputnik 发射时刻）。当输出给 GMAT CLI 引擎执行的 `.script` 文件时，对早期存档（$< 1957$）执行底层安全映射，确保 GMAT CLI 解析器不会因 DE405 边界校验失败而崩溃退出。
+
+## 7.6 统一 SPICE 配置文件与纯净 Sol/RSS 太阳系规范
+- **统一配置文件**：`GameData/KSPGMAT/Config/backend.cfg`
+  - `gmat_root`：指定 GMAT `bin` 安装目录；
+  - `spice_bsp_path`：指定 NASA JPL SPICE 星历文件路径（如 `de440.bsp` / `de430.bsp` / `de421.bsp`）。
+- **纯净太阳系 (Pure Sol/RSS Only)**：
+  - 系统专为真实太阳系打造，彻底移除原版（Stock）虚构天体（Kerbin, Eve, Duna 等）；
+  - 核心天体库严格限定为标准太阳系天体：水星 (Mercury)、金星 (Venus)、地球 (Earth)、月球 (Moon/Luna)、火星 (Mars)、木星 (Jupiter)、土星 (Saturn)、天王星 (Uranus)、海王星 (Neptune)、冥王星 (Pluto)。
+
+## 7.7 日心轨道全景画布高精渲染与等距物理比例规范 (Orbit Canvas Engine)
+- **绝对等距几何比例 (1:1 Strict Isometric Scale)**：
+  - X 与 Y 轴严格共享单一缩放因子 $S = \frac{\min(W, H) \times 0.44 \times \text{Zoom}}{\text{ViewRadiusKm}}$，严禁按宽高分别缩放导致开普勒圆轨道形变为椭圆；
+  - 真实反映各大行星天心距比例（水星 $0.39\text{ AU}$、金星 $0.72\text{ AU}$、地球 $1.0\text{ AU}$、火星 $1.52\text{ AU}$、木星 $5.2\text{ AU}$、土星 $9.58\text{ AU}$）；
+- **平移坐标系与鼠标交互锁相**：
+  - 屏幕 Y 轴向下与纹理 Y 轴向上对齐纠正（$\Delta Y_{\text{pan}} = -\Delta Y_{\text{mouse}}$），实现 1:1 自然拖拽跟随；
+- **工业级亚像素抗锯齿与深空天体光晕**：
+  - 采用 Xiaolin Wu 亚像素抗锯齿算法（AA）绘制光滑连续轨道弧线；
+  - 太阳呈现多层色散径向辐射晕；
+  - 行星天体呈现专属光谱色调与土星光环特征，内嵌 5x7 高清点阵文字标注系统。
+
+## 7.8 霍曼相角先验窗口与 3D 自由日心交互视口 (Launch Window & 3D Engine)
+- **解析霍曼与会合周期窗口推荐 (`CalculateHohmannWindow`)**：
+  - 利用双星相角 $\phi = \pi - \omega_2 T_{\text{hoh}}$ 与会合周期 $T_{\text{syn}} = \frac{2\pi}{|\omega_1 - \omega_2|}$ 快速解析最近转移窗口；
+  - 将霍曼先验直接注入差分进化种群，秒级收敛至全局最优 $\Delta V$（杜绝非窗口期 $20+\text{ km/s}$ 暴力推进）；
+- **3D 自由交互日心视口**：
+  - **右键拖拽**：3D 俯仰 (Pitch $5^\circ \sim 89.9^\circ$) 与 方位角 (Yaw $0^\circ \sim 360^\circ$) 自由旋转；
+  - **左键拖拽**：平面平移；
+  - **滚轮**：平滑缩放；
+  - **一键切换**：支持 3D 透视视口与 2D 顶视视口秒级切换；
+  - **黄道面投影垂线**：针对高倾角天体绘制 $Z=0$ 黄道面投影虚线，真实展现三维空间轨道几何。
+
+## 7.9 官方 PyKEP 高精猪排图生成器与 3 轴机动矢量规范
+- **官方 ESA 兰伯特网格扫频 (`PorkchopGenerator`)**：
+  - 采用多线程并行网格架构（出发日期 $t_{\text{dep}}$ vs 飞行时长 $\text{ToF}$），每一个网格单元均调用 ESA ACT `keplerian_toolbox::lambert_problem`（Izzo 算法）；
+  - 渲染高精连续等高线热力纹理（Navy $\to$ Cyan $\to$ Emerald $\to$ Amber $\to$ Coral），自动标记全局最优极小值金星（★）；
+  - 支持鼠标悬停光标微秒级读取任意坐标点的出发历元、到达历元、飞行时间、脱离 $\Delta V$、捕获 $\Delta V$ 与特征能量 $C_3$，支持 1 键选取转移窗口；
+- **全套行星际出射与捕获特征参数输出**：
+  - **相角 (Phase Angle $\phi$)**、**出射角 (Ejection Angle $\eta$)**、**出射升交点赤经 (Ejection LAN $\Omega$)**、**出射倾角 (Ejection Inclination $i$)**、**特征能量 $C_3$**、**捕获倾角 ($i_{\text{insert}}$)**；
+  - 自动向 GMAT 脚本注入标准 `ImpulsiveBurn` 对象与 3 轴 VNC 矢量分量（$\Delta V_{\text{Prograde}}, \Delta V_{\text{Normal}}, \Delta V_{\text{Radial}}$）。
+
+# 8. 航天动力学三核闭环钳制校准系统计划 (Tri-Engine Closed-Loop Roadmap)
+
+> [!NOTE]
+> **目标**：在 KEP $\to$ GMAT 的双向数据验证完成后，构建 **KEP $\to$ GMAT $\to$ Principia** 航天动力学三核协同闭环系统，利用三者优势互相钳制校准数值，最终实现游戏内 Principia 真实引力机动节点与理论最优设计完全 1:1 闭环吻合。
+
+```mermaid
+flowchart TD
+    A["<b>1. KEP 动力学引擎</b><br/>(PyKEP / keplerian_toolbox)<br/>全局差分进化 + 猪排图寻优"] -->|"输出全局转移窗口、历元、ToF、初始 ΔV 矢量"| B["<b>2. NASA GMAT 高精数值打靶</b><br/>(High-Precision Numerical Engine)<br/>DE405/DE440 + SRP + 高阶引力场 + DC 微分校正器"]
+    B -->|"输出 B-Plane (B·T, B·R) 目标与高精 3 轴 VNC 机动矢量"| C["<b>3. Principia 游戏内辛积分引擎</b><br/>(In-Game Symplectic N-Body Engine)<br/>真实引力场飞行计划与内部飞掠优化器"]
+    C -->|"闭环残差校验与钳制反馈 (ΔV Residuals & Periapsis Deviation)"| D{"<b>4. 闭环收敛校验</b><br/>|ΔV| < 0.1 m/s ?"}
+    D -- "否 (残差超限)" --> B
+    D -- "是 (完美闭环)" --> E["<b>✅ 游戏内完美执行</b><br/>Principia 自动执行精准飞掠"]
+```
+
+## 8.1 三核职责分工与协同机制
+1. **核一：KEP 全局转移窗口与初始构型规划 (Global Optimization)**
+   - **职责**：利用开普勒两体兰伯特方程与多重引力助推（MGA）差分进化算法，在全太阳系时空范围内快速定位出全局最小 $\Delta V$ 转移窗口与初始借力序列（地球 $\to$ 金星 $\to$ 地球 $\to$ 木星 $\to$ 土星）；
+   - **产出**：初始出发历元 $t_0$、各段飞行时长 $T_k$、借力天体近拱点高度 $r_{p, k}$、初始双曲脱离速度矢量 $\vec{v}_{\infty}$。
+2. **核二：NASA GMAT 高精度数值摄动打靶 (High-Fidelity Targeting)**
+   - **职责**：以 KEP 的输出作为初始猜测值，引入太阳系全天体引力摄动、太阳光压（SRP）、非球形引力场 $J_2/J_4$ 与高精度数值积分器（Prince-Dormand 78 / Runge-Kutta 89）；
+   - **打靶求解**：配置 Differential Corrector（微分校正器），精确打靶目标天体的 **B-Plane 参数（$B\cdot T, B\cdot R$）** 与飞掠近拱点时刻/高度；
+   - **产出**：高精度 3 轴机动矢量（$\Delta V_V, \Delta V_N, \Delta V_B$）与精确点火历元。
+3. **核三：Principia 游戏内多体辛积分与机动节点优化 (In-Game N-Body Flight Plan)**
+   - **职责**：直接对接游戏内 Principia 模组（`PrincipiaInterop`），将 GMAT 打靶得到的机动矢量与历元注入 Principia 飞行计划（Flight Plan）；
+   - **Principia 内部优化联动**：调用 Principia 的内置飞掠优化器，对多体引力环境下的细微数值偏差（如微小历元漂移）进行本地钳制优化；
+   - **产出**：游戏内可直接执行的 Principia 飞行计划点火节点。
+
+## 8.2 实施步骤与里程碑 (TODO List)
+- [x] **Milestone 1**: 编译官方 PyKEP/keplerian_toolbox 原生 C++ 动力学核心，打通 C# P/Invoke 接口；
+- [x] **Milestone 2**: 实现解析霍曼窗口推荐与原生多线程高精猪排图生成器（Porkchop Plot）；
+- [x] **Milestone 3**: 实现行星际出发特征参数（相角、出射角、出射倾角、LAN、$C_3$）解析与 GMAT 3 轴 VNC 脚本导出；
+- [ ] **Milestone 4 (当前阶段)**: **KEP 到 GMAT 数据与打靶双向验证**：
+  - 验证 GMAT 后端 CLI 运行生成的 MGA/行星际脚本能否 100% 收敛并达成 B-Plane 目标；
+  - 校验 GMAT 输出的 TrajReport 与 KEP 开普勒状态的轨道残差；
+- [ ] **Milestone 5 (下一步开发)**: **Principia C-API 深层接入与飞掠优化联动**：
+  - 逆向/解析 Principia 官方 C++ 导出接口（基于 `C:\Users\43701\Documents\Principia` 源码）；
+  - 实现从 GMAT 输出结果直接驱动 Principia `OptimizeBurn` / `OptimizeFlightPlan` 飞掠优化器；
+- [ ] **Milestone 6**: **三核闭环钳制与残差自动校准器**：
+  - 建立自动化评估管道：当 Principia 飞行计划与 GMAT 预测产生偏差时，自动提取偏差回传至 GMAT 进行二次微分修正，直至偏差 $< 0.1\text{ m/s}$。
+
+
+
+
+
+

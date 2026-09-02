@@ -19,6 +19,11 @@ namespace KSPGMAT {
             return (SolverConfig)this.MemberwiseClone();
         }
 
+        /// <summary>
+        /// 生成默认求解器预设。
+        /// 基线 7 说明: 此处为引导期兜底预设 (NewtonRaphson/Broyden 均为 GMAT 原生算法)，
+        /// 权威清单以 gmat_capabilities.json 动态加载为准 (见 GMATParameterRegistry.AvailableSolvers)。
+        /// </summary>
         public static Dictionary<string, SolverConfig> CreateDefaultPresets() {
             var dict = new Dictionary<string, SolverConfig>();
 

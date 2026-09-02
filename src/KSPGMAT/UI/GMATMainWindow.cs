@@ -22,6 +22,8 @@ namespace KSPGMAT.UI {
         private string pendingFocusControl = "";
         private float lastHardwareScanTime = 0f;
         private const float HARDWARE_SCAN_INTERVAL = 0.15f; // 6.7 Hz high-frequency live telemetry (Zero GC, <0.02ms CPU cost)
+        private float lastI18nRescanTime = 0f;
+        private const float I18N_RESCAN_INTERVAL = 2.0f; // detect newly added language files (e.g. ru.json)
         private int intelliSenseTargetStepIndex = -1;
         private string intelliSenseFieldName = ""; // "achieve" or "vary"
         private Rect intelliSenseAnchorRect = Rect.zero;
@@ -52,11 +54,12 @@ namespace KSPGMAT.UI {
 
         private int activeTab = 0; // Default to Tab 0: Craft & Orbit
         private string[] GetTabNames() => new string[] {
-            I18n.T("tab_craft", "🛰️ 飞船与动力学"),
-            I18n.T("tab_resources", "📁 资源库 (Resources)"),
-            I18n.T("tab_mission", "📋 任务控制序列"),
-            I18n.T("tab_results", "📈 变轨与轨迹明细"),
-            I18n.T("tab_settings", "⚙️ 设置")
+            I18n.T("tab_craft", "飞船与动力学"),
+            I18n.T("tab_resources", "资源库"),
+            I18n.T("tab_mission", "任务控制序列"),
+            I18n.T("tab_mga", "深空借力 (MGA)"),
+            I18n.T("tab_results", "变轨与轨迹明细"),
+            I18n.T("tab_settings", "设置")
         };
 
         private Vector2 scrollPosCraft = Vector2.zero;
@@ -118,7 +121,7 @@ namespace KSPGMAT.UI {
         private float solveProgress = 0.0f;
         private float solveStartTime = 0.0f;
         private float solveTotalTime = 0.0f;
-        private string solveStageText = "就绪";
+        private string solveStageText = "";
         private int solveCurrentStepIndex = 0;
 
         // Sub-Window: Spacecraft details
@@ -131,7 +134,7 @@ namespace KSPGMAT.UI {
         private Rect simulationImageWindowRect;
         private Texture2D simulationTexture = null;
         private string currentViewMode = "dual";
-        private string imageStatusText = "就绪。";
+        private string imageStatusText = "";
 
         // Sub-Window 2: Propagator & Force Model Config
         private bool showPropagatorConfigWindow = false;
@@ -157,6 +160,15 @@ namespace KSPGMAT.UI {
         private bool showCsOriginPicker = false;
         private bool showCsAxesPicker = false;
         private bool showCsPrimaryPicker = false;
+
+        // Sub-Window 5: Celestial Body / Planet Picker Modal (MGA 行星际天体弹出选择器)
+        private bool showPlanetPickerModal = false;
+        private Rect planetPickerWindowRect = new Rect(Screen.width * 0.3f, Screen.height * 0.2f, 520, 480);
+        private int planetPickerTargetType = 0; // 0: Departure, 1: Destination, 2: Replace Flyby, 3: Append Flyby
+        private int planetPickerFlybyIndex = -1;
+        private string planetPickerTitle = "";
+        private Vector2 planetPickerScrollPos = Vector2.zero;
+        private string planetPickerSearch = "";
         private bool showCsSecondaryPicker = false;
         private bool showCsHelpTooltip = false;
         private Rect targeterSetupWindowRect;
@@ -164,24 +176,24 @@ namespace KSPGMAT.UI {
         private string wizardDcName = "DefaultDC";
         private int wizardAlgorithmIndex = 0;
         private static readonly string[] WizardAlgorithmNames = new string[] { "NewtonRaphson", "Broyden", "ModifiedBroyden" };
-        private static readonly string[] WizardAlgorithmLabels = new string[] { "标准牛顿法 (Newton-Raphson)", "拟牛顿法 (Broyden)", "修正拟牛顿 (Modified Broyden)" };
+        private static string[] GetWizardAlgorithmLabels() => new string[] { I18n.T("alg_newton"), I18n.T("alg_broyden"), I18n.T("alg_modbroyden") };
         private int wizardMaxIterations = 50;
         private int wizardDerivativeIndex = 0;
         private static readonly string[] WizardDerivativeNames = new string[] { "ForwardDifference", "CentralDifference" };
-        private static readonly string[] WizardDerivativeLabels = new string[] { "前向差分 (Forward Difference)", "中心差分 (Central Difference)" };
+        private static string[] GetWizardDerivativeLabels() => new string[] { I18n.T("deriv_forward"), I18n.T("deriv_central") };
         private int wizardSolveModeIndex = 0;
         private static readonly string[] WizardSolveModeNames = new string[] { "Solve", "RunInitialGuess" };
-        private static readonly string[] WizardSolveModeLabels = new string[] { "自动打靶寻优 (Solve)", "仅运行初猜 (RunInitialGuess)" };
+        private static string[] GetWizardSolveModeLabels() => new string[] { I18n.T("mode_solve"), I18n.T("mode_runinit") };
         private int wizardExitModeIndex = 0;
         private static readonly string[] WizardExitModeNames = new string[] { "DiscardAndContinue", "SaveAndContinue", "Stop" };
-        private static readonly string[] WizardExitModeLabels = new string[] { "舍弃并在解处继续 (DiscardAndContinue)", "保存解并继续 (SaveAndContinue)", "终止停机 (Stop)" };
+        private static string[] GetWizardExitModeLabels() => new string[] { I18n.T("exit_discard"), I18n.T("exit_save"), I18n.T("exit_stop") };
         private int wizardTemplateIndex = 0;
-        private static readonly string[] WizardTemplateLabels = new string[] {
-            "🌟 [自由打靶空组] 自定义编写 (仅生成 Target / EndTarget)",
-            "🔺 [远地点高度打靶] GTO / 同步轨道转移 (Vary BurnTime -> Achieve Alt)",
-            "⏱️ [轨道周期打靶] GEO 同步 / 周期共振 (Vary BurnTime -> Achieve OrbitPeriod)",
-            "🌙 [地月转移注入打靶 (TLI)] 月球近心点 (Vary BurnTime -> Achieve Luna RMAG)",
-            "📐 [轨道面倾角变轨] 法向机动 (Vary Normal dV -> Achieve INC)"
+        private static string[] GetWizardTemplateLabels() => new string[] {
+            I18n.T("tmpl_free"),
+            I18n.T("tmpl_apogee"),
+            I18n.T("tmpl_period"),
+            I18n.T("tmpl_tli"),
+            I18n.T("tmpl_inc")
         };
 
         // Mission Sequence & Results
@@ -207,9 +219,9 @@ namespace KSPGMAT.UI {
         };
 
         private static readonly string[] PropagatorLabels = new string[] {
-            "🪐 近轨高保真积分 (NearBody)",
-            "🌌 深空多体巡航积分 (DeepSpace)",
-            "🌙 复杂三体/Halo积分 (LagrangeHalo)"
+            "近轨高保真积分 (NearBody)",
+            "深空多体巡航积分 (DeepSpace)",
+            "复杂三体/Halo积分 (LagrangeHalo)"
         };
 
         // GUI Styles
@@ -270,10 +282,15 @@ namespace KSPGMAT.UI {
             try {
                 I18n.AutoDetect();
             } catch {}
+            solveStageText = I18n.T("solve_stage_ready");
+            imageStatusText = I18n.T("img_status_ready");
+            planetPickerTitle = I18n.T("mga_picker_default_title");
+            mgaStatusText = I18n.T("mga_status_ready");
+            porkchopStatusText = I18n.T("solve_stage_ready");
             // Default template: Earth LEO Parking -> Prograde Burn -> Propagate to Apoapsis
-            missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LEOProp", stop_type = "Time", duration = 1800.0, label = "LEO 停泊巡航" });
-            missionSequence.Add(new MissionStep { type = "FiniteBurn", duration = 60.0, propagator = "LEOProp", burn_direction = "Prograde", label = "轨道抬高有限推力点火" });
-            missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LEOProp", stop_type = "Apoapsis", label = "积分至远地点" });
+            missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LEOProp", stop_type = "Time", duration = 1800.0, label = I18n.T("misc_default_cruise") });
+            missionSequence.Add(new MissionStep { type = "FiniteBurn", duration = 60.0, propagator = "LEOProp", burn_direction = "Prograde", label = I18n.T("misc_default_burn") });
+            missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LEOProp", stop_type = "Apoapsis", label = I18n.T("misc_default_prop_ap") });
         }
 
         void Start() {
@@ -281,6 +298,12 @@ namespace KSPGMAT.UI {
         }
 
         void Update() {
+            // i18n dynamic language registration: rescan loc/ when its contents changed (e.g. a new ru.json)
+            if (Time.realtimeSinceStartup - lastI18nRescanTime > I18N_RESCAN_INTERVAL) {
+                lastI18nRescanTime = Time.realtimeSinceStartup;
+                try { I18n.RescanIfChanged(); } catch {}
+            }
+
             // High-frequency live telemetry scan (100% automatic, zero user clicking needed)
             if (visible && FlightGlobals.ActiveVessel != null && Time.realtimeSinceStartup - lastHardwareScanTime > HARDWARE_SCAN_INTERVAL) {
                 lastHardwareScanTime = Time.realtimeSinceStartup;
@@ -296,21 +319,21 @@ namespace KSPGMAT.UI {
                 solveTotalTime = elapsed;
                 if (elapsed < 0.6f) {
                     solveProgress = Mathf.Lerp(0.05f, 0.22f, elapsed / 0.6f);
-                    solveStageText = "1/4 🛰️ 抓取飞船与引力场真实初始状态...";
+                    solveStageText = I18n.T("solve_stage_1");
                     solveCurrentStepIndex = 0;
                 } else if (elapsed < 1.5f) {
                     solveProgress = Mathf.Lerp(0.22f, 0.48f, (elapsed - 0.6f) / 0.9f);
-                    solveStageText = "2/4 📜 编译 NASA GMAT 任务动力学脚本与力模型...";
+                    solveStageText = I18n.T("solve_stage_2");
                     solveCurrentStepIndex = Mathf.Min(1, missionSequence.Count - 1);
                 } else if (elapsed < 3.8f) {
                     solveProgress = Mathf.Lerp(0.48f, 0.88f, (elapsed - 1.5f) / 2.3f);
-                    solveStageText = "3/4 🧮 GMAT RungeKutta89 积分与微分修正打靶中...";
+                    solveStageText = I18n.T("solve_stage_3");
                     if (missionSequence.Count > 2) {
                         solveCurrentStepIndex = (int)Mathf.Lerp(1, missionSequence.Count - 1, (elapsed - 1.5f) / 2.3f);
                     }
                 } else {
                     solveProgress = Mathf.Min(0.96f, 0.88f + (elapsed - 3.8f) * 0.015f);
-                    solveStageText = "4/4 📊 解析高保真轨迹、机动节点与状态报告...";
+                    solveStageText = I18n.T("solve_stage_4");
                     solveCurrentStepIndex = missionSequence.Count - 1;
                 }
             }
@@ -472,7 +495,8 @@ namespace KSPGMAT.UI {
             }
         }
 
-        public MissionStep CreateFiniteBurnStep(string label = "变轨有限推力点火") {
+        public MissionStep CreateFiniteBurnStep(string label = null) {
+            if (string.IsNullOrEmpty(label)) label = I18n.T("misc_finite_burn_default");
             var curThruster = GMATStateManager.Current.GetSelectedThruster();
             string engName = curThruster != null ? curThruster.Id : "MainEngine";
             string tkName = curThruster != null ? curThruster.BoundTankId : "Tank0";
@@ -499,7 +523,7 @@ namespace KSPGMAT.UI {
                 burn_vary_var_name = $"{burnName}_Duration",
                 burn_decrement_mass = true,
                 burn_isp = curThruster != null ? curThruster.IspVac : 300.0,
-                label = clusterList.Count > 1 ? $"{label} ({clusterList.Count}发集群)" : $"{label} ({engName})"
+                label = clusterList.Count > 1 ? I18n.Format("burn_label_cluster", label, clusterList.Count) : I18n.Format("burn_label_single", label, engName)
             };
         }
 
@@ -532,12 +556,12 @@ namespace KSPGMAT.UI {
                     byte[] data = System.IO.File.ReadAllBytes(path);
                     if (simulationTexture == null) simulationTexture = new Texture2D(2, 2);
                     simulationTexture.LoadImage(data);
-                    imageStatusText = $"已载入 GMAT 仿真图 ({simulationTexture.width}x{simulationTexture.height})";
+                    imageStatusText = I18n.Format("img_loaded", simulationTexture.width, simulationTexture.height);
                 } catch (Exception ex) {
-                    imageStatusText = "载入图片失败: " + ex.Message;
+                    imageStatusText = I18n.Format("img_load_fail", ex.Message);
                 }
             } else {
-                imageStatusText = "尚未生成仿真渲染图，请点击求解或重新渲染。";
+                imageStatusText = I18n.T("img_not_ready");
             }
         }
 
@@ -591,7 +615,8 @@ namespace KSPGMAT.UI {
                 }
             }
 
-            GUI.backgroundColor = Color.white;
+            // 基线4.1: 全局背景色使用深空暗黑令牌，杜绝白色闪烁 (Zero-White-Flash)
+            GUI.backgroundColor = new Color(0.038f, 0.048f, 0.070f, 1.0f);
             // Smooth screen boundary clamping without layout fighting
             windowRect.x = Mathf.Clamp(windowRect.x, 0f, Mathf.Max(0f, Screen.width - windowRect.width));
             windowRect.y = Mathf.Clamp(windowRect.y, 0f, Mathf.Max(0f, Screen.height - windowRect.height));
@@ -633,6 +658,16 @@ namespace KSPGMAT.UI {
                     GUILayout.Width(coordSystemWindowRect.width), GUILayout.Height(coordSystemWindowRect.height));
             }
 
+            if (showPlanetPickerModal) {
+                if (planetPickerWindowRect.width < 450 || planetPickerWindowRect.height < 400) {
+                    float pw = Mathf.Clamp(Screen.width * 0.45f, 480f, 650f);
+                    float ph = Mathf.Clamp(Screen.height * 0.55f, 450f, 600f);
+                    planetPickerWindowRect = new Rect((Screen.width - pw) / 2, (Screen.height - ph) / 2, pw, ph);
+                }
+                planetPickerWindowRect = GUILayout.Window(982308, planetPickerWindowRect, DrawPlanetPickerWindow, "", windowStyle,
+                    GUILayout.Width(planetPickerWindowRect.width), GUILayout.Height(planetPickerWindowRect.height));
+            }
+
             // Script Push Modal unified into Tab 1 Built-in IDE
 
             if (intelliSenseOpen) {
@@ -669,9 +704,12 @@ namespace KSPGMAT.UI {
                     DrawTabMissionSequence(vessel);
                     break;
                 case 3:
-                    DrawTabResults();
+                    DrawTabMGA(vessel);
                     break;
                 case 4:
+                    DrawTabResults();
+                    break;
+                case 5:
                     DrawTabSettings();
                     break;
             }
@@ -682,31 +720,36 @@ namespace KSPGMAT.UI {
 
         private void DrawTopBar() {
             GUILayout.BeginHorizontal();
-            GUILayout.Label("<color=#38bdf8><b>🚀 NASA GMAT</b></color> <color=#94a3b8>高精度任务规划中枢</color>", headerStyle);
+            GUILayout.Label(I18n.T("topbar_title"), headerStyle);
 
             Vessel v = FlightGlobals.ActiveVessel;
             if (v != null) {
                 GUILayout.Space(6);
-                GUILayout.Label($"<color=#7dd3fc>[🛰️ {v.vesselName} | {v.mainBody.name}]</color>", labelValueStyle);
+                GUILayout.Label(I18n.ColorFormat("topbar_vessel", v.vesselName, v.mainBody.name), labelValueStyle);
             }
 
             GUILayout.Space(8);
-            double currentJd = 2433647.5 + (Planetarium.GetUniversalTime() / 86400.0);
-            bool isBefore1957 = currentJd < 2436116.0;
-            if (isBefore1957) {
-                GUILayout.Label("<color=#facc15><b>🕒 历元对齐:</b> 游戏时间 < 1957年 (已启用自动安全偏移 07 Mar 1960 对齐星历，任务相对时间 100% 完美保真)</color>", labelValueStyle);
+            if (GMATClient.HasFullSpiceEphemeris) {
+                string kernelName = GMATClient.DetectedSpiceKernelName;
+                GUILayout.Label(I18n.ColorFormat("topbar_spice_loaded", kernelName), labelValueStyle);
             } else {
-                GUILayout.Label("<color=#34d399><b>🕒 历元对齐:</b> 1957+ 真实星历直通 (零偏移完美对齐)</color>", labelValueStyle);
+                double currentJd = 2433647.5 + (Planetarium.GetUniversalTime() / 86400.0);
+                bool isBefore1957 = currentJd < 2436116.0;
+                if (isBefore1957) {
+                    GUILayout.Label(I18n.T("topbar_epoch_pre1957"), labelValueStyle);
+                } else {
+                    GUILayout.Label(I18n.T("topbar_epoch_post1957"), labelValueStyle);
+                }
             }
 
             GUILayout.FlexibleSpace();
 
             string statusColor = GMATClient.IsConnected ? "#34d399" : "#f87171";
-            string statusIcon = GMATClient.IsConnected ? "● ONLINE" : "● OFFLINE";
+            string statusIcon = GMATClient.IsConnected ? I18n.T("status_online") : I18n.T("status_offline");
             GUILayout.Label($"<color={statusColor}><b>{statusIcon}</b></color>", labelValueStyle);
 
             GUILayout.Space(10);
-            if (GUILayout.Button(isMaximized ? "❐ 还原" : "⛶ 放大", secondaryButtonStyle, GUILayout.Width(58), GUILayout.Height(22))) {
+            if (GUILayout.Button(isMaximized ? I18n.T("btn_restore") : I18n.T("btn_maximize"), secondaryButtonStyle, GUILayout.Width(58), GUILayout.Height(22))) {
                 ToggleMaximize();
             }
 

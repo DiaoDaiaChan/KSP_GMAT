@@ -58,11 +58,18 @@ gmat_orbit_render.png
 *.dll.old
 *.old.dll
 *.pdb
+*.obj
+*.exp
+*.lib
+*.ilk
 GMAT.ini
 gmat_startup_file.txt
 osgPlugins-*/
 gmatpy/
 principia-src/
+
+# Scratch & temporary exploratory code
+scratch/
 
 # Allow GameData Release DLL
 !GameData/KSPGMAT/Plugins/KSPGMAT.dll

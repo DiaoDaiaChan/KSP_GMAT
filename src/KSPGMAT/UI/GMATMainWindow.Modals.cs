@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using UnityEngine;
+using KSPGMAT.MGA;
 
 namespace KSPGMAT.UI {
     public partial class GMATMainWindow {
@@ -42,7 +43,7 @@ namespace KSPGMAT.UI {
 
             // Title Bar
             GUILayout.BeginHorizontal();
-            GUILayout.Label("<b>🌐 ParameterSelectDialog (GMAT 官方参数与硬件对象选择器)</b>", headerStyle);
+            GUILayout.Label(I18n.T("modal_param_title"), headerStyle);
             GUILayout.FlexibleSpace();
             if (GUILayout.Button("✕", deleteButtonStyle, GUILayout.Width(24), GUILayout.Height(20))) {
                 showParamPickerModal = false;
@@ -53,9 +54,9 @@ namespace KSPGMAT.UI {
 
             // Search Bar
             GUILayout.BeginHorizontal();
-            GUILayout.Label("🔍 快速搜索过滤:", labelValueStyle, GUILayout.Width(100));
+            GUILayout.Label(I18n.T("modal_search"), labelValueStyle, GUILayout.Width(100));
             paramPickerSearchQuery = GUILayout.TextField(paramPickerSearchQuery, GUILayout.MinWidth(200), GUILayout.ExpandWidth(true));
-            if (GUILayout.Button("清空", secondaryButtonStyle, GUILayout.Width(45), GUILayout.Height(20))) {
+            if (GUILayout.Button(I18n.T("btn_clear"), secondaryButtonStyle, GUILayout.Width(45), GUILayout.Height(20))) {
                 paramPickerSearchQuery = "";
             }
             GUILayout.EndHorizontal();
@@ -69,11 +70,11 @@ namespace KSPGMAT.UI {
             // COLUMN 1: Object Type & Attached Hardware List (Width: 200px)
             // -----------------------------------------------------------------
             GUILayout.BeginVertical(cardBoxStyle, GUILayout.Width(210));
-            GUILayout.Label("<b>Object Type (对象类型)</b>", subHeaderStyle);
+            GUILayout.Label(I18n.T("modal_obj_type_header"), subHeaderStyle);
             psdScrollObjType = GUILayout.BeginScrollView(psdScrollObjType);
 
             string[] objTypes = new string[] { "Spacecraft", "Variable", "ChemicalThruster", "ChemicalTank", "ImpulsiveBurn", "CoordinateSystem", "Array" };
-            string[] objTypeLabels = new string[] { "🚀 Spacecraft (航天器)", "🔢 Variable (自定义变量)", "🔥 ChemicalThruster (推力器)", "⛽ ChemicalTank (储罐)", "💥 ImpulsiveBurn (脉冲机动)", "🌐 CoordinateSystem (坐标系)", "📊 Array (数组矩阵)" };
+            string[] objTypeLabels = new string[] { I18n.T("objtype_spacecraft"), I18n.T("objtype_variable"), I18n.T("objtype_thruster"), I18n.T("objtype_tank"), I18n.T("objtype_impulsive"), I18n.T("objtype_coord"), I18n.T("objtype_array") };
 
             for (int t = 0; t < objTypes.Length; t++) {
                 bool isCurType = (psdSelectedObjectTypeIndex == t && string.IsNullOrEmpty(psdSelectedHardwareName));
@@ -85,7 +86,7 @@ namespace KSPGMAT.UI {
 
             // Attached Hardware Section (Scan actual craft + sequence)
             GUILayout.Space(6);
-            GUILayout.Label("<color=#94a3b8><b>Attached Hardware:</b></color>", labelValueStyle);
+            GUILayout.Label(I18n.T("modal_attached_hw"), labelValueStyle);
 
             // Thrusters
             var allEngines = ROEngineInterop.ScanVesselEngines(v);
@@ -103,7 +104,7 @@ namespace KSPGMAT.UI {
             for (int th = 0; th < thList.Count; th++) {
                 string tName = thList[th];
                 bool isCurHw = (psdSelectedHardwareName == tName);
-                if (GUILayout.Button($"🔥 {tName}", isCurHw ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
+                if (GUILayout.Button(tName, isCurHw ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
                     psdSelectedHardwareName = tName;
                     psdSelectedObjectTypeIndex = 2; // Thruster
                 }
@@ -119,7 +120,7 @@ namespace KSPGMAT.UI {
             for (int tk = 0; tk < tkList.Count; tk++) {
                 string tName = tkList[tk];
                 bool isCurHw = (psdSelectedHardwareName == tName);
-                if (GUILayout.Button($"⛽ {tName}", isCurHw ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
+                if (GUILayout.Button(tName, isCurHw ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
                     psdSelectedHardwareName = tName;
                     psdSelectedObjectTypeIndex = 3; // Tank
                 }
@@ -158,21 +159,21 @@ namespace KSPGMAT.UI {
                 }
             } else if (curObjTypeName == "ChemicalThruster" || (!string.IsNullOrEmpty(psdSelectedHardwareName) && (psdSelectedHardwareName.Contains("Thruster") || psdSelectedHardwareName.Contains("Engine") || psdSelectedHardwareName.Contains("RL10")))) {
                 // Thruster Properties
-                propList.Add(new KeyValuePair<string, string>("ThrustDirection1", "切向推力偏转分量 (0~1)"));
-                propList.Add(new KeyValuePair<string, string>("ThrustDirection2", "法向推力偏转分量 (-1~1)"));
-                propList.Add(new KeyValuePair<string, string>("ThrustDirection3", "径向推力偏转分量 (-1~1)"));
-                propList.Add(new KeyValuePair<string, string>("C1", "推力大小 (Newtons N)"));
-                propList.Add(new KeyValuePair<string, string>("K1", "真空比冲 (Isp s)"));
-                propList.Add(new KeyValuePair<string, string>("DutyCycle", "占空比开度 (0.0~1.0)"));
-                propList.Add(new KeyValuePair<string, string>("ThrustScaleFactor", "推力缩放因子"));
-                propList.Add(new KeyValuePair<string, string>("GravitationalAccel", "标准重力加速度 (9.81 m/s²)"));
+                propList.Add(new KeyValuePair<string, string>("ThrustDirection1", I18n.T("prop_ThrustDirection1")));
+                propList.Add(new KeyValuePair<string, string>("ThrustDirection2", I18n.T("prop_ThrustDirection2")));
+                propList.Add(new KeyValuePair<string, string>("ThrustDirection3", I18n.T("prop_ThrustDirection3")));
+                propList.Add(new KeyValuePair<string, string>("C1", I18n.T("prop_C1")));
+                propList.Add(new KeyValuePair<string, string>("K1", I18n.T("prop_K1")));
+                propList.Add(new KeyValuePair<string, string>("DutyCycle", I18n.T("prop_DutyCycle")));
+                propList.Add(new KeyValuePair<string, string>("ThrustScaleFactor", I18n.T("prop_ThrustScaleFactor")));
+                propList.Add(new KeyValuePair<string, string>("GravitationalAccel", I18n.T("prop_GravitationalAccel")));
             } else if (curObjTypeName == "ChemicalTank" || (!string.IsNullOrEmpty(psdSelectedHardwareName) && psdSelectedHardwareName.Contains("Tank"))) {
                 // Tank Properties
-                propList.Add(new KeyValuePair<string, string>("FuelMass", "储罐当前推进剂质量 (kg)"));
-                propList.Add(new KeyValuePair<string, string>("FuelDensity", "燃料混合密度 (kg/m³)"));
-                propList.Add(new KeyValuePair<string, string>("Pressure", "储罐工作压力 (kPa)"));
-                propList.Add(new KeyValuePair<string, string>("Volume", "储罐物理容积 (m³)"));
-                propList.Add(new KeyValuePair<string, string>("Temperature", "推进剂温度 (°C)"));
+                propList.Add(new KeyValuePair<string, string>("FuelMass", I18n.T("prop_FuelMass")));
+                propList.Add(new KeyValuePair<string, string>("FuelDensity", I18n.T("prop_FuelDensity")));
+                propList.Add(new KeyValuePair<string, string>("Pressure", I18n.T("prop_Pressure")));
+                propList.Add(new KeyValuePair<string, string>("Volume", I18n.T("prop_Volume")));
+                propList.Add(new KeyValuePair<string, string>("Temperature", I18n.T("prop_Temperature")));
             } else if (curObjTypeName == "Variable") {
                 // User declared sequence variables
                 List<string> declaredVars = new List<string>() { "burntime", "GTO_Duration", "GEO_Duration", "LOI_Duration1", "LOI_Duration2", "LOI_Duration3", "TLI_Duration" };
@@ -186,16 +187,16 @@ namespace KSPGMAT.UI {
                     }
                 }
                 for (int dv = 0; dv < declaredVars.Count; dv++) {
-                    propList.Add(new KeyValuePair<string, string>(declaredVars[dv], "用户标量时间/寻优变量 (s)"));
+                    propList.Add(new KeyValuePair<string, string>(declaredVars[dv], I18n.T("prop_user_var_desc")));
                 }
             } else if (curObjTypeName == "ImpulsiveBurn") {
-                propList.Add(new KeyValuePair<string, string>("Element1", "切向速度增量 ΔV_V (km/s)"));
-                propList.Add(new KeyValuePair<string, string>("Element2", "法向速度增量 ΔV_N (km/s)"));
-                propList.Add(new KeyValuePair<string, string>("Element3", "径向速度增量 ΔV_B (km/s)"));
+                propList.Add(new KeyValuePair<string, string>("Element1", I18n.T("prop_Element1")));
+                propList.Add(new KeyValuePair<string, string>("Element2", I18n.T("prop_Element2")));
+                propList.Add(new KeyValuePair<string, string>("Element3", I18n.T("prop_Element3")));
             } else if (curObjTypeName == "CoordinateSystem") {
-                propList.Add(new KeyValuePair<string, string>("EarthMJ2000Eq", "地球标准赤道惯性坐标系"));
-                propList.Add(new KeyValuePair<string, string>("Local", "局部轨道面 VNB 坐标系"));
-                propList.Add(new KeyValuePair<string, string>("MoonInertial", "月心惯性坐标系"));
+                propList.Add(new KeyValuePair<string, string>("EarthMJ2000Eq", I18n.T("prop_EarthMJ2000Eq")));
+                propList.Add(new KeyValuePair<string, string>("Local", I18n.T("prop_Local")));
+                propList.Add(new KeyValuePair<string, string>("MoonInertial", I18n.T("prop_MoonInertial")));
             }
 
             // Apply search filter if present
@@ -227,7 +228,7 @@ namespace KSPGMAT.UI {
 
                 bool isSelected = (psdPendingSelectedValue == fullGmatPath || psdPendingSelectedValue == propKey);
                 GUILayout.BeginHorizontal();
-                if (GUILayout.Button($"➔ {propKey}", isSelected ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Width(170), GUILayout.Height(20))) {
+                if (GUILayout.Button($"-> {propKey}", isSelected ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Width(170), GUILayout.Height(20))) {
                     psdPendingSelectedValue = fullGmatPath;
                 }
                 GUILayout.Label($"<color=#facc15>{propDesc}</color>", labelValueStyle);
@@ -244,10 +245,10 @@ namespace KSPGMAT.UI {
             // COLUMN 3: Selected Value(s) & Confirmation Actions (Width: 220px)
             // -----------------------------------------------------------------
             GUILayout.BeginVertical(cardBoxStyle, GUILayout.Width(220));
-            GUILayout.Label("<b>Selected Value(s)</b>", subHeaderStyle);
+            GUILayout.Label(I18n.T("modal_selected_values"), subHeaderStyle);
             GUILayout.Space(4);
 
-            GUILayout.Label("<color=#94a3b8>完整 GMAT 变量表达式:</color>", labelValueStyle);
+            GUILayout.Label(I18n.T("modal_full_expr"), labelValueStyle);
             psdPendingSelectedValue = GUILayout.TextField(psdPendingSelectedValue, GUILayout.Height(26));
 
             GUILayout.Space(8);
@@ -259,7 +260,7 @@ namespace KSPGMAT.UI {
             GUILayout.FlexibleSpace();
 
             // [OK] & [Cancel] Buttons (Image 3)
-            if (GUILayout.Button("✔ OK / 确定应用", successButtonStyle, GUILayout.Height(28))) {
+            if (GUILayout.Button(I18n.T("btn_ok_apply"), successButtonStyle, GUILayout.Height(28))) {
                 if (paramPickerTargetStepIndex >= 0 && paramPickerTargetStepIndex < missionSequence.Count) {
                     var s = missionSequence[paramPickerTargetStepIndex];
                     if (paramPickerMode == "vary") {
@@ -280,7 +281,7 @@ namespace KSPGMAT.UI {
             }
 
             GUILayout.Space(4);
-            if (GUILayout.Button("✕ Cancel / 取消", secondaryButtonStyle, GUILayout.Height(24))) {
+            if (GUILayout.Button(I18n.T("btn_cancel"), secondaryButtonStyle, GUILayout.Height(24))) {
                 showParamPickerModal = false;
             }
 
@@ -295,9 +296,9 @@ namespace KSPGMAT.UI {
             if (cb == "Kerbin") cb = "Earth"; else if (cb == "Mun") cb = "Luna";
 
             GUILayout.BeginHorizontal();
-            string pickerTitle = isPropStop ? "⏱️ GMAT 动力学终止条件字典 (Propagate Stop Conditions)" :
-                                 (paramPickerMode == "achieve") ? "🎯 GMAT 官方约束目标字典 (Achieve Parameters)" :
-                                 "📋 GMAT 动力学与开普勒参数字典 (GMAT Parameter Library)";
+            string pickerTitle = isPropStop ? I18n.T("param_title_stop") :
+                                 (paramPickerMode == "achieve") ? I18n.T("param_title_achieve") :
+                                 I18n.T("param_title_general");
             GUILayout.Label($"<b>{pickerTitle}</b>", headerStyle);
             GUILayout.FlexibleSpace();
             if (GUILayout.Button("✕", deleteButtonStyle, GUILayout.Width(24), GUILayout.Height(20))) {
@@ -309,9 +310,9 @@ namespace KSPGMAT.UI {
 
             // Search Bar
             GUILayout.BeginHorizontal();
-            GUILayout.Label("🔍 快速搜索过滤:", labelValueStyle, GUILayout.Width(95));
+            GUILayout.Label(I18n.T("modal_search"), labelValueStyle, GUILayout.Width(95));
             paramPickerSearchQuery = GUILayout.TextField(paramPickerSearchQuery);
-            if (GUILayout.Button("清空", secondaryButtonStyle, GUILayout.Width(45), GUILayout.Height(20))) {
+            if (GUILayout.Button(I18n.T("btn_clear"), secondaryButtonStyle, GUILayout.Width(45), GUILayout.Height(20))) {
                 paramPickerSearchQuery = "";
             }
             GUILayout.EndHorizontal();
@@ -323,7 +324,7 @@ namespace KSPGMAT.UI {
 
             // Category Filter Toolbar
             GUILayout.BeginHorizontal();
-            GUILayout.Label("参数类别:", labelValueStyle, GUILayout.Width(65));
+            GUILayout.Label(I18n.T("param_category_label"), labelValueStyle, GUILayout.Width(65));
             for (int c = 0; c < categoryOptions.Length; c++) {
                 bool isCur = (paramPickerCategoryIndex == c);
                 if (GUILayout.Button(categoryOptions[c], isCur ? tabButtonActiveStyle : tabButtonStyle, GUILayout.Height(22))) {
@@ -352,14 +353,14 @@ namespace KSPGMAT.UI {
                     GUILayout.Space(20);
                     GUILayout.BeginHorizontal();
                     GUILayout.FlexibleSpace();
-                    GUILayout.Label("<color=#64748b>未找到匹配终止条件</color>", labelValueStyle);
+                    GUILayout.Label(I18n.T("param_no_match_stop"), labelValueStyle);
                     GUILayout.FlexibleSpace();
                     GUILayout.EndHorizontal();
                 } else {
                     for (int p = 0; p < stopItems.Count; p++) {
                         var item = stopItems[p];
                         GUILayout.BeginHorizontal();
-                        if (GUILayout.Button($"➕ {item.Key}", secondaryButtonStyle, GUILayout.Width(180), GUILayout.Height(22))) {
+                        if (GUILayout.Button($"+ {item.Key}", secondaryButtonStyle, GUILayout.Width(180), GUILayout.Height(22))) {
                             if (paramPickerTargetStepIndex >= 0 && paramPickerTargetStepIndex < missionSequence.Count) {
                                 var s = missionSequence[paramPickerTargetStepIndex];
                                 
@@ -405,14 +406,14 @@ namespace KSPGMAT.UI {
                     GUILayout.Space(20);
                     GUILayout.BeginHorizontal();
                     GUILayout.FlexibleSpace();
-                    GUILayout.Label("<color=#64748b>未找到匹配参数</color>", labelValueStyle);
+                    GUILayout.Label(I18n.T("param_no_match_param"), labelValueStyle);
                     GUILayout.FlexibleSpace();
                     GUILayout.EndHorizontal();
                 } else {
                     for (int p = 0; p < paramItems.Count; p++) {
                         var item = paramItems[p];
                         GUILayout.BeginHorizontal();
-                        if (GUILayout.Button($"➕ {item.Name}", secondaryButtonStyle, GUILayout.Width(180), GUILayout.Height(22))) {
+                        if (GUILayout.Button($"+ {item.Name}", secondaryButtonStyle, GUILayout.Width(180), GUILayout.Height(22))) {
                             if (paramPickerTargetStepIndex >= 0 && paramPickerTargetStepIndex < missionSequence.Count) {
                                 var s = missionSequence[paramPickerTargetStepIndex];
                                 if (paramPickerMode == "achieve") {
@@ -444,7 +445,7 @@ namespace KSPGMAT.UI {
                         string i18nDesc = GMATParameterRegistry.GetParamBadgeI18n(item.Name);
                         string unitBadge = (!string.IsNullOrEmpty(item.Unit) && item.Unit != "?") ? $" <color=#38bdf8>[{item.Unit}]</color>" : "";
                         string descText = !string.IsNullOrEmpty(i18nDesc) ? $"<color=#facc15><b>{i18nDesc}</b></color> <color=#94a3b8>({item.GetLocalizedDescription()})</color>" : $"<color=#94a3b8>{item.GetLocalizedDescription()}</color>";
-                        GUILayout.Label($"<b>{item.Name}</b>{unitBadge} - {descText} <color=#64748b>(例: {item.Example})</color>", labelValueStyle);
+                        GUILayout.Label($"<b>{item.Name}</b>{unitBadge} - {descText} {I18n.Format("param_example", item.Example)}", labelValueStyle);
                         GUILayout.EndHorizontal();
                     }
                 }
@@ -454,7 +455,7 @@ namespace KSPGMAT.UI {
             GUILayout.Space(8);
             GUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button("✕ 完成并关闭", secondaryButtonStyle, GUILayout.Width(120), GUILayout.Height(24))) {
+            if (GUILayout.Button(I18n.T("btn_done_close"), secondaryButtonStyle, GUILayout.Width(120), GUILayout.Height(24))) {
                 showParamPickerModal = false;
             }
             GUILayout.EndHorizontal();
@@ -488,7 +489,7 @@ namespace KSPGMAT.UI {
 
         private void DrawTargeterSetupWindow(int windowID) {
             GUILayout.BeginHorizontal();
-            GUILayout.Label("<b>🎯 GMAT 官方微分修正求解器管理与配置 (Solvers & Targeters)</b>", headerStyle);
+            GUILayout.Label(I18n.T("targeter_title"), headerStyle);
             GUILayout.FlexibleSpace();
             if (GUILayout.Button("✕", deleteButtonStyle, GUILayout.Width(24), GUILayout.Height(20))) {
                 showTargeterSetupModal = false;
@@ -499,7 +500,7 @@ namespace KSPGMAT.UI {
 
             // Solver Instance Switcher Toolbar
             GUILayout.BeginHorizontal();
-            GUILayout.Label("当前求解器:", labelValueStyle, GUILayout.Width(75));
+            GUILayout.Label(I18n.T("targeter_current"), labelValueStyle, GUILayout.Width(75));
 
             var solverConfigs = GMATParameterRegistry.GetAllSolverConfigs();
             List<string> solverKeys = new List<string>(solverConfigs.Keys);
@@ -515,7 +516,7 @@ namespace KSPGMAT.UI {
             }
 
             GUILayout.Space(8);
-            if (GUILayout.Button("➕ 新建求解器...", actionButtonStyle, GUILayout.Height(24))) {
+            if (GUILayout.Button(I18n.T("btn_new_solver"), actionButtonStyle, GUILayout.Height(24))) {
                 string newName = "CustomDC_" + (solverConfigs.Count + 1);
                 var newSolver = new SolverConfig {
                     name = newName,
@@ -530,17 +531,17 @@ namespace KSPGMAT.UI {
                 };
                 GMATParameterRegistry.AddOrUpdateSolver(newSolver);
                 wizardDcName = newName;
-                ScreenMessages.PostScreenMessage($"✅ 已新建求解器: {newName}", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                ScreenMessages.PostScreenMessage(I18n.Format("targeter_created", newName), 3.0f, ScreenMessageStyle.UPPER_CENTER);
             }
 
             SolverConfig activeSolver = solverConfigs.ContainsKey(wizardDcName) ? solverConfigs[wizardDcName] : new SolverConfig();
 
             if (!activeSolver.isDefault) {
                 GUILayout.Space(6);
-                if (GUILayout.Button("🗑️ 删除", deleteButtonStyle, GUILayout.Height(24))) {
+                if (GUILayout.Button(I18n.T("btn_delete"), deleteButtonStyle, GUILayout.Height(24))) {
                     GMATParameterRegistry.DeleteSolver(wizardDcName);
                     wizardDcName = "DefaultDC";
-                    ScreenMessages.PostScreenMessage("🗑️ 已删除自定义求解器", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                    ScreenMessages.PostScreenMessage(I18n.T("targeter_deleted"), 3.0f, ScreenMessageStyle.UPPER_CENTER);
                 }
             }
 
@@ -550,21 +551,21 @@ namespace KSPGMAT.UI {
             GUILayout.BeginVertical(cardBoxStyle);
 
             // Section 1: 求解器命名与标识
-            GUILayout.Label("1. 求解器标识与命名", subHeaderStyle);
+            GUILayout.Label(I18n.T("targeter_s1"), subHeaderStyle);
             GUILayout.BeginHorizontal();
-            GUILayout.Label("求解器名称 (DC Name):", labelValueStyle, GUILayout.Width(140));
+            GUILayout.Label(I18n.T("targeter_dc_name"), labelValueStyle, GUILayout.Width(140));
             activeSolver.name = GUILayout.TextField(activeSolver.name ?? wizardDcName, GUILayout.Width(160));
-            GUILayout.Label("<color=#64748b>(GMAT 原生 DifferentialCorrector 实例名)</color>", labelValueStyle);
+            GUILayout.Label(I18n.T("targeter_dc_hint"), labelValueStyle);
             GUILayout.EndHorizontal();
 
             GUILayout.Space(6);
 
             // Section 2: 数学优化算法 (Algorithm)
-            GUILayout.Label("2. 数学优化算法 (Algorithm)", subHeaderStyle);
+            GUILayout.Label(I18n.T("targeter_s2"), subHeaderStyle);
             GUILayout.BeginHorizontal();
             for (int a = 0; a < WizardAlgorithmNames.Length; a++) {
                 bool isSel = (activeSolver.algorithm == WizardAlgorithmNames[a]);
-                if (GUILayout.Button(WizardAlgorithmLabels[a], isSel ? tabButtonActiveStyle : tabButtonStyle, GUILayout.Height(24))) {
+                if (GUILayout.Button(GetWizardAlgorithmLabels()[a], isSel ? tabButtonActiveStyle : tabButtonStyle, GUILayout.Height(24))) {
                     activeSolver.algorithm = WizardAlgorithmNames[a];
                 }
             }
@@ -573,11 +574,11 @@ namespace KSPGMAT.UI {
             GUILayout.Space(6);
 
             // Section 3: 导数计算差分方式 (DerivativeMethod)
-            GUILayout.Label("3. 导数计算差分方式 (DerivativeMethod)", subHeaderStyle);
+            GUILayout.Label(I18n.T("targeter_s3"), subHeaderStyle);
             GUILayout.BeginHorizontal();
             for (int d = 0; d < WizardDerivativeNames.Length; d++) {
                 bool isSel = (activeSolver.derivativeMethod == WizardDerivativeNames[d]);
-                if (GUILayout.Button(WizardDerivativeLabels[d], isSel ? tabButtonActiveStyle : tabButtonStyle, GUILayout.Height(24))) {
+                if (GUILayout.Button(GetWizardDerivativeLabels()[d], isSel ? tabButtonActiveStyle : tabButtonStyle, GUILayout.Height(24))) {
                     activeSolver.derivativeMethod = WizardDerivativeNames[d];
                 }
             }
@@ -586,12 +587,12 @@ namespace KSPGMAT.UI {
             GUILayout.Space(6);
 
             // Section 4: 控制参数与模式 (Modes & Parameters)
-            GUILayout.Label("4. 求解模式、退出策略与最大迭代", subHeaderStyle);
+            GUILayout.Label(I18n.T("targeter_s4"), subHeaderStyle);
             GUILayout.BeginHorizontal();
-            GUILayout.Label("求解模式:", labelValueStyle, GUILayout.Width(75));
+            GUILayout.Label(I18n.T("targeter_solve_mode"), labelValueStyle, GUILayout.Width(75));
             for (int sm = 0; sm < WizardSolveModeNames.Length; sm++) {
                 bool isSel = (activeSolver.solveMode == WizardSolveModeNames[sm]);
-                if (GUILayout.Button(WizardSolveModeLabels[sm], isSel ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(22))) {
+                if (GUILayout.Button(GetWizardSolveModeLabels()[sm], isSel ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(22))) {
                     activeSolver.solveMode = WizardSolveModeNames[sm];
                 }
             }
@@ -599,10 +600,10 @@ namespace KSPGMAT.UI {
 
             GUILayout.Space(4);
             GUILayout.BeginHorizontal();
-            GUILayout.Label("退出模式:", labelValueStyle, GUILayout.Width(75));
+            GUILayout.Label(I18n.T("targeter_exit_mode"), labelValueStyle, GUILayout.Width(75));
             for (int em = 0; em < WizardExitModeNames.Length; em++) {
                 bool isSel = (activeSolver.exitMode == WizardExitModeNames[em]);
-                if (GUILayout.Button(WizardExitModeLabels[em], isSel ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(22))) {
+                if (GUILayout.Button(GetWizardExitModeLabels()[em], isSel ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(22))) {
                     activeSolver.exitMode = WizardExitModeNames[em];
                 }
             }
@@ -610,11 +611,11 @@ namespace KSPGMAT.UI {
 
             GUILayout.Space(4);
             GUILayout.BeginHorizontal();
-            GUILayout.Label("最大迭代次数 (MaxIterations):", labelValueStyle, GUILayout.Width(190));
+            GUILayout.Label(I18n.T("targeter_max_iter"), labelValueStyle, GUILayout.Width(190));
             activeSolver.maxIterations = DrawDelayedIntField("modal_solver_max_iter", activeSolver.maxIterations, numericInputStyle ?? GUI.skin.textField, GUILayout.Width(70));
 
             GUILayout.Space(15);
-            activeSolver.showProgress = GUILayout.Toggle(activeSolver.showProgress, "控制台显示收敛进度", GUILayout.Width(160));
+            activeSolver.showProgress = GUILayout.Toggle(activeSolver.showProgress, I18n.T("targeter_show_progress"), GUILayout.Width(160));
             GUILayout.EndHorizontal();
 
             GUILayout.EndVertical();
@@ -624,7 +625,7 @@ namespace KSPGMAT.UI {
             GUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();
 
-            if (GUILayout.Button("💾 保存并应用此求解器", actionButtonStyle, GUILayout.Width(180), GUILayout.Height(28))) {
+            if (GUILayout.Button(I18n.T("btn_save_solver"), actionButtonStyle, GUILayout.Width(180), GUILayout.Height(28))) {
                 GMATParameterRegistry.AddOrUpdateSolver(activeSolver);
                 if (editingTargetStepIndex >= 0 && editingTargetStepIndex < missionSequence.Count) {
                     var step = missionSequence[editingTargetStepIndex];
@@ -633,11 +634,11 @@ namespace KSPGMAT.UI {
                     step.dc_max_iter = activeSolver.maxIterations;
                 }
                 showTargeterSetupModal = false;
-                ScreenMessages.PostScreenMessage($"✅ 求解器配置已成功同步: {activeSolver.name}", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                ScreenMessages.PostScreenMessage(I18n.Format("targeter_saved", activeSolver.name), 3.0f, ScreenMessageStyle.UPPER_CENTER);
             }
 
             GUILayout.Space(10);
-            if (GUILayout.Button("关闭", secondaryButtonStyle, GUILayout.Width(80), GUILayout.Height(28))) {
+            if (GUILayout.Button(I18n.T("btn_close"), secondaryButtonStyle, GUILayout.Width(80), GUILayout.Height(28))) {
                 showTargeterSetupModal = false;
             }
             GUILayout.EndHorizontal();
@@ -661,67 +662,67 @@ namespace KSPGMAT.UI {
                 s.solve_mode = solveMode;
                 s.exit_mode = exitMode;
                 s.dc_max_iter = maxIter;
-                ScreenMessages.PostScreenMessage($"✅ 求解器 {dcName} 参数已更新！", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                ScreenMessages.PostScreenMessage(I18n.Format("targeter_updated", dcName), 3.0f, ScreenMessageStyle.UPPER_CENTER);
             } else {
                 if (wizardTemplateIndex == 0) {
                     missionSequence.Add(new MissionStep {
-                        type = "Target", label = "自定义打靶组",
+                        type = "Target", label = I18n.T("label_target_custom"),
                         dc_name = dcName, dc_algorithm = dcAlg, dc_derivative_method = dcDm,
                         solve_mode = solveMode, exit_mode = exitMode, dc_max_iter = maxIter
                     });
-                    missionSequence.Add(new MissionStep { type = "EndTarget", label = "闭合自定义打靶" });
+                    missionSequence.Add(new MissionStep { type = "EndTarget", label = I18n.T("label_end_custom") });
                 } else if (wizardTemplateIndex == 1) {
                     missionSequence.Add(new MissionStep {
-                        type = "Target", label = "远地点高度打靶",
+                        type = "Target", label = I18n.T("label_target_apogee"),
                         dc_name = dcName, dc_algorithm = dcAlg, dc_derivative_method = dcDm,
                         solve_mode = solveMode, exit_mode = exitMode, dc_max_iter = maxIter
                     });
-                    missionSequence.Add(new MissionStep { type = "Vary", vary_variable = "burntime", vary_initial = 150.0, vary_lower = 0.0, vary_upper = 1000.0, vary_max_step = 2.0, label = "Vary burntime" });
-                    missionSequence.Add(new MissionStep { type = "FiniteBurn", propagator = "LEOProp", burn_use_vary_var = true, burn_vary_var_name = "burntime", label = "有限推力顺行点火" });
-                    missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LEOProp", stop_type = "Apoapsis", label = "积分至远地点" });
-                    missionSequence.Add(new MissionStep { type = "Achieve", achieve_param = "Earth.Altitude", achieve_val = 35786.0, achieve_tolerance = 0.1, label = "Achieve Ap=35786km" });
-                    missionSequence.Add(new MissionStep { type = "EndTarget", label = "闭合远地点打靶" });
+                    missionSequence.Add(new MissionStep { type = "Vary", vary_variable = "burntime", vary_initial = 150.0, vary_lower = 0.0, vary_upper = 1000.0, vary_max_step = 2.0, label = I18n.T("label_vary_burntime") });
+                    missionSequence.Add(new MissionStep { type = "FiniteBurn", propagator = "LEOProp", burn_use_vary_var = true, burn_vary_var_name = "burntime", label = I18n.T("label_burn_prograde") });
+                    missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LEOProp", stop_type = "Apoapsis", label = I18n.T("misc_default_prop_ap") });
+                    missionSequence.Add(new MissionStep { type = "Achieve", achieve_param = "Earth.Altitude", achieve_val = 35786.0, achieve_tolerance = 0.1, label = I18n.T("label_achieve_ap") });
+                    missionSequence.Add(new MissionStep { type = "EndTarget", label = I18n.T("label_end_apogee") });
                 } else if (wizardTemplateIndex == 2) {
                     missionSequence.Add(new MissionStep {
-                        type = "Target", label = "GEO 周期同步打靶",
+                        type = "Target", label = I18n.T("label_target_geo"),
                         dc_name = dcName, dc_algorithm = dcAlg, dc_derivative_method = dcDm,
                         solve_mode = solveMode, exit_mode = exitMode, dc_max_iter = maxIter
                     });
-                    missionSequence.Add(new MissionStep { type = "Vary", vary_variable = "burntime", vary_initial = 200.0, vary_lower = 0.0, vary_upper = 2000.0, vary_max_step = 2.0, label = "Vary burntime" });
-                    missionSequence.Add(new MissionStep { type = "FiniteBurn", propagator = "LEOProp", burn_use_vary_var = true, burn_vary_var_name = "burntime", label = "GEO 圆化点火" });
-                    missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LEOProp", stop_type = "Apoapsis", label = "积分至远地点" });
-                    missionSequence.Add(new MissionStep { type = "Achieve", achieve_param = "Earth.OrbitPeriod", achieve_val = 86164.0, achieve_tolerance = 1.0, label = "Achieve Period=86164s" });
-                    missionSequence.Add(new MissionStep { type = "EndTarget", label = "闭合 GEO 打靶" });
+                    missionSequence.Add(new MissionStep { type = "Vary", vary_variable = "burntime", vary_initial = 200.0, vary_lower = 0.0, vary_upper = 2000.0, vary_max_step = 2.0, label = I18n.T("label_vary_burntime") });
+                    missionSequence.Add(new MissionStep { type = "FiniteBurn", propagator = "LEOProp", burn_use_vary_var = true, burn_vary_var_name = "burntime", label = I18n.T("label_burn_geo") });
+                    missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LEOProp", stop_type = "Apoapsis", label = I18n.T("misc_default_prop_ap") });
+                    missionSequence.Add(new MissionStep { type = "Achieve", achieve_param = "Earth.OrbitPeriod", achieve_val = 86164.0, achieve_tolerance = 1.0, label = I18n.T("label_achieve_period") });
+                    missionSequence.Add(new MissionStep { type = "EndTarget", label = I18n.T("label_end_geo") });
                 } else if (wizardTemplateIndex == 3) {
                     missionSequence.Add(new MissionStep {
-                        type = "Target", label = "地月转移注入 TLI",
+                        type = "Target", label = I18n.T("label_target_tli"),
                         dc_name = dcName, dc_algorithm = dcAlg, dc_derivative_method = dcDm,
                         solve_mode = solveMode, exit_mode = exitMode, dc_max_iter = maxIter
                     });
-                    missionSequence.Add(new MissionStep { type = "Vary", vary_variable = "burntime", vary_initial = 350.0, vary_lower = 0.0, vary_upper = 3000.0, vary_max_step = 2.0, label = "Vary TLI burntime" });
-                    missionSequence.Add(new MissionStep { type = "FiniteBurn", propagator = "LEOProp", burn_use_vary_var = true, burn_vary_var_name = "burntime", label = "TLI 点火" });
-                    missionSequence.Add(new MissionStep { type = "Propagate", propagator = "CislunarProp", stop_type = "Days", duration = 4.5, label = "巡航至月球" });
-                    missionSequence.Add(new MissionStep { type = "Achieve", achieve_param = "Luna.RMAG", achieve_val = 3229.0, achieve_tolerance = 5.0, label = "Achieve Perilune=3229km" });
-                    missionSequence.Add(new MissionStep { type = "EndTarget", label = "闭合地月打靶" });
+                    missionSequence.Add(new MissionStep { type = "Vary", vary_variable = "burntime", vary_initial = 350.0, vary_lower = 0.0, vary_upper = 3000.0, vary_max_step = 2.0, label = I18n.T("label_vary_tli") });
+                    missionSequence.Add(new MissionStep { type = "FiniteBurn", propagator = "LEOProp", burn_use_vary_var = true, burn_vary_var_name = "burntime", label = I18n.T("label_burn_tli") });
+                    missionSequence.Add(new MissionStep { type = "Propagate", propagator = "CislunarProp", stop_type = "Days", duration = 4.5, label = I18n.T("label_prop_luna") });
+                    missionSequence.Add(new MissionStep { type = "Achieve", achieve_param = "Luna.RMAG", achieve_val = 3229.0, achieve_tolerance = 5.0, label = I18n.T("label_achieve_perilune") });
+                    missionSequence.Add(new MissionStep { type = "EndTarget", label = I18n.T("label_end_tli") });
                 } else if (wizardTemplateIndex == 4) {
                     missionSequence.Add(new MissionStep {
-                        type = "Target", label = "轨道面倾角变换",
+                        type = "Target", label = I18n.T("label_target_inc"),
                         dc_name = dcName, dc_algorithm = dcAlg, dc_derivative_method = dcDm,
                         solve_mode = solveMode, exit_mode = exitMode, dc_max_iter = maxIter
                     });
-                    missionSequence.Add(new MissionStep { type = "Vary", vary_variable = "Maneuver1.Element2", vary_initial = 100.0, vary_lower = -1000.0, vary_upper = 1000.0, vary_max_step = 5.0, label = "Vary Normal dV" });
-                    missionSequence.Add(new MissionStep { type = "ImpulsiveBurn", dv_v = 0.0, dv_n = 100.0, dv_b = 0.0, label = "交点法向脉冲机动" });
-                    missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LEOProp", stop_type = "Node", label = "积分至赤道交点" });
-                    missionSequence.Add(new MissionStep { type = "Achieve", achieve_param = "Earth.INC", achieve_val = 0.0, achieve_tolerance = 0.01, label = "Achieve INC=0°" });
-                    missionSequence.Add(new MissionStep { type = "EndTarget", label = "闭合倾角打靶" });
+                    missionSequence.Add(new MissionStep { type = "Vary", vary_variable = "Maneuver1.Element2", vary_initial = 100.0, vary_lower = -1000.0, vary_upper = 1000.0, vary_max_step = 5.0, label = I18n.T("label_vary_normal") });
+                    missionSequence.Add(new MissionStep { type = "ImpulsiveBurn", dv_v = 0.0, dv_n = 100.0, dv_b = 0.0, label = I18n.T("label_burn_normal") });
+                    missionSequence.Add(new MissionStep { type = "Propagate", propagator = "LEOProp", stop_type = "Node", label = I18n.T("label_prop_node") });
+                    missionSequence.Add(new MissionStep { type = "Achieve", achieve_param = "Earth.INC", achieve_val = 0.0, achieve_tolerance = 0.01, label = I18n.T("label_achieve_inc") });
+                    missionSequence.Add(new MissionStep { type = "EndTarget", label = I18n.T("label_end_inc") });
                 }
-                ScreenMessages.PostScreenMessage($"✅ 成功创建打靶求解组 [{dcName}]！", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                ScreenMessages.PostScreenMessage(I18n.Format("targeter_group_created", dcName), 3.0f, ScreenMessageStyle.UPPER_CENTER);
             }
         }
 
         private void DrawSimulationImageWindow(int windowID) {
             GUILayout.BeginHorizontal();
-            GUILayout.Label("<b>🖼️ GMAT 轨道仿真图像渲染器 (Trajectory 2D/3D View)</b>", headerStyle);
+            GUILayout.Label(I18n.T("simimg_title"), headerStyle);
             GUILayout.FlexibleSpace();
             if (GUILayout.Button("✕", deleteButtonStyle, GUILayout.Width(24), GUILayout.Height(20))) {
                 showSimulationImageWindow = false;
@@ -732,9 +733,9 @@ namespace KSPGMAT.UI {
 
             // View Mode Toolbar
             GUILayout.BeginHorizontal();
-            GUILayout.Label("切换视图:", labelValueStyle, GUILayout.Width(65));
+            GUILayout.Label(I18n.T("simimg_switch_view"), labelValueStyle, GUILayout.Width(65));
             string[] modes = new string[] { "dual", "planar", "target" };
-            string[] modeLabels = new string[] { "🌐 双视角 (平面+3D)", "🪐 轨道全景 (2D)", "🎯 目标端点特写" };
+            string[] modeLabels = new string[] { I18n.T("view_dual"), I18n.T("view_planar"), I18n.T("view_target") };
 
             for (int i = 0; i < modes.Length; i++) {
                 bool isCur = (currentViewMode == modes[i]);
@@ -767,10 +768,10 @@ namespace KSPGMAT.UI {
 
             GUILayout.Space(4);
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("🔄 重新渲染此视角", actionButtonStyle, GUILayout.Height(26))) {
+            if (GUILayout.Button(I18n.T("btn_render"), actionButtonStyle, GUILayout.Height(26))) {
                 RerenderSimulationImage();
             }
-            GUILayout.Label($"状态: {imageStatusText}", labelValueStyle);
+            GUILayout.Label(I18n.ColorFormat("simimg_status", imageStatusText), labelValueStyle);
             GUILayout.EndHorizontal();
 
             DrawResizeHandle(ref simulationImageWindowRect, 680f, 480f);
@@ -778,21 +779,21 @@ namespace KSPGMAT.UI {
         }
 
         private void RerenderSimulationImage() {
-            imageStatusText = "正在请求 Python 重新渲染图像...";
+            imageStatusText = I18n.T("simimg_rerender_req");
             string bodyName = FlightGlobals.ActiveVessel != null ? FlightGlobals.ActiveVessel.mainBody.name : "Earth";
             double bodyRadiusKm = FlightGlobals.ActiveVessel != null ? (FlightGlobals.ActiveVessel.mainBody.Radius / 1000.0) : 6378.14;
             GMATClient.RenderTrajectory(currentViewMode, bodyName, bodyRadiusKm, (success, path) => {
                 if (success) {
                     LoadSimulationTexture(path);
                 } else {
-                    imageStatusText = "重新渲染失败: " + path;
+                    imageStatusText = I18n.Format("simimg_rerender_fail", path);
                 }
             });
         }
 
         private void DrawPropagatorConfigWindow(int windowID) {
             GUILayout.BeginHorizontal();
-            GUILayout.Label("<b>⚙️ GMAT 官方传播子与高精度受力模型深度配置 (Propagator & Force Models)</b>", headerStyle);
+            GUILayout.Label(I18n.T("propcfg_title"), headerStyle);
             GUILayout.FlexibleSpace();
             if (GUILayout.Button("✕", deleteButtonStyle, GUILayout.Width(24), GUILayout.Height(20))) {
                 showPropagatorConfigWindow = false;
@@ -803,7 +804,7 @@ namespace KSPGMAT.UI {
 
             // Propagator Selector & Management Toolbar
             GUILayout.BeginHorizontal();
-            GUILayout.Label("当前传播子:", labelValueStyle, GUILayout.Width(75));
+            GUILayout.Label(I18n.T("propcfg_current"), labelValueStyle, GUILayout.Width(75));
 
             var propConfigs = GMATParameterRegistry.GetAllPropagatorConfigs();
             List<string> propKeys = new List<string>(propConfigs.Keys);
@@ -819,7 +820,7 @@ namespace KSPGMAT.UI {
             }
 
             GUILayout.Space(8);
-            if (GUILayout.Button("➕ 新建传播子...", actionButtonStyle, GUILayout.Height(24))) {
+            if (GUILayout.Button(I18n.T("btn_new_prop"), actionButtonStyle, GUILayout.Height(24))) {
                 string newName = "CustomProp_" + (propConfigs.Count + 1);
                 var newCfg = new PropagatorConfig {
                     name = newName,
@@ -837,17 +838,17 @@ namespace KSPGMAT.UI {
                 };
                 GMATParameterRegistry.AddOrUpdatePropagator(newCfg);
                 selectedPropagatorKey = newName;
-                ScreenMessages.PostScreenMessage($"✅ 已新建传播子: {newName}", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                ScreenMessages.PostScreenMessage(I18n.Format("propcfg_created", newName), 3.0f, ScreenMessageStyle.UPPER_CENTER);
             }
 
             PropagatorConfig cfg = propConfigs.ContainsKey(selectedPropagatorKey) ? propConfigs[selectedPropagatorKey] : new PropagatorConfig();
 
             if (!cfg.isDefault) {
                 GUILayout.Space(6);
-                if (GUILayout.Button("🗑️ 删除", deleteButtonStyle, GUILayout.Height(24))) {
+                if (GUILayout.Button(I18n.T("btn_delete"), deleteButtonStyle, GUILayout.Height(24))) {
                     GMATParameterRegistry.DeletePropagator(selectedPropagatorKey);
                     selectedPropagatorKey = "LEOProp";
-                    ScreenMessages.PostScreenMessage("🗑️ 已删除自定义传播子", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                    ScreenMessages.PostScreenMessage(I18n.T("propcfg_deleted"), 3.0f, ScreenMessageStyle.UPPER_CENTER);
                 }
             }
 
@@ -858,12 +859,12 @@ namespace KSPGMAT.UI {
             scrollPosPropConfig = GUILayout.BeginScrollView(scrollPosPropConfig, cardBoxStyle, GUILayout.Height(propScrollH));
 
             // Section 1: 积分器动力学内核 (Integrator Core - Official GMAT Integrators)
-            GUILayout.Label("1. 数值积分器算法 (Numerical Integrator Engine)", subHeaderStyle);
+            GUILayout.Label(I18n.T("propcfg_s1"), subHeaderStyle);
             GUILayout.BeginHorizontal();
-            GUILayout.Label("积分器内核:", labelValueStyle, GUILayout.Width(80));
+            GUILayout.Label(I18n.T("propcfg_integrator"), labelValueStyle, GUILayout.Width(80));
 
             string[] integrators = new string[] { "RungeKutta89", "PrinceDormand78", "RungeKutta56", "RungeKutta68", "AdamsBashforthMoulton" };
-            string[] integLabels = new string[] { "RK89 (8阶高精)", "PD78 (7/8阶自适应)", "RK56 (5/6阶经典)", "RK68 (6/8阶平衡)", "ABM (4阶预报校正)" };
+            string[] integLabels = new string[] { I18n.T("integ_rk89"), I18n.T("integ_pd78"), I18n.T("integ_rk56"), I18n.T("integ_rk68"), I18n.T("integ_abm") };
 
             for (int it = 0; it < integrators.Length; it++) {
                 bool isCur = (cfg.integratorType == integrators[it]);
@@ -875,25 +876,25 @@ namespace KSPGMAT.UI {
 
             GUILayout.Space(4);
             GUILayout.BeginHorizontal();
-            GUILayout.Label("初始步长 (InitialStepSize):", labelValueStyle, GUILayout.Width(170));
+            GUILayout.Label(I18n.T("propcfg_init_step"), labelValueStyle, GUILayout.Width(170));
             cfg.initialStepSize = DrawDelayedNumericField("modal_prop_init_step", cfg.initialStepSize, numericInputStyle ?? GUI.skin.textField, GUILayout.Width(70), "F1");
 
-            GUILayout.Label("数值精度 (Accuracy):", labelValueStyle, GUILayout.Width(140));
+            GUILayout.Label(I18n.T("propcfg_accuracy"), labelValueStyle, GUILayout.Width(140));
             cfg.accuracy = DrawDelayedNumericField("modal_prop_acc", (cfg.accuracy > 1e-20 ? cfg.accuracy : 1e-11), numericInputStyle ?? GUI.skin.textField, GUILayout.Width(80), "E2");
 
-            GUILayout.Label("最小步长 (MinStep):", labelValueStyle, GUILayout.Width(130));
+            GUILayout.Label(I18n.T("propcfg_min_step"), labelValueStyle, GUILayout.Width(130));
             cfg.minStep = DrawDelayedNumericField("modal_prop_min_step", cfg.minStep, numericInputStyle ?? GUI.skin.textField, GUILayout.Width(60), "F3");
 
-            GUILayout.Label("最大步长 (MaxStep):", labelValueStyle, GUILayout.Width(130));
+            GUILayout.Label(I18n.T("propcfg_max_step"), labelValueStyle, GUILayout.Width(130));
             cfg.maxStep = DrawDelayedNumericField("modal_prop_max_step", cfg.maxStep, numericInputStyle ?? GUI.skin.textField, GUILayout.Width(70), "F1");
             GUILayout.EndHorizontal();
 
             GUILayout.Space(8);
 
             // Section 2: 引力场与多体引力摄动 (Gravity Field & Point Masses)
-            GUILayout.Label("2. 引力场与多体摄动模型 (Gravity Field & Point Masses)", subHeaderStyle);
+            GUILayout.Label(I18n.T("propcfg_s2"), subHeaderStyle);
             GUILayout.BeginHorizontal();
-            GUILayout.Label("中心天体 (CentralBody):", labelValueStyle, GUILayout.Width(160));
+            GUILayout.Label(I18n.T("propcfg_central_body"), labelValueStyle, GUILayout.Width(160));
             Vessel v = FlightGlobals.ActiveVessel;
             List<string> bodies = GMATParameterRegistry.GetAllBodies(v);
             for (int b = 0; b < bodies.Count && b < 6; b++) {
@@ -907,21 +908,21 @@ namespace KSPGMAT.UI {
 
             GUILayout.Space(4);
             GUILayout.BeginHorizontal();
-            GUILayout.Label("点质量引力摄动源:", labelValueStyle, GUILayout.Width(130));
-            cfg.gravityEarth = GUILayout.Toggle(cfg.gravityEarth, "地球 (Earth)", GUILayout.Width(100));
-            cfg.gravityLuna = GUILayout.Toggle(cfg.gravityLuna, "月球 (Luna)", GUILayout.Width(95));
-            cfg.gravitySun = GUILayout.Toggle(cfg.gravitySun, "太阳 (Sun)", GUILayout.Width(95));
-            cfg.gravityJupiter = GUILayout.Toggle(cfg.gravityJupiter, "木星 (Jupiter)", GUILayout.Width(105));
-            cfg.gravityMars = GUILayout.Toggle(cfg.gravityMars, "火星 (Mars)", GUILayout.Width(95));
-            cfg.gravityVenus = GUILayout.Toggle(cfg.gravityVenus, "金星 (Venus)", GUILayout.Width(95));
+            GUILayout.Label(I18n.T("propcfg_point_masses"), labelValueStyle, GUILayout.Width(130));
+            cfg.gravityEarth = GUILayout.Toggle(cfg.gravityEarth, I18n.T("propcfg_toggle_earth"), GUILayout.Width(100));
+            cfg.gravityLuna = GUILayout.Toggle(cfg.gravityLuna, I18n.T("propcfg_toggle_luna"), GUILayout.Width(95));
+            cfg.gravitySun = GUILayout.Toggle(cfg.gravitySun, I18n.T("propcfg_toggle_sun"), GUILayout.Width(95));
+            cfg.gravityJupiter = GUILayout.Toggle(cfg.gravityJupiter, I18n.T("propcfg_toggle_jupiter"), GUILayout.Width(105));
+            cfg.gravityMars = GUILayout.Toggle(cfg.gravityMars, I18n.T("propcfg_toggle_mars"), GUILayout.Width(95));
+            cfg.gravityVenus = GUILayout.Toggle(cfg.gravityVenus, I18n.T("propcfg_toggle_venus"), GUILayout.Width(95));
             GUILayout.EndHorizontal();
 
             GUILayout.Space(8);
 
             // Section 3: 大气与环境扰动 (Atmosphere & SRP)
-            GUILayout.Label("3. 大气阻力与太阳光压扰动 (Atmosphere & SRP)", subHeaderStyle);
+            GUILayout.Label(I18n.T("propcfg_s3"), subHeaderStyle);
             GUILayout.BeginHorizontal();
-            GUILayout.Label("大气模型 (Drag):", labelValueStyle, GUILayout.Width(110));
+            GUILayout.Label(I18n.T("propcfg_drag_model"), labelValueStyle, GUILayout.Width(110));
             string[] atmos = new string[] { "None", "MSISE90", "JacchiaRoberts", "Exponential" };
             for (int a = 0; a < atmos.Length; a++) {
                 bool isAtmo = (cfg.dragModel == atmos[a]);
@@ -931,8 +932,8 @@ namespace KSPGMAT.UI {
             }
 
             GUILayout.Space(15);
-            cfg.enableSRP = GUILayout.Toggle(cfg.enableSRP, "太阳辐射光压 (SRP)", GUILayout.Width(140));
-            cfg.enableRelativity = GUILayout.Toggle(cfg.enableRelativity, "相对论修正", GUILayout.Width(100));
+            cfg.enableSRP = GUILayout.Toggle(cfg.enableSRP, I18n.T("propcfg_srp"), GUILayout.Width(140));
+            cfg.enableRelativity = GUILayout.Toggle(cfg.enableRelativity, I18n.T("propcfg_relativity"), GUILayout.Width(100));
             GUILayout.EndHorizontal();
 
             GUILayout.EndScrollView();
@@ -942,13 +943,13 @@ namespace KSPGMAT.UI {
             GUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();
 
-            if (GUILayout.Button("💾 保存并应用此传播子", actionButtonStyle, GUILayout.Width(180), GUILayout.Height(28))) {
+            if (GUILayout.Button(I18n.T("btn_save_prop"), actionButtonStyle, GUILayout.Width(180), GUILayout.Height(28))) {
                 GMATParameterRegistry.AddOrUpdatePropagator(cfg);
-                ScreenMessages.PostScreenMessage($"✅ 传播子已保存并同步至全局: {cfg.name}", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                ScreenMessages.PostScreenMessage(I18n.Format("propcfg_saved", cfg.name), 3.0f, ScreenMessageStyle.UPPER_CENTER);
             }
 
             GUILayout.Space(10);
-            if (GUILayout.Button("关闭", secondaryButtonStyle, GUILayout.Width(80), GUILayout.Height(28))) {
+            if (GUILayout.Button(I18n.T("btn_close"), secondaryButtonStyle, GUILayout.Width(80), GUILayout.Height(28))) {
                 showPropagatorConfigWindow = false;
             }
             GUILayout.EndHorizontal();
@@ -959,7 +960,7 @@ namespace KSPGMAT.UI {
         private void DrawCraftDetailsWindow(int windowID) {
             Vessel vessel = FlightGlobals.ActiveVessel;
             GUILayout.BeginHorizontal();
-            GUILayout.Label("<b>🛰️ GMAT 同步航天器完整参数快照 (Spacecraft Parameters)</b>", headerStyle);
+            GUILayout.Label(I18n.T("craftdetails_title"), headerStyle);
             GUILayout.FlexibleSpace();
             if (GUILayout.Button("✕", deleteButtonStyle, GUILayout.Width(24), GUILayout.Height(20))) {
                 showCraftDetailsWindow = false;
@@ -972,18 +973,18 @@ namespace KSPGMAT.UI {
             if (vessel != null) {
                 // Section 1: Basic & Orbit
                 GUILayout.BeginVertical(cardBoxStyle);
-                GUILayout.Label("🌍 航天器身份与轨道引力环境", subHeaderStyle);
-                GUILayout.Label($"飞船名称: <b>{vessel.vesselName}</b> | 活跃中心天体 (SOI): <b>{vessel.mainBody.name}</b>", labelValueStyle);
+                GUILayout.Label(I18n.T("craftdetails_s1"), subHeaderStyle);
+                GUILayout.Label(I18n.ColorFormat("craftdetails_vessel", vessel.vesselName, vessel.mainBody.name), labelValueStyle);
                 double ut = Planetarium.GetUniversalTime();
-                GUILayout.Label($"当前游戏世界时间 UT: <b>{ut:F2} s</b>", labelValueStyle);
+                GUILayout.Label(I18n.ColorFormat("craftdetails_ut", ut), labelValueStyle);
 
                 Vector3d pos_km, vel_kms;
                 PrincipiaInterop.GetVesselStateICRF(vessel, out pos_km, out vel_kms);
-                GUILayout.Label($"空间惯性系位置 (ICRF): X=<b>{pos_km.x:F2}</b> km, Y=<b>{pos_km.y:F2}</b> km, Z=<b>{pos_km.z:F2}</b> km (r=<b>{pos_km.magnitude:F1}</b> km)", labelValueStyle);
-                GUILayout.Label($"空间惯性系速度 (ICRF): VX=<b>{vel_kms.x:F3}</b> km/s, VY=<b>{vel_kms.y:F3}</b> km/s, VZ=<b>{vel_kms.z:F3}</b> km/s (v=<b>{vel_kms.magnitude:F3}</b> km/s)", labelValueStyle);
+                GUILayout.Label(I18n.ColorFormat("craftdetails_icrf_pos", pos_km.x, pos_km.y, pos_km.z, pos_km.magnitude), labelValueStyle);
+                GUILayout.Label(I18n.ColorFormat("craftdetails_icrf_vel", vel_kms.x, vel_kms.y, vel_kms.z, vel_kms.magnitude), labelValueStyle);
                 if (vessel.orbit != null) {
-                    GUILayout.Label($"开普勒根数: 半长轴 SMA=<b>{vessel.orbit.semiMajorAxis / 1000.0:F1} km</b>, 离心率 ECC=<b>{vessel.orbit.eccentricity:F4}</b>, 倾角 INC=<b>{vessel.orbit.inclination:F2}°</b>", labelValueStyle);
-                    GUILayout.Label($"近拱点高度: <b>{vessel.orbit.PeA / 1000.0:F1} km</b>, 远拱点高度: <b>{vessel.orbit.ApA / 1000.0:F1} km</b>", labelValueStyle);
+                    GUILayout.Label(I18n.ColorFormat("craftdetails_kepler", vessel.orbit.semiMajorAxis / 1000.0, vessel.orbit.eccentricity, vessel.orbit.inclination), labelValueStyle);
+                    GUILayout.Label(I18n.ColorFormat("craftdetails_apsides", vessel.orbit.PeA / 1000.0, vessel.orbit.ApA / 1000.0), labelValueStyle);
                 }
                 GUILayout.EndVertical();
 
@@ -992,33 +993,33 @@ namespace KSPGMAT.UI {
                 // Section 2: Staging Stack
                 GUILayout.BeginVertical(cardBoxStyle);
                 var selStages = GetSelectedStagesList();
-                GUILayout.Label($"🚀 多级火箭质量与 ΔV 组合 (已选 {selStages.Count} 个分级)", subHeaderStyle);
+                GUILayout.Label(I18n.Format("craftdetails_s2", selStages.Count), subHeaderStyle);
                 double sumDv = 0, sumFuel = 0, maxWet = 0, minDry = double.MaxValue;
                 foreach (var st in selStages) {
                     sumDv += st.deltaV;
                     sumFuel += st.fuelMassTonnes;
                     if (st.wetMassTonnes > maxWet) maxWet = st.wetMassTonnes;
                     if (st.dryMassTonnes < minDry) minDry = st.dryMassTonnes;
-                    GUILayout.Label($"  - <b>Stage {st.stageNumber}</b>: ΔV=<b>{st.deltaV:F0} m/s</b> | 湿重=<b>{st.wetMassTonnes:F2}t</b> | 燃料=<b>{st.fuelMassTonnes:F2}t</b> | 干重=<b>{st.dryMassTonnes:F2}t</b>", labelValueStyle);
+                    GUILayout.Label(I18n.ColorFormat("craftdetails_stage", st.stageNumber, st.deltaV, st.wetMassTonnes, st.fuelMassTonnes, st.dryMassTonnes), labelValueStyle);
                 }
                 if (minDry == double.MaxValue) minDry = vessel.totalMass * 0.4;
                 if (maxWet <= 0) maxWet = vessel.totalMass;
                 GUILayout.Space(2);
-                GUILayout.Label($"<color=#55ffff>组合初始湿重: <b>{maxWet:F2} 吨</b> | 最终干重: <b>{minDry:F2} 吨</b> | 总推进剂: <b>{sumFuel:F2} 吨</b> | 总设计ΔV: <b>{sumDv:F0} m/s</b></color>", labelValueStyle);
+                GUILayout.Label(I18n.ColorFormat("craftdetails_combined", maxWet, minDry, sumFuel, sumDv), labelValueStyle);
                 GUILayout.EndVertical();
 
                 GUILayout.Space(6);
 
                 // Section 3: RO Engine & Tank
                 GUILayout.BeginVertical(cardBoxStyle);
-                GUILayout.Label("🔥 RealismOverhaul 推进系统动力学", subHeaderStyle);
+                GUILayout.Label(I18n.T("craftdetails_s3"), subHeaderStyle);
                 if (cachedEngines != null && selectedEngineIndex < cachedEngines.Count) {
                     var eng = cachedEngines[selectedEngineIndex];
-                    GUILayout.Label($"主发动机: <b>{eng.title}</b> | 真空推力: <b>{eng.thrustKN:F1} kN</b> | 真空比冲: <b>{eng.ispVac:F0} s</b>", labelValueStyle);
-                    GUILayout.Label($"推进剂组元: <color=#55ffff>{eng.propellantDesc}</color>", labelValueStyle);
-                    GUILayout.Label($"推进剂混合密度: <b>{eng.fuelDensityKgM3:F1} kg/m³</b> | 储罐容积: <b>{eng.tankVolumeM3:F3} m³</b> | 调节压力: <b>{eng.tankPressureKPa:F0} kPa</b>", labelValueStyle);
+                    GUILayout.Label(I18n.ColorFormat("craftdetails_engine", eng.title, eng.thrustKN, eng.ispVac), labelValueStyle);
+                    GUILayout.Label(I18n.ColorFormat("craftdetails_propellant", eng.propellantDesc), labelValueStyle);
+                    GUILayout.Label(I18n.ColorFormat("craftdetails_mix", eng.fuelDensityKgM3, eng.tankVolumeM3, eng.tankPressureKPa), labelValueStyle);
                 } else {
-                    GUILayout.Label("使用通用动力学推力模型 (50.0 kN, Isp 310 s)", labelValueStyle);
+                    GUILayout.Label(I18n.T("craftdetails_fallback"), labelValueStyle);
                 }
                 GUILayout.EndVertical();
 
@@ -1026,21 +1027,21 @@ namespace KSPGMAT.UI {
 
                 // Section 4: GMAT Force Models
                 GUILayout.BeginVertical(cardBoxStyle);
-                GUILayout.Label("🌌 GMAT 动力学模型与传播子配置", subHeaderStyle);
-                GUILayout.Label("• <b>CislunarForceModel</b>: 中心天体 Earth, 质点引力 {Earth, Luna, Sun, Jupiter}, 太阳光压 SRP 开启", labelValueStyle);
-                GUILayout.Label("• <b>LunarNRHOForceModel</b>: 中心天体 Luna, 质点引力 {Luna, Earth, Sun, Jupiter}, 太阳光压 SRP 开启", labelValueStyle);
-                GUILayout.Label("• <b>LEOProp</b>: 地球近地轨道RungeKutta89积分器 (最大步长 2700s)", labelValueStyle);
-                GUILayout.Label("• <b>CislunarProp</b>: 地月转移高效率RungeKutta89积分器 (最大步长 21600s / 6小时)", labelValueStyle);
-                GUILayout.Label("• <b>LunarNRHOProp</b>: 月球NRHO高精度Halo晕轮轨道积分器 (最大步长 10800s / 3小时)", labelValueStyle);
+                GUILayout.Label(I18n.T("craftdetails_s4"), subHeaderStyle);
+                GUILayout.Label(I18n.ColorFormat("craftdetails_fm1"), labelValueStyle);
+                GUILayout.Label(I18n.ColorFormat("craftdetails_fm2"), labelValueStyle);
+                GUILayout.Label(I18n.T("craftdetails_fm3"), labelValueStyle);
+                GUILayout.Label(I18n.T("craftdetails_fm4"), labelValueStyle);
+                GUILayout.Label(I18n.T("craftdetails_fm5"), labelValueStyle);
                 GUILayout.EndVertical();
             } else {
-                GUILayout.Label("无活跃飞船数据。", labelValueStyle);
+                GUILayout.Label(I18n.T("no_active_vessel"), labelValueStyle);
             }
 
             GUILayout.EndScrollView();
 
             GUILayout.Space(6);
-            if (GUILayout.Button("✕ 关闭快照", secondaryButtonStyle, GUILayout.Height(28))) {
+            if (GUILayout.Button(I18n.T("btn_close_snapshot"), secondaryButtonStyle, GUILayout.Height(28))) {
                 showCraftDetailsWindow = false;
             }
             DrawResizeHandle(ref craftDetailsWindowRect, 600f, 450f);
@@ -1062,7 +1063,7 @@ namespace KSPGMAT.UI {
 
             // Title Bar
             GUILayout.BeginHorizontal();
-            string winTitle = editingCoordSystem.isBuiltIn ? "<b>📐 官方坐标系统属性 (Coordinate System)</b>" : "<b>📐 New Coordinate System (新建/修改空间坐标系)</b>";
+            string winTitle = editingCoordSystem.isBuiltIn ? I18n.T("cs_title_builtin") : I18n.T("cs_title_custom");
             GUILayout.Label(winTitle, headerStyle);
             GUILayout.FlexibleSpace();
             if (GUILayout.Button("✕", deleteButtonStyle, GUILayout.Width(22), GUILayout.Height(20))) {
@@ -1076,7 +1077,7 @@ namespace KSPGMAT.UI {
             GUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();
             GUILayout.BeginVertical(GUILayout.Width(340));
-            GUILayout.Label("<color=#e2e8f0>Coordinate System Name</color>", labelValueStyle);
+            GUILayout.Label(I18n.T("cs_name_label"), labelValueStyle);
             GUI.enabled = !editingCoordSystem.isBuiltIn;
             editingCoordSystem.name = GUILayout.TextField(editingCoordSystem.name ?? "", GUILayout.Height(22));
             GUI.enabled = true;
@@ -1089,7 +1090,7 @@ namespace KSPGMAT.UI {
             // 2. Origin Dropdown
             GUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();
-            GUILayout.Label("<color=#e2e8f0>Origin</color>", labelValueStyle, GUILayout.Width(60));
+            GUILayout.Label(I18n.T("cs_origin_label"), labelValueStyle, GUILayout.Width(60));
             if (GUILayout.Button($"{editingCoordSystem.origin} ▾", secondaryButtonStyle, GUILayout.Width(200), GUILayout.Height(22))) {
                 showCsOriginPicker = !showCsOriginPicker;
                 showCsAxesPicker = false;
@@ -1102,7 +1103,7 @@ namespace KSPGMAT.UI {
             if (showCsOriginPicker) {
                 GUILayout.Space(2);
                 GUILayout.BeginVertical(nestedCardBoxStyle);
-                GUILayout.Label("<color=#94a3b8>选择参考原点 (Origin):</color>", labelValueStyle);
+                GUILayout.Label(I18n.T("cs_origin_hint"), labelValueStyle);
                 GUILayout.BeginHorizontal();
                 int oCount = 0;
                 for (int b = 0; b < allBodies.Count && oCount < 6; b++) {
@@ -1125,13 +1126,13 @@ namespace KSPGMAT.UI {
 
             // 3. Axes Group Box (1:1 with NASA GMAT)
             GUILayout.BeginVertical(targetGroupBoxStyle);
-            GUILayout.Label("<color=#38bdf8><b>Axes (轴向定义)</b></color>", subHeaderStyle);
+            GUILayout.Label(I18n.T("cs_axes_header"), subHeaderStyle);
             GUILayout.Space(4);
 
             // Axes Type
             GUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();
-            GUILayout.Label("Type", labelValueStyle, GUILayout.Width(50));
+            GUILayout.Label(I18n.T("cs_type_label"), labelValueStyle, GUILayout.Width(50));
             if (GUILayout.Button($"{editingCoordSystem.axes} ▾", secondaryButtonStyle, GUILayout.Width(220), GUILayout.Height(22))) {
                 showCsAxesPicker = !showCsAxesPicker;
                 showCsOriginPicker = false;
@@ -1144,18 +1145,18 @@ namespace KSPGMAT.UI {
             if (showCsAxesPicker) {
                 GUILayout.Space(2);
                 GUILayout.BeginVertical(nestedCardBoxStyle);
-                GUILayout.Label("<color=#94a3b8>选择官方轴向定义 (Axes Type):</color>", labelValueStyle);
+                GUILayout.Label(I18n.T("cs_axes_hint"), labelValueStyle);
                 for (int a = 0; a < GMATParameterRegistry.AllowedAxisTypes.Count; a++) {
                     string aType = GMATParameterRegistry.AllowedAxisTypes[a];
                     bool isSel = (editingCoordSystem.axes == aType);
-                    string desc = (aType == "MJ2000Eq") ? "J2000 赤道惯性系" :
-                                 (aType == "MJ2000Ec") ? "J2000 黄道惯性系" :
-                                 (aType == "ICRF") ? "国际天球参考系" :
-                                 (aType == "ObjectReferenced") ? "双天体旋转随动系 (R, V, N)" :
-                                 (aType == "BodyInertial") ? "中心天体极轴惯性系" :
-                                 (aType == "BodyFixed") ? "中心天体固连自转系" :
-                                 (aType == "BodySpinSun") ? "天体自转-太阳对齐系" :
-                                 (aType == "Topocentric") ? "站心坐标系" : aType;
+                    string desc = (aType == "MJ2000Eq") ? I18n.T("axis_MJ2000Eq") :
+                                 (aType == "MJ2000Ec") ? I18n.T("axis_MJ2000Ec") :
+                                 (aType == "ICRF") ? I18n.T("axis_ICRF") :
+                                 (aType == "ObjectReferenced") ? I18n.T("axis_ObjectReferenced") :
+                                 (aType == "BodyInertial") ? I18n.T("axis_BodyInertial") :
+                                 (aType == "BodyFixed") ? I18n.T("axis_BodyFixed") :
+                                 (aType == "BodySpinSun") ? I18n.T("axis_BodySpinSun") :
+                                 (aType == "Topocentric") ? I18n.T("axis_Topocentric") : aType;
                     if (GUILayout.Button($"<b>{aType}</b> - {desc}", isSel ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
                         editingCoordSystem.axes = aType;
                         showCsAxesPicker = false;
@@ -1171,14 +1172,14 @@ namespace KSPGMAT.UI {
             GUI.enabled = reqObjects;
 
             GUILayout.BeginHorizontal();
-            GUILayout.Label("Primary", labelValueStyle, GUILayout.Width(65));
+            GUILayout.Label(I18n.T("cs_primary"), labelValueStyle, GUILayout.Width(65));
             if (GUILayout.Button(reqObjects ? $"{editingCoordSystem.primary} ▾" : "--", secondaryButtonStyle, GUILayout.Width(130), GUILayout.Height(22))) {
                 showCsPrimaryPicker = !showCsPrimaryPicker;
                 showCsSecondaryPicker = false;
             }
 
             GUILayout.Space(10);
-            GUILayout.Label("Secondary", labelValueStyle, GUILayout.Width(75));
+            GUILayout.Label(I18n.T("cs_secondary"), labelValueStyle, GUILayout.Width(75));
             if (GUILayout.Button(reqObjects ? $"{editingCoordSystem.secondary} ▾" : "--", secondaryButtonStyle, GUILayout.Width(130), GUILayout.Height(22))) {
                 showCsSecondaryPicker = !showCsSecondaryPicker;
                 showCsPrimaryPicker = false;
@@ -1217,7 +1218,7 @@ namespace KSPGMAT.UI {
 
             // A1MJD Epoch
             GUILayout.BeginHorizontal();
-            GUILayout.Label("A1MJD Epoch", labelValueStyle, GUILayout.Width(90));
+            GUILayout.Label(I18n.T("cs_epoch"), labelValueStyle, GUILayout.Width(90));
             editingCoordSystem.epoch = GUILayout.TextField(editingCoordSystem.epoch ?? "", GUILayout.ExpandWidth(true));
             GUILayout.EndHorizontal();
 
@@ -1254,10 +1255,10 @@ namespace KSPGMAT.UI {
             if (showCsHelpTooltip) {
                 GUILayout.Space(4);
                 GUILayout.BeginVertical(nestedCardBoxStyle);
-                GUILayout.Label("<color=#38bdf8><b>NASA GMAT 坐标系统官方规范:</b></color>", labelValueStyle);
-                GUILayout.Label("• <b>MJ2000Eq / MJ2000Ec</b>: IAU-1976/FK5 标准赤道/黄道惯性系，用于常规轨道积分；", labelValueStyle);
-                GUILayout.Label("• <b>ObjectReferenced</b>: 双天体轨道随动系。X轴沿连线 R，Z轴沿轨道法向 N，Y轴正交补全。地月拉格朗日点与 NRHO 轨道设计必备；", labelValueStyle);
-                GUILayout.Label("• <b>BodyInertial / BodyFixed</b>: 天体极轴惯性或固连系，用于近月、近火着陆与近心点打靶。", labelValueStyle);
+                GUILayout.Label(I18n.T("cs_help_header"), labelValueStyle);
+                GUILayout.Label(I18n.T("cs_help_1"), labelValueStyle);
+                GUILayout.Label(I18n.T("cs_help_2"), labelValueStyle);
+                GUILayout.Label(I18n.T("cs_help_3"), labelValueStyle);
                 GUILayout.EndVertical();
             }
 
@@ -1267,23 +1268,23 @@ namespace KSPGMAT.UI {
             GUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();
 
-            if (GUILayout.Button("OK", actionButtonStyle, GUILayout.Width(90), GUILayout.Height(26))) {
+            if (GUILayout.Button(I18n.T("btn_ok"), actionButtonStyle, GUILayout.Width(90), GUILayout.Height(26))) {
                 if (string.IsNullOrEmpty(editingCoordSystem.name)) {
-                    ScreenMessages.PostScreenMessage("❌ 坐标系名称不能为空！", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                    ScreenMessages.PostScreenMessage(I18n.T("cs_name_empty"), 3.0f, ScreenMessageStyle.UPPER_CENTER);
                 } else {
                     GMATParameterRegistry.AddOrUpdateCoordinateSystem(editingCoordSystem);
                     showCoordSystemWindow = false;
-                    ScreenMessages.PostScreenMessage($"✅ 成功注册空间参考系: {editingCoordSystem.name}！补全提示已实时刷新！", 4.0f, ScreenMessageStyle.UPPER_CENTER);
+                    ScreenMessages.PostScreenMessage(I18n.Format("cs_registered", editingCoordSystem.name), 4.0f, ScreenMessageStyle.UPPER_CENTER);
                 }
             }
 
             GUILayout.Space(10);
-            if (GUILayout.Button("Cancel", secondaryButtonStyle, GUILayout.Width(90), GUILayout.Height(26))) {
+            if (GUILayout.Button(I18n.T("btn_cancel_word"), secondaryButtonStyle, GUILayout.Width(90), GUILayout.Height(26))) {
                 showCoordSystemWindow = false;
             }
 
             GUILayout.Space(10);
-            if (GUILayout.Button("Help", secondaryButtonStyle, GUILayout.Width(70), GUILayout.Height(26))) {
+            if (GUILayout.Button(I18n.T("btn_help"), secondaryButtonStyle, GUILayout.Width(70), GUILayout.Height(26))) {
                 showCsHelpTooltip = !showCsHelpTooltip;
             }
 
@@ -1299,6 +1300,169 @@ namespace KSPGMAT.UI {
             if (idx < 0) idx = 0;
             idx = (idx + 1) % vecOptions.Length;
             cur = vecOptions[idx];
+        }
+
+        // =========================================================================
+        // MGA 行星际天体弹出选择器 (Celestial Body / Planet Picker Modal)
+        // =========================================================================
+        public void OpenPlanetPicker(int targetType, string title, int flybyIndex = -1) {
+            planetPickerTargetType = targetType;
+            planetPickerTitle = title;
+            planetPickerFlybyIndex = flybyIndex;
+            planetPickerSearch = "";
+            float pw = Mathf.Clamp(Screen.width * 0.45f, 500f, 680f);
+            float ph = Mathf.Clamp(Screen.height * 0.55f, 460f, 620f);
+            planetPickerWindowRect = new Rect((Screen.width - pw) / 2, (Screen.height - ph) / 2, pw, ph);
+            showPlanetPickerModal = true;
+            GUI.BringWindowToFront(982308);
+        }
+
+        private void DrawPlanetPickerWindow(int windowID) {
+            GUILayout.BeginVertical();
+
+            // Header Title Bar
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(I18n.Format("mga_picker_title_prefix", planetPickerTitle), headerStyle);
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button("✕", deleteButtonStyle, GUILayout.Width(24), GUILayout.Height(20))) {
+                showPlanetPickerModal = false;
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(6);
+
+            // Search Bar
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(I18n.T("modal_search"), labelValueStyle, GUILayout.Width(100));
+            planetPickerSearch = GUILayout.TextField(planetPickerSearch, GUILayout.MinWidth(180), GUILayout.ExpandWidth(true));
+            if (!string.IsNullOrEmpty(planetPickerSearch)) {
+                if (GUILayout.Button(I18n.T("btn_clear"), secondaryButtonStyle, GUILayout.Width(45), GUILayout.Height(20))) {
+                    planetPickerSearch = "";
+                }
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(6);
+
+            var allPlanets = SolarSystemCatalog.GetAvailablePlanets();
+            var filtered = string.IsNullOrEmpty(planetPickerSearch) 
+                ? allPlanets 
+                : allPlanets.FindAll(p => p.Name.IndexOf(planetPickerSearch, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                         p.DisplayName.IndexOf(planetPickerSearch, StringComparison.OrdinalIgnoreCase) >= 0);
+
+            planetPickerScrollPos = GUILayout.BeginScrollView(planetPickerScrollPos);
+
+            // 分组展示: 内太阳系 vs 外太阳系
+            var innerPlanets = filtered.FindAll(p => p.SMA < 2.5 * 1.496e8);
+            var outerPlanets = filtered.FindAll(p => p.SMA >= 2.5 * 1.496e8);
+
+            if (innerPlanets.Count > 0) {
+                GUILayout.Label(I18n.T("mga_inner_header"), labelValueStyle);
+                DrawPlanetGrid(innerPlanets);
+                GUILayout.Space(8);
+            }
+
+            if (outerPlanets.Count > 0) {
+                GUILayout.Label(I18n.T("mga_outer_header"), labelValueStyle);
+                DrawPlanetGrid(outerPlanets);
+                GUILayout.Space(8);
+            }
+
+            GUILayout.EndScrollView();
+
+            GUILayout.Space(6);
+            GUILayout.BeginHorizontal();
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button(I18n.T("mga_btn_close_cancel"), secondaryButtonStyle, GUILayout.Width(100), GUILayout.Height(24))) {
+                showPlanetPickerModal = false;
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.EndVertical();
+
+            GUI.DragWindow(new Rect(0, 0, planetPickerWindowRect.width, 30));
+        }
+
+        private void DrawPlanetGrid(List<SolarPlanet> planets) {
+            int cols = 2;
+            for (int r = 0; r < (planets.Count + cols - 1) / cols; r++) {
+                GUILayout.BeginHorizontal();
+                for (int c = 0; c < cols; c++) {
+                    int idx = r * cols + c;
+                    if (idx < planets.Count) {
+                        var p = planets[idx];
+                        string currentTarget = "";
+                        if (planetPickerTargetType == 0) currentTarget = mgaConfig.DepartureBody;
+                        else if (planetPickerTargetType == 1) currentTarget = mgaConfig.DestinationBody;
+                        else if (planetPickerTargetType == 2 && planetPickerFlybyIndex >= 0 && planetPickerFlybyIndex < mgaConfig.FlybySequence.Count) 
+                            currentTarget = mgaConfig.FlybySequence[planetPickerFlybyIndex];
+
+                        bool isSelected = p.Name.Equals(currentTarget, StringComparison.OrdinalIgnoreCase);
+                        GUIStyle cardStyle = isSelected ? actionButtonStyle : secondaryButtonStyle;
+
+                        double smaAU = p.SMA / 1.495978707e8;
+                        string btnText = I18n.Format("mga_planet_btn", p.Icon, p.GetDisplayName(), p.Name, smaAU, p.RadiusKm);
+
+                        if (GUILayout.Button(btnText, cardStyle, GUILayout.Height(42), GUILayout.ExpandWidth(true))) {
+                            SelectPlanetFromPicker(p.Name);
+                        }
+                    }
+                }
+                GUILayout.EndHorizontal();
+                GUILayout.Space(4);
+            }
+        }
+
+        private void SelectPlanetFromPicker(string planetName) {
+            if (planetPickerTargetType == 0) {
+                // 出发天体
+                mgaConfig.DepartureBody = planetName;
+                if (mgaWorkflowMode == 0) {
+                    mgaConfig.FlybySequence = new List<string> { mgaConfig.DestinationBody };
+                }
+                selectedMgaSolution = null;
+                mgaSolutions.Clear();
+                RefreshCandidateChains(mgaWorkflowMode == 1);
+                RefreshMgaCanvas();
+                ScreenMessages.PostScreenMessage(I18n.Format("mga_departure_set", planetName), 2.5f, ScreenMessageStyle.UPPER_CENTER);
+            } else if (planetPickerTargetType == 1) {
+                // 目标天体
+                mgaConfig.DestinationBody = planetName;
+                if (mgaWorkflowMode == 0) {
+                    mgaConfig.FlybySequence = new List<string> { planetName };
+                } else if (mgaConfig.FlybySequence != null && mgaConfig.FlybySequence.Count > 0) {
+                    mgaConfig.FlybySequence[mgaConfig.FlybySequence.Count - 1] = planetName;
+                } else {
+                    mgaConfig.FlybySequence = new List<string> { planetName };
+                }
+                customChainInput = string.Join(",", mgaConfig.FlybySequence);
+                selectedMgaSolution = null;
+                mgaSolutions.Clear();
+                RefreshCandidateChains(mgaWorkflowMode == 1);
+                RefreshMgaCanvas();
+                ScreenMessages.PostScreenMessage(I18n.Format("mga_destination_set", planetName), 2.5f, ScreenMessageStyle.UPPER_CENTER);
+            } else if (planetPickerTargetType == 2) {
+                // 替换中间借力节点
+                if (planetPickerFlybyIndex >= 0 && mgaConfig.FlybySequence != null && planetPickerFlybyIndex < mgaConfig.FlybySequence.Count) {
+                    mgaConfig.FlybySequence[planetPickerFlybyIndex] = planetName;
+                    customChainInput = string.Join(",", mgaConfig.FlybySequence);
+                    RefreshMgaCanvas();
+                    ScreenMessages.PostScreenMessage(I18n.Format("mga_flyby_changed", planetPickerFlybyIndex + 1, planetName), 2.5f, ScreenMessageStyle.UPPER_CENTER);
+                }
+            } else if (planetPickerTargetType == 3) {
+                // 追加中间借力节点
+                if (mgaConfig.FlybySequence == null) mgaConfig.FlybySequence = new List<string>();
+                if (mgaConfig.FlybySequence.Count == 0) {
+                    mgaConfig.FlybySequence.Add(planetName);
+                    mgaConfig.FlybySequence.Add(mgaConfig.DestinationBody);
+                } else {
+                    mgaConfig.FlybySequence.Insert(mgaConfig.FlybySequence.Count - 1, planetName);
+                }
+                customChainInput = string.Join(",", mgaConfig.FlybySequence);
+                RefreshMgaCanvas();
+                ScreenMessages.PostScreenMessage(I18n.Format("mga_flyby_appended", planetName), 2.5f, ScreenMessageStyle.UPPER_CENTER);
+            }
+            showPlanetPickerModal = false;
         }
     }
 }

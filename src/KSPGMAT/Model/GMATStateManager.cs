@@ -62,7 +62,7 @@ namespace KSPGMAT.Model {
         public double DragArea { get; set; } = 15.0;  // 官方 GMAT 缺省 15m²
         public double Cd { get; set; } = 2.2;         // 官方 GMAT 缺省 2.2
         public double Cr { get; set; } = 1.8;         // 官方 GMAT 缺省 1.8
-        public double SRPArea { get; set; } = 1.0;    // 官方 GMAT 缺省 1.0m²
+        public double SRPArea { get; set; } = 15.0;   // 基线 1.2.1: SRPArea 默认 15.0m²
         public Vector3d PosKm { get; set; } = Vector3d.zero;
         public Vector3d VelKms { get; set; } = Vector3d.zero;
         public string CentralBody { get; set; } = "Earth";
@@ -72,7 +72,7 @@ namespace KSPGMAT.Model {
     public class GMATVariableModel {
         public string Name { get; set; } = "Var1";
         public double InitialValue { get; set; } = 0.0;
-        public string Description { get; set; } = "用户自定义标量变量";
+        public string Description { get; set; } = I18n.T("sv_desc_scalar");
     }
 
     [Serializable]
@@ -80,14 +80,14 @@ namespace KSPGMAT.Model {
         public string Name { get; set; } = "Arr1";
         public int Rows { get; set; } = 3;
         public int Cols { get; set; } = 3;
-        public string Description { get; set; } = "用户自定义矩阵数组";
+        public string Description { get; set; } = I18n.T("sv_desc_array");
     }
 
     [Serializable]
     public class GMATStringModel {
         public string Name { get; set; } = "Str1";
         public string Value { get; set; } = "";
-        public string Description { get; set; } = "用户自定义字符串变量";
+        public string Description { get; set; } = I18n.T("sv_desc_string");
     }
 
     [Serializable]
@@ -148,7 +148,7 @@ namespace KSPGMAT.Model {
             public const double DragArea = 15.0;
             public const double Cd = 2.2;
             public const double Cr = 1.8;
-            public const double SRPArea = 1.0;
+            public const double SRPArea = 15.0;   // 基线 1.2.1: SRPArea 默认 15.0m²
             public const string DateFormat = "UTCGregorian";
             public const string CoordinateSystem = "EarthMJ2000Eq";
             public const string DisplayStateType = "Cartesian";
@@ -231,7 +231,7 @@ namespace KSPGMAT.Model {
             if (Spacecraft != null) {
                 if (Spacecraft.DryMassKg <= 0.0) {
                     Spacecraft.DryMassKg = GMATDefaults.Spacecraft.DryMassKg;
-                    ValidationAlerts.Add($"⚠️ 航天器干重 (DryMass) 必须大于 0，已自动恢复 GMAT 官方缺省值 {GMATDefaults.Spacecraft.DryMassKg} kg");
+                    ValidationAlerts.Add(I18n.Format("sv_alert_drymass", GMATDefaults.Spacecraft.DryMassKg));
                     hasAutoFixed = true;
                 }
                 if (Spacecraft.TotalMassKg <= 0.0) {
@@ -245,12 +245,12 @@ namespace KSPGMAT.Model {
                     var tk = Tanks[i];
                     if (tk.VolumeM3 <= 0.0) {
                         tk.VolumeM3 = GMATDefaults.Tank.VolumeM3;
-                        ValidationAlerts.Add($"⚠️ 储罐 {tk.Id} 容积 (Volume) 必须大于 0，已自动恢复 GMAT 官方缺省值 {GMATDefaults.Tank.VolumeM3} m³");
+                        ValidationAlerts.Add(I18n.Format("sv_alert_tank_volume", tk.Id, GMATDefaults.Tank.VolumeM3));
                         hasAutoFixed = true;
                     }
                     if (tk.FuelDensityKgM3 <= 0.0) {
                         tk.FuelDensityKgM3 = GMATDefaults.Tank.FuelDensityKgM3;
-                        ValidationAlerts.Add($"⚠️ 储罐 {tk.Id} 燃料密度 (FuelDensity) 必须大于 0，已自动恢复 GMAT 官方缺省值 {GMATDefaults.Tank.FuelDensityKgM3} kg/m³");
+                        ValidationAlerts.Add(I18n.Format("sv_alert_tank_density", tk.Id, GMATDefaults.Tank.FuelDensityKgM3));
                         hasAutoFixed = true;
                     }
                 }
@@ -262,7 +262,7 @@ namespace KSPGMAT.Model {
                     var thr = Thrusters[i];
                     if (thr.IspVac <= 0.0) {
                         thr.IspVac = GMATDefaults.Thruster.IspVac;
-                        ValidationAlerts.Add($"⚠️ 推力器 {thr.Id} 真空比冲 (Isp) 必须大于 0，已自动恢复 GMAT 官方缺省值 {GMATDefaults.Thruster.IspVac} s");
+                        ValidationAlerts.Add(I18n.Format("sv_alert_thr_isp", thr.Id, GMATDefaults.Thruster.IspVac));
                         hasAutoFixed = true;
                     }
                     if (thr.GravitationalAccel <= 0.0) {
@@ -273,7 +273,7 @@ namespace KSPGMAT.Model {
                         thr.ThrustDirection1 = 1.0;
                         thr.ThrustDirection2 = 0.0;
                         thr.ThrustDirection3 = 0.0;
-                        ValidationAlerts.Add($"⚠️ 推力器 {thr.Id} 推力方向矢量不能全为 0，已自动重置为默认切向 (1.0, 0.0, 0.0)");
+                        ValidationAlerts.Add(I18n.Format("sv_alert_thr_dir", thr.Id));
                         hasAutoFixed = true;
                     }
                 }
@@ -285,22 +285,22 @@ namespace KSPGMAT.Model {
                     var p = kvp.Value;
                     if (p.accuracy <= 0.0) {
                         p.accuracy = GMATDefaults.Propagator.Accuracy;
-                        ValidationAlerts.Add($"⚠️ 传播子 {p.name} 精度容差 (Accuracy) 不能为 0，已自动恢复 GMAT 官方缺省值 {GMATDefaults.Propagator.Accuracy:E2}");
+                        ValidationAlerts.Add(I18n.Format("sv_alert_prop_accuracy", p.name, GMATDefaults.Propagator.Accuracy));
                         hasAutoFixed = true;
                     }
                     if (p.minStep <= 0.0) {
                         p.minStep = GMATDefaults.Propagator.MinStep;
-                        ValidationAlerts.Add($"⚠️ 传播子 {p.name} 最小步长 (MinStep) 必须大于 0，已自动恢复 GMAT 官方缺省值 {GMATDefaults.Propagator.MinStep} s");
+                        ValidationAlerts.Add(I18n.Format("sv_alert_prop_minstep", p.name, GMATDefaults.Propagator.MinStep));
                         hasAutoFixed = true;
                     }
                     if (p.maxStep <= 0.0 || p.maxStep < p.minStep) {
                         p.maxStep = Math.Max(GMATDefaults.Propagator.MaxStep, p.minStep * 10.0);
-                        ValidationAlerts.Add($"⚠️ 传播子 {p.name} 最大步长 (MaxStep) 无效，已自动恢复 GMAT 官方缺省值 {p.maxStep} s");
+                        ValidationAlerts.Add(I18n.Format("sv_alert_prop_maxstep", p.name, p.maxStep));
                         hasAutoFixed = true;
                     }
                     if (p.initialStepSize <= 0.0) {
                         p.initialStepSize = GMATDefaults.Propagator.InitialStepSize;
-                        ValidationAlerts.Add($"⚠️ 传播子 {p.name} 初始步长 (InitialStepSize) 必须大于 0，已自动恢复 GMAT 官方缺省值 {GMATDefaults.Propagator.InitialStepSize} s");
+                        ValidationAlerts.Add(I18n.Format("sv_alert_prop_initstep", p.name, GMATDefaults.Propagator.InitialStepSize));
                         hasAutoFixed = true;
                     }
                     if (p.maxStepAttempts < 1) {
@@ -316,13 +316,13 @@ namespace KSPGMAT.Model {
                     if (st.type == "Achieve") {
                         if (st.achieve_tolerance <= 0.0) {
                             st.achieve_tolerance = GMATDefaults.Step.AchieveTolerance;
-                            ValidationAlerts.Add($"⚠️ 步骤 #{s + 1} Achieve 容差不能为 0，已自动恢复 GMAT 官方缺省值 {GMATDefaults.Step.AchieveTolerance}");
+                            ValidationAlerts.Add(I18n.Format("sv_alert_step_achieve", s + 1, GMATDefaults.Step.AchieveTolerance));
                             hasAutoFixed = true;
                         }
                     } else if (st.type == "Vary") {
                         if (st.vary_perturbation == 0.0) {
                             st.vary_perturbation = GMATDefaults.Step.VaryPerturbation;
-                            ValidationAlerts.Add($"⚠️ 步骤 #{s + 1} Vary 扰动步长 (Perturbation) 不能为 0，已自动恢复 GMAT 官方缺省值 {GMATDefaults.Step.VaryPerturbation}");
+                            ValidationAlerts.Add(I18n.Format("sv_alert_step_vary", s + 1, GMATDefaults.Step.VaryPerturbation));
                             hasAutoFixed = true;
                         }
                         if (st.vary_max_step <= 0.0) {
@@ -345,8 +345,8 @@ namespace KSPGMAT.Model {
                 Solvers.Add(new GMATSolverModel { Name = "DC_GEO", Algorithm = "NewtonRaphson", DerivativeMethod = "ForwardDifference", MaxIterations = 50 });
             }
             if (Variables.Count == 0) {
-                Variables.Add(new GMATVariableModel { Name = "GTO_Duration", InitialValue = 120.0, Description = "GTO 远地点抬升点火时长" });
-                Variables.Add(new GMATVariableModel { Name = "GEO_Duration", InitialValue = 70.0, Description = "GEO 圆化与定点点火时长" });
+                Variables.Add(new GMATVariableModel { Name = "GTO_Duration", InitialValue = 120.0, Description = I18n.T("sv_GTO_Duration") });
+                Variables.Add(new GMATVariableModel { Name = "GEO_Duration", InitialValue = 70.0, Description = I18n.T("sv_GEO_Duration") });
             }
             if (ReportFiles.Count == 0) {
                 ReportFiles.Add(new GMATReportFileModel { Name = "TrajReport", Filename = "TrajReport.txt", WriteHeaders = false });
@@ -509,10 +509,17 @@ namespace KSPGMAT.Model {
             budget.WetMassTonnes = Spacecraft.TotalMassKg / 1000.0;
             budget.DryMassTonnes = Math.Max(0.01, budget.WetMassTonnes - budget.FuelMassTonnes);
 
-            double isp = curEng.IspVac > 1.0 ? curEng.IspVac : 300.0;
-            if (budget.DryMassTonnes > 0 && budget.WetMassTonnes > budget.DryMassTonnes) {
-                budget.DeltaV = 9.80665 * isp * Math.Log(budget.WetMassTonnes / budget.DryMassTonnes);
+            // 采用 MechJeb 原生分级 ΔV (数据中继，符合零托管计算铁律；不再自编齐奥尔科夫斯基公式)
+            double mechjebDv = 0.0;
+            if (Stages != null) {
+                for (int s = 0; s < Stages.Count; s++) {
+                    if (Stages[s].stageNumber == curEng.StageNumber && Stages[s].deltaV > 0.0) {
+                        mechjebDv = Stages[s].deltaV;
+                        break;
+                    }
+                }
             }
+            budget.DeltaV = mechjebDv;
 
             return budget;
         }
@@ -582,9 +589,18 @@ namespace KSPGMAT.Model {
 
         /// <summary>
         /// 全流程 GMAT 脚本合规净化过滤器 (Pure-ASCII & GMAT Compliance Filter)
+        /// 基线 1.4 四条子规则：
+        ///   1) 纯 ASCII 字符流强制转换 (过滤中文与 Emoji)；
+        ///   2) 航天器标识符前缀自愈 (正则 \bSat\d+\. 对齐为 Sat.)；
+        ///   3) 打靶区间与容差防退化守护 (Upper/Lower 安全边界、Tolerance 按物理量赋容差)；
+        ///   4) 终止条件合规化 (Sat.Earth.Node → Sat.Earth.Latitude = 0.0)。
+        /// 基线 1.5：第三方异构脚本别名归一化 (Tianwen/Change5/europaclipper/Juno → Sat; maintank/MMH → TankX)。
         /// </summary>
         public static string SanitizeGmatScript(string rawScript) {
-            if (string.IsNullOrEmpty(rawScript)) return "";
+            if (rawScript == null) return "";
+            if (rawScript.Length == 0) return "";
+
+            // 1) 纯 ASCII 字符流强制转换 (过滤中文与 Emoji，Tab 转 4 空格)
             System.Text.StringBuilder sb = new System.Text.StringBuilder();
             using (System.IO.StringReader reader = new System.IO.StringReader(rawScript)) {
                 string line;
@@ -595,11 +611,145 @@ namespace KSPGMAT.Model {
                         if (c >= 32 && c < 127) lineSb.Append(c);
                         else if (c == '\t') lineSb.Append("    ");
                     }
-                    string cleaned = lineSb.ToString();
-                    sb.AppendLine(cleaned);
+                    sb.AppendLine(lineSb.ToString());
                 }
             }
-            return sb.ToString();
+            string script = sb.ToString();
+
+            // 2) 第三方异构脚本别名归一化 (基线 1.5)
+            script = NormalizeExternalAliases(script);
+
+            // 3) 航天器标识符前缀自愈 (基线 1.4-2): Sat\d+. → Sat.
+            script = System.Text.RegularExpressions.Regex.Replace(script, @"\bSat\d+\.", "Sat.");
+
+            // 4) 终止条件合规化 (基线 1.4-4): X.Y.Node / X.Y.AscendingNode / X.Y.DescendingNode → X.Y.Latitude = 0.0
+            script = System.Text.RegularExpressions.Regex.Replace(
+                script,
+                @"\b([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\.(?:Node|AscendingNode|DescendingNode)\b",
+                "$1.$2.Latitude = 0.0");
+
+            // 5) 打靶区间与容差防退化守护 (基线 1.4-3): 逐行处理 Vary / Achieve
+            System.Text.StringBuilder result = new System.Text.StringBuilder();
+            using (System.IO.StringReader reader = new System.IO.StringReader(script)) {
+                string line;
+                while ((line = reader.ReadLine()) != null) {
+                    result.AppendLine(SanitizeTargetingLine(line));
+                }
+            }
+            return result.ToString();
+        }
+
+        /// <summary>
+        /// 第三方异构脚本别名归一化 (基线 1.5)。
+        /// 主航天器别名 → Sat；外部储罐别名 → Tank0/Tank1。
+        /// 注：外部求解器 (DC1/NLP/VF13ad1) 为合法 GMAT 求解器名，按基线应"注册进候选池"而非改写文本，
+        /// 其运行时纳管由求解器注册表负责。
+        /// </summary>
+        private static string NormalizeExternalAliases(string script) {
+            string s = System.Text.RegularExpressions.Regex.Replace(
+                script,
+                @"\b(Tianwen|Change5|europaclipper|Juno)\b",
+                "Sat",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            s = System.Text.RegularExpressions.Regex.Replace(
+                s,
+                @"\bmaintank\b",
+                "Tank0",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            s = System.Text.RegularExpressions.Regex.Replace(s, @"\bMMH\b", "Tank1");
+            return s;
+        }
+
+        /// <summary>
+        /// 逐行打靶指令 (Vary / Achieve) 的防退化守护 (基线 1.4-3)。
+        /// </summary>
+        private static string SanitizeTargetingLine(string line) {
+            // --- Vary: Lower/Upper 安全边界 + Perturbation 兜底 ---
+            var varyMatch = System.Text.RegularExpressions.Regex.Match(
+                line, @"^\s*Vary\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^=]+?)\s*=\s*([^,]+?)\s*,\s*\{(.*)\}\s*\)\s*;");
+            if (varyMatch.Success) {
+                string solver = varyMatch.Groups[1].Value;
+                string variable = varyMatch.Groups[2].Value.Trim();
+                string init = varyMatch.Groups[3].Value.Trim();
+                string options = varyMatch.Groups[4].Value;
+                string newOptions = GuardVaryOptions(options);
+                if (newOptions != options) {
+                    return string.Format(CultureInfo.InvariantCulture, "Vary {0}({1} = {2}, {{{3}}});", solver, variable, init, newOptions);
+                }
+                return line;
+            }
+
+            // --- Achieve: Tolerance 防退化 (按物理量赋予收敛容差) ---
+            var achieveMatch = System.Text.RegularExpressions.Regex.Match(
+                line, @"^\s*Achieve\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^=]+?)\s*=\s*([^,]+?)\s*,\s*\{(.*)\}\s*\)\s*;");
+            if (achieveMatch.Success) {
+                string solver = achieveMatch.Groups[1].Value;
+                string variable = achieveMatch.Groups[2].Value.Trim();
+                string target = achieveMatch.Groups[3].Value.Trim();
+                string options = achieveMatch.Groups[4].Value;
+                string newOptions = GuardAchieveOptions(variable, options);
+                if (newOptions != options) {
+                    return string.Format(CultureInfo.InvariantCulture, "Achieve {0}({1} = {2}, {{{3}}});", solver, variable, target, newOptions);
+                }
+                return line;
+            }
+
+            return line;
+        }
+
+        private static double GetNumberOption(string options, string key) {
+            var m = System.Text.RegularExpressions.Regex.Match(options, @"\b" + key + @"\s*=\s*([^\s,}]+)");
+            if (!m.Success) return double.NaN;
+            double v;
+            return double.TryParse(m.Groups[1].Value, System.Globalization.NumberStyles.Float, CultureInfo.InvariantCulture, out v) ? v : double.NaN;
+        }
+
+        private static string FormatNum(double v) {
+            return v.ToString("R", CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>
+        /// Vary 区间防退化守护：Perturbation<=0 → 0.0001；Upper==0 或 Upper<=Lower → 自动修正安全上界。
+        /// </summary>
+        private static string GuardVaryOptions(string options) {
+            double lower = GetNumberOption(options, "Lower");
+            double upper = GetNumberOption(options, "Upper");
+            double perturb = GetNumberOption(options, "Perturbation");
+            string result = options;
+
+            if (!double.IsNaN(perturb) && perturb <= 0.0) {
+                result = System.Text.RegularExpressions.Regex.Replace(result, @"\bPerturbation\s*=\s*[^\s,}]+", "Perturbation = 0.0001");
+            }
+            if (!double.IsNaN(lower) && !double.IsNaN(upper)) {
+                double safeUpper = (upper == 0.0 || upper <= lower) ? lower + Math.Max(Math.Abs(lower) * 0.1, 1.0) : upper;
+                if (safeUpper != upper) {
+                    result = System.Text.RegularExpressions.Regex.Replace(result, @"\bUpper\s*=\s*[^\s,}]+", "Upper = " + FormatNum(safeUpper));
+                }
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Achieve 容差防退化守护：Tolerance<=0 时按物理量赋予收敛容差
+        /// (距离量 0.5~1.0 km、速度量 0.01 km/s、角度量 0.01 deg)。
+        /// </summary>
+        private static string GuardAchieveOptions(string variable, string options) {
+            double tol = GetNumberOption(options, "Tolerance");
+            if (double.IsNaN(tol) || tol > 0.0) return options;
+
+            string v = variable.ToUpperInvariant();
+            double tolVal;
+            if (v.Contains("VEL") || v.Contains("VMAG") || v.Contains("C3") || v.Contains("ENERGY") || v.Contains("MASSFLOW")) {
+                tolVal = 0.01;   // 速度量 km/s
+            } else if (v.Contains("INC") || v.Contains("RAAN") || v.Contains("AOP") || v.Contains("LATITUDE") ||
+                       v.Contains("LONGITUDE") || v.Contains("DEC") || v.Contains("AZI") || v.Contains("FPA") ||
+                       v.Contains("BETAANGLE") || v.Contains("TLONG") || v.Contains("MEANANOMALY") ||
+                       v == "TA" || v == "MA" || v == "EA" || v == "HA") {
+                tolVal = 0.01;   // 角度量 deg
+            } else {
+                tolVal = 0.5;    // 距离量 km (0.5~1.0)
+            }
+            return System.Text.RegularExpressions.Regex.Replace(options, @"\bTolerance\s*=\s*[^\s,}]+", "Tolerance = " + FormatNum(tolVal));
         }
     }
 }

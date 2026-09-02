@@ -4,7 +4,8 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $SrcDir = Join-Path $ScriptDir "src\KSPGMAT"
 $Csproj = Join-Path $SrcDir "KSPGMAT.csproj"
 $LocalGameData = Join-Path $ScriptDir "GameData\KSPGMAT"
-$KspGameData = "C:\Program Files (x86)\Steam\steamapps\common\Kerbal Space Program_newmod\GameData\KSPGMAT"
+$KspRoot = "C:\Program Files (x86)\Steam\steamapps\common\Kerbal Space Program_newmod"
+$KspGameData = Join-Path $KspRoot "GameData\KSPGMAT"
 
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "  1. Building KSPGMAT (Release)..." -ForegroundColor Cyan
@@ -24,9 +25,17 @@ Write-Host "  2. Deploying to Local GameData..." -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Green
 
 $LocalPlugins = Join-Path $LocalGameData "Plugins"
+$LocalNative = Join-Path $LocalGameData "native"
 $LocalTemplates = Join-Path $LocalGameData "templates"
+$LocalLoc = Join-Path $LocalGameData "loc"
 New-Item -ItemType Directory -Force -Path $LocalPlugins | Out-Null
+New-Item -ItemType Directory -Force -Path $LocalNative | Out-Null
 New-Item -ItemType Directory -Force -Path $LocalTemplates | Out-Null
+New-Item -ItemType Directory -Force -Path $LocalLoc | Out-Null
+
+# Clean any unmanaged native binaries from GameData to prevent KSP AssemblyLoader crash
+Get-ChildItem -Path $LocalGameData -Recurse -Filter "pykep_native.dll" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+Get-ChildItem -Path $LocalPlugins -Filter "pykep_native.*" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
 
 Copy-Item $BuildOutDll $LocalPlugins -Force
 Copy-Item $BuildOutPdb $LocalPlugins -Force
@@ -39,15 +48,23 @@ Write-Host "`n========================================" -ForegroundColor Green
 Write-Host "  3. Deploying to KSP Game Folder..." -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Green
 
-if (Test-Path "C:\Program Files (x86)\Steam\steamapps\common\Kerbal Space Program_newmod\GameData") {
+if (Test-Path $KspRoot) {
     $KspPlugins = Join-Path $KspGameData "Plugins"
+    $KspNative = Join-Path $KspGameData "native"
     $KspTemplates = Join-Path $KspGameData "templates"
+    $KspLoc = Join-Path $KspGameData "loc"
     New-Item -ItemType Directory -Force -Path $KspPlugins | Out-Null
+    New-Item -ItemType Directory -Force -Path $KspNative | Out-Null
     New-Item -ItemType Directory -Force -Path $KspTemplates | Out-Null
+    New-Item -ItemType Directory -Force -Path $KspLoc | Out-Null
 
-    # Clean any stale backup files that Unity might accidentally load
+    # Clean any unmanaged DLLs from GameData to prevent KSP AssemblyLoader crash
+    Get-ChildItem -Path $KspGameData -Recurse -Filter "*.dll" | Where-Object { $_.DirectoryName -notmatch "Plugins" } | Remove-Item -Force -ErrorAction SilentlyContinue
     Get-ChildItem -Path $KspPlugins -Filter "*.old" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
     Get-ChildItem -Path $KspPlugins -Filter "*.bak" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+    Get-ChildItem -Path $KspPlugins -Filter "pykep_native.*" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+    Get-ChildItem -Path $KspPlugins -Filter "keplerian_toolbox.*" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+    Get-ChildItem -Path $KspPlugins -Filter "boost_serialization.*" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
 
     $TargetDll = Join-Path $KspPlugins "KSPGMAT.dll"
     $TargetPdb = Join-Path $KspPlugins "KSPGMAT.pdb"
@@ -68,6 +85,19 @@ if (Test-Path "C:\Program Files (x86)\Steam\steamapps\common\Kerbal Space Progra
         Copy-Item $BuildOutDll $TargetDll -Force
         Copy-Item $BuildOutPdb $TargetPdb -Force
     }
+
+    # Deploy native binaries exclusively as .bin inside GameData/KSPGMAT/native (100% clean, no files scattered to root)
+    if (Test-Path $LocalNative) {
+        Get-ChildItem -Path $LocalNative -File | Where-Object { $_.Extension -eq ".bin" } | ForEach-Object {
+            $dest = Join-Path $KspNative $_.Name
+            Copy-Item $_.FullName $dest -Force -ErrorAction SilentlyContinue
+        }
+        # Clean up any leftover DLLs in KspRoot to keep the game directory clean and neat
+        @("boost_serialization.dll", "keplerian_toolbox.dll", "pykep_native.dll") | ForEach-Object {
+            $leftover = Join-Path $KspRoot $_
+            if (Test-Path $leftover) { Remove-Item $leftover -Force -ErrorAction SilentlyContinue }
+        }
+    }
     Copy-Item $TemplateSource $KspTemplates -Force
 
     # Also copy Textures and Config if present
@@ -79,6 +109,9 @@ if (Test-Path "C:\Program Files (x86)\Steam\steamapps\common\Kerbal Space Progra
     }
     if (Test-Path (Join-Path $LocalGameData "gmat_capabilities.json")) {
         Copy-Item (Join-Path $LocalGameData "gmat_capabilities.json") $KspGameData -Force
+    }
+    if (Test-Path $LocalLoc) {
+        Copy-Item (Join-Path $LocalLoc "*.json") $KspLoc -Force
     }
 
     Write-Host "✅ Successfully deployed to KSP Steam Installation: $KspGameData" -ForegroundColor Green

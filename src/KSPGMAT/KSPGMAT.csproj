@@ -56,5 +56,9 @@
       <HintPath>C:\Program Files (x86)\Steam\steamapps\common\Kerbal Space Program_newmod\GameData\MechJeb2\Plugins\MechJebLib.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="TransferWindowPlanner">
+      <HintPath>C:\Program Files (x86)\Steam\steamapps\common\Kerbal Space Program_newmod\GameData\TriggerTech\TransferWindowPlanner\TransferWindowPlanner.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 </Project>

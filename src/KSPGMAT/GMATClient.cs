@@ -435,14 +435,134 @@ namespace KSPGMAT {
             return dir;
         }
 
-        public static string JdToUtcGregorian(double jd) {
-            // NASA GMAT ephemeris requires Gregorian date >= 04 Oct 1957 (JD 2436116.0)
-            // For RP-1 / early career saves (e.g. 1950/1951), safely map the baseline epoch to valid range
-            if (jd < 2436116.0) {
-                double safeBaseJd = 2437000.0; // 07 Mar 1960
-                double startOffset = (jd > 2430000.0) ? (jd - 2433647.5) : jd;
-                jd = safeBaseJd + startOffset;
+        /// <summary>
+        /// 检查是否已检测到 NASA JPL 完整 SPICE 星历 (如 de440.bsp / de430.bsp / de421.bsp)
+        /// </summary>
+        public static bool HasFullSpiceEphemeris => !string.IsNullOrEmpty(DetectedSpiceKernelPath);
+
+        /// <summary>
+        /// 获取检测到的 SPICE 星历内核文件名 (如 "de440.bsp")
+        /// </summary>
+        public static string DetectedSpiceKernelName {
+            get {
+                string p = DetectedSpiceKernelPath;
+                return !string.IsNullOrEmpty(p) ? Path.GetFileName(p) : null;
             }
+        }
+
+        /// <summary>
+        /// 智能探测 SPICE 星历内核文件的实际绝对路径
+        /// </summary>
+        public static string DetectedSpiceKernelPath {
+            get {
+                try {
+                    // 0. 优先读取 backend.cfg 中统一配置的 spice_bsp_path
+                    string cfgPath = KSPGMATSettings.SpiceBspPath;
+                    if (!string.IsNullOrEmpty(cfgPath) && File.Exists(cfgPath)) {
+                        return cfgPath;
+                    }
+
+                    string binDir = Path.GetDirectoryName(GmatBinPath);
+                    string[] names = new string[] { "de440.bsp", "de430.bsp", "de421.bsp" };
+                    foreach (var name in names) {
+                        // 1. GMAT data/planetary_ephem/spk/
+                        string p1 = Path.Combine(binDir, "..", "data", "planetary_ephem", "spk", name);
+                        if (File.Exists(p1)) return p1;
+                        string p2 = Path.Combine(binDir, "data", "planetary_ephem", "spk", name);
+                        if (File.Exists(p2)) return p2;
+                    }
+                    // 2. Windows 用户 Documents 目录
+                    string userDoc = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+                    foreach (var name in names) {
+                        string pDoc = Path.Combine(userDoc, name);
+                        if (File.Exists(pDoc)) return pDoc;
+                    }
+                    // 3. KSP GameData 目录
+                    string root = "";
+                    try { root = KSPUtil.ApplicationRootPath; } catch {}
+                    if (string.IsNullOrEmpty(root)) root = AppDomain.CurrentDomain.BaseDirectory;
+                    string gameDataPath = Path.Combine(root, "GameData", "KSPGMAT", "data");
+                    foreach (var name in names) {
+                        string pGd = Path.Combine(gameDataPath, name);
+                        if (File.Exists(pGd)) return pGd;
+                    }
+                } catch {}
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// 100% 真实天文历元格式化 (用于游戏内物理、MGA 寻优与 UI 真实显示，无任何人工偏移)
+        /// </summary>
+        public static string FormatUtcGregorian(double ut) {
+            double jd = 2433647.5 + (ut / 86400.0);
+            return JdToUtcGregorian(jd);
+        }
+
+        public static double ParseUtcGregorian(string str) {
+            if (string.IsNullOrEmpty(str)) return 0;
+            try {
+                string[] parts = str.Trim().Split(new char[] { ' ', ':', '.' }, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length >= 3) {
+                    int day = int.Parse(parts[0]);
+                    string monStr = parts[1];
+                    int year = int.Parse(parts[2]);
+                    int hour = parts.Length > 3 ? int.Parse(parts[3]) : 0;
+                    int min = parts.Length > 4 ? int.Parse(parts[4]) : 0;
+                    double sec = parts.Length > 5 ? double.Parse(parts[5], System.Globalization.CultureInfo.InvariantCulture) : 0;
+                    if (parts.Length > 6) {
+                        sec += double.Parse("0." + parts[6], System.Globalization.CultureInfo.InvariantCulture);
+                    }
+
+                    string[] months = new string[] { "", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+                    int month = 1;
+                    for (int m = 1; m <= 12; m++) {
+                        if (months[m].Equals(monStr, StringComparison.OrdinalIgnoreCase)) {
+                            month = m;
+                            break;
+                        }
+                    }
+
+                    int a = (14 - month) / 12;
+                    int y = year + 4800 - a;
+                    int m_adj = month + 12 * a - 3;
+                    double jdn = day + (153 * m_adj + 2) / 5 + 365 * y + y / 4 - y / 100 + y / 400 - 32045;
+                    double jd = jdn + (hour - 12) / 24.0 + min / 1440.0 + sec / 86400.0;
+                    return (jd - 2433647.5) * 86400.0;
+                }
+            } catch {}
+            return 0;
+        }
+
+        /// <summary>
+        /// GMAT 脚本安全历元格式化 (专用于输出给 NASA GMAT 后端执行的 .script 文件)
+        /// 说明: NASA GMAT 官方 C++ 引擎硬性校验 Sat.DateFormat = UTCGregorian 必须在 ["04 Oct 1957" ~ "28 Feb 2100"] 范围内。
+        /// 针对 1957 年前的早期历史存档 (如 RP-1 1951 开局)，自动对 GMAT 脚本的 Sat.Epoch 进行安全映射，确保 GMAT C++ 解析器 100% 成功执行。
+        /// </summary>
+        public static string FormatGmatSafeEpoch(double ut) {
+            double jd = 2433647.5 + (ut / 86400.0);
+            if (jd < 2436116.0) { // 2436116.0 = 04 Oct 1957 12:00:00.000 (GMAT 官方硬性边界)
+                double safeBaseJd = 2437000.0; // 07 Mar 1960
+                double offset = (jd > 2430000.0) ? (jd - 2433647.5) : jd;
+                jd = safeBaseJd + offset;
+            }
+            return JdToUtcGregorian(jd);
+        }
+
+        public static string FormatGmatSafeEpochString(string utcGregorianStr) {
+            if (string.IsNullOrEmpty(utcGregorianStr)) return "01 Jan 2000 12:00:00.000";
+            var match = System.Text.RegularExpressions.Regex.Match(utcGregorianStr, @"\b(19[0-5][0-9]|18\d{2})\b");
+            if (match.Success) {
+                int yr = int.Parse(match.Groups[1].Value);
+                if (yr < 1958) {
+                    int safeYr = yr + 10;
+                    return utcGregorianStr.Substring(0, match.Index) + safeYr.ToString() + utcGregorianStr.Substring(match.Index + match.Length);
+                }
+            }
+            return utcGregorianStr;
+        }
+
+        public static string JdToUtcGregorian(double jd) {
             double jdAdj = jd + 0.5;
             long Z = (long)Math.Floor(jdAdj);
             double F = jdAdj - Z;
@@ -478,12 +598,12 @@ namespace KSPGMAT {
                 string cli = FindCliScript();
                 if (File.Exists(cli)) {
                     IsConnected = true;
-                    ServerStatusText = "⚡ GMAT 原生引擎就绪 (无需后台服务)";
+                    ServerStatusText = "GMAT 原生引擎就绪 (无需后台服务)";
                     FetchParameters();
                     KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(true, "CLI Ready"));
                 } else {
                     IsConnected = false;
-                    ServerStatusText = "❌ gmat_cli.py 未找到: " + cli;
+                    ServerStatusText = "gmat_cli.py 未找到: " + cli;
                     KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(false, ServerStatusText));
                 }
             });
@@ -569,7 +689,7 @@ namespace KSPGMAT {
             ThreadPool.QueueUserWorkItem(_ => {
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 try {
-                    KSPGMATLog.Section("🚀 GMAT NATIVE MISSION PROPAGATION STARTED");
+                    KSPGMATLog.Section("GMAT NATIVE MISSION PROPAGATION STARTED");
                     if (vessel != null) {
                         GMATStateManager.Current.SyncFromVessel(vessel);
                     }
@@ -577,6 +697,9 @@ namespace KSPGMAT {
                     string scriptToSend = !string.IsNullOrEmpty(rawScript)
                         ? rawScript
                         : GMATScriptGenerator.GenerateScript(vessel, steps, null, propagatorConfigs);
+
+                    // 基线 1.4: 后台物理求解前必须 100% 经 SanitizeGmatScript 合规净化
+                    scriptToSend = GMATStateManager.SanitizeGmatScript(scriptToSend);
 
                     GMATConsoleRunner.ExecuteScriptAsync(scriptToSend, steps, (success, result) => {
                         sw.Stop();
@@ -647,7 +770,7 @@ namespace KSPGMAT {
                     string scriptContent = GMATScriptGenerator.GenerateScript(vessel, sequence, GMATStateManager.Current.Spacecraft.CentralBody);
                     string sanitized = GMATStateManager.SanitizeGmatScript(scriptContent);
                     File.WriteAllText(targetPath, sanitized, Utf8NoBom);
-                    KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(true, $"✅ 成功导出高保真 GMAT 脚本至: {targetPath}"));
+                    KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(true, $"成功导出高保真 GMAT 脚本至: {targetPath}"));
                 } catch (Exception ex) {
                     KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(false, "导出异常: " + ex.Message));
                 }

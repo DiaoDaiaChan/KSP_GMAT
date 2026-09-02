@@ -128,18 +128,18 @@ namespace KSPGMAT {
                     title = FormatFallbackTitle(fileName);
                 }
 
-                string icon = "📜";
+                string icon = "";
                 string category = "通用";
 
                 string lower = (fileName + " " + title).ToLowerInvariant();
                 if (lower.Contains("moon") || lower.Contains("lunar") || lower.Contains("change") || lower.Contains("apollo") || lower.Contains("nrho") || lower.Contains("halo") || lower.Contains("tli") || lower.Contains("loi")) {
-                    icon = "🌕"; category = "地月系";
+                    category = "地月系";
                 } else if (lower.Contains("mars") || lower.Contains("tmi") || lower.Contains("hohmann") || lower.Contains("interplanetary") || lower.Contains("venus") || lower.Contains("jupiter")) {
-                    icon = "🔴"; category = "深空/行星际";
+                    category = "深空/行星际";
                 } else if (lower.Contains("geo") || lower.Contains("gto") || lower.Contains("leo") || lower.Contains("earth") || lower.Contains("orbit")) {
-                    icon = "🚀"; category = "近地/地球";
+                    category = "近地/地球";
                 } else if (lower.Contains("test") || lower.Contains("offset") || lower.Contains("dual") || lower.Contains("burns")) {
-                    icon = "🧪"; category = "测试/验证";
+                    category = "测试/验证";
                 }
 
                 return new GMATTemplateInfo {
@@ -178,7 +178,7 @@ namespace KSPGMAT {
                     System.Diagnostics.Process.Start("explorer.exe", dir);
                 }
             } catch (Exception ex) {
-                ScreenMessages.PostScreenMessage($"❌ 打开文件夹失败: {ex.Message}", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                ScreenMessages.PostScreenMessage($"打开文件夹失败: {ex.Message}", 3.0f, ScreenMessageStyle.UPPER_CENTER);
             }
         }
     }

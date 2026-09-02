@@ -16,6 +16,7 @@ namespace KSPGMAT {
         public string Example;
         public string Unit;
         public string DependencyObject;
+        public ParamCapability Capability; // 基线 3.1: 参数能力位掩码
 
         public GMATParam(string name, string category, string desc, string example) {
             Name = name;
@@ -26,6 +27,7 @@ namespace KSPGMAT {
             Example = example;
             Unit = "";
             DependencyObject = "";
+            Capability = ParamCapability.ContinuouslyDifferentiable | ParamCapability.Reportable; // 默认连续可导
         }
 
         public string GetLocalizedDescription() {
@@ -155,17 +157,8 @@ namespace KSPGMAT {
         }
 
         public string GetIcon() {
-            switch (Kind) {
-                case IntelliSenseKind.CelestialBody: return "🪐";
-                case IntelliSenseKind.CoordinateSystem: return "📐";
-                case IntelliSenseKind.Spacecraft: return "🛰️";
-                case IntelliSenseKind.Parameter: return "📏";
-                case IntelliSenseKind.Variable: return "⚡";
-                case IntelliSenseKind.Propagator: return "🚀";
-                case IntelliSenseKind.Solver: return "🎯";
-                case IntelliSenseKind.DirectCoord: return "🧭";
-                default: return "🔹";
-            }
+            // IMGUI 字体不渲染彩色 emoji，图标前缀统一移除，仅保留文本标签。
+            return "";
         }
     }
 
@@ -376,7 +369,7 @@ namespace KSPGMAT {
 
         public static string[] Categories {
             get {
-                List<string> list = new List<string> { "🌟 全部" };
+                List<string> list = new List<string> { I18n.T("paramcat_all") };
                 list.AddRange(CategoriesList);
                 return list.ToArray();
             }
@@ -384,7 +377,7 @@ namespace KSPGMAT {
 
         public static string[] PropStopCategories {
             get {
-                List<string> list = new List<string> { "🌟 全部" };
+                List<string> list = new List<string> { I18n.T("paramcat_all") };
                 list.AddRange(PropStopCategoriesList);
                 return list.ToArray();
             }
@@ -463,12 +456,12 @@ namespace KSPGMAT {
                 List<GMATParam> newParams = new List<GMATParam>();
 
                 foreach (var p in rawParams) {
-                    // Filter out pure stopping condition events from Achieve catalog
-                    if (p.name == "Apoapsis" || p.name == "Periapsis" || p.name == "Node" || p.name == "AscendingNode" || p.name == "DescendingNode") {
+                    // 基线 3.1: 过滤纯停机事件参数 (is_extremum 或官方极值名单)，严禁用于 Achieve 连续求解
+                    if (p.is_extremum || p.name == "Apoapsis" || p.name == "Periapsis" || p.name == "Node" || p.name == "AscendingNode" || p.name == "DescendingNode") {
                         continue;
                     }
                     string cat = (I18n.Current == I18n.Lang.EN) ? p.category_en : p.category_zh;
-                    if (string.IsNullOrEmpty(cat)) cat = p.category_zh ?? "动力学参数";
+                    if (string.IsNullOrEmpty(cat)) cat = p.category_zh ?? I18n.T("paramcat_dynamics");
                     catSet.Add(cat);
 
                     string desc = p.description ?? p.name;
@@ -478,6 +471,10 @@ namespace KSPGMAT {
                     GMATParam catalogParam = new GMATParam(p.key, cat, desc, example);
                     catalogParam.Unit = p.unit ?? "";
                     catalogParam.DependencyObject = p.dep_object ?? "";
+                    // 基线 3.1: 按 is_extremum 接入能力位掩码 (极值事件仅 Propagate，不得用于 Achieve)
+                    catalogParam.Capability = p.is_extremum
+                        ? ParamCapability.DiscontinuousExtremumEvent
+                        : (ParamCapability.ContinuouslyDifferentiable | ParamCapability.Reportable);
                     newParams.Add(catalogParam);
                 }
 
@@ -486,7 +483,7 @@ namespace KSPGMAT {
 
                 foreach (var s in rawStops) {
                     string cat = (I18n.Current == I18n.Lang.EN) ? s.category_en : s.category_zh;
-                    if (string.IsNullOrEmpty(cat)) cat = s.category_zh ?? "终止条件";
+                    if (string.IsNullOrEmpty(cat)) cat = s.category_zh ?? I18n.T("paramcat_stopcond");
                     stopCatSet.Add(cat);
 
                     string disp = s.name;
@@ -657,161 +654,57 @@ namespace KSPGMAT {
         #endregion
 
         private static void PopulateFallbackCore() {
-            // Core standard Keplerian, Distance, Time elements (GMAT standard)
-            CategoriesList = new List<string> { "⏱️ 时间与历元", "🌐 轨道根数", "📏 空间距离与高度", "🪐 轨道极值与交点", "⚖️ 质量与硬件" };
-            PropStopCategoriesList = new List<string> { "⏱️ 时间与历元", "🪐 轨道极值与交点", "🌐 轨道根数", "📏 空间距离与高度" };
+            // Core standard Keplerian, Distance, Time elements (GMAT standard).
+            // Display strings are localized through I18n (loc/*.json) so language switches stay hot.
+            CategoriesList = new List<string> {
+                I18n.T("paramcat_time_epoch"),
+                I18n.T("paramcat_orbit_elements"),
+                I18n.T("paramcat_dist_altitude"),
+                I18n.T("paramcat_orbit_extremes"),
+                I18n.T("paramcat_mass_hardware")
+            };
+            PropStopCategoriesList = new List<string> {
+                I18n.T("paramcat_time_epoch"),
+                I18n.T("paramcat_orbit_extremes"),
+                I18n.T("paramcat_orbit_elements"),
+                I18n.T("paramcat_dist_altitude")
+            };
 
             AllParameters = new List<GMATParam> {
-                new GMATParam("ElapsedSecs", "⏱️ 时间与历元", "任务经过秒数 (s)", "1800.0"),
-                new GMATParam("ElapsedDays", "⏱️ 时间与历元", "任务经过天数 (Days)", "2.2"),
-                new GMATParam("A1ModJulian", "⏱️ 时间与历元", "A1修正儒略日", "21545.0"),
-                new GMATParam("SMA", "🌐 轨道根数", "半长轴 (Km)", "6578.14"),
-                new GMATParam("ECC", "🌐 轨道根数", "轨道离心率", "0.0012"),
-                new GMATParam("INC", "🌐 轨道根数", "轨道倾角 (Deg)", "28.5"),
-                new GMATParam("RAAN", "🌐 轨道根数", "升交点赤经 (Deg)", "120.0"),
-                new GMATParam("AOP", "🌐 轨道根数", "近心点幅角 (Deg)", "45.0"),
-                new GMATParam("TA", "🌐 轨道根数", "真近点角 (Deg)", "180.0"),
-                new GMATParam("Altitude", "📏 空间距离与高度", "海平面高度 (Km)", "200.0"),
-                new GMATParam("RMAG", "📏 空间距离与高度", "距心距离模长 (Km)", "6578.14"),
-                new GMATParam("TotalMass", "⚖️ 质量与硬件", "飞船总质量 (kg)", "7500.0"),
-                new GMATParam("DryMass", "⚖️ 质量与硬件", "飞船干重 (kg)", "1500.0")
+                new GMATParam("ElapsedSecs", I18n.T("paramcat_time_epoch"), I18n.T("fb_elapsedsecs"), "1800.0"),
+                new GMATParam("ElapsedDays", I18n.T("paramcat_time_epoch"), I18n.T("fb_elapseddays"), "2.2"),
+                new GMATParam("A1ModJulian", I18n.T("paramcat_time_epoch"), I18n.T("fb_a1modjulian"), "21545.0"),
+                new GMATParam("SMA", I18n.T("paramcat_orbit_elements"), I18n.T("fb_sma"), "6578.14"),
+                new GMATParam("ECC", I18n.T("paramcat_orbit_elements"), I18n.T("fb_ecc"), "0.0012"),
+                new GMATParam("INC", I18n.T("paramcat_orbit_elements"), I18n.T("fb_inc"), "28.5"),
+                new GMATParam("RAAN", I18n.T("paramcat_orbit_elements"), I18n.T("fb_raan"), "120.0"),
+                new GMATParam("AOP", I18n.T("paramcat_orbit_elements"), I18n.T("fb_aop"), "45.0"),
+                new GMATParam("TA", I18n.T("paramcat_orbit_elements"), I18n.T("fb_ta"), "180.0"),
+                new GMATParam("Altitude", I18n.T("paramcat_dist_altitude"), I18n.T("fb_altitude"), "200.0"),
+                new GMATParam("RMAG", I18n.T("paramcat_dist_altitude"), I18n.T("fb_rmag"), "6578.14"),
+                new GMATParam("TotalMass", I18n.T("paramcat_mass_hardware"), I18n.T("fb_totalmass"), "7500.0"),
+                new GMATParam("DryMass", I18n.T("paramcat_mass_hardware"), I18n.T("fb_drymass"), "1500.0")
             };
 
             AllPropStopDefs = new List<PropStopDef> {
-                new PropStopDef("Time", "⏱️ 飞行秒数 (ElapsedSecs) [s]", "⏱️ 时间与历元", "s", "推进指定秒数", false, 3600.0, 1e-5),
-                new PropStopDef("Days", "📅 飞行天数 (ElapsedDays) [Day]", "⏱️ 时间与历元", "Day", "推进指定天数", false, 3.0, 1e-5),
-                new PropStopDef("Apoapsis", "🔺 远拱点 (Apoapsis)", "🪐 轨道极值与交点", "", "自动积分至远心点/远地点", true, 0.0, 1e-5),
-                new PropStopDef("Periapsis", "🔻 近拱点 (Periapsis)", "🪐 轨道极值与交点", "", "自动积分至近心点/近地点", true, 0.0, 1e-5),
-                new PropStopDef("Latitude", "🧭 赤道升降交点 (Latitude = 0°)", "🪐 轨道极值与交点", "°", "自动积分至赤道面升降交点", false, 0.0, 1e-5),
-                new PropStopDef("EarthMJ2000Eq.Z", "🧭 J2000 赤道面交点 (Z = 0 Km)", "🪐 轨道极值与交点", "Km", "自动积分至 J2000 赤道面交点", false, 0.0, 1e-5),
-                new PropStopDef("TA", "📐 真近点角 (TA) [°]", "🌐 轨道根数", "°", "真近点角 0~360°", false, 180.0, 1e-4),
-                new PropStopDef("SMA", "🌐 半长轴 (SMA) [Km]", "🌐 轨道根数", "Km", "半长轴", false, 7000.0, 0.1),
-                new PropStopDef("Altitude", "📏 距地高度 (Altitude) [Km]", "📏 空间距离与高度", "Km", "距地几何高度", false, 400.0, 0.1),
-                new PropStopDef("RMAG", "🌐 距心距离 (RMAG) [Km]", "📏 空间距离与高度", "Km", "距心模长", false, 42164.0, 0.1)
+                // 基线 3.3: 停止条件 Key 使用 GMAT 官方命名 (ElapsedSecs/ElapsedDays)
+                new PropStopDef("ElapsedSecs", I18n.T("fb_stop_elapsedsecs_name"), I18n.T("paramcat_time_epoch"), "s", I18n.T("fb_stop_elapsedsecs_desc"), false, 3600.0, 1e-5),
+                new PropStopDef("ElapsedDays", I18n.T("fb_stop_elapseddays_name"), I18n.T("paramcat_time_epoch"), "Day", I18n.T("fb_stop_elapseddays_desc"), false, 3.0, 1e-5),
+                new PropStopDef("Apoapsis", I18n.T("fb_stop_apoapsis_name"), I18n.T("paramcat_orbit_extremes"), "", I18n.T("fb_stop_apoapsis_desc"), true, 0.0, 1e-5),
+                new PropStopDef("Periapsis", I18n.T("fb_stop_periapsis_name"), I18n.T("paramcat_orbit_extremes"), "", I18n.T("fb_stop_periapsis_desc"), true, 0.0, 1e-5),
+                new PropStopDef("Latitude", I18n.T("fb_stop_latitude_name"), I18n.T("paramcat_orbit_extremes"), "°", I18n.T("fb_stop_latitude_desc"), false, 0.0, 1e-5),
+                new PropStopDef("EarthMJ2000Eq.Z", I18n.T("fb_stop_earthmj2000z_name"), I18n.T("paramcat_orbit_extremes"), "Km", I18n.T("fb_stop_earthmj2000z_desc"), false, 0.0, 1e-5),
+                new PropStopDef("TA", I18n.T("fb_stop_ta_name"), I18n.T("paramcat_orbit_elements"), "°", I18n.T("fb_stop_ta_desc"), false, 180.0, 1e-4),
+                new PropStopDef("SMA", I18n.T("fb_stop_sma_name"), I18n.T("paramcat_orbit_elements"), "Km", I18n.T("fb_stop_sma_desc"), false, 7000.0, 0.1),
+                new PropStopDef("Altitude", I18n.T("fb_stop_altitude_name"), I18n.T("paramcat_dist_altitude"), "Km", I18n.T("fb_stop_altitude_desc"), false, 400.0, 0.1),
+                new PropStopDef("RMAG", I18n.T("fb_stop_rmag_name"), I18n.T("paramcat_dist_altitude"), "Km", I18n.T("fb_stop_rmag_desc"), false, 42164.0, 0.1)
             };
         }
 
-                private static readonly Dictionary<string, string> ParameterI18nMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
-            // Orbital Extremums & Events
-            { "apoapsis", "远心点 / 远地点 (速度极小值点)" },
-            { "apo", "远心点 (速度极小值点)" },
-            { "radapo", "远心点轨道半径 (km)" },
-            { "velapoapsis", "远心点瞬时速度 (km/s)" },
-            { "periapsis", "近心点 / 近地点 (速度极大值点)" },
-            { "per", "近心点 (速度极大值点)" },
-            { "radper", "近心点轨道半径 (km)" },
-            { "velperiapsis", "近心点瞬时速度 (km/s)" },
-            { "node", "赤道升降交点 (纬度=0°)" },
-            { "ascendingnode", "升交点 (自南向北穿过赤道面)" },
-            { "descendingnode", "降交点 (自北向南穿过赤道面)" },
-            { "latitude_zero", "赤道面穿过点 (纬度=0°)" },
-            { "equatorialnode", "赤道面升降交点 (纬度=0°)" },
-
-            // Keplerian Elements
-            { "altitude", "天体几何表面高度 (km)" },
-            { "alt", "天体表面高度 (km)" },
-            { "rmag", "天体质心距离矢径模长 (km)" },
-            { "radius", "质心距离 (km)" },
-            { "sma", "轨道半长轴 (km)" },
-            { "semimajoraxis", "轨道半长轴 (km)" },
-            { "ecc", "轨道偏心率 / 离心率" },
-            { "eccentricity", "偏心率" },
-            { "inc", "轨道倾角 (°)" },
-            { "inclination", "轨道倾角 (°)" },
-            { "raan", "升交点赤经 (°)" },
-            { "aop", "近心点幅角 / 近地点角 (°)" },
-            { "argofperiapsis", "近地点/近心点幅角 (°)" },
-            { "ta", "真近点角 (°)" },
-            { "trueanomaly", "真近点角 (°)" },
-            { "ea", "偏近点角 (°)" },
-            { "eccentricanomaly", "偏近点角 (°)" },
-            { "ma", "平近点角 (°)" },
-            { "meananomaly", "平近点角 (°)" },
-            { "orbitperiod", "轨道周期 (s)" },
-            { "period", "轨道周期 (s)" },
-
-            // Brouwer Mean Elements (平均轨道根数)
-            { "brouwershortecc", "Brouwer 短期平偏心率" },
-            { "brouwershortinc", "Brouwer 短期平倾角 (°)" },
-            { "brouwershortaop", "Brouwer 短期平日心/近点角 (°)" },
-            { "brouwershortma", "Brouwer 短期平平近点角 (°)" },
-            { "brouwerlongecc", "Brouwer 长期平偏心率" },
-            { "brouwerlonginc", "Brouwer 长期平倾角 (°)" },
-            { "brouwerlongaop", "Brouwer 长期平近地点角 (°)" },
-            { "brouwerlongma", "Brouwer 长期平平近点角 (°)" },
-
-            // Equinoctial & Asymptote Elements (春分点根数与双曲线渐近线)
-            { "smadot", "半长轴时间变化率 SMA Dot (km/s)" },
-            { "incomingrha", "双曲线进入双渐近线赤经 RHA (°)" },
-            { "incomingdha", "双曲线进入双渐近线赤纬 DHA (°)" },
-            { "outgoingrha", "双曲线离开双渐近线赤经 RHA (°)" },
-            { "outgoingdha", "双曲线离开双渐近线赤纬 DHA (°)" },
-            { "hmag", "轨道比角动量模长 HMAG (km²/s)" },
-            { "directioncosinematrix", "方向余弦姿态变换矩阵 DCM" },
-            { "spadsrpscalefactorsigma", "太阳光压 SPAD 尺度因子方差" },
-
-            // Geographical & Spherical
-            { "latitude", "星下点地理纬度 Latitude (°)" },
-            { "lat", "星下点地理纬度 (°)" },
-            { "longitude", "星下点地理经度 Longitude (°)" },
-            { "lon", "星下点地理经度 (°)" },
-
-            // Time & Epochs
-            { "elapsedsecs", "任务流逝时间 (s)" },
-            { "elapseddays", "任务流逝天数 (d)" },
-            { "time", "传播积分时长 (s)" },
-            { "days", "传播积分天数 (d)" },
-            { "epoch", "绝对天文历元 (UTCGregorian)" },
-            { "utc_epoch", "绝对天文历元 (UTCGregorian)" },
-            { "utc", "世界协调时 UTC" },
-            { "utcgregorian", "格里高利历元字符串" },
-            { "a1modjulian", "A1 修正儒略日 (MJD)" },
-            { "taimodjulian", "TAI 国际原子时修正儒略日" },
-            { "utcmodjulian", "UTC 修正儒略日 (MJD)" },
-
-            // Spacecraft Mass & Hardware
-            { "totalmass", "航天器全船总质量 (kg)" },
-            { "drymass", "航天器结构干质量 (kg)" },
-            { "fuelmass", "推进剂剩余质量 (kg)" },
-            // Impulsive Burn & Maneuver Vector Elements (VNB / Cartesian)
-            { "element1", "切向速度增量 ΔV_V (km/s)" },
-            { "element2", "法向变轨增量 ΔV_N (km/s)" },
-            { "element3", "副法向/径向增量 ΔV_B (km/s)" },
-            { "element_1", "切向速度增量 ΔV_V (km/s)" },
-            { "element_2", "法向变轨增量 ΔV_N (km/s)" },
-            { "element_3", "副法向/径向增量 ΔV_B (km/s)" },
-            // Thruster Directional Cosines / Vector Steering (Aligned with Principia & VNB System)
-            { "thrustdirection1", "切向推力分量 (V: 顺行/逆行)" },
-            { "thrustdirection2", "副法向推力分量 (N: 变倾角/面外)" },
-            { "thrustdirection3", "法向/径向推力分量 (B: 径向高度微调)" },
-            { "thrust_direction1", "切向推力分量 (V: 顺行/逆行)" },
-            { "thrust_direction2", "副法向推力分量 (N: 变倾角/面外)" },
-            { "thrust_direction3", "法向/径向推力分量 (B: 径向高度微调)" },
-            { "burntime", "主发动机点火持续时长 (s)" },
-            { "duration", "机动点火时长 (s)" },
-
-            // Orbital Energy & Targeting
-            { "energy", "比轨道能量 Specific Energy (km²/s²)" },
-            { "c3energy", "逃逸特征能量 C3 Energy (km²/s²)" },
-            { "c3", "逃逸特征能量 C3 (km²/s²)" },
-            { "betaangle", "太阳光照轨道 Beta 角 (°)" },
-            { "bdott", "B 平面交会瞄准 T 轴截距 (km)" },
-            { "bdotr", "B 平面交会瞄准 R 轴截距 (km)" },
-            { "x", "笛卡尔位置 X 分量 (km)" },
-            { "y", "笛卡尔位置 Y 分量 (km)" },
-            { "z", "笛卡尔位置 Z 分量 (km)" },
-            { "vx", "笛卡尔速度 VX 分量 (km/s)" },
-            { "vy", "笛卡尔速度 VY 分量 (km/s)" },
-            { "vz", "笛卡尔速度 VZ 分量 (km/s)" },
-            { "ax", "加速度 AX (km/s²)" },
-            { "ay", "加速度 AY (km/s²)" },
-            { "az", "加速度 AZ (km/s²)" },
-            { "delta_v", "机动速度增量 ΔV (m/s)" }
-        };
-
         /// <summary>
-        /// Retrieves concise Chinese technical annotation for any parameter, stop condition, or variable.
+        /// Retrieves concise localized technical annotation for any parameter, stop condition, or variable.
         /// Handles dot-syntax paths (e.g. Sat.Earth.Apoapsis, Sat.Luna.Altitude, EarthMoonRot.Z, burntime).
+        /// Terms live in the i18n loc/*.json tables under orb_* keys.
         /// </summary>
         public static string GetParamBadgeI18n(string key) {
             if (string.IsNullOrEmpty(key)) return "";
@@ -822,12 +715,12 @@ namespace KSPGMAT {
 
             string badge = "";
             string normField = field.ToLower().Replace("_", "");
-            if (ParameterI18nMap.ContainsKey(normField)) {
-                badge = ParameterI18nMap[normField];
+            if (I18n.HasKey("orb_" + normField)) {
+                badge = I18n.T("orb_" + normField);
             } else {
-                foreach (var kv in ParameterI18nMap) {
-                    if (normField.Contains(kv.Key) || kv.Key.Contains(normField)) {
-                        badge = kv.Value;
+                foreach (var suffix in I18n.OrbKeys) {
+                    if (normField.Contains(suffix) || suffix.Contains(normField)) {
+                        badge = I18n.T("orb_" + suffix);
                         break;
                     }
                 }
@@ -849,7 +742,7 @@ namespace KSPGMAT {
                     return AllPropStopDefs[i];
                 }
             }
-            return new PropStopDef(key, key, "自定义", "", key, false, 0.0, 1e-5);
+            return new PropStopDef(key, key, I18n.T("paramcat_custom"), "", key, false, 0.0, 1e-5);
         }
 
         public static List<PropStopDef> GetStopDefsByCategory(string cat) {
@@ -883,13 +776,22 @@ namespace KSPGMAT {
         }
 
                 public static void ReloadCategories() {
+            // Fallback mode (no gmat_capabilities.json loaded): rebuild localized fallback defs so
+            // a language switch still refreshes categories/descriptions.
+            bool fallbackMode = (rawParamsCache == null || rawParamsCache.Count == 0)
+                             && (rawStopsCache == null || rawStopsCache.Count == 0);
+            if (fallbackMode) {
+                try { PopulateFallbackCore(); } catch {}
+                return;
+            }
+
             if (rawParamsCache != null && rawParamsCache.Count > 0) {
                 HashSet<string> catSet = new HashSet<string>();
                 List<GMATParam> newParams = new List<GMATParam>();
 
                 foreach (var p in rawParamsCache) {
                     string cat = (I18n.Current == I18n.Lang.EN) ? p.category_en : p.category_zh;
-                    if (string.IsNullOrEmpty(cat)) cat = p.category_zh ?? "动力学参数";
+                    if (string.IsNullOrEmpty(cat)) cat = p.category_zh ?? I18n.T("paramcat_dynamics");
                     catSet.Add(cat);
 
                     string descZh = !string.IsNullOrEmpty(p.description_zh) ? p.description_zh : (p.description ?? p.name);
@@ -919,7 +821,7 @@ namespace KSPGMAT {
 
                 foreach (var s in rawStopsCache) {
                     string cat = (I18n.Current == I18n.Lang.EN) ? s.category_en : s.category_zh;
-                    if (string.IsNullOrEmpty(cat)) cat = s.category_zh ?? "终止条件";
+                    if (string.IsNullOrEmpty(cat)) cat = s.category_zh ?? I18n.T("paramcat_stopcond");
                     stopCatSet.Add(cat);
 
                     string disp = s.name;
@@ -1355,59 +1257,59 @@ namespace KSPGMAT {
             if (registeredCommands.Count > 0) return;
 
             // 1. Burns & Thrust
-            registeredCommands.Add(new GMATCommandDef("Maneuver", "cat_burns", "💥", "脉冲机动 (Maneuver)", "Maneuver", "执行瞬间脉冲速度增量 ΔV 机动", "Executes an impulsive velocity increment maneuver"));
-            registeredCommands.Add(new GMATCommandDef("BeginFiniteBurn", "cat_burns", "🔥", "开启有限点火 (BeginFiniteBurn)", "Begin Finite Burn", "开启化学/电推进有限时长发动机推力", "Starts a finite burn engine with mass depletion"));
-            registeredCommands.Add(new GMATCommandDef("EndFiniteBurn", "cat_burns", "🛑", "关闭有限点火 (EndFiniteBurn)", "End Finite Burn", "关闭有限时长发动机推力", "Stops an active finite burn engine"));
-            registeredCommands.Add(new GMATCommandDef("BeginFileThrust", "cat_burns", "📂", "开启文件推力 (BeginFileThrust)", "Begin File Thrust", "基于推力历史数据文件执行连续推力插值", "Applies thrust interpolated from an external thrust history file"));
-            registeredCommands.Add(new GMATCommandDef("EndFileThrust", "cat_burns", "🛑", "结束文件推力 (EndFileThrust)", "End File Thrust", "结束文件推力历史插值", "Ends external file thrust interpolation"));
+            registeredCommands.Add(new GMATCommandDef("Maneuver", "cat_burns", "", "cmd_Maneuver_label", "cmd_Maneuver_tooltip"));
+            registeredCommands.Add(new GMATCommandDef("BeginFiniteBurn", "cat_burns", "", "cmd_BeginFiniteBurn_label", "cmd_BeginFiniteBurn_tooltip"));
+            registeredCommands.Add(new GMATCommandDef("EndFiniteBurn", "cat_burns", "", "cmd_EndFiniteBurn_label", "cmd_EndFiniteBurn_tooltip"));
+            registeredCommands.Add(new GMATCommandDef("BeginFileThrust", "cat_burns", "", "cmd_BeginFileThrust_label", "cmd_BeginFileThrust_tooltip"));
+            registeredCommands.Add(new GMATCommandDef("EndFileThrust", "cat_burns", "", "cmd_EndFileThrust_label", "cmd_EndFileThrust_tooltip"));
 
             // 2. Propagation
-            registeredCommands.Add(new GMATCommandDef("Propagate", "cat_prop", "🌐", "轨道积分 (Propagate)", "Propagate", "数值外推轨道状态至指定动力学终止条件", "Numerically propagates orbit state to dynamic stop conditions"));
-            registeredCommands.Add(new GMATCommandDef("Stop", "cat_prop", "⛔", "终止仿真 (Stop)", "Stop", "提前强制中止任务序列执行", "Stops mission sequence execution immediately"));
+            registeredCommands.Add(new GMATCommandDef("Propagate", "cat_prop", "", "cmd_Propagate_label", "cmd_Propagate_tooltip"));
+            registeredCommands.Add(new GMATCommandDef("Stop", "cat_prop", "", "cmd_Stop_label", "cmd_Stop_tooltip"));
 
             // 3. Targeting & Optimization
-            registeredCommands.Add(new GMATCommandDef("Target", "cat_target", "🎯", "Target 求解组 (Target)", "Target Group", "开启微分修正打靶求解器循环 (Differential Corrector)", "Opens a Differential Corrector targeter loop"));
-            registeredCommands.Add(new GMATCommandDef("Vary", "cat_target", "✏️", "待解变量 (Vary)", "Vary", "声明由求解器/优化器调整的控制变量", "Defines an independent variable for solvers/optimizers"));
-            registeredCommands.Add(new GMATCommandDef("Achieve", "cat_target", "🎯", "达成目标 (Achieve)", "Achieve Goal", "设置打靶求解的目标动力学等式约束", "Defines an equality goal constraint for Differential Corrector"));
-            registeredCommands.Add(new GMATCommandDef("EndTarget", "cat_target", "↵", "结束打靶 (EndTarget)", "End Target", "闭合微分修正器打靶循环", "Closes Differential Corrector loop"));
-            registeredCommands.Add(new GMATCommandDef("Optimize", "cat_optimize", "⚡", "Optimize 优化器 (Optimize)", "Optimize Group", "开启非线性规划优化器循环 (SQP/VF13ad/SNOPT/Fmincon)", "Opens a nonlinear optimization loop (SQP, VF13ad, SNOPT)"));
-            registeredCommands.Add(new GMATCommandDef("Minimize", "cat_optimize", "📉", "目标函数最小化 (Minimize)", "Minimize Cost", "指定优化器寻求最小化的代价函数 (如燃料消耗)", "Defines cost function to minimize (e.g. Fuel Mass Burned)"));
-            registeredCommands.Add(new GMATCommandDef("NonlinearConstraint", "cat_optimize", "⚖️", "非线性约束 (NonlinearConstraint)", "Nonlinear Constraint", "设置优化器的等式/不等式动力学约束条件", "Defines equality or inequality constraints for optimizer"));
-            registeredCommands.Add(new GMATCommandDef("EndOptimize", "cat_optimize", "↵", "结束优化 (EndOptimize)", "End Optimize", "闭合非线性规划优化循环", "Closes nonlinear optimization loop"));
+            registeredCommands.Add(new GMATCommandDef("Target", "cat_target", "", "cmd_Target_label", "cmd_Target_tooltip"));
+            registeredCommands.Add(new GMATCommandDef("Vary", "cat_target", "", "cmd_Vary_label", "cmd_Vary_tooltip"));
+            registeredCommands.Add(new GMATCommandDef("Achieve", "cat_target", "", "cmd_Achieve_label", "cmd_Achieve_tooltip"));
+            registeredCommands.Add(new GMATCommandDef("EndTarget", "cat_target", "", "cmd_EndTarget_label", "cmd_EndTarget_tooltip"));
+            registeredCommands.Add(new GMATCommandDef("Optimize", "cat_optimize", "", "cmd_Optimize_label", "cmd_Optimize_tooltip"));
+            registeredCommands.Add(new GMATCommandDef("Minimize", "cat_optimize", "", "cmd_Minimize_label", "cmd_Minimize_tooltip"));
+            registeredCommands.Add(new GMATCommandDef("NonlinearConstraint", "cat_optimize", "", "cmd_NonlinearConstraint_label", "cmd_NonlinearConstraint_tooltip"));
+            registeredCommands.Add(new GMATCommandDef("EndOptimize", "cat_optimize", "", "cmd_EndOptimize_label", "cmd_EndOptimize_tooltip"));
 
             // 4. Control Logic
-            registeredCommands.Add(new GMATCommandDef("If", "cat_control", "🔀", "If 条件分支 (If)", "If Branch", "条件分支判断 (根据动力学条件选择执行路径)", "Executes commands conditionally based on logical expression"));
-            registeredCommands.Add(new GMATCommandDef("Else", "cat_control", "🔀", "Else 分支 (Else)", "Else Branch", "条件分支可选路径", "Alternate branch for If statement"));
-            registeredCommands.Add(new GMATCommandDef("EndIf", "cat_control", "↵", "EndIf (EndIf)", "End If", "闭合条件分支结构", "Closes If/Else block"));
-            registeredCommands.Add(new GMATCommandDef("While", "cat_control", "🔁", "While 循环 (While)", "While Loop", "条件循环 (如自主周期性轨道维持)", "Repeats commands while condition remains true"));
-            registeredCommands.Add(new GMATCommandDef("EndWhile", "cat_control", "↵", "EndWhile (EndWhile)", "End While", "闭合 While 循环结构", "Closes While loop"));
-            registeredCommands.Add(new GMATCommandDef("For", "cat_control", "🔢", "For 计数循环 (For)", "For Loop", "定次计数循环 (如多圈变轨与离散网格点)", "Loops over a specified index range"));
-            registeredCommands.Add(new GMATCommandDef("EndFor", "cat_control", "↵", "EndFor (EndFor)", "End For", "闭合 For 循环结构", "Closes For loop"));
+            registeredCommands.Add(new GMATCommandDef("If", "cat_control", "", "cmd_If_label", "cmd_If_tooltip"));
+            registeredCommands.Add(new GMATCommandDef("Else", "cat_control", "", "cmd_Else_label", "cmd_Else_tooltip"));
+            registeredCommands.Add(new GMATCommandDef("EndIf", "cat_control", "", "cmd_EndIf_label", "cmd_EndIf_tooltip"));
+            registeredCommands.Add(new GMATCommandDef("While", "cat_control", "", "cmd_While_label", "cmd_While_tooltip"));
+            registeredCommands.Add(new GMATCommandDef("EndWhile", "cat_control", "", "cmd_EndWhile_label", "cmd_EndWhile_tooltip"));
+            registeredCommands.Add(new GMATCommandDef("For", "cat_control", "", "cmd_For_label", "cmd_For_tooltip"));
+            registeredCommands.Add(new GMATCommandDef("EndFor", "cat_control", "", "cmd_EndFor_label", "cmd_EndFor_tooltip"));
 
             // 5. Math & Data
-            registeredCommands.Add(new GMATCommandDef("Equation", "cat_math", "📐", "代数赋值 (Equation)", "Equation", "单行代数表达式计算与变量赋值", "Single-line algebraic equation calculation & assignment"));
-            registeredCommands.Add(new GMATCommandDef("ScriptEvent", "cat_math", "📜", "脚本事件块 (ScriptEvent)", "Script Event", "多行原生 GMAT 脚本计算与坐标重对齐块", "Multi-line native GMAT script calculation block"));
-            registeredCommands.Add(new GMATCommandDef("Set", "cat_math", "⚙️", "Set 属性设置 (Set)", "Set Property", "显式重置对象内部属性或历元", "Explicitly sets property or state on an object"));
-            registeredCommands.Add(new GMATCommandDef("Global", "cat_math", "🌍", "Global 全局声明 (Global)", "Global", "声明跨函数/跨作用域共享的全局对象", "Declares globally shared objects across scopes/functions"));
+            registeredCommands.Add(new GMATCommandDef("Equation", "cat_math", "", "cmd_Equation_label", "cmd_Equation_tooltip"));
+            registeredCommands.Add(new GMATCommandDef("ScriptEvent", "cat_math", "", "cmd_ScriptEvent_label", "cmd_ScriptEvent_tooltip"));
+            registeredCommands.Add(new GMATCommandDef("Set", "cat_math", "", "cmd_Set_label", "cmd_Set_tooltip"));
+            registeredCommands.Add(new GMATCommandDef("Global", "cat_math", "", "cmd_Global_label", "cmd_Global_tooltip"));
 
             // 6. Functions
-            registeredCommands.Add(new GMATCommandDef("CallGmatFunction", "cat_func", "📦", "调用用户函数 (CallGmatFunction)", "Call GMAT Function", "调用自定义模块化 GMAT 算法函数", "Calls a user-defined custom GMAT function script"));
-            registeredCommands.Add(new GMATCommandDef("CallBuiltinGmatFunction", "cat_func", "⚙️", "调用内置函数 (CallBuiltinGmatFunction)", "Call Builtin Function", "调用 GMAT 内置 C++ 高性能坐标/状态转换算法", "Calls native GMAT built-in C++ conversion function"));
+            registeredCommands.Add(new GMATCommandDef("CallGmatFunction", "cat_func", "", "cmd_CallGmatFunction_label", "cmd_CallGmatFunction_tooltip"));
+            registeredCommands.Add(new GMATCommandDef("CallBuiltinGmatFunction", "cat_func", "", "cmd_CallBuiltinGmatFunction_label", "cmd_CallBuiltinGmatFunction_tooltip"));
 
             // 7. Subscribers & Drawing
-            registeredCommands.Add(new GMATCommandDef("Report", "cat_report", "🧾", "状态报告 (Report)", "Report", "向 ReportFile 追加输出关键事件点动力学遥测", "Appends telemetry parameters to a designated ReportFile"));
-            registeredCommands.Add(new GMATCommandDef("Write", "cat_report", "📝", "消息写入 (Write)", "Write", "向消息窗口或日志写入格式化调试文本", "Writes formatted telemetry string to message window or log"));
-            registeredCommands.Add(new GMATCommandDef("Toggle", "cat_report", "👁️", "视窗开关 (Toggle)", "Toggle View", "动态开启/关闭指定 3D 视窗或报告数据流", "Dynamically toggles subscriber views On/Off"));
-            registeredCommands.Add(new GMATCommandDef("ClearPlot", "cat_report", "🧹", "清空绘图 (ClearPlot)", "Clear Plot", "清空指定绘图窗口的历史轨迹连线", "Clears plotted history from specified view"));
-            registeredCommands.Add(new GMATCommandDef("PenUp", "cat_report", "✏️", "抬起画笔 (PenUp)", "Pen Up", "暂停绘制轨迹 (隐藏无用滑行段)", "Pauses trajectory line drawing on specified view"));
-            registeredCommands.Add(new GMATCommandDef("PenDown", "cat_report", "🖊️", "落下画笔 (PenDown)", "Pen Down", "恢复绘制轨迹 (高亮显示关键机动段)", "Resumes trajectory line drawing on specified view"));
-            registeredCommands.Add(new GMATCommandDef("UpdateDynamicData", "cat_report", "🔄", "刷新动态数据 (UpdateDynamicData)", "Update Dynamic Data", "强制刷新绘图与动态数据缓冲区", "Forces update of dynamic plot subscribers"));
+            registeredCommands.Add(new GMATCommandDef("Report", "cat_report", "", "cmd_Report_label", "cmd_Report_tooltip"));
+            registeredCommands.Add(new GMATCommandDef("Write", "cat_report", "", "cmd_Write_label", "cmd_Write_tooltip"));
+            registeredCommands.Add(new GMATCommandDef("Toggle", "cat_report", "", "cmd_Toggle_label", "cmd_Toggle_tooltip"));
+            registeredCommands.Add(new GMATCommandDef("ClearPlot", "cat_report", "", "cmd_ClearPlot_label", "cmd_ClearPlot_tooltip"));
+            registeredCommands.Add(new GMATCommandDef("PenUp", "cat_report", "", "cmd_PenUp_label", "cmd_PenUp_tooltip"));
+            registeredCommands.Add(new GMATCommandDef("PenDown", "cat_report", "", "cmd_PenDown_label", "cmd_PenDown_tooltip"));
+            registeredCommands.Add(new GMATCommandDef("UpdateDynamicData", "cat_report", "", "cmd_UpdateDynamicData_label", "cmd_UpdateDynamicData_tooltip"));
 
             // 8. Events & Debug
-            registeredCommands.Add(new GMATCommandDef("FindEvents", "cat_events", "🔭", "空间事件查找 (FindEvents)", "Find Events", "触发高精度星蚀 EclipseLocator 或地面站 ContactLocator 查找", "Calculates eclipse shadows and ground station contact events"));
-            registeredCommands.Add(new GMATCommandDef("Breakpoint", "cat_events", "🛑", "调试断点 (Breakpoint)", "Breakpoint", "在任务序列中设置断点供交互式单步调试", "Sets an interactive breakpoint for mission debugging"));
-            registeredCommands.Add(new GMATCommandDef("CommandEcho", "cat_events", "📢", "命令回显 (CommandEcho)", "Command Echo", "控制命令行与日志逐行回显开关", "Controls command echo output to log and console"));
-            registeredCommands.Add(new GMATCommandDef("MarkPoint", "cat_events", "📍", "轨迹标记点 (MarkPoint)", "Mark Point", "在 3D 轨迹中标注特征离散点 (如星箭分离点)", "Marks a point in 3D orbit plots for significant events"));
+            registeredCommands.Add(new GMATCommandDef("FindEvents", "cat_events", "", "cmd_FindEvents_label", "cmd_FindEvents_tooltip"));
+            registeredCommands.Add(new GMATCommandDef("Breakpoint", "cat_events", "", "cmd_Breakpoint_label", "cmd_Breakpoint_tooltip"));
+            registeredCommands.Add(new GMATCommandDef("CommandEcho", "cat_events", "", "cmd_CommandEcho_label", "cmd_CommandEcho_tooltip"));
+            registeredCommands.Add(new GMATCommandDef("MarkPoint", "cat_events", "", "cmd_MarkPoint_label", "cmd_MarkPoint_tooltip"));
         }
 
         public static List<GMATCommandDef> GetAllCommands() {
@@ -1430,27 +1332,25 @@ namespace KSPGMAT {
         public string Type;
         public string CategoryKey;
         public string Icon;
-        public string DefaultLabelZh;
-        public string DefaultLabelEn;
-        public string TooltipZh;
-        public string TooltipEn;
+        /// <summary>i18n 词典键 (cmd_*_label)，标签文本存于 loc/*.json。</summary>
+        public string LabelKey;
+        /// <summary>i18n 词典键 (cmd_*_tooltip)，悬浮提示存于 loc/*.json。</summary>
+        public string TooltipKey;
 
-        public GMATCommandDef(string type, string cat, string icon, string lblZh, string lblEn, string tipZh, string tipEn) {
+        public GMATCommandDef(string type, string cat, string icon, string labelKey, string tooltipKey) {
             Type = type;
             CategoryKey = cat;
             Icon = icon;
-            DefaultLabelZh = lblZh;
-            DefaultLabelEn = lblEn;
-            TooltipZh = tipZh;
-            TooltipEn = tipEn;
+            LabelKey = labelKey;
+            TooltipKey = tooltipKey;
         }
 
         public string GetLocalizedLabel() {
-            return I18n.Current == I18n.Lang.EN ? DefaultLabelEn : DefaultLabelZh;
+            return I18n.T(LabelKey);
         }
 
         public string GetLocalizedTooltip() {
-            return I18n.Current == I18n.Lang.EN ? TooltipEn : TooltipZh;
+            return I18n.T(TooltipKey);
         }
     }
 }

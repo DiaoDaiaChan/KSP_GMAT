@@ -19,7 +19,7 @@ namespace KSPGMAT.Service {
                 try {
                     if (currentRunningProcess != null && !currentRunningProcess.HasExited) {
                         currentRunningProcess.Kill();
-                        KSPGMATLog.Warn("🛑 User aborted GmatConsole execution process.");
+                        KSPGMATLog.Warn("User aborted GmatConsole execution process.");
                     }
                 } catch (Exception ex) {
                     KSPGMATLog.Warn($"Process kill exception: {ex.Message}");
@@ -115,7 +115,7 @@ namespace KSPGMAT.Service {
                         }
 
                         sw.Stop();
-                        KSPGMATLog.Info($"⚡ GmatConsole finished in {sw.ElapsedMilliseconds} ms (ExitCode: {exitCode}, Script: mission_{timestamp}.script)");
+                        KSPGMATLog.Info($"GmatConsole finished in {sw.ElapsedMilliseconds} ms (ExitCode: {exitCode}, Script: mission_{timestamp}.script)");
 
                         var result = GMATSolutionMapper.ParseAndMapResult(stdout, stderr, exitCode, reportFile, outputDir, originalSteps, scriptContent, scriptFile);
 

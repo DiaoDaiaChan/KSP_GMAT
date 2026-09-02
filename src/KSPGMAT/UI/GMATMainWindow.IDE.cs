@@ -15,7 +15,7 @@ namespace KSPGMAT.UI {
             isPropagating = true;
             solveStartTime = Time.realtimeSinceStartup;
             solveProgress = 0.05f;
-            solveStageText = "1/4 正在序列化物理状态与航天器资源...";
+            solveStageText = I18n.T("solve_stage_serialize");
 
             List<StageData> selectedStages = GetSelectedStagesList();
             ROEngineInfo selectedEngine = GetDefaultOrActiveEngine();
@@ -32,7 +32,7 @@ namespace KSPGMAT.UI {
                 latestResult = result;
                 SyncSolvedValuesToSequence(result);
                 if (success && result != null) {
-                    syncStatusMessage = $"✅ GMAT 物理求解收敛成功！耗时: {solveTotalTime:F2}s";
+                    syncStatusMessage = I18n.Format("solve_success_msg", solveTotalTime);
                     if (result.trajectory != null && result.trajectory.Count > 0) {
                         simulationTexture = GMATOrbitCanvas.RenderTrajectoryTexture(result.trajectory, cBody);
                     }
@@ -40,7 +40,8 @@ namespace KSPGMAT.UI {
                         activeTab = 3; // Switch to Results tab
                     }
                 } else {
-                    syncStatusMessage = $"❌ 求解未收敛: {(result != null ? (result.error ?? "未知错误") : "通信异常")}";
+                    string errInner = (result != null ? (result.error ?? I18n.T("solve_unknown_error")) : I18n.T("solve_comm_error"));
+                    syncStatusMessage = I18n.Format("solve_not_converged", errInner);
                 }
             });
         }

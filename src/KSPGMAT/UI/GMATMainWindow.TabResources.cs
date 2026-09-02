@@ -43,20 +43,20 @@ namespace KSPGMAT.UI {
             // Folder Categories Bar (Matching Official GMAT Desktop Tree)
             GUILayout.BeginVertical(cardBoxStyle);
             GUILayout.BeginHorizontal();
-            GUILayout.Label("<color=#38bdf8><b>📁 GMAT 原生资源配置树 (Resources Explorer)</b></color>", headerStyle);
+            GUILayout.Label(I18n.T("res_explorer_header"), headerStyle);
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button("🔄 刷新飞船数据", secondaryButtonStyle, GUILayout.Height(20))) {
+            if (GUILayout.Button(I18n.T("btn_refresh_vessel"), secondaryButtonStyle, GUILayout.Height(20))) {
                 cachedEngines = ROEngineInterop.ScanVesselEngines(vessel);
                 cachedTanks = ROEngineInterop.ScanVesselTanks(vessel);
-                ScreenMessages.PostScreenMessage("✅ 已重新抓取当前飞船推进硬件与储罐数据！", 2.0f, ScreenMessageStyle.UPPER_CENTER);
+                ScreenMessages.PostScreenMessage(I18n.T("res_refreshed"), 2.0f, ScreenMessageStyle.UPPER_CENTER);
             }
             GUILayout.EndHorizontal();
             GUILayout.Space(4);
 
             string[] treeCategories = new string[] {
-                "🛰️ 航天器", "🔧 硬件储罐/引擎", "🔥 点火对象",
-                "🌐 传播子", "📐 坐标系", "⚡ 求解器",
-                "📊 输出与报告", "🔢 变量/数组/字符串", "🌌 空间事件"
+                I18n.T("rescat_craft"), I18n.T("rescat_hw"), I18n.T("rescat_burns"),
+                I18n.T("rescat_prop"), I18n.T("rescat_coord"), I18n.T("rescat_solver"),
+                I18n.T("rescat_output"), I18n.T("rescat_var"), I18n.T("rescat_event")
             };
 
             GUILayout.BeginHorizontal();
@@ -86,9 +86,9 @@ namespace KSPGMAT.UI {
             if (valAlerts != null && valAlerts.Count > 0) {
                 GUILayout.BeginVertical(nestedCardBoxStyle);
                 GUILayout.BeginHorizontal();
-                GUILayout.Label($"<color=#f87171><b>🛡️ GMAT 状态校验器检测到 {valAlerts.Count} 处无效参数并已自动恢复缺省值:</b></color>", labelValueStyle);
+                GUILayout.Label(I18n.ColorFormat("res_validation", valAlerts.Count), labelValueStyle);
                 GUILayout.FlexibleSpace();
-                if (GUILayout.Button("✕ 忽略", secondaryButtonStyle, GUILayout.Width(50), GUILayout.Height(18))) {
+                if (GUILayout.Button(I18n.T("btn_dismiss"), secondaryButtonStyle, GUILayout.Width(50), GUILayout.Height(18))) {
                     valAlerts.Clear();
                 }
                 GUILayout.EndHorizontal();
@@ -107,11 +107,11 @@ namespace KSPGMAT.UI {
             if (selectedResourceCategory == 0) {
                 GUILayout.BeginVertical(cardBoxStyle);
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("<color=#38bdf8><b>🛰️ Spacecraft 航天器原生对象 (Sat):</b></color>", headerStyle);
+                GUILayout.Label(I18n.T("res_sc_header"), headerStyle);
                 GUILayout.FlexibleSpace();
-                if (GUILayout.Button("🔄 飞船物理状态同步", secondaryButtonStyle, GUILayout.Height(20))) {
+                if (GUILayout.Button(I18n.T("btn_sync_state"), secondaryButtonStyle, GUILayout.Height(20))) {
                     GMATStateManager.Current.SyncFromVessel(vessel);
-                    ScreenMessages.PostScreenMessage("🔄 已从当前飞船全量同步动力学与硬件物理状态！", 2.0f, ScreenMessageStyle.UPPER_CENTER);
+                    ScreenMessages.PostScreenMessage(I18n.T("res_sc_synced"), 2.0f, ScreenMessageStyle.UPPER_CENTER);
                 }
                 GUILayout.EndHorizontal();
                 GUILayout.Space(4);
@@ -119,45 +119,45 @@ namespace KSPGMAT.UI {
                 var scModel = GMATStateManager.Current.Spacecraft;
 
                 GUILayout.BeginVertical(nestedCardBoxStyle);
-                GUILayout.Label("<color=#facc15><b>⚙️ 坐标系与时间历元配置:</b></color>", subHeaderStyle);
+                GUILayout.Label(I18n.T("res_sc_coord_header"), subHeaderStyle);
                 GUILayout.Space(2);
                 GUILayout.BeginHorizontal();
-                scModel.DateFormat = DrawTextField("时间格式 (DateFormat):", scModel.DateFormat ?? "UTCGregorian", 160, 130);
-                scModel.CoordinateSystem = DrawTextField("主坐标系 (CoordinateSystem):", scModel.CoordinateSystem ?? "EarthMJ2000Eq", 180, 140);
+                scModel.DateFormat = DrawTextField(I18n.T("res_sc_dateformat"), scModel.DateFormat ?? "UTCGregorian", 160, 130);
+                scModel.CoordinateSystem = DrawTextField(I18n.T("res_sc_coordsys"), scModel.CoordinateSystem ?? "EarthMJ2000Eq", 180, 140);
                 GUILayout.EndHorizontal();
                 GUILayout.BeginHorizontal();
-                scModel.DisplayStateType = DrawTextField("状态表示法 (DisplayStateType):", scModel.DisplayStateType ?? "Cartesian", 160, 130);
+                scModel.DisplayStateType = DrawTextField(I18n.T("res_sc_state_type"), scModel.DisplayStateType ?? "Cartesian", 160, 130);
                 GUILayout.EndHorizontal();
                 GUILayout.EndVertical();
 
                 GUILayout.Space(4);
                 GUILayout.BeginVertical(nestedCardBoxStyle);
-                GUILayout.Label("<color=#facc15><b>⚖️ 航天器物理质量与气动/光压参数:</b></color>", subHeaderStyle);
+                GUILayout.Label(I18n.T("res_sc_mass_header"), subHeaderStyle);
                 GUILayout.Space(2);
                 double effDryMass = scModel.DryMassKg > 0 ? scModel.DryMassKg : totalDryMassKg;
                 GUILayout.BeginHorizontal();
-                double newDry = DrawDoubleField("干重 DryMass (kg):", effDryMass, 140, 100, "F2", "sc_dry_mass");
+                double newDry = DrawDoubleField(I18n.T("res_sc_dry"), effDryMass, 140, 100, "F2", "sc_dry_mass");
                 if (newDry != effDryMass) scModel.DryMassKg = newDry;
-                GUILayout.Label($"燃料质量 FuelMass: <b>{totalFuelMassKg:F1} kg</b>", labelValueStyle, GUILayout.Width(180));
-                GUILayout.Label($"总湿重 WetMass: <b>{(effDryMass + totalFuelMassKg):F1} kg</b>", labelValueStyle);
+                GUILayout.Label(I18n.ColorFormat("res_sc_fuel", totalFuelMassKg), labelValueStyle, GUILayout.Width(180));
+                GUILayout.Label(I18n.ColorFormat("res_sc_wet", effDryMass + totalFuelMassKg), labelValueStyle);
                 GUILayout.EndHorizontal();
 
                 GUILayout.BeginHorizontal();
-                scModel.DragArea = DrawDoubleField("迎风面积 DragArea (m²):", scModel.DragArea, 140, 100, "F2", "sc_drag_area");
-                scModel.Cd = DrawDoubleField("阻力系数 Cd:", scModel.Cd, 100, 70, "F2", "sc_cd");
-                scModel.Cr = DrawDoubleField("光压系数 Cr:", scModel.Cr, 100, 70, "F2", "sc_cr");
-                scModel.SRPArea = DrawDoubleField("光压面积 SRPArea (m²):", scModel.SRPArea, 140, 70, "F2", "sc_srp_area");
+                scModel.DragArea = DrawDoubleField(I18n.T("res_sc_dragarea"), scModel.DragArea, 140, 100, "F2", "sc_drag_area");
+                scModel.Cd = DrawDoubleField(I18n.T("res_sc_cd"), scModel.Cd, 100, 70, "F2", "sc_cd");
+                scModel.Cr = DrawDoubleField(I18n.T("res_sc_cr"), scModel.Cr, 100, 70, "F2", "sc_cr");
+                scModel.SRPArea = DrawDoubleField(I18n.T("res_sc_srparea"), scModel.SRPArea, 140, 70, "F2", "sc_srp_area");
                 GUILayout.EndHorizontal();
                 GUILayout.EndVertical();
 
                 GUILayout.Space(4);
                 GUILayout.BeginVertical(nestedCardBoxStyle);
-                GUILayout.Label("<color=#facc15><b>🔗 挂载硬件摘要 (Hardware Bindings):</b></color>", subHeaderStyle);
+                GUILayout.Label(I18n.T("res_sc_hw_header"), subHeaderStyle);
                 List<string> attachedTkNames = GMATStateManager.Current.GetAttachedTankIds();
                 List<string> attachedEngNames = GMATStateManager.Current.GetAttachedThrusterIds();
 
-                GUILayout.Label($"挂载储罐: <b>{{{string.Join(", ", attachedTkNames.ToArray())}}}</b>", labelValueStyle);
-                GUILayout.Label($"挂载推力器: <b>{{{string.Join(", ", attachedEngNames.ToArray())}}}</b>", labelValueStyle);
+                GUILayout.Label(I18n.ColorFormat("res_sc_tanks", string.Join(", ", attachedTkNames.ToArray())), labelValueStyle);
+                GUILayout.Label(I18n.ColorFormat("res_sc_thrusters", string.Join(", ", attachedEngNames.ToArray())), labelValueStyle);
                 GUILayout.EndVertical();
 
                 GUILayout.EndVertical();
@@ -169,9 +169,9 @@ namespace KSPGMAT.UI {
             else if (selectedResourceCategory == 1) {
                 GUILayout.BeginVertical(cardBoxStyle);
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("<color=#38bdf8><b>🔧 Hardware 推进储罐与发动机硬件:</b></color>", headerStyle);
+                GUILayout.Label(I18n.T("res_hw_header"), headerStyle);
                 GUILayout.FlexibleSpace();
-                if (GUILayout.Button("➕ 新建储罐", actionButtonStyle, GUILayout.Height(20))) {
+                if (GUILayout.Button(I18n.T("btn_new_tank"), actionButtonStyle, GUILayout.Height(20))) {
                     int tkIdx = GMATStateManager.Current.Tanks.Count;
                     GMATStateManager.Current.Tanks.Add(new GMATTankModel {
                         Id = $"Tank{tkIdx}",
@@ -182,7 +182,7 @@ namespace KSPGMAT.UI {
                     });
                 }
                 GUILayout.Space(4);
-                if (GUILayout.Button("➕ 新建推力器", actionButtonStyle, GUILayout.Height(20))) {
+                if (GUILayout.Button(I18n.T("btn_new_thruster"), actionButtonStyle, GUILayout.Height(20))) {
                     int egIdx = GMATStateManager.Current.Thrusters.Count + 1;
                     string defTk = GMATStateManager.Current.Tanks.Count > 0 ? GMATStateManager.Current.Tanks[0].Id : "Tank0";
                     GMATStateManager.Current.Thrusters.Add(new GMATThrusterModel {
@@ -197,17 +197,17 @@ namespace KSPGMAT.UI {
                 GUILayout.EndHorizontal();
                 GUILayout.Space(4);
 
-                GUILayout.Label("<color=#facc15><b>⛽ Chemical Tanks 推进储罐列表:</b></color>", subHeaderStyle);
+                GUILayout.Label(I18n.T("res_tanks_header"), subHeaderStyle);
                 var curTanks = GMATStateManager.Current.Tanks;
                 if (curTanks != null && curTanks.Count > 0) {
                     for (int tk = 0; tk < curTanks.Count; tk++) {
                         var tnk = curTanks[tk];
                         GUILayout.BeginVertical(nestedCardBoxStyle);
                         GUILayout.BeginHorizontal();
-                        tnk.Id = DrawTextField("<color=#facc15><b>储罐 ID:</b></color>", tnk.Id, 70, 100);
-                        tnk.StageNumber = DrawIntField("分级 (Stage):", tnk.StageNumber, 80, 35);
+                        tnk.Id = DrawTextField(I18n.T("res_tank_id"), tnk.Id, 70, 100);
+                        tnk.StageNumber = DrawIntField(I18n.T("res_tank_stage"), tnk.StageNumber, 80, 35);
                         GUILayout.FlexibleSpace();
-                        if (GUILayout.Button("❌ 删除", deleteButtonStyle, GUILayout.Height(18), GUILayout.Width(50))) {
+                        if (GUILayout.Button(I18n.T("btn_delete_small"), deleteButtonStyle, GUILayout.Height(18), GUILayout.Width(50))) {
                             curTanks.RemoveAt(tk);
                             tk--;
                             GUILayout.EndHorizontal();
@@ -217,30 +217,30 @@ namespace KSPGMAT.UI {
                         GUILayout.EndHorizontal();
 
                         GUILayout.BeginHorizontal();
-                        tnk.FuelMassKg = DrawDoubleField("燃料质量 (kg):", tnk.FuelMassKg, 90, 80, "F2", $"tank_fuel_{tk}_{tnk.Id}");
-                        tnk.DryMassKg = DrawDoubleField("结构干重 (kg):", tnk.DryMassKg, 90, 70, "F2", $"tank_dry_{tk}_{tnk.Id}");
-                        tnk.VolumeM3 = DrawDoubleField("容积 (m³):", tnk.VolumeM3, 70, 60, "F3", $"tank_vol_{tk}_{tnk.Id}");
+                        tnk.FuelMassKg = DrawDoubleField(I18n.T("res_tank_fuel"), tnk.FuelMassKg, 90, 80, "F2", $"tank_fuel_{tk}_{tnk.Id}");
+                        tnk.DryMassKg = DrawDoubleField(I18n.T("res_tank_dry"), tnk.DryMassKg, 90, 70, "F2", $"tank_dry_{tk}_{tnk.Id}");
+                        tnk.VolumeM3 = DrawDoubleField(I18n.T("res_tank_vol"), tnk.VolumeM3, 70, 60, "F3", $"tank_vol_{tk}_{tnk.Id}");
                         GUILayout.FlexibleSpace();
                         GUILayout.EndHorizontal();
                         GUILayout.EndVertical();
                         GUILayout.Space(2);
                     }
                 } else {
-                    GUILayout.Label("<color=#64748b><i>暂无储罐对象，点击上方「➕ 新建储罐」添加。</i></color>", labelValueStyle);
+                    GUILayout.Label(I18n.T("res_tank_empty"), labelValueStyle);
                 }
 
                 GUILayout.Space(6);
-                GUILayout.Label("<color=#38bdf8><b>🚀 Chemical Thrusters 发动机推力器列表:</b></color>", subHeaderStyle);
+                GUILayout.Label(I18n.T("res_thr_header"), subHeaderStyle);
                 var curThrusters = GMATStateManager.Current.Thrusters;
                 if (curThrusters != null && curThrusters.Count > 0) {
                     for (int eg = 0; eg < curThrusters.Count; eg++) {
                         var eng = curThrusters[eg];
                         GUILayout.BeginVertical(nestedCardBoxStyle);
                         GUILayout.BeginHorizontal();
-                        eng.Id = DrawTextField("<color=#34d399><b>推力器 ID:</b></color>", eng.Id, 85, 140);
-                        eng.StageNumber = DrawIntField("所属分级:", eng.StageNumber, 75, 35);
+                        eng.Id = DrawTextField(I18n.T("res_thr_id"), eng.Id, 85, 140);
+                        eng.StageNumber = DrawIntField(I18n.T("res_thr_stage"), eng.StageNumber, 75, 35);
                         GUILayout.FlexibleSpace();
-                        if (GUILayout.Button("❌ 删除", deleteButtonStyle, GUILayout.Height(18), GUILayout.Width(50))) {
+                        if (GUILayout.Button(I18n.T("btn_delete_small"), deleteButtonStyle, GUILayout.Height(18), GUILayout.Width(50))) {
                             curThrusters.RemoveAt(eg);
                             eg--;
                             GUILayout.EndHorizontal();
@@ -250,13 +250,13 @@ namespace KSPGMAT.UI {
                         GUILayout.EndHorizontal();
 
                         GUILayout.BeginHorizontal();
-                        eng.ThrustKN = DrawDoubleField("真空推力 (kN):", eng.ThrustKN, 95, 75, "F2", $"thr_thrust_{eg}_{eng.Id}");
-                        eng.IspVac = DrawDoubleField("真空比冲 (s):", eng.IspVac, 85, 65, "F1", $"thr_isp_{eg}_{eng.Id}");
+                        eng.ThrustKN = DrawDoubleField(I18n.T("res_thr_thrust"), eng.ThrustKN, 95, 75, "F2", $"thr_thrust_{eg}_{eng.Id}");
+                        eng.IspVac = DrawDoubleField(I18n.T("res_thr_isp"), eng.IspVac, 85, 65, "F1", $"thr_isp_{eg}_{eng.Id}");
                         
                         // Bound Tank Switcher
-                        GUILayout.Label($"供油储罐: <b>{{{eng.BoundTankId}}}</b>", labelValueStyle, GUILayout.Width(130));
+                        GUILayout.Label(I18n.ColorFormat("res_thr_bound_tank", eng.BoundTankId), labelValueStyle, GUILayout.Width(130));
                         if (curTanks.Count > 1) {
-                            if (GUILayout.Button("切换", secondaryButtonStyle, GUILayout.Height(18), GUILayout.Width(45))) {
+                            if (GUILayout.Button(I18n.T("btn_switch"), secondaryButtonStyle, GUILayout.Height(18), GUILayout.Width(45))) {
                                 int curTkIdx = curTanks.FindIndex(t => t.Id == eng.BoundTankId);
                                 int nextTkIdx = (curTkIdx + 1) % curTanks.Count;
                                 eng.BoundTankId = curTanks[nextTkIdx].Id;
@@ -268,7 +268,7 @@ namespace KSPGMAT.UI {
                         GUILayout.Space(2);
                     }
                 } else {
-                    GUILayout.Label("<color=#64748b><i>暂无推力器对象，点击上方「➕ 新建推力器」添加。</i></color>", labelValueStyle);
+                    GUILayout.Label(I18n.T("res_thr_empty"), labelValueStyle);
                 }
 
                 GUILayout.EndVertical();
@@ -280,9 +280,9 @@ namespace KSPGMAT.UI {
             else if (selectedResourceCategory == 2) {
                 GUILayout.BeginVertical(cardBoxStyle);
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("<color=#38bdf8><b>🔥 Burns 点火机动对象:</b></color>", headerStyle);
+                GUILayout.Label(I18n.T("res_burns_header"), headerStyle);
                 GUILayout.FlexibleSpace();
-                if (GUILayout.Button("➕ 新增脉冲点火 (Impulsive)", actionButtonStyle, GUILayout.Height(20))) {
+                if (GUILayout.Button(I18n.T("btn_add_impulsive"), actionButtonStyle, GUILayout.Height(20))) {
                     GMATStateManager.Current.Burns.Add(new Model.GMATBurnModel {
                         Name = $"Impulsive{GMATStateManager.Current.Burns.Count + 1}",
                         Origin = "Earth",
@@ -294,7 +294,7 @@ namespace KSPGMAT.UI {
                 GUILayout.EndHorizontal();
                 GUILayout.Space(4);
 
-                GUILayout.Label("<color=#f97316><b>🔥 FiniteBurns 有限推力机动列表 (与任务序列同步):</b></color>", subHeaderStyle);
+                GUILayout.Label(I18n.T("res_fb_header"), subHeaderStyle);
                 bool hasBurns = false;
                 for (int i = 0; i < missionSequence.Count; i++) {
                     var st = missionSequence[i];
@@ -304,16 +304,16 @@ namespace KSPGMAT.UI {
                         string boundEng = string.IsNullOrEmpty(st.bound_thruster) ? (cachedEngines != null && cachedEngines.Count > 0 ? GMATParameterRegistry.SanitizeGmatIdentifier(cachedEngines[0].title, "Engine") : "MainEngine") : st.bound_thruster;
                         GUILayout.BeginVertical(nestedCardBoxStyle);
                         GUILayout.BeginHorizontal();
-                        st.burn_name = DrawTextField("<color=#f97316><b>点火对象名:</b></color>", bName, 90, 140);
-                        st.bound_thruster = DrawTextField("绑定推力器:", boundEng, 90, 140);
+                        st.burn_name = DrawTextField(I18n.T("res_fb_name"), bName, 90, 140);
+                        st.bound_thruster = DrawTextField(I18n.T("res_fb_thruster"), boundEng, 90, 140);
                         GUILayout.FlexibleSpace();
                         GUILayout.EndHorizontal();
 
                         GUILayout.BeginHorizontal();
-                        st.burn_direction = DrawTextField("点火方向模式:", st.burn_direction, 100, 100);
-                        st.thrust_dir1 = DrawDoubleField("V(向):", st.thrust_dir1, 50, 50, "F3", $"fb_v_{i}_{st.burn_name}");
-                        st.thrust_dir2 = DrawDoubleField("N(法):", st.thrust_dir2, 50, 50, "F3", $"fb_n_{i}_{st.burn_name}");
-                        st.thrust_dir3 = DrawDoubleField("B(径):", st.thrust_dir3, 50, 50, "F3", $"fb_b_{i}_{st.burn_name}");
+                        st.burn_direction = DrawTextField(I18n.T("res_fb_direction"), st.burn_direction, 100, 100);
+                        st.thrust_dir1 = DrawDoubleField(I18n.T("res_fb_v"), st.thrust_dir1, 50, 50, "F3", $"fb_v_{i}_{st.burn_name}");
+                        st.thrust_dir2 = DrawDoubleField(I18n.T("res_fb_n"), st.thrust_dir2, 50, 50, "F3", $"fb_n_{i}_{st.burn_name}");
+                        st.thrust_dir3 = DrawDoubleField(I18n.T("res_fb_b"), st.thrust_dir3, 50, 50, "F3", $"fb_b_{i}_{st.burn_name}");
                         GUILayout.FlexibleSpace();
                         GUILayout.EndHorizontal();
                         GUILayout.EndVertical();
@@ -321,22 +321,22 @@ namespace KSPGMAT.UI {
                     }
                 }
                 if (!hasBurns) {
-                    GUILayout.Label("<color=#64748b><i>当前任务序列中暂无 FiniteBurn 有限推力机动对象。</i></color>", labelValueStyle);
+                    GUILayout.Label(I18n.T("res_fb_empty"), labelValueStyle);
                 }
 
                 GUILayout.Space(6);
-                GUILayout.Label("<color=#ef4444><b>💥 ImpulsiveBurns 脉冲机动列表 (瞬时速度增量):</b></color>", subHeaderStyle);
+                GUILayout.Label(I18n.T("res_imp_header"), subHeaderStyle);
                 var impulsiveBurns = GMATStateManager.Current.Burns;
                 if (impulsiveBurns != null && impulsiveBurns.Count > 0) {
                     for (int ib = 0; ib < impulsiveBurns.Count; ib++) {
                         var imp = impulsiveBurns[ib];
                         GUILayout.BeginVertical(nestedCardBoxStyle);
                         GUILayout.BeginHorizontal();
-                        imp.Name = DrawTextField("<color=#ef4444><b>机动名称:</b></color>", imp.Name, 80, 120);
-                        imp.Origin = DrawTextField("中心天体:", imp.Origin, 70, 80);
-                        imp.Axes = DrawTextField("参考坐标系:", imp.Axes, 80, 80);
+                        imp.Name = DrawTextField(I18n.T("res_imp_name"), imp.Name, 80, 120);
+                        imp.Origin = DrawTextField(I18n.T("res_imp_origin"), imp.Origin, 70, 80);
+                        imp.Axes = DrawTextField(I18n.T("res_imp_axes"), imp.Axes, 80, 80);
                         GUILayout.FlexibleSpace();
-                        if (GUILayout.Button("❌ 删除", deleteButtonStyle, GUILayout.Height(18), GUILayout.Width(50))) {
+                        if (GUILayout.Button(I18n.T("btn_delete_small"), deleteButtonStyle, GUILayout.Height(18), GUILayout.Width(50))) {
                             impulsiveBurns.RemoveAt(ib);
                             ib--;
                             GUILayout.EndHorizontal();
@@ -346,17 +346,17 @@ namespace KSPGMAT.UI {
                         GUILayout.EndHorizontal();
 
                         GUILayout.BeginHorizontal();
-                        imp.Element1 = DrawDoubleField("ΔV1 (km/s):", imp.Element1, 80, 60, "F4", $"imp_v1_{ib}_{imp.Name}");
-                        imp.Element2 = DrawDoubleField("ΔV2 (km/s):", imp.Element2, 80, 60, "F4", $"imp_v2_{ib}_{imp.Name}");
-                        imp.Element3 = DrawDoubleField("ΔV3 (km/s):", imp.Element3, 80, 60, "F4", $"imp_v3_{ib}_{imp.Name}");
-                        imp.Isp = DrawDoubleField("比冲 (s):", imp.Isp, 60, 60, "F1", $"imp_isp_{ib}_{imp.Name}");
+                        imp.Element1 = DrawDoubleField(I18n.T("res_imp_dv1"), imp.Element1, 80, 60, "F4", $"imp_v1_{ib}_{imp.Name}");
+                        imp.Element2 = DrawDoubleField(I18n.T("res_imp_dv2"), imp.Element2, 80, 60, "F4", $"imp_v2_{ib}_{imp.Name}");
+                        imp.Element3 = DrawDoubleField(I18n.T("res_imp_dv3"), imp.Element3, 80, 60, "F4", $"imp_v3_{ib}_{imp.Name}");
+                        imp.Isp = DrawDoubleField(I18n.T("res_imp_isp"), imp.Isp, 60, 60, "F1", $"imp_isp_{ib}_{imp.Name}");
                         GUILayout.FlexibleSpace();
                         GUILayout.EndHorizontal();
                         GUILayout.EndVertical();
                         GUILayout.Space(2);
                     }
                 } else {
-                    GUILayout.Label("<color=#64748b><i>暂无脉冲点火对象，点击上方「➕ 新增脉冲点火」添加。</i></color>", labelValueStyle);
+                    GUILayout.Label(I18n.T("res_imp_empty"), labelValueStyle);
                 }
 
                 GUILayout.EndVertical();
@@ -368,9 +368,9 @@ namespace KSPGMAT.UI {
             else if (selectedResourceCategory == 3) {
                 GUILayout.BeginVertical(cardBoxStyle);
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("<color=#38bdf8><b>🌐 Propagators 轨道积分器与力模型管理器:</b></color>", headerStyle);
+                GUILayout.Label(I18n.T("res_prop_header"), headerStyle);
                 GUILayout.FlexibleSpace();
-                if (GUILayout.Button("➕ 新建传播子", actionButtonStyle, GUILayout.Height(20))) {
+                if (GUILayout.Button(I18n.T("btn_new_prop2"), actionButtonStyle, GUILayout.Height(20))) {
                     string newKey = $"CustomProp_{propagatorConfigs.Count + 1}";
                     propagatorConfigs[newKey] = new PropagatorConfig {
                         integratorType = "RungeKutta89",
@@ -392,14 +392,14 @@ namespace KSPGMAT.UI {
                     var cfg = propagatorConfigs[pKey];
                     GUILayout.BeginVertical(nestedCardBoxStyle);
                     GUILayout.BeginHorizontal();
-                    GUILayout.Label($"<color=#38bdf8><b>🌐 Create Propagator {pKey};</b></color>", labelValueStyle);
+                    GUILayout.Label(I18n.ColorFormat("res_prop_item", pKey), labelValueStyle);
                     GUILayout.FlexibleSpace();
-                    if (GUILayout.Button("⚙️ 高级力模型配置", secondaryButtonStyle, GUILayout.Height(18))) {
+                    if (GUILayout.Button(I18n.T("btn_force_model"), secondaryButtonStyle, GUILayout.Height(18))) {
                         selectedPropagatorKey = pKey;
                         showPropagatorConfigWindow = true;
                     }
                     if (pKeys.Count > 1) {
-                        if (GUILayout.Button("❌ 删除", deleteButtonStyle, GUILayout.Height(18), GUILayout.Width(50))) {
+                        if (GUILayout.Button(I18n.T("btn_delete_small"), deleteButtonStyle, GUILayout.Height(18), GUILayout.Width(50))) {
                             propagatorConfigs.Remove(pKey);
                             GUILayout.EndHorizontal();
                             GUILayout.EndVertical();
@@ -409,18 +409,18 @@ namespace KSPGMAT.UI {
                     GUILayout.EndHorizontal();
 
                     GUILayout.BeginHorizontal();
-                    cfg.integratorType = DrawTextField("积分器类型:", cfg.integratorType, 80, 130);
-                    cfg.accuracy = DrawDoubleField("精度/容差:", cfg.accuracy, 80, 90, "E2", $"prop_acc_{pKey}");
-                    cfg.minStep = DrawDoubleField("最小步长(s):", cfg.minStep, 90, 60, "F3", $"prop_min_{pKey}");
-                    cfg.maxStep = DrawDoubleField("最大步长(s):", cfg.maxStep, 90, 70, "F1", $"prop_max_{pKey}");
+                    cfg.integratorType = DrawTextField(I18n.T("res_prop_integrator"), cfg.integratorType, 80, 130);
+                    cfg.accuracy = DrawDoubleField(I18n.T("res_prop_accuracy"), cfg.accuracy, 80, 90, "E2", $"prop_acc_{pKey}");
+                    cfg.minStep = DrawDoubleField(I18n.T("res_prop_min"), cfg.minStep, 90, 60, "F3", $"prop_min_{pKey}");
+                    cfg.maxStep = DrawDoubleField(I18n.T("res_prop_max"), cfg.maxStep, 90, 70, "F1", $"prop_max_{pKey}");
                     GUILayout.FlexibleSpace();
                     GUILayout.EndHorizontal();
 
                     GUILayout.BeginHorizontal();
-                    cfg.centralBody = DrawTextField("主引力天体:", cfg.centralBody, 80, 80);
-                    cfg.gravityModel = DrawTextField("引力场模型:", cfg.gravityModel, 80, 80);
-                    cfg.dragAtmosphereModel = DrawTextField("大气模型:", cfg.dragAtmosphereModel, 70, 90);
-                    GUILayout.Label($"光压 (SRP): <b>{(cfg.enableSRP ? "开启" : "关闭")}</b>", labelValueStyle, GUILayout.Width(100));
+                    cfg.centralBody = DrawTextField(I18n.T("res_prop_central"), cfg.centralBody, 80, 80);
+                    cfg.gravityModel = DrawTextField(I18n.T("res_prop_gravity"), cfg.gravityModel, 80, 80);
+                    cfg.dragAtmosphereModel = DrawTextField(I18n.T("res_prop_atmo"), cfg.dragAtmosphereModel, 70, 90);
+                    GUILayout.Label(I18n.ColorFormat("res_prop_srp", cfg.enableSRP ? I18n.T("res_prop_on") : I18n.T("res_prop_off")), labelValueStyle, GUILayout.Width(100));
                     GUILayout.FlexibleSpace();
                     GUILayout.EndHorizontal();
 
@@ -436,26 +436,22 @@ namespace KSPGMAT.UI {
             else if (selectedResourceCategory == 4) {
                 GUILayout.BeginVertical(cardBoxStyle);
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("<color=#38bdf8><b>📐 Coordinate Systems 坐标系管理器:</b></color>", headerStyle);
+                GUILayout.Label(I18n.T("res_cs_header"), headerStyle);
                 GUILayout.FlexibleSpace();
-                if (GUILayout.Button("➕ 新建坐标系...", actionButtonStyle, GUILayout.Height(20))) {
+                if (GUILayout.Button(I18n.T("btn_new_cs"), actionButtonStyle, GUILayout.Height(20))) {
                     showCoordSystemWindow = true;
                 }
                 GUILayout.EndHorizontal();
                 GUILayout.Space(4);
 
-                GUILayout.Label("<color=#a78bfa><b>🌐 GMAT 原生标准坐标系:</b></color>", subHeaderStyle);
+                GUILayout.Label(I18n.T("res_cs_std_header"), subHeaderStyle);
                 string[] coords = new string[] { "EarthMJ2000Eq", "EarthFixed", "MoonInertial", "EarthMoonRot", "SunEcliptic" };
                 string[] descs = new string[] {
-                    "地球 J2000 赤道惯性系 (Origin: Earth, Axes: MJ2000Eq) [GMAT 默认主参考系]",
-                    "地球地固旋转坐标系 (Origin: Earth, Axes: BodyFixed) [用于地面站与发射场分析]",
-                    "月球惯性参考系 (Origin: Luna, Axes: BodyInertial) [用于环月与着陆打靶]",
-                    "地月旋转脉动坐标系 (Origin: Luna, Axes: ObjectReferenced, Primary: Earth) [NRHO/晕轨道核心]",
-                    "日心黄道惯性坐标系 (Origin: Sun, Axes: MJ2000Ec) [用于深空引力助推]"
+                    I18n.T("csdesc_0"), I18n.T("csdesc_1"), I18n.T("csdesc_2"), I18n.T("csdesc_3"), I18n.T("csdesc_4")
                 };
                 for (int cs = 0; cs < coords.Length; cs++) {
                     GUILayout.BeginVertical(nestedCardBoxStyle);
-                    GUILayout.Label($"<color=#a78bfa><b>📐 Create CoordinateSystem {coords[cs]};</b></color>", labelValueStyle);
+                    GUILayout.Label(I18n.ColorFormat("res_cs_item", coords[cs]), labelValueStyle);
                     GUILayout.Label($"<color=#94a3b8>{descs[cs]}</color>", labelValueStyle);
                     GUILayout.EndVertical();
                     GUILayout.Space(2);
@@ -463,16 +459,16 @@ namespace KSPGMAT.UI {
 
                 if (GMATParameterRegistry.UserCoordinateSystems.Count > 0) {
                     GUILayout.Space(4);
-                    GUILayout.Label("<color=#facc15><b>⚙️ 用户自定义坐标系:</b></color>", subHeaderStyle);
+                    GUILayout.Label(I18n.T("res_cs_custom_header"), subHeaderStyle);
                     for (int u = 0; u < GMATParameterRegistry.UserCoordinateSystems.Count; u++) {
                         var ucs = GMATParameterRegistry.UserCoordinateSystems[u];
                         GUILayout.BeginVertical(nestedCardBoxStyle);
                         GUILayout.BeginHorizontal();
-                        ucs.name = DrawTextField("<color=#facc15><b>坐标系名:</b></color>", ucs.name, 70, 120);
-                        ucs.origin = DrawTextField("中心天体:", ucs.origin, 70, 80);
-                        ucs.axes = DrawTextField("类型/轴系:", ucs.axes, 70, 100);
+                        ucs.name = DrawTextField(I18n.T("res_cs_name"), ucs.name, 70, 120);
+                        ucs.origin = DrawTextField(I18n.T("res_cs_origin"), ucs.origin, 70, 80);
+                        ucs.axes = DrawTextField(I18n.T("res_cs_axes"), ucs.axes, 70, 100);
                         GUILayout.FlexibleSpace();
-                        if (GUILayout.Button("❌ 删除", deleteButtonStyle, GUILayout.Height(18), GUILayout.Width(50))) {
+                        if (GUILayout.Button(I18n.T("btn_delete_small"), deleteButtonStyle, GUILayout.Height(18), GUILayout.Width(50))) {
                             GMATParameterRegistry.DeleteCoordinateSystem(ucs.name);
                             break;
                         }
@@ -491,9 +487,9 @@ namespace KSPGMAT.UI {
             else if (selectedResourceCategory == 5) {
                 GUILayout.BeginVertical(cardBoxStyle);
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("<color=#38bdf8><b>⚡ Differential Correctors 差分修正求解器:</b></color>", headerStyle);
+                GUILayout.Label(I18n.T("res_solver_header"), headerStyle);
                 GUILayout.FlexibleSpace();
-                if (GUILayout.Button("➕ 新建差分求解器", actionButtonStyle, GUILayout.Height(20))) {
+                if (GUILayout.Button(I18n.T("btn_new_solver2"), actionButtonStyle, GUILayout.Height(20))) {
                     string newName = $"DC_{GMATStateManager.Current.Solvers.Count + 1}";
                     GMATStateManager.Current.Solvers.Add(new Model.GMATSolverModel {
                         Name = newName,
@@ -515,10 +511,10 @@ namespace KSPGMAT.UI {
                     
                     // Card Title Bar
                     GUILayout.BeginHorizontal();
-                    GUILayout.Label($"<color=#38bdf8><b>🌐 Create DifferentialCorrector {sol.Name};</b></color>", labelValueStyle);
+                    GUILayout.Label(I18n.ColorFormat("res_solver_item", sol.Name), labelValueStyle);
                     GUILayout.FlexibleSpace();
                     if (solvers.Count > 1) {
-                        if (GUILayout.Button("❌ 删除", deleteButtonStyle, GUILayout.Height(18), GUILayout.Width(50))) {
+                        if (GUILayout.Button(I18n.T("btn_delete_small"), deleteButtonStyle, GUILayout.Height(18), GUILayout.Width(50))) {
                             solvers.RemoveAt(d);
                             d--;
                             GUILayout.EndHorizontal();
@@ -531,12 +527,12 @@ namespace KSPGMAT.UI {
 
                     // --- Options Group Box ---
                     GUILayout.BeginVertical(cardBoxStyle);
-                    GUILayout.Label("<color=#facc15><b>⚙️ Options 动力学校正内核设置:</b></color>", subHeaderStyle);
+                    GUILayout.Label(I18n.T("res_solver_options"), subHeaderStyle);
                     GUILayout.Space(2);
 
                     // 1. Algorithm Selector
                     GUILayout.BeginHorizontal();
-                    GUILayout.Label("寻优算法 (Algorithm):", labelValueStyle, GUILayout.Width(150));
+                    GUILayout.Label(I18n.T("res_solver_alg"), labelValueStyle, GUILayout.Width(150));
                     string[] algs = new string[] { "NewtonRaphson", "Broyden", "ModifiedBroyden" };
                     for (int a = 0; a < algs.Length; a++) {
                         bool isCur = (sol.Algorithm == algs[a]);
@@ -550,11 +546,11 @@ namespace KSPGMAT.UI {
                     // 2. Derivative Method Selector
                     GUILayout.Space(2);
                     GUILayout.BeginHorizontal();
-                    GUILayout.Label("差分求导 (Derivative Method):", labelValueStyle, GUILayout.Width(150));
+                    GUILayout.Label(I18n.T("res_solver_deriv"), labelValueStyle, GUILayout.Width(150));
                     string[] dmList = new string[] { "ForwardDifference", "CentralDifference" };
                     for (int m = 0; m < dmList.Length; m++) {
                         bool isCur = (sol.DerivativeMethod == dmList[m]);
-                        string desc = (dmList[m] == "ForwardDifference") ? "ForwardDifference (前向单扰动)" : "CentralDifference (中心双扰动高精)";
+                        string desc = (dmList[m] == "ForwardDifference") ? I18n.T("res_solver_deriv_fwd") : I18n.T("res_solver_deriv_cent");
                         if (GUILayout.Button(desc, isCur ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
                             sol.DerivativeMethod = dmList[m];
                         }
@@ -565,9 +561,9 @@ namespace KSPGMAT.UI {
                     // 3. Max Iterations Field & Quick Presets
                     GUILayout.Space(2);
                     GUILayout.BeginHorizontal();
-                    sol.MaxIterations = DrawIntField("最大迭代 (Max Iterations):", sol.MaxIterations, 150, 60);
+                    sol.MaxIterations = DrawIntField(I18n.T("res_solver_maxiter"), sol.MaxIterations, 150, 60);
                     GUILayout.Space(6);
-                    GUILayout.Label("<color=#64748b>预设:</color>", gridLabelStyle, GUILayout.Width(35));
+                    GUILayout.Label(I18n.T("res_preset_label"), gridLabelStyle, GUILayout.Width(35));
                     int[] iterPresets = new int[] { 25, 50, 100, 200 };
                     for (int ip = 0; ip < iterPresets.Length; ip++) {
                         if (GUILayout.Button(iterPresets[ip].ToString(), secondaryButtonStyle, GUILayout.Width(35), GUILayout.Height(18))) {
@@ -582,19 +578,19 @@ namespace KSPGMAT.UI {
 
                     // --- Output Group Box ---
                     GUILayout.BeginVertical(cardBoxStyle);
-                    GUILayout.Label("<color=#38bdf8><b>📄 Output 数据输出与收敛报告设置:</b></color>", subHeaderStyle);
+                    GUILayout.Label(I18n.T("res_solver_output"), subHeaderStyle);
                     GUILayout.Space(2);
 
                     // 1. Show Progress Toggle
                     GUILayout.BeginHorizontal();
-                    sol.ShowProgress = GUILayout.Toggle(sol.ShowProgress, " 实时在控制台与输出窗口输出求解进度 (ShowProgress = true)", GUILayout.Height(18));
+                    sol.ShowProgress = GUILayout.Toggle(sol.ShowProgress, I18n.T("res_solver_showprogress"), GUILayout.Height(18));
                     GUILayout.FlexibleSpace();
                     GUILayout.EndHorizontal();
 
                     // 2. Report Style Selector
                     GUILayout.Space(2);
                     GUILayout.BeginHorizontal();
-                    GUILayout.Label("报告级别 (Report Style):", labelValueStyle, GUILayout.Width(150));
+                    GUILayout.Label(I18n.T("res_solver_repstyle"), labelValueStyle, GUILayout.Width(150));
                     string[] repStyles = new string[] { "Normal", "Concise", "Verbose", "Debug" };
                     for (int rs = 0; rs < repStyles.Length; rs++) {
                         bool isCur = (sol.ReportStyle == repStyles[rs]);
@@ -609,7 +605,7 @@ namespace KSPGMAT.UI {
                     GUILayout.Space(2);
                     GUILayout.BeginHorizontal();
                     string defRepFile = string.IsNullOrEmpty(sol.ReportFile) ? $"DifferentialCorrector{sol.Name}.data" : sol.ReportFile;
-                    sol.ReportFile = DrawTextField("数据报告文件 (Report File):", defRepFile, 150, 220);
+                    sol.ReportFile = DrawTextField(I18n.T("res_solver_repfile"), defRepFile, 150, 220);
                     GUILayout.FlexibleSpace();
                     GUILayout.EndHorizontal();
 
@@ -626,24 +622,24 @@ namespace KSPGMAT.UI {
             // -------------------------------------------------------------
             else if (selectedResourceCategory == 6) {
                 GUILayout.BeginVertical(cardBoxStyle);
-                GUILayout.Label("<color=#38bdf8><b>📊 Subscribers & Reports 数据输出与可视化报告:</b></color>", headerStyle);
+                GUILayout.Label(I18n.T("res_sub_header"), headerStyle);
                 GUILayout.Space(4);
 
                 GUILayout.BeginVertical(nestedCardBoxStyle);
-                GUILayout.Label("<color=#38bdf8><b>📄 Create ReportFile TrajReport;</b></color>", labelValueStyle);
-                GUILayout.Label("输出文件: <b>output/mission_traj.txt</b> | 实时记录航天器全轨道历元位置与速度向量", labelValueStyle);
+                GUILayout.Label(I18n.T("res_reportfile1"), labelValueStyle);
+                GUILayout.Label(I18n.T("res_reportfile1_desc"), labelValueStyle);
                 GUILayout.EndVertical();
                 GUILayout.Space(2);
 
                 GUILayout.BeginVertical(nestedCardBoxStyle);
-                GUILayout.Label("<color=#38bdf8><b>📄 Create ReportFile FiniteBurnReport;</b></color>", labelValueStyle);
-                GUILayout.Label("输出文件: <b>output/mission_traj.txt.finite.txt</b> | 记录有限推力点火积分前后的质量与动力学状态", labelValueStyle);
+                GUILayout.Label(I18n.T("res_reportfile2"), labelValueStyle);
+                GUILayout.Label(I18n.T("res_reportfile2_desc"), labelValueStyle);
                 GUILayout.EndVertical();
                 GUILayout.Space(2);
 
                 GUILayout.BeginVertical(nestedCardBoxStyle);
-                GUILayout.Label("<color=#38bdf8><b>🖼️ Create OrbitView EarthInertialView;</b></color>", labelValueStyle);
-                GUILayout.Label("渲染驱动: <b>orbit_renderer.py (高保真三维正交双视窗轨迹绘图)</b>", labelValueStyle);
+                GUILayout.Label(I18n.T("res_orbitview"), labelValueStyle);
+                GUILayout.Label(I18n.T("res_orbitview_desc"), labelValueStyle);
                 GUILayout.EndVertical();
 
                 GUILayout.EndVertical();
@@ -655,16 +651,16 @@ namespace KSPGMAT.UI {
             else if (selectedResourceCategory == 7) {
                 GUILayout.BeginVertical(cardBoxStyle);
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("<color=#38bdf8><b>🔢 User Variables, Arrays & Strings 用户变量/数组/字符串:</b></color>", headerStyle);
+                GUILayout.Label(I18n.T("res_var_header2"), headerStyle);
                 GUILayout.FlexibleSpace();
-                if (GUILayout.Button("➕ 添加标量变量", actionButtonStyle, GUILayout.Height(20))) {
+                if (GUILayout.Button(I18n.T("btn_add_var"), actionButtonStyle, GUILayout.Height(20))) {
                     GMATStateManager.Current.Variables.Add(new Model.GMATVariableModel {
                         Name = $"Var{GMATStateManager.Current.Variables.Count + 1}",
                         InitialValue = 0.0
                     });
                 }
                 GUILayout.Space(4);
-                if (GUILayout.Button("➕ 添加矩阵数组", actionButtonStyle, GUILayout.Height(20))) {
+                if (GUILayout.Button(I18n.T("btn_add_array"), actionButtonStyle, GUILayout.Height(20))) {
                     GMATStateManager.Current.Arrays.Add(new Model.GMATArrayModel {
                         Name = $"Arr{GMATStateManager.Current.Arrays.Count + 1}",
                         Rows = 3,
@@ -672,7 +668,7 @@ namespace KSPGMAT.UI {
                     });
                 }
                 GUILayout.Space(4);
-                if (GUILayout.Button("➕ 添加字符串", actionButtonStyle, GUILayout.Height(20))) {
+                if (GUILayout.Button(I18n.T("btn_add_string"), actionButtonStyle, GUILayout.Height(20))) {
                     GMATStateManager.Current.Strings.Add(new Model.GMATStringModel {
                         Name = $"Str{GMATStateManager.Current.Strings.Count + 1}",
                         Value = "Value"
@@ -682,16 +678,16 @@ namespace KSPGMAT.UI {
                 GUILayout.Space(4);
 
                 var vars = GMATStateManager.Current.Variables;
-                GUILayout.Label("<color=#facc15><b>📌 Variables 标量变量列表:</b></color>", subHeaderStyle);
+                GUILayout.Label(I18n.T("res_var_list"), subHeaderStyle);
                 if (vars.Count > 0) {
                     for (int v = 0; v < vars.Count; v++) {
                         var uvar = vars[v];
                         GUILayout.BeginVertical(nestedCardBoxStyle);
                         GUILayout.BeginHorizontal();
-                        uvar.Name = DrawTextField("<color=#facc15><b>变量名:</b></color>", uvar.Name, 60, 140);
-                        uvar.InitialValue = DrawDoubleField("初值:", uvar.InitialValue, 50, 90, "auto", $"uvar_val_{v}_{uvar.Name}");
+                        uvar.Name = DrawTextField(I18n.T("res_var_name"), uvar.Name, 60, 140);
+                        uvar.InitialValue = DrawDoubleField(I18n.T("res_var_init"), uvar.InitialValue, 50, 90, "auto", $"uvar_val_{v}_{uvar.Name}");
                         GUILayout.FlexibleSpace();
-                        if (GUILayout.Button("❌ 删除", deleteButtonStyle, GUILayout.Height(18), GUILayout.Width(50))) {
+                        if (GUILayout.Button(I18n.T("btn_delete_small"), deleteButtonStyle, GUILayout.Height(18), GUILayout.Width(50))) {
                             vars.RemoveAt(v);
                             v--;
                             GUILayout.EndHorizontal();
@@ -703,22 +699,22 @@ namespace KSPGMAT.UI {
                         GUILayout.Space(2);
                     }
                 } else {
-                    GUILayout.Label("<color=#64748b><i>暂无标量变量，点击上方按钮添加。</i></color>", labelValueStyle);
+                    GUILayout.Label(I18n.T("res_var_empty"), labelValueStyle);
                 }
 
                 var arrays = GMATStateManager.Current.Arrays;
                 if (arrays.Count > 0) {
                     GUILayout.Space(4);
-                    GUILayout.Label("<color=#34d399><b>📊 Arrays 矩阵数组列表:</b></color>", subHeaderStyle);
+                    GUILayout.Label(I18n.T("res_arr_list"), subHeaderStyle);
                     for (int a = 0; a < arrays.Count; a++) {
                         var uarr = arrays[a];
                         GUILayout.BeginVertical(nestedCardBoxStyle);
                         GUILayout.BeginHorizontal();
-                        uarr.Name = DrawTextField("<color=#34d399><b>数组名:</b></color>", uarr.Name, 60, 140);
-                        uarr.Rows = DrawIntField("行数:", uarr.Rows, 50, 40);
-                        uarr.Cols = DrawIntField("列数:", uarr.Cols, 50, 40);
+                        uarr.Name = DrawTextField(I18n.T("res_arr_name"), uarr.Name, 60, 140);
+                        uarr.Rows = DrawIntField(I18n.T("res_arr_rows"), uarr.Rows, 50, 40);
+                        uarr.Cols = DrawIntField(I18n.T("res_arr_cols"), uarr.Cols, 50, 40);
                         GUILayout.FlexibleSpace();
-                        if (GUILayout.Button("❌ 删除", deleteButtonStyle, GUILayout.Height(18), GUILayout.Width(50))) {
+                        if (GUILayout.Button(I18n.T("btn_delete_small"), deleteButtonStyle, GUILayout.Height(18), GUILayout.Width(50))) {
                             arrays.RemoveAt(a);
                             a--;
                             GUILayout.EndHorizontal();
@@ -734,15 +730,15 @@ namespace KSPGMAT.UI {
                 var strings = GMATStateManager.Current.Strings;
                 if (strings.Count > 0) {
                     GUILayout.Space(4);
-                    GUILayout.Label("<color=#a78bfa><b>🔤 Strings 字符串变量列表:</b></color>", subHeaderStyle);
+                    GUILayout.Label(I18n.T("res_str_list"), subHeaderStyle);
                     for (int st = 0; st < strings.Count; st++) {
                         var ustr = strings[st];
                         GUILayout.BeginVertical(nestedCardBoxStyle);
                         GUILayout.BeginHorizontal();
-                        ustr.Name = DrawTextField("<color=#a78bfa><b>变量名:</b></color>", ustr.Name, 60, 140);
-                        ustr.Value = DrawTextField("字符串内容:", ustr.Value, 80, 180);
+                        ustr.Name = DrawTextField(I18n.T("res_str_name"), ustr.Name, 60, 140);
+                        ustr.Value = DrawTextField(I18n.T("res_str_value"), ustr.Value, 80, 180);
                         GUILayout.FlexibleSpace();
-                        if (GUILayout.Button("❌ 删除", deleteButtonStyle, GUILayout.Height(18), GUILayout.Width(50))) {
+                        if (GUILayout.Button(I18n.T("btn_delete_small"), deleteButtonStyle, GUILayout.Height(18), GUILayout.Width(50))) {
                             strings.RemoveAt(st);
                             st--;
                             GUILayout.EndHorizontal();
@@ -764,14 +760,14 @@ namespace KSPGMAT.UI {
             else if (selectedResourceCategory == 8) {
                 GUILayout.BeginVertical(cardBoxStyle);
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("<color=#38bdf8><b>🌌 Space Events 开普勒轨道几何事件与打靶约束库:</b></color>", headerStyle);
+                GUILayout.Label(I18n.T("res_event_header"), headerStyle);
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
                 GUILayout.Space(4);
 
                 GUILayout.BeginHorizontal(nestedCardBoxStyle);
-                eventSearchKeyword = DrawTextField("🔍 搜索参数/事件:", eventSearchKeyword, 120, 200);
-                if (!string.IsNullOrEmpty(eventSearchKeyword) && GUILayout.Button("✖ 清空", secondaryButtonStyle, GUILayout.Height(18), GUILayout.Width(50))) {
+                eventSearchKeyword = DrawTextField(I18n.T("res_event_search"), eventSearchKeyword, 120, 200);
+                if (!string.IsNullOrEmpty(eventSearchKeyword) && GUILayout.Button(I18n.T("ide_clear_search"), secondaryButtonStyle, GUILayout.Height(18), GUILayout.Width(50))) {
                     eventSearchKeyword = "";
                 }
                 GUILayout.FlexibleSpace();
@@ -779,13 +775,13 @@ namespace KSPGMAT.UI {
                 GUILayout.Space(4);
 
                 string[] evts = new string[] {
-                    "Sat.Earth.Apoapsis (远地点事件)", "Sat.Earth.Periapsis (近地点事件)",
-                    "Sat.Earth.Latitude = 0.0 (赤道升/降交点事件)", "Sat.Luna.Periapsis (近月点事件)",
-                    "Sat.Earth.SMA = 42164.14 (GEO 同步半长轴)", "Sat.Earth.Altitude = 35786.0 (GTO 远地点高度)",
-                    "Sat.EarthMJ2000Eq.VZ = 0.0 (赤纬速度=0 消除倾角)", "Sat.Earth.ECC = 0.0 (圆化轨道)",
-                    "Sat.Earth.INC = 0.0 (0度赤道共面)", "Sat.Earth.RAAN (升交点赤经)",
-                    "Sat.Earth.AOP (近地点幅角)", "Sat.Earth.TA (真近点角)",
-                    "Sat.FuelMass (推进剂剩余质量)", "Sat.C3Energy (逃逸特征能 C3)"
+                    I18n.T("res_evt_0"), I18n.T("res_evt_1"),
+                    I18n.T("res_evt_2"), I18n.T("res_evt_3"),
+                    I18n.T("res_evt_4"), I18n.T("res_evt_5"),
+                    I18n.T("res_evt_6"), I18n.T("res_evt_7"),
+                    I18n.T("res_evt_8"), I18n.T("res_evt_9"),
+                    I18n.T("res_evt_10"), I18n.T("res_evt_11"),
+                    I18n.T("res_evt_12"), I18n.T("res_evt_13")
                 };
 
                 for (int e = 0; e < evts.Length; e++) {
@@ -796,33 +792,33 @@ namespace KSPGMAT.UI {
 
                     GUILayout.BeginVertical(nestedCardBoxStyle);
                     GUILayout.BeginHorizontal();
-                    GUILayout.Label($"<color=#38bdf8><b>🎯 {ev}</b></color>", labelValueStyle);
+                    GUILayout.Label($"<color=#38bdf8><b>{ev}</b></color>", labelValueStyle);
                     GUILayout.FlexibleSpace();
 
                     string cleanParam = ev.Split(' ')[0];
                     if (cleanParam.Contains("=")) cleanParam = cleanParam.Split('=')[0].Trim();
 
-                    if (GUILayout.Button("🎯 插入打靶目标", actionButtonStyle, GUILayout.Height(18))) {
+                    if (GUILayout.Button(I18n.T("btn_insert_target"), actionButtonStyle, GUILayout.Height(18))) {
                         missionSequence.Add(new MissionStep {
                             type = "Achieve",
-                            label = $"约束 {cleanParam}",
+                            label = I18n.Format("res_evt_label_achieve", cleanParam),
                             achieve_param = cleanParam,
                             achieve_val = ev.Contains("=") ? double.Parse(ev.Split('=')[1].Split(' ')[0].Trim(), System.Globalization.CultureInfo.InvariantCulture) : 0.0,
                             achieve_tolerance = 0.5,
                             dc_name = GetActiveSolverNames()[0]
                         });
-                        ScreenMessages.PostScreenMessage($"✅ 已插入打靶约束目标: {cleanParam}", 2.0f, ScreenMessageStyle.UPPER_CENTER);
+                        ScreenMessages.PostScreenMessage(I18n.Format("res_evt_inserted_achieve", cleanParam), 2.0f, ScreenMessageStyle.UPPER_CENTER);
                     }
                     GUILayout.Space(2);
-                    if (GUILayout.Button("⏱️ 插入停止条件", secondaryButtonStyle, GUILayout.Height(18))) {
+                    if (GUILayout.Button(I18n.T("btn_insert_stop"), secondaryButtonStyle, GUILayout.Height(18))) {
                         missionSequence.Add(new MissionStep {
                             type = "Propagate",
-                            label = $"积分至 {cleanParam}",
+                            label = I18n.Format("res_evt_label_prop", cleanParam),
                             propagator = "LEOProp",
                             stop_type = cleanParam,
                             target_val = ev.Contains("=") ? double.Parse(ev.Split('=')[1].Split(' ')[0].Trim(), System.Globalization.CultureInfo.InvariantCulture) : 0.0
                         });
-                        ScreenMessages.PostScreenMessage($"✅ 已插入积分停止条件: {cleanParam}", 2.0f, ScreenMessageStyle.UPPER_CENTER);
+                        ScreenMessages.PostScreenMessage(I18n.Format("res_evt_inserted_stop", cleanParam), 2.0f, ScreenMessageStyle.UPPER_CENTER);
                     }
                     GUILayout.EndHorizontal();
                     GUILayout.EndVertical();
@@ -859,24 +855,24 @@ namespace KSPGMAT.UI {
             string currentScriptToUse = (ideViewMode != 0 && ideHasUnsavedEdits) ? ideCustomBuffer : liveScript;
 
             GUILayout.BeginHorizontal();
-            GUILayout.Label("<color=#38bdf8><b>💻 GMAT 脚本 IDE 与代码编辑器</b></color>", headerStyle);
+            GUILayout.Label(I18n.T("res_ide_header"), headerStyle);
             GUILayout.Space(8);
 
             if (ideHasUnsavedEdits) {
-                GUILayout.Label("<color=#facc15><b>⚠️ [有未同步的编辑器修改]</b></color>", labelValueStyle);
-                if (GUILayout.Button("🔄 丢弃修改并拉取最新GUI", secondaryButtonStyle, GUILayout.Height(20))) {
+                GUILayout.Label(I18n.T("res_ide_unsaved"), labelValueStyle);
+                if (GUILayout.Button(I18n.T("btn_discard"), secondaryButtonStyle, GUILayout.Height(20))) {
                     ideCustomBuffer = liveScript;
                     ideLastLiveScriptSnapshot = liveScript;
                     ideHasUnsavedEdits = false;
-                    ScreenMessages.PostScreenMessage("🔄 已重置为最新 GUI 任务序列！", 2.0f, ScreenMessageStyle.UPPER_CENTER);
+                    ScreenMessages.PostScreenMessage(I18n.T("res_ide_reset_gui"), 2.0f, ScreenMessageStyle.UPPER_CENTER);
                 }
             } else {
-                GUILayout.Label("<color=#34d399><b>● 与 GUI 实时双向同步中</b></color>", labelValueStyle);
+                GUILayout.Label(I18n.T("res_ide_synced"), labelValueStyle);
             }
 
             GUILayout.FlexibleSpace();
 
-            string[] ideModes = new string[] { "📄 全脚本", "📦 资源区", "🎯 任务区" };
+            string[] ideModes = new string[] { I18n.T("ide_mode_full"), I18n.T("ide_mode_res"), I18n.T("ide_mode_seq") };
             for (int m = 0; m < ideModes.Length; m++) {
                 bool isM = (ideScriptViewMode == m);
                 if (GUILayout.Button(ideModes[m], isM ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
@@ -891,7 +887,7 @@ namespace KSPGMAT.UI {
             GUILayout.Space(6);
 
             // 3-Mode Switcher: Preview, Edit, Split View
-            string[] viewModes = new string[] { "🎨 高亮预览", "✏️ 自由编辑", "🌓 分栏对照" };
+            string[] viewModes = new string[] { I18n.T("ide_view_highlight"), I18n.T("ide_view_edit"), I18n.T("ide_view_split") };
             for (int vm = 0; vm < viewModes.Length; vm++) {
                 bool isVm = (ideViewMode == vm);
                 if (GUILayout.Button(viewModes[vm], isVm ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
@@ -909,23 +905,23 @@ namespace KSPGMAT.UI {
             GUILayout.BeginHorizontal(nestedCardBoxStyle);
 
             GUI.enabled = (ideViewMode != 0) && !isSavingAndSyncing;
-            if (GUILayout.Button(isSavingAndSyncing ? "⏳ 正在同步..." : "💾 保存并同步到任务序列", successButtonStyle, GUILayout.Height(22))) {
+            if (GUILayout.Button(isSavingAndSyncing ? I18n.T("btn_saving") : I18n.T("btn_save_sync"), successButtonStyle, GUILayout.Height(22))) {
                 SaveAndSyncIdeScriptToSequence(currentScriptToUse, vessel);
             }
             GUI.enabled = true;
 
-            if (GUILayout.Button("💻 外部IDE打开", secondaryButtonStyle, GUILayout.Height(22))) {
+            if (GUILayout.Button(I18n.T("btn_external_ide"), secondaryButtonStyle, GUILayout.Height(22))) {
                 OpenScriptInExternalEditor(currentScriptToUse);
             }
-            if (GUILayout.Button("📥 重载外部文件", secondaryButtonStyle, GUILayout.Height(22))) {
+            if (GUILayout.Button(I18n.T("btn_reload_external"), secondaryButtonStyle, GUILayout.Height(22))) {
                 ReloadScriptFromExternalFile();
             }
 
-            if (GUILayout.Button("📋 复制代码", secondaryButtonStyle, GUILayout.Height(22))) {
+            if (GUILayout.Button(I18n.T("btn_copy_code"), secondaryButtonStyle, GUILayout.Height(22))) {
                 GUIUtility.systemCopyBuffer = GMATClient.SanitizeGmatScript(currentScriptToUse);
-                ScreenMessages.PostScreenMessage("✅ GMAT 标准合规脚本已复制到剪贴板！", 2.0f, ScreenMessageStyle.UPPER_CENTER);
+                ScreenMessages.PostScreenMessage(I18n.T("res_copy_ok"), 2.0f, ScreenMessageStyle.UPPER_CENTER);
             }
-            if (GUILayout.Button("💾 导出脚本...", secondaryButtonStyle, GUILayout.Height(22))) {
+            if (GUILayout.Button(I18n.T("btn_export_script2"), secondaryButtonStyle, GUILayout.Height(22))) {
                 try {
                     string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss_fff");
                     string outputDir = GMATClient.GetOutputDir();
@@ -936,12 +932,12 @@ namespace KSPGMAT.UI {
                     File.WriteAllText(expPath, sanitized, new System.Text.UTF8Encoding(false));
                     File.WriteAllText(Path.Combine(outputDir, "mission_latest.script"), sanitized, new System.Text.UTF8Encoding(false));
                     File.WriteAllText(Path.Combine(outputDir, "mission_run.script"), sanitized, new System.Text.UTF8Encoding(false));
-                    ScreenMessages.PostScreenMessage("✅ GMAT 标准合规脚本已导出至: " + expPath, 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                    ScreenMessages.PostScreenMessage(I18n.Format("res_export_ok", expPath), 3.0f, ScreenMessageStyle.UPPER_CENTER);
                 } catch (Exception ex) {
-                    ScreenMessages.PostScreenMessage("❌ 导出失败: " + ex.Message, 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                    ScreenMessages.PostScreenMessage(I18n.Format("res_export_fail", ex.Message), 3.0f, ScreenMessageStyle.UPPER_CENTER);
                 }
             }
-            if (GUILayout.Button("🚀 推送至 GMAT", actionButtonStyle, GUILayout.Height(22))) {
+            if (GUILayout.Button(I18n.T("btn_push_gmat"), actionButtonStyle, GUILayout.Height(22))) {
                 try {
                     string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss_fff");
                     string outputDir = GMATClient.GetOutputDir();
@@ -953,30 +949,30 @@ namespace KSPGMAT.UI {
                     File.WriteAllText(Path.Combine(outputDir, "mission_latest.script"), sanitized, new System.Text.UTF8Encoding(false));
                     File.WriteAllText(Path.Combine(outputDir, "mission_run.script"), sanitized, new System.Text.UTF8Encoding(false));
                     GMATClient.OpenGmatDesktop(expPath);
-                    ScreenMessages.PostScreenMessage($"🚀 已推送合规脚本 ({Path.GetFileName(expPath)}) 至 GMAT 桌面端！", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                    ScreenMessages.PostScreenMessage(I18n.Format("res_push_ok", Path.GetFileName(expPath)), 3.0f, ScreenMessageStyle.UPPER_CENTER);
                 } catch (Exception ex) {
-                    ScreenMessages.PostScreenMessage("❌ 推送失败: " + ex.Message, 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                    ScreenMessages.PostScreenMessage(I18n.Format("res_push_fail", ex.Message), 3.0f, ScreenMessageStyle.UPPER_CENTER);
                 }
             }
             if (ideViewMode != 0) {
-                if (GUILayout.Button("🔄 恢复自动生成", secondaryButtonStyle, GUILayout.Height(22))) {
+                if (GUILayout.Button(I18n.T("btn_restore_auto"), secondaryButtonStyle, GUILayout.Height(22))) {
                     ideCustomBuffer = GenerateLiveGmatScript(ideScriptViewMode);
                     ideLastLiveScriptSnapshot = ideCustomBuffer;
                     ideHasUnsavedEdits = false;
-                    ScreenMessages.PostScreenMessage("🔄 已重置为实时自动生成脚本！", 2.0f, ScreenMessageStyle.UPPER_CENTER);
+                    ScreenMessages.PostScreenMessage(I18n.T("res_restored"), 2.0f, ScreenMessageStyle.UPPER_CENTER);
                 }
             }
             if (isPropagating) {
-                if (GUILayout.Button("🛑 中断物理求解", deleteButtonStyle, GUILayout.Height(22))) {
+                if (GUILayout.Button(I18n.T("btn_abort_solve"), deleteButtonStyle, GUILayout.Height(22))) {
                     GMATClient.AbortCurrentExecution();
                     isPropagating = false;
                     solveTotalTime = Time.realtimeSinceStartup - solveStartTime;
-                    solveStageText = $"⚠️ 用户已手动中断 GMAT 求解 (耗时 {solveTotalTime:F1}s)";
+                    solveStageText = I18n.Format("solve_user_abort", solveTotalTime);
                     solveProgress = 0f;
-                    ScreenMessages.PostScreenMessage("⚠️ 已手动中断 GMAT 物理求解进程。", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                    ScreenMessages.PostScreenMessage(I18n.T("solve_user_abort_msg"), 3.0f, ScreenMessageStyle.UPPER_CENTER);
                 }
             } else {
-                if (GUILayout.Button((ideViewMode != 0) ? "⚡ 求解编辑脚本" : "⚡ 立即求解", actionButtonStyle, GUILayout.Height(22))) {
+                if (GUILayout.Button((ideViewMode != 0) ? I18n.T("ide_solve_edited") : I18n.T("btn_solve_now"), actionButtonStyle, GUILayout.Height(22))) {
                     if (ideViewMode != 0 && !string.IsNullOrEmpty(ideCustomBuffer)) {
                         TriggerPropagationSolve(ideCustomBuffer);
                     } else {
@@ -1018,7 +1014,7 @@ namespace KSPGMAT.UI {
                 
                 // Left Pane: Editor (50% Width)
                 GUILayout.BeginVertical(GUILayout.Width(rightW * 0.49f), GUILayout.ExpandHeight(true));
-                GUILayout.Label("<color=#94a3b8><b>✏️ 代码编辑区 (输入即触发补全)</b></color>", labelValueStyle);
+                GUILayout.Label(I18n.T("res_edit_pane"), labelValueStyle);
                 ideScriptScroll = GUILayout.BeginScrollView(ideScriptScroll, GUILayout.ExpandHeight(true));
                 GUI.SetNextControlName("GmatIdeTextArea");
                 ideCustomBuffer = GUILayout.TextArea(ideCustomBuffer, ideEditorStyle ?? GUI.skin.textArea, GUILayout.ExpandHeight(true), GUILayout.ExpandWidth(true));
@@ -1030,7 +1026,7 @@ namespace KSPGMAT.UI {
 
                 // Right Pane: Synchronized Syntax Highlighted Output (50% Width)
                 GUILayout.BeginVertical(GUILayout.Width(rightW * 0.49f), GUILayout.ExpandHeight(true));
-                GUILayout.Label("<color=#38bdf8><b>🎨 实时语法高亮渲染</b></color>", labelValueStyle);
+                GUILayout.Label(I18n.T("res_highlight_pane"), labelValueStyle);
                 GUILayout.BeginScrollView(ideScriptScroll, GUILayout.ExpandHeight(true));
                 string[] scriptLines = (ideCustomBuffer ?? "").Split(new char[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
                 for (int l = 0; l < scriptLines.Length; l++) {
@@ -1106,9 +1102,9 @@ namespace KSPGMAT.UI {
             // Floating Popup Container
             GUILayout.BeginVertical(nestedCardBoxStyle, GUILayout.Height(Mathf.Min(170, maxItems * 26 + 36)));
             GUILayout.BeginHorizontal();
-            GUILayout.Label($"<color=#38bdf8><b>⚡ GMAT 智能补全</b></color> <color=#64748b>(匹配: \"{currentWord}\")</color>", labelValueStyle);
+            GUILayout.Label(I18n.ColorFormat("res_autocomplete_title", currentWord), labelValueStyle);
             GUILayout.FlexibleSpace();
-            GUILayout.Label("<color=#facc15><size=10>↑↓ 选择, Enter/Tab 插入, Esc 关闭</size></color>", labelValueStyle);
+            GUILayout.Label(I18n.T("res_autocomplete_hint"), labelValueStyle);
             GUILayout.EndHorizontal();
 
             ideAutocompleteScroll = GUILayout.BeginScrollView(ideAutocompleteScroll);
@@ -1173,14 +1169,14 @@ namespace KSPGMAT.UI {
                     UseShellExecute = true
                 };
                 System.Diagnostics.Process.Start(psi);
-                ScreenMessages.PostScreenMessage($"💻 已调用系统 API 与默认 IDE 打开文件: {Path.GetFileName(scriptPath)}", 3.5f, ScreenMessageStyle.UPPER_CENTER);
+                ScreenMessages.PostScreenMessage(I18n.Format("res_external_opened", Path.GetFileName(scriptPath)), 3.5f, ScreenMessageStyle.UPPER_CENTER);
             } catch (Exception ex) {
                 try {
                     string scriptPath = Path.Combine(GMATClient.GetOutputDir(), "user_custom_edit.script");
                     System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{scriptPath}\"");
-                    ScreenMessages.PostScreenMessage($"📂 已在系统资源管理器中定位脚本文件", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                    ScreenMessages.PostScreenMessage(I18n.T("res_external_located"), 3.0f, ScreenMessageStyle.UPPER_CENTER);
                 } catch (Exception) {
-                    ScreenMessages.PostScreenMessage($"❌ 打开外部编辑器失败: {ex.Message}", 3.5f, ScreenMessageStyle.UPPER_CENTER);
+                    ScreenMessages.PostScreenMessage(I18n.Format("res_external_fail", ex.Message), 3.5f, ScreenMessageStyle.UPPER_CENTER);
                 }
             }
         }
@@ -1194,10 +1190,10 @@ namespace KSPGMAT.UI {
                     ideViewMode = 1; // Switch to Edit mode
                     SaveAndSyncIdeScriptToSequence(loaded, FlightGlobals.ActiveVessel);
                 } else {
-                    ScreenMessages.PostScreenMessage("⚠️ 未找到外部临时脚本文件，请先点击【外部IDE打开】", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                    ScreenMessages.PostScreenMessage(I18n.T("res_reload_missing"), 3.0f, ScreenMessageStyle.UPPER_CENTER);
                 }
             } catch (Exception ex) {
-                ScreenMessages.PostScreenMessage($"❌ 重载失败: {ex.Message}", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                ScreenMessages.PostScreenMessage(I18n.Format("res_reload_fail", ex.Message), 3.0f, ScreenMessageStyle.UPPER_CENTER);
             }
         }
 
@@ -1229,15 +1225,15 @@ namespace KSPGMAT.UI {
                         ideCustomBuffer = ideLastLiveScriptSnapshot;
                         ideHasUnsavedEdits = false;
 
-                        ScreenMessages.PostScreenMessage($"✅ 脚本修改已保存！已同步至【资源管理】与【任务序列】({(result.sequence != null ? result.sequence.Count : 0)} 个步骤)。", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                        ScreenMessages.PostScreenMessage(I18n.Format("res_saved_msg", (result.sequence != null ? result.sequence.Count : 0)), 3.0f, ScreenMessageStyle.UPPER_CENTER);
                     } else {
                         ideCustomBuffer = scriptContent;
-                        ScreenMessages.PostScreenMessage("💾 脚本已保存！(已保留在当前编辑器中)", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                        ScreenMessages.PostScreenMessage(I18n.T("res_saved_kept"), 3.0f, ScreenMessageStyle.UPPER_CENTER);
                     }
                 });
             } catch (Exception ex) {
                 isSavingAndSyncing = false;
-                ScreenMessages.PostScreenMessage("❌ 保存失败: " + ex.Message, 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                ScreenMessages.PostScreenMessage(I18n.Format("res_save_fail", ex.Message), 3.0f, ScreenMessageStyle.UPPER_CENTER);
             }
         }
 
@@ -1338,7 +1334,7 @@ namespace KSPGMAT.UI {
                 ideCustomBuffer += "\n";
             }
             ideCustomBuffer += textToInsert + "\n";
-            ScreenMessages.PostScreenMessage($"✅ 已插入: {textToInsert.Split('\n')[0]}", 2.0f, ScreenMessageStyle.UPPER_CENTER);
+            ScreenMessages.PostScreenMessage(I18n.Format("res_inserted", textToInsert.Split('\n')[0]), 2.0f, ScreenMessageStyle.UPPER_CENTER);
         }
     }
 }

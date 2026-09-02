@@ -13,7 +13,7 @@ namespace KSPGMAT.UI {
         /// </summary>
         private void DrawTabCraftAndOrbit(Vessel vessel) {
             if (vessel == null) {
-                GUILayout.Label("请在飞行场景中选择一艘飞船。", labelValueStyle);
+                GUILayout.Label(I18n.T("craft_no_vessel"), labelValueStyle);
                 return;
             }
 
@@ -28,21 +28,21 @@ namespace KSPGMAT.UI {
 
             // Orbit & ICRF
             GUILayout.BeginVertical(cardBoxStyle);
-            GUILayout.Label("🌍 轨道根数与引力环境 (Principia ICRF)", headerStyle);
-            GUILayout.Label($"中心天体: <b>{vessel.mainBody.name}</b> (SOI) | UT: {Planetarium.GetUniversalTime():F1} s", labelValueStyle);
+            GUILayout.Label(I18n.T("craft_orbit_header"), headerStyle);
+            GUILayout.Label(I18n.ColorFormat("craft_central_body", vessel.mainBody.name, Planetarium.GetUniversalTime()), labelValueStyle);
 
             Vector3d pos_km, vel_kms;
             bool ok = PrincipiaInterop.GetVesselStateICRF(vessel, out pos_km, out vel_kms);
             if (ok) {
-                GUILayout.Label($"ICRF 相对位置: r={pos_km.magnitude:F1} km (X={pos_km.x:F1}, Y={pos_km.y:F1}, Z={pos_km.z:F1})", labelValueStyle);
-                GUILayout.Label($"ICRF 速度矢量: v={vel_kms.magnitude:F3} km/s (Vx={vel_kms.x:F3}, Vy={vel_kms.y:F3}, Vz={vel_kms.z:F3})", labelValueStyle);
+                GUILayout.Label(I18n.ColorFormat("craft_icrf_pos", pos_km.magnitude, pos_km.x, pos_km.y, pos_km.z), labelValueStyle);
+                GUILayout.Label(I18n.ColorFormat("craft_icrf_vel", vel_kms.magnitude, vel_kms.x, vel_kms.y, vel_kms.z), labelValueStyle);
             } else {
-                GUILayout.Label("无法获取 Principia 状态向量，使用备用开普勒根数。", labelValueStyle);
+                GUILayout.Label(I18n.T("craft_no_principia"), labelValueStyle);
             }
 
             if (vessel.orbit != null) {
-                GUILayout.Label($"半长轴: <b>{vessel.orbit.semiMajorAxis / 1000.0:F1} km</b> | 离心率: <b>{vessel.orbit.eccentricity:F4}</b> | 倾角: <b>{vessel.orbit.inclination:F2}°</b>", labelValueStyle);
-                GUILayout.Label($"近拱点高度: <b>{vessel.orbit.PeA / 1000.0:F1} km</b> | 远拱点高度: <b>{vessel.orbit.ApA / 1000.0:F1} km</b>", labelValueStyle);
+                GUILayout.Label(I18n.ColorFormat("craft_kepler", vessel.orbit.semiMajorAxis / 1000.0, vessel.orbit.eccentricity, vessel.orbit.inclination), labelValueStyle);
+                GUILayout.Label(I18n.ColorFormat("craft_apsides", vessel.orbit.PeA / 1000.0, vessel.orbit.ApA / 1000.0), labelValueStyle);
             }
             GUILayout.EndVertical();
 
@@ -54,9 +54,9 @@ namespace KSPGMAT.UI {
             // ==========================================
             GUILayout.BeginVertical(targetGroupBoxStyle);
             GUILayout.BeginHorizontal();
-            GUILayout.Label("<b>🔭 GMAT 星历与 Principia N体动力学校核对比</b>", headerStyle);
+            GUILayout.Label(I18n.T("craft_eph_verify"), headerStyle);
             GUILayout.FlexibleSpace();
-            string toggleExplText = showEphemerisExplanation ? "💡 误差机理指南 ▴" : "💡 误差可以避免吗？ ▾";
+            string toggleExplText = showEphemerisExplanation ? I18n.T("craft_eph_toggle_close") : I18n.T("craft_eph_toggle_open");
             if (GUILayout.Button(toggleExplText, secondaryButtonStyle, GUILayout.Height(20))) {
                 showEphemerisExplanation = !showEphemerisExplanation;
             }
@@ -66,8 +66,8 @@ namespace KSPGMAT.UI {
 
             // 1. Initial State Alignment (t0)
             GUILayout.BeginHorizontal();
-            GUILayout.Label("飞船初始状态 (t₀):", labelValueStyle, GUILayout.Width(110));
-            GUILayout.Label("<color=#34d399>已从 Principia ICRF 精确同步历元与六维状态矢量</color>", labelValueStyle);
+            GUILayout.Label(I18n.T("craft_initial_state_label"), labelValueStyle, GUILayout.Width(110));
+            GUILayout.Label(I18n.T("craft_initial_state_val"), labelValueStyle);
             GUILayout.FlexibleSpace();
             GUILayout.EndHorizontal();
 
@@ -76,15 +76,15 @@ namespace KSPGMAT.UI {
             if (moonBody != null && vessel.mainBody != null) {
                 double moonDist_km = Vector3d.Distance(moonBody.position, vessel.mainBody.position) / 1000.0;
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("主摄动月球星历:", labelValueStyle, GUILayout.Width(110));
-                GUILayout.Label($"当前地月距离: <b>{moonDist_km:F0} km</b> | 动力学校核: <color=#34d399>GMAT (JPL DE405) ↔ Principia (N-body 辛积分)</color>", labelValueStyle);
+                GUILayout.Label(I18n.T("craft_moon_label"), labelValueStyle, GUILayout.Width(110));
+                GUILayout.Label(I18n.ColorFormat("craft_moon_val", moonDist_km), labelValueStyle);
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
             }
 
             GUILayout.BeginHorizontal();
-            GUILayout.Label("引力势场模型:", labelValueStyle, GUILayout.Width(110));
-            GUILayout.Label("GMAT: <b>JGM-4/EGM96 8×8 阶球谐引力场</b> | Principia: <b>完全 N 体多极引力积分 + 广义相对论</b> <color=#34d399>[标准对齐]</color>", labelValueStyle);
+            GUILayout.Label(I18n.T("craft_gravity_label"), labelValueStyle, GUILayout.Width(110));
+            GUILayout.Label(I18n.T("craft_gravity_val"), labelValueStyle);
             GUILayout.FlexibleSpace();
             GUILayout.EndHorizontal();
 
@@ -92,20 +92,20 @@ namespace KSPGMAT.UI {
             if (showEphemerisExplanation) {
                 GUILayout.Space(4);
                 GUILayout.BeginVertical(nestedCardBoxStyle);
-                GUILayout.Label("<color=#38bdf8><b>📖 航天工程深度解析：这些误差可以避免吗？</b></color>", labelValueStyle);
+                GUILayout.Label(I18n.T("craft_explain_title"), labelValueStyle);
                 GUILayout.Space(2);
 
-                GUILayout.Label("<color=#f59e0b><b>一、理论与物理规律上：不可能绝对为零 (物理客观存在)</b></color>", labelValueStyle);
-                GUILayout.Label("1. <b>N体混沌与不可积性</b>: 庞加莱早已证明三体及以上力学系统无普遍闭合解析解，数值积分必然产生离散步长与 IEEE 754 浮点机精舍入；", labelValueStyle);
-                GUILayout.Label("2. <b>星历核与积分器算法差异</b>: NASA GMAT 采用 JPL DE405 多项式拟合切比雪夫雷达测距核，而 Principia 采用高阶辛几何积分器在线数值积分，二者对极小微摄动（如小行星带引力、太阳四极矩 J₂）的截断阶数存在微小差异（地月距离 38 万公里偏差仅约 30 米，相对误差仅千万分之八）；", labelValueStyle);
-                GUILayout.Label("3. <b>推进剂重力损耗与物理帧波动</b>: 飞船变轨时真实发动机变质量消耗在引力场中产生积分重力损耗，且游戏引擎物理帧 (0.02s) 会带来微量积分时延。", labelValueStyle);
+                GUILayout.Label(I18n.T("craft_explain_1_title"), labelValueStyle);
+                GUILayout.Label(I18n.T("craft_explain_1a"), labelValueStyle);
+                GUILayout.Label(I18n.T("craft_explain_1b"), labelValueStyle);
+                GUILayout.Label(I18n.T("craft_explain_1c"), labelValueStyle);
 
                 GUILayout.Space(2);
-                GUILayout.Label("<color=#34d399><b>二、工程实践上：可以 100% 消除对任务成功的影响 (航天闭环协议)</b></color>", labelValueStyle);
-                GUILayout.Label("真实航天（阿波罗登月、嫦娥六号、阿耳忒弥斯）<b>依靠高精度打靶与中途修正</b>。工程标准解决方案为：", labelValueStyle);
-                GUILayout.Label("• <b>基准对齐</b>: 采用本插件实现的地心 ICRF 惯性坐标系与历元对齐；", labelValueStyle);
-                GUILayout.Label("• <b>原生高精求解</b>: GMAT 原生微分修正器直接对真实发动机与质量进行高阶数值积分，求解精确有限点火参数；", labelValueStyle);
-                GUILayout.Label("• <b>中途修正 (TCM)</b>: 在地月中途安排微量修正脉冲，抹平长途飞行中的微弱积分漂移！", labelValueStyle);
+                GUILayout.Label(I18n.T("craft_explain_2_title"), labelValueStyle);
+                GUILayout.Label(I18n.T("craft_explain_2a"), labelValueStyle);
+                GUILayout.Label(I18n.T("craft_explain_2b"), labelValueStyle);
+                GUILayout.Label(I18n.T("craft_explain_2c"), labelValueStyle);
+                GUILayout.Label(I18n.T("craft_explain_2d"), labelValueStyle);
                 GUILayout.EndVertical();
             }
 
@@ -116,14 +116,14 @@ namespace KSPGMAT.UI {
             // MechJeb Staging with Multi-Stage Checkboxes
             GUILayout.BeginVertical(cardBoxStyle);
             GUILayout.BeginHorizontal();
-            GUILayout.Label("🚀 MechJeb 分级多选 (勾选包含的分级)", headerStyle);
+            GUILayout.Label(I18n.T("craft_staging_header"), headerStyle);
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button("🔄 刷新", secondaryButtonStyle, GUILayout.Width(50), GUILayout.Height(20))) {
+            if (GUILayout.Button(I18n.T("btn_refresh"), secondaryButtonStyle, GUILayout.Width(50), GUILayout.Height(20))) {
                 RefreshCraftData();
             }
             GUILayout.EndHorizontal();
 
-            GUILayout.Label($"飞船当前总湿重: <b>{vessel.totalMass:F3} 吨</b>", labelValueStyle);
+            GUILayout.Label(I18n.ColorFormat("craft_wet_mass", vessel.totalMass), labelValueStyle);
             if (cachedStages != null && cachedStages.Count > 0) {
                 double combinedDv = 0.0;
                 double combinedFuel = 0.0;
@@ -134,7 +134,7 @@ namespace KSPGMAT.UI {
                     var st = cachedStages[i];
                     bool isSel = selectedStageIndices.Contains(i);
                     GUILayout.BeginHorizontal();
-                    bool newSel = GUILayout.Toggle(isSel, $" <b>Stage {st.stageNumber}</b>: Δv <b>{st.deltaV:F0}</b>m/s | 湿重 {st.wetMassTonnes:F2}t | 燃料 {st.fuelMassTonnes:F2}t | 干重 {st.dryMassTonnes:F2}t", GUILayout.Height(22));
+                    bool newSel = GUILayout.Toggle(isSel, I18n.Format("craft_stage_toggle", st.stageNumber, st.deltaV, st.wetMassTonnes, st.fuelMassTonnes, st.dryMassTonnes), GUILayout.Height(22));
                     if (newSel != isSel) {
                         if (newSel) selectedStageIndices.Add(i);
                         else if (selectedStageIndices.Count > 1) selectedStageIndices.Remove(i);
@@ -154,12 +154,12 @@ namespace KSPGMAT.UI {
 
                 GUILayout.Space(4);
                 GUILayout.BeginVertical(GUI.skin.box);
-                GUILayout.Label("<color=#55ffff><b>已选多级组合统计 (Combined Staging Stack):</b></color>", labelValueStyle);
-                GUILayout.Label($"总设计 ΔV: <b>{combinedDv:F0} m/s</b> | 初始湿重: <b>{combinedStartMass:F2} 吨</b>", labelValueStyle);
-                GUILayout.Label($"可用推进剂: <b>{combinedFuel:F2} 吨</b> | 最终干重: <b>{minDry:F2} 吨</b>", labelValueStyle);
+                GUILayout.Label(I18n.T("craft_combined_header"), labelValueStyle);
+                GUILayout.Label(I18n.ColorFormat("craft_combined_dv", combinedDv, combinedStartMass), labelValueStyle);
+                GUILayout.Label(I18n.ColorFormat("craft_combined_fuel", combinedFuel, minDry), labelValueStyle);
                 GUILayout.EndVertical();
             } else {
-                GUILayout.Label("未检测到 MechJeb 分级，使用当前飞船整体作为单阶段。", labelValueStyle);
+                GUILayout.Label(I18n.T("craft_no_stages"), labelValueStyle);
             }
             GUILayout.EndVertical();
 
@@ -173,11 +173,11 @@ namespace KSPGMAT.UI {
             // RO Engines & Tanks (Exact restoration from f6273ae)
             GUILayout.BeginVertical(cardBoxStyle);
             GUILayout.BeginHorizontal();
-            GUILayout.Label("🔥 RealismOverhaul 推进系统", headerStyle);
+            GUILayout.Label(I18n.T("craft_ro_header"), headerStyle);
             GUILayout.FlexibleSpace();
             bool roOk = ROEngineInterop.IsRealismOverhaulInstalled();
             GUI.contentColor = roOk ? Color.green : new Color(1f, 0.6f, 0.2f);
-            GUILayout.Label(roOk ? "✅ RO/RealFuels 就绪" : "⚠️ 未检测到 RO", GUILayout.Height(20));
+            GUILayout.Label(roOk ? I18n.T("craft_ro_ready") : I18n.T("craft_ro_missing"), GUILayout.Height(20));
             GUI.contentColor = Color.white;
             GUILayout.EndHorizontal();
 
@@ -187,7 +187,7 @@ namespace KSPGMAT.UI {
                     var eng = cachedEngines[i];
                     bool isSel = (selectedEngineIndex == i);
                     GUI.backgroundColor = isSel ? new Color(0.2f, 0.8f, 0.5f) : Color.white;
-                    string engBtn = $"{(isSel ? "🔘 " : "")}[Stage {eng.stageNumber}] {eng.title} ({eng.thrustKN:F1}kN, Isp {eng.ispVac:F0}s)";
+                    string engBtn = (isSel ? "● " : "") + I18n.Format("craft_engine_btn", eng.stageNumber, eng.title, eng.thrustKN, eng.ispVac);
                     if (GUILayout.Button(engBtn, GUILayout.Height(24))) {
                         SelectEngineAndSync(i);
                     }
@@ -198,33 +198,33 @@ namespace KSPGMAT.UI {
                     var curEng = cachedEngines[selectedEngineIndex];
                     GUILayout.Space(4);
                     GUILayout.BeginVertical(GUI.skin.box);
-                    GUILayout.Label($"推进剂组合: <color=#55ffff>{curEng.propellantDesc}</color>", labelValueStyle);
+                    GUILayout.Label(I18n.ColorFormat("craft_propellant", curEng.propellantDesc), labelValueStyle);
 
                     GUILayout.BeginHorizontal();
-                    GUILayout.Label("推进剂质量:", labelValueStyle, GUILayout.Width(75));
+                    GUILayout.Label(I18n.T("craft_fuel_mass_label"), labelValueStyle, GUILayout.Width(75));
                     curEng.fuelMassKg = DrawDelayedNumericField($"craft_fuel_mass_{selectedEngineIndex}", curEng.fuelMassKg, numericInputStyle ?? GUI.skin.textField, GUILayout.Width(70), "F1");
                     GUILayout.Label("kg", labelValueStyle, GUILayout.Width(25));
 
-                    GUILayout.Label("推进剂密度:", labelValueStyle, GUILayout.Width(75));
+                    GUILayout.Label(I18n.T("craft_fuel_density_label"), labelValueStyle, GUILayout.Width(75));
                     curEng.fuelDensityKgM3 = DrawDelayedNumericField($"craft_fuel_rho_{selectedEngineIndex}", curEng.fuelDensityKgM3, numericInputStyle ?? GUI.skin.textField, GUILayout.Width(70), "F1");
                     GUILayout.Label("kg/m³", labelValueStyle, GUILayout.Width(40));
                     GUILayout.EndHorizontal();
 
                     GUILayout.BeginHorizontal();
-                    GUILayout.Label("储罐容积:", labelValueStyle, GUILayout.Width(75));
+                    GUILayout.Label(I18n.T("craft_tank_volume_label"), labelValueStyle, GUILayout.Width(75));
                     curEng.tankVolumeM3 = DrawDelayedNumericField($"craft_tank_vol_{selectedEngineIndex}", curEng.tankVolumeM3, numericInputStyle ?? GUI.skin.textField, GUILayout.Width(70), "F3");
                     GUILayout.Label("m³", labelValueStyle, GUILayout.Width(25));
 
-                    GUILayout.Label("调节压力:", labelValueStyle, GUILayout.Width(75));
+                    GUILayout.Label(I18n.T("craft_tank_pressure_label"), labelValueStyle, GUILayout.Width(75));
                     curEng.tankPressureKPa = DrawDelayedNumericField($"craft_tank_pres_{selectedEngineIndex}", curEng.tankPressureKPa, numericInputStyle ?? GUI.skin.textField, GUILayout.Width(70), "F0");
                     GUILayout.Label("kPa", labelValueStyle, GUILayout.Width(40));
                     GUILayout.EndHorizontal();
 
-                    GUILayout.Label($"真空推力: <b>{curEng.thrustKN:F1} kN</b> | 真空比冲: <b>{curEng.ispVac:F0} s</b>", labelValueStyle);
+                    GUILayout.Label(I18n.ColorFormat("craft_vac_thrust", curEng.thrustKN, curEng.ispVac), labelValueStyle);
                     GUILayout.EndVertical();
                 }
             } else {
-                GUILayout.Label("当前飞船未发现可用发动机，将使用默认动力学参数。", labelValueStyle);
+                GUILayout.Label(I18n.T("craft_no_engine"), labelValueStyle);
             }
             GUILayout.EndVertical();
 
@@ -235,9 +235,9 @@ namespace KSPGMAT.UI {
             // =========================================================================
             GUILayout.BeginVertical(cardBoxStyle);
             GUILayout.BeginHorizontal();
-            GUILayout.Label("<b>📐 空间坐标系统管理 (Coordinate Systems)</b>", headerStyle);
+            GUILayout.Label(I18n.T("craft_cs_header"), headerStyle);
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button("➕ 新建坐标系", actionButtonStyle, GUILayout.Height(22))) {
+            if (GUILayout.Button(I18n.T("btn_new_coord"), actionButtonStyle, GUILayout.Height(22))) {
                 editingCoordSystem = new CustomCoordSystemDef {
                     name = "CustomCS_" + (GMATParameterRegistry.UserCoordinateSystems.Count + 1),
                     origin = vessel != null ? vessel.mainBody.name : "Earth",
@@ -259,17 +259,17 @@ namespace KSPGMAT.UI {
             GUILayout.EndHorizontal();
 
             GUILayout.Space(2);
-            GUILayout.Label("<color=#94a3b8>管理并自定义任务所需空间参考系 (支持旋转系 R-V-N、惯性系与自转固连系，自动同步 IDE 智能补全)</color>", labelValueStyle);
+            GUILayout.Label(I18n.T("craft_cs_hint"), labelValueStyle);
             GUILayout.Space(4);
 
             // 1. Built-in Coordinate Systems summary chip bar
             GUILayout.BeginVertical(nestedCardBoxStyle);
-            GUILayout.Label("<color=#38bdf8><b>官方内建参考系:</b></color>", labelValueStyle);
+            GUILayout.Label(I18n.T("craft_cs_builtin"), labelValueStyle);
             GUILayout.BeginHorizontal();
             string[] quickBuiltIns = new string[] { "EarthMJ2000Eq", "EarthMJ2000Ec", "EarthFixed", "EarthICRF", "LunaMJ2000Eq", "LunaFixed" };
             for (int b = 0; b < quickBuiltIns.Length; b++) {
                 string csName = quickBuiltIns[b];
-                if (GUILayout.Button($"🌐 {csName}", secondaryButtonStyle, GUILayout.Height(20))) {
+                if (GUILayout.Button(csName, secondaryButtonStyle, GUILayout.Height(20))) {
                     editingCoordSystem = new CustomCoordSystemDef {
                         name = csName,
                         origin = csName.StartsWith("Luna") ? "Luna" : "Earth",
@@ -290,34 +290,34 @@ namespace KSPGMAT.UI {
             // 2. User Custom Coordinate Systems List
             if (GMATParameterRegistry.UserCoordinateSystems.Count > 0) {
                 GUILayout.Space(4);
-                GUILayout.Label($"<b>自定义坐标系 ({GMATParameterRegistry.UserCoordinateSystems.Count}):</b>", labelValueStyle);
+                GUILayout.Label(I18n.ColorFormat("craft_cs_custom_count", GMATParameterRegistry.UserCoordinateSystems.Count), labelValueStyle);
                 for (int u = 0; u < GMATParameterRegistry.UserCoordinateSystems.Count; u++) {
                     var ucs = GMATParameterRegistry.UserCoordinateSystems[u];
                     GUILayout.BeginVertical(nestedCardBoxStyle);
                     GUILayout.BeginHorizontal();
-                    GUILayout.Label($"<b>📐 {ucs.name}</b> <color=#94a3b8>(原点: {ucs.origin} | 轴向: {ucs.axes})</color>", labelValueStyle);
+                    GUILayout.Label(I18n.ColorFormat("craft_cs_item", ucs.name, ucs.origin, ucs.axes), labelValueStyle);
                     GUILayout.FlexibleSpace();
 
-                    if (GUILayout.Button("✏️ 修改", secondaryButtonStyle, GUILayout.Width(50), GUILayout.Height(20))) {
+                    if (GUILayout.Button(I18n.T("btn_edit"), secondaryButtonStyle, GUILayout.Width(50), GUILayout.Height(20))) {
                         editingCoordSystem = ucs.Clone();
                         showCoordSystemWindow = true;
                     }
                     if (GUILayout.Button("✕", deleteButtonStyle, GUILayout.Width(22), GUILayout.Height(20))) {
                         GMATParameterRegistry.DeleteCoordinateSystem(ucs.name);
-                        ScreenMessages.PostScreenMessage($"🗑️ 已删除坐标系: {ucs.name}", 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                        ScreenMessages.PostScreenMessage(I18n.Format("craft_cs_deleted", ucs.name), 3.0f, ScreenMessageStyle.UPPER_CENTER);
                         break;
                     }
                     GUILayout.EndHorizontal();
 
                     if (ucs.axes == "ObjectReferenced") {
-                        GUILayout.Label($"<color=#64748b>随动参数: 主天体={ucs.primary}, 伴星={ucs.secondary} | X轴={ucs.xAxis}, Z轴={ucs.zAxis}</color>", labelValueStyle);
+                        GUILayout.Label(I18n.ColorFormat("craft_cs_follow", ucs.primary, ucs.secondary, ucs.xAxis, ucs.zAxis), labelValueStyle);
                     }
                     GUILayout.EndVertical();
                     GUILayout.Space(2);
                 }
             } else {
                 GUILayout.Space(2);
-                GUILayout.Label("<color=#64748b><i>暂无自定义坐标系。点击上方「➕ 新建坐标系」可随时创建地月晕轨道旋转系或火星探测系。</i></color>", labelValueStyle);
+                GUILayout.Label(I18n.T("craft_cs_empty"), labelValueStyle);
             }
 
             GUILayout.EndVertical();
@@ -326,12 +326,12 @@ namespace KSPGMAT.UI {
 
             // Synchronize & Sub-window Button Card (Exact restoration from f6273ae)
             GUILayout.BeginVertical(cardBoxStyle);
-            if (GUILayout.Button("🚀 同步航天器动力学至 GMAT (前往任务序列)", actionButtonStyle, GUILayout.Height(34))) {
-                string engTitle = (cachedEngines != null && selectedEngineIndex < cachedEngines.Count) ? cachedEngines[selectedEngineIndex].title : "默认动力";
-                syncStatusMessage = $"已同步飞船！中心天体: {vessel.mainBody.name}, 选定 {selectedStageIndices.Count} 个分级, 发动机: {engTitle}";
+            if (GUILayout.Button(I18n.T("btn_sync_to_gmat"), actionButtonStyle, GUILayout.Height(34))) {
+                string engTitle = (cachedEngines != null && selectedEngineIndex < cachedEngines.Count) ? cachedEngines[selectedEngineIndex].title : I18n.T("craft_default_engine");
+                syncStatusMessage = I18n.Format("craft_sync_done", vessel.mainBody.name, selectedStageIndices.Count, engTitle);
                 activeTab = 2; // jump to mission sequence (Tab 2)
             }
-            if (GUILayout.Button("🔍 查看已同步航天器详细参数 (快照子界面)", secondaryButtonStyle, GUILayout.Height(26))) {
+            if (GUILayout.Button(I18n.T("btn_view_craft_snapshot"), secondaryButtonStyle, GUILayout.Height(26))) {
                 showCraftDetailsWindow = true;
             }
             if (!string.IsNullOrEmpty(syncStatusMessage)) {
