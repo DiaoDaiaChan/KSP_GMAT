@@ -395,38 +395,6 @@ namespace KSPGMAT {
         public static string CustomPythonPath = "";
         private static readonly UTF8Encoding Utf8NoBom = new UTF8Encoding(false);
 
-        public static string FindPythonExe() {
-            if (!string.IsNullOrEmpty(CustomPythonPath) && File.Exists(CustomPythonPath)) return CustomPythonPath;
-            string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-            string[] candidates = new string[] {
-                "python.exe",
-                Path.Combine(localAppData, @"Programs\Python\Python310\python.exe"),
-                Path.Combine(localAppData, @"Programs\Python\Python311\python.exe"),
-                Path.Combine(localAppData, @"Programs\Python\Python312\python.exe"),
-                Path.Combine(programFiles, @"Python310\python.exe"),
-                Path.Combine(programFiles, @"Python311\python.exe"),
-                Path.Combine(programFiles, @"Python312\python.exe")
-            };
-            foreach (var c in candidates) {
-                if (c == "python.exe") return c; // try PATH
-                if (File.Exists(c)) return c;
-            }
-            return "python.exe";
-        }
-
-        public static string FindCliScript() {
-            string[] candidates = new string[] {
-                Path.Combine(GmatBinPath, "KSP_GMAT", "gmat_service", "gmat_cli.py"),
-                Path.Combine(GmatBinPath, "gmat_service", "gmat_cli.py"),
-                Path.Combine(KSPUtil.ApplicationRootPath, "GameData", "KSPGMAT", "GMATService", "gmat_cli.py")
-            };
-            foreach (var c in candidates) {
-                if (File.Exists(c)) return c;
-            }
-            return Path.Combine(GmatBinPath, "KSP_GMAT", "gmat_service", "gmat_cli.py");
-        }
-
         public static string GetOutputDir() {
             string dir = Path.Combine(Path.GetDirectoryName(GmatBinPath), "output");
             if (!Directory.Exists(dir)) {
@@ -595,15 +563,15 @@ namespace KSPGMAT {
 
         public static void CheckConnection(Action<bool, string> callback) {
             ThreadPool.QueueUserWorkItem(_ => {
-                string cli = FindCliScript();
-                if (File.Exists(cli)) {
+                string gmatConsole = Service.GMATConsoleRunner.FindGmatConsoleExe();
+                if (File.Exists(gmatConsole)) {
                     IsConnected = true;
-                    ServerStatusText = "GMAT 原生引擎就绪 (无需后台服务)";
+                    ServerStatusText = "GMAT 原生引擎就绪 (GmatConsole)";
                     FetchParameters();
-                    KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(true, "CLI Ready"));
+                    KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(true, "Native GMAT Ready"));
                 } else {
                     IsConnected = false;
-                    ServerStatusText = "gmat_cli.py 未找到: " + cli;
+                    ServerStatusText = "GmatConsole.exe 未找到: " + gmatConsole;
                     KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(false, ServerStatusText));
                 }
             });
@@ -614,9 +582,10 @@ namespace KSPGMAT {
                 try {
                     // Load capabilities from local JSON file directly
                     string[] candidates = new string[] {
-                        Path.Combine(GmatBinPath, "KSP_GMAT", "gmat_service", "gmat_capabilities.json"),
-                        Path.Combine(GmatBinPath, "KSP_GMAT", "Plugins", "gmat_capabilities.json"),
-                        Path.Combine(KSPUtil.ApplicationRootPath, "GameData", "KSPGMAT", "Plugins", "gmat_capabilities.json")
+                        Path.Combine(KSPUtil.ApplicationRootPath, "GameData", "KSPGMAT", "gmat_capabilities.json"),
+                        Path.Combine(KSPUtil.ApplicationRootPath, "GameData", "KSPGMAT", "Plugins", "gmat_capabilities.json"),
+                        Path.Combine(GmatBinPath, "KSP_GMAT", "GameData", "KSPGMAT", "gmat_capabilities.json"),
+                        Path.Combine(GmatBinPath, "gmat_capabilities.json")
                     };
                     foreach (var path in candidates) {
                         if (File.Exists(path)) {
@@ -812,71 +781,6 @@ namespace KSPGMAT {
             });
         }
 
-        public static void SyncPrincipiaNodes(Vessel vessel, List<PrincipiaInterop.FlightPlanNode> nodes, double predictedApoapsisKm, Action<bool, string> callback) {
-            ThreadPool.QueueUserWorkItem(_ => {
-                try {
-                    double ut = Planetarium.GetUniversalTime();
-                    double pTime = PrincipiaInterop.GetCurrentPrincipiaTime();
-                    StringBuilder sb = new StringBuilder();
-                    sb.Append("{");
-                    sb.Append("\"vessel_state\": {");
-                    sb.Append($"\"vessel_name\": \"{Sanitize(vessel != null ? vessel.vesselName : "Vessel")}\",");
-                    sb.Append($"\"ut\": {ut.ToString("F3", CultureInfo.InvariantCulture)},");
-                    sb.Append($"\"principia_time\": {pTime.ToString("F3", CultureInfo.InvariantCulture)},");
-                    sb.Append($"\"principia_final_apoapsis\": {predictedApoapsisKm.ToString("F1", CultureInfo.InvariantCulture)},");
-                    sb.Append($"\"mass_tonnes\": {(vessel != null ? vessel.totalMass : 0.0).ToString("F3", CultureInfo.InvariantCulture)}");
-                    sb.Append("},");
-                    sb.Append("\"nodes\": [");
-                    for (int i = 0; i < (nodes != null ? nodes.Count : 0); i++) {
-                        var n = nodes[i];
-                        if (i > 0) sb.Append(",");
-                        sb.Append("{");
-                        sb.Append($"\"index\": {i+1},");
-                        sb.Append($"\"initial_time\": {n.initialTime.ToString("F3", CultureInfo.InvariantCulture)},");
-                        sb.Append($"\"duration\": {n.duration.ToString("F3", CultureInfo.InvariantCulture)},");
-                        sb.Append($"\"magnitude\": {n.deltaV.magnitude.ToString("F3", CultureInfo.InvariantCulture)},");
-                        sb.Append($"\"dv_tangent\": {n.deltaV.x.ToString("F3", CultureInfo.InvariantCulture)},");
-                        sb.Append($"\"dv_normal\": {n.deltaV.y.ToString("F3", CultureInfo.InvariantCulture)},");
-                        sb.Append($"\"dv_binormal\": {n.deltaV.z.ToString("F3", CultureInfo.InvariantCulture)},");
-                        sb.Append($"\"thrust_kn\": {n.thrust_kn.ToString("F3", CultureInfo.InvariantCulture)},");
-                        sb.Append($"\"isp\": {n.isp.ToString("F3", CultureInfo.InvariantCulture)},");
-                        sb.Append($"\"initial_mass_tonnes\": {n.initial_mass_tonnes.ToString("F3", CultureInfo.InvariantCulture)}");
-                        sb.Append("}");
-                    }
-                    sb.Append("]");
-                    sb.Append("}");
-
-                    string cliScript = FindCliScript();
-                    string outputDir = GetOutputDir();
-                    string inputFile = Path.Combine(outputDir, "principia_sync.json");
-                    string outputFile = Path.Combine(outputDir, "principia_comp.json");
-                    if (File.Exists(outputFile)) {
-                        try { File.Delete(outputFile); } catch {}
-                    }
-                    File.WriteAllText(inputFile, sb.ToString(), Utf8NoBom);
-                    System.Diagnostics.ProcessStartInfo psi = new System.Diagnostics.ProcessStartInfo {
-                        FileName = FindPythonExe(),
-                        Arguments = $"\"{cliScript}\" --action sync --input \"{inputFile}\" --output \"{outputFile}\"",
-                        WorkingDirectory = GmatBinPath,
-                        UseShellExecute = false,
-                        CreateNoWindow = true,
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true
-                    };
-                    using (var process = System.Diagnostics.Process.Start(psi)) {
-                        process.WaitForExit(15000);
-                    }
-                    string responseJson = "";
-                    if (File.Exists(outputFile)) {
-                        responseJson = File.ReadAllText(outputFile, Encoding.UTF8);
-                    }
-                    UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(true, responseJson));
-                } catch (Exception ex) {
-                    UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(false, ex.Message));
-                }
-            });
-        }
-
         public static string Sanitize(string rawName, string fallback = "Sat") {
             return GMATParameterRegistry.SanitizeGmatIdentifier(rawName, fallback);
         }
@@ -1032,48 +936,6 @@ namespace KSPGMAT {
                 res.error = "JSON 解析异常: " + ex.Message;
             }
             return res;
-        }
-
-        public static void RenderTrajectory(string viewMode, string centralBody, double bodyRadiusKm, Action<bool, string> callback) {
-            ThreadPool.QueueUserWorkItem(_ => {
-                try {
-                    string cBody = string.IsNullOrEmpty(centralBody) ? "Earth" : centralBody;
-                    string rKm = bodyRadiusKm > 0 ? bodyRadiusKm.ToString("F1", System.Globalization.CultureInfo.InvariantCulture) : "6378.1";
-                    string payload = $"{{\"view_mode\": \"{viewMode}\", \"central_body\": \"{cBody}\", \"body_radius\": {rKm}}}";
-
-                    string cliScript = FindCliScript();
-                    string outputDir = GetOutputDir();
-                    string inputFile = Path.Combine(outputDir, "render_input.json");
-                    string outputFile = Path.Combine(outputDir, "render_result.json");
-                    File.WriteAllText(inputFile, payload, Utf8NoBom);
-                    System.Diagnostics.ProcessStartInfo psi = new System.Diagnostics.ProcessStartInfo {
-                        FileName = FindPythonExe(),
-                        Arguments = $"\"{cliScript}\" --action render --input \"{inputFile}\" --output \"{outputFile}\"",
-                        WorkingDirectory = GmatBinPath,
-                        UseShellExecute = false,
-                        CreateNoWindow = true,
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true
-                    };
-                    using (var process = System.Diagnostics.Process.Start(psi)) {
-                        process.WaitForExit(15000);
-                    }
-                    if (File.Exists(outputFile)) {
-                        string resJson = File.ReadAllText(outputFile, Encoding.UTF8);
-                        string path = ExtractString(resJson, "image_path");
-                        bool ok = resJson.Contains("\"success\": true");
-                        KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(ok, path));
-                    } else {
-                        KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(false, "渲染进程未生成输出文件"));
-                    }
-                } catch (Exception ex) {
-                    KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(false, ex.Message));
-                }
-            });
-        }
-
-        public static void RenderTrajectory(string viewMode, Action<bool, string> callback) {
-            RenderTrajectory(viewMode, "Earth", 6378.14, callback);
         }
 
         private static string ExtractString(string json, string key) {

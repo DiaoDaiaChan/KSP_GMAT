@@ -781,14 +781,12 @@ namespace KSPGMAT.UI {
         private void RerenderSimulationImage() {
             imageStatusText = I18n.T("simimg_rerender_req");
             string bodyName = FlightGlobals.ActiveVessel != null ? FlightGlobals.ActiveVessel.mainBody.name : "Earth";
-            double bodyRadiusKm = FlightGlobals.ActiveVessel != null ? (FlightGlobals.ActiveVessel.mainBody.Radius / 1000.0) : 6378.14;
-            GMATClient.RenderTrajectory(currentViewMode, bodyName, bodyRadiusKm, (success, path) => {
-                if (success) {
-                    LoadSimulationTexture(path);
-                } else {
-                    imageStatusText = I18n.Format("simimg_rerender_fail", path);
-                }
-            });
+            if (latestResult != null && latestResult.trajectory != null && latestResult.trajectory.Count > 0) {
+                simulationTexture = Service.GMATOrbitCanvas.RenderTrajectoryTexture(latestResult.trajectory, bodyName);
+                imageStatusText = I18n.T("simimg_status_ready");
+            } else {
+                imageStatusText = I18n.T("img_not_ready");
+            }
         }
 
         private void DrawPropagatorConfigWindow(int windowID) {

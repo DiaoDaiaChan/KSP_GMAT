@@ -70,6 +70,9 @@ principia-src/
 
 # Scratch & temporary exploratory code
 scratch/
+scratch_*.txt
+temp_*.script
+*.script.tmp
 
 # Allow GameData Release DLL
 !GameData/KSPGMAT/Plugins/KSPGMAT.dll

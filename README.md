@@ -17,7 +17,7 @@
 - 标准化多目标微分校正打靶（Differential Corrector）；
 - 求解机动 **一键写入 Principia 飞行规划器**（Flight Planner）。
 
-**计算边界**：轨道传播只由 GMAT `Propagator` 执行；脉冲机动只由 GMAT `ImpulsiveBurn` 执行；有限推力只由 GMAT `FiniteBurn`、`ChemicalThruster` 和 `Propagator` 执行；打靶只由 GMAT `DifferentialCorrector` 的 `Target/Vary/Achieve` 执行。Python 桥接层仅生成 GMAT 脚本、调用 `gmatpy` 并读取 GMAT RuntimeObject/ReportFile，C# 只负责采集游戏状态、显示和写入 Principia。
+**计算边界**：轨道传播只由 GMAT `Propagator` 执行；脉冲机动只由 GMAT `ImpulsiveBurn` 执行；有限推力只由 GMAT `FiniteBurn`、`ChemicalThruster` 和 `Propagator` 执行；打靶只由 GMAT `DifferentialCorrector` 的 `Target/Vary/Achieve` 执行。框架直接通过系统进程原生调用 NASA GMAT 官方命令行执行器 `GmatConsole.exe`，并由 C# 高效解析报告结果，**零 Python 依赖、无需运行任何外部后台服务**。
 
 有限推力结果不会被火箭方程转换成伪造的瞬时脉冲。当前只有 GMAT 明确提供原生脉冲量的节点允许写入 Principia；有限燃烧会保留 GMAT 报告的边界状态和质量，并明确标记为不可等价写入的结果。
 
@@ -110,12 +110,6 @@ KSP_GMAT/
 │       ├── Model/              # 状态管理中枢 (GMATStateManager) 与参数架构 (GMATParamSchema)
 │       ├── Service/            # 任务时序提取、脚本解析与高精度星历渲染
 │       └── UI/                 # IMGUI 模块化界面 (Styles, TabCraft, TabSequence, TabMGA, TabResults, Modals)
-├── gmat_service/               # Python 桥接中间件 (运行于 GMAT 运行时环境中)
-│   ├── gmat_bridge_server.py   # 轻量级 RESTful API 服务 (默认端口 8055)
-│   ├── gmat_engine.py          # GMAT 原生脚本编译、执行与运行时结果提取
-│   ├── orbit_renderer.py       # Matplotlib 轨迹二维投影渲染器
-│   ├── script_parser.py        # 脚本解析工具
-│   └── requirements.txt        # Python 依赖清单
 ├── nrho-visualizer/            # Web 3D 轨迹渲染工具 (Three.js / HTML5)
 │   ├── index.html
 │   ├── package.json
@@ -124,16 +118,14 @@ KSP_GMAT/
 │   ├── Mission_EarthToLunarNRHO_1988.script # 经典地月 NRHO 任务基准
 │   ├── test_nasa_target.script             # NASA 打靶测试
 │   └── test_nrho_14days.script             # 14 天长程 Halo 积分
-├── start_gmat_service.bat      # Windows 一键启动桥接服务脚本
-├── .gitignore                  # 严谨的过滤规则 (自动剥离 GMAT 官方二进制及临时日志)
+├── deploy.ps1                  # 自动化一键多目标构建与部署脚本 (含四语 i18n 表自动同步)
+├── .gitignore                  # 严谨的过滤规则 (自动剥离编译器目标文件与临时日志)
 └── LICENSE                     # 开源协议 (MIT)
 ```
 
-### 路径配置
+### 路径配置 (Zero-Config Auto Discovery)
 
-KSP 插件不再依赖固定盘符。编辑 `GameData/KSPGMAT/Config/backend.cfg`，设置 GMAT `bin` 目录。
-
-GMAT 机动写入 Principia 后，结果页提供“校验 GMAT / Principia 机动节点”。它读取 Flight Plan 中的 manoeuvre，按写入时的 Principia 时间基准匹配 GMAT 节点，并报告时间与 ΔV 幅值误差；如果当前 Principia 版本不支持读取接口，会明确显示失败原因。
+KSP 插件会自动扫描主流独立版 GMAT 安装路径（如 `~/gmat-win-R2026a/bin`、`C:/GMAT/bin`、`D:/GMAT/bin` 等）。若存放在特殊自定义路径，编辑 `GameData/KSPGMAT/Config/backend.cfg` 设置 GMAT `bin` 目录或在游戏内【系统设置】直接选择即可。
 
 ---
 
@@ -143,38 +135,24 @@ GMAT 机动写入 Principia 后，结果页提供“校验 GMAT / Principia 机�
 1. **安装 Kerbal Space Program** (推荐 1.12.x)，并安装以下前置模组：
    - [Principia](https://github.com/mockingbirdnest/Principia)
    - Realism Overhaul / Real Solar System (推荐)
-2. **下载并安装 GMAT**：
-   - 从 [NASA 官方网站](https://software.nasa.gov/software/GSC-17177-1) 或 GitHub 下载 GMAT (R2022a 或 R2026a)；
-   - 确保 Python 3.10+ 环境可用。
+2. **下载独立版 GMAT**：
+   - 从 [NASA 官方网站](https://software.nasa.gov/software/GSC-17177-1) 或 GitHub 下载官方独立版 GMAT（R2022a 或 R2026a 解压即用，无需安装 Python）。
 
-### 2. 安装 KSP_GMAT 插件
-- 将仓库中的 `GameData/KSPGMAT` 文件夹复制到您的 KSP 安装目录下的 `GameData/` 中。
+### 2. 安装与部署 KSP_GMAT 插件
+- **自动化一键部署**：在仓库根目录直接右键运行 `deploy.ps1`（或控制台执行 `pwsh deploy.ps1`），脚本会自动编译最新的 Release DLL 并将核心模块、原生 C++ 计算库与四语本地化字典一并部署至所有检测到的 KSP 游戏目录；
+- **手动安装**：直接将本仓库 `GameData/KSPGMAT` 文件夹拷贝至您的 KSP 安装目录下的 `GameData/` 中。
 
-### 3. 启动 GMAT 桥接后台服务
-- 将 `gmat_service` 文件夹放置或软链接到 GMAT 的 `bin/` 目录下；
-- 双击运行 `start_gmat_service.bat`（或在控制台执行 `python gmat_service/gmat_bridge_server.py`）；
-- 控制台将提示 `GMAT API initialized successfully` 且监听在 `http://127.0.0.1:8055`。
-
-### 4. 在游戏内体验
-1. 进入 KSP 飞行视角（Flight Scene），点击右侧工具栏的 **GMAT** 图标；
+### 3. 在游戏内即刻体验 (无需开启任何外部命令行或服务)
+1. 启动游戏进入 KSP 飞行视角（Flight Scene），点击右侧工具栏的 **GMAT** 图标；
 2. 切换至 **【任务序列与求解】** 标签页：
-   - 支持点击预设模板（如 **GTO 地球同步转移** 或 **地月 NRHO 任务**）；
-   - 或使用下方按钮自由添加 `➕ 积分`、`➕ 脉冲`、`🎯 目标求解`；
-   - 使用卡片顶部的 `▲`、`▼` 或 `☰ 拖动` 自由排列执行顺序；
+   - 可直接载入经典预设模板（如 **GTO 地球同步转移**、**地月 NRHO 捕获** 或 **火星霍曼转移**）；
+   - 或使用底部按钮添加 `➕ 积分`、`➕ 脉冲`、`🎯 目标求解`，并通过 `☰ 拖动` 手柄直观重排；
 3. 点击 **`[ ▶ 启动 GMAT 任务序列求解 ]`**：
-   - GMAT 原生内核将在几百毫秒内完成收敛；
-   - 求解得到的准确速度增量 $\Delta V$ 将实时写回各机动卡片；
-4. 点击 **`[ 🔥 一键写入所有机动至 Principia ]`**，打开游戏内 Principia 地图，查看精准变轨结果！
+   - 插件将静默调用 GMAT 原生内核，毫秒级完成轨道收敛；
+   - 求解所得速度增量 $\Delta V$ 与变质量点火质心提前偏置实时回显；
+4. 点击 **`[ 🔥 一键写入所有机动至 Principia ]`**，打开游戏内 Principia 航迹地图，查看严丝合缝的真实变轨结果！
 
-### 5. 运行原生计算边界检查
-
-该检查不执行离线轨道求解，只防止桥接层重新加入二体公式、RK4 或火箭方程替代实现：
-
-```text
-python gmat_service/test_native_authority.py
-```
-
-### 6. (选装推荐) 支持 1957 年前历史年份星历配置 (RP-1 / 1950~1951 年开局)
+### 4. (选装推荐) 支持 1957 年前历史年份星历配置 (RP-1 / 1950~1951 年开局)
 
 > **💡 背景说明**：NASA GMAT 官方安装包默认附带的 `DE405` 行星历表为了精简体积，默认从 **1957 年 10 月 4 日（Sputnik 1 发射）** 起算。如果您在 **RP-1 / 早期航天生涯模组（1950/1951 年开局）** 中进行任务设计，建议下载 NASA JPL 完整版 SPICE 星历内核以获得横跨数个世纪的高精星历支持。
 
