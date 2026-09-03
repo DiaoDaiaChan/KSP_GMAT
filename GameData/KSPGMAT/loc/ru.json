@@ -1726,5 +1726,18 @@
   "widget_obj_type": "<color=#64748b>Тип объекта:</color>",
   "widget_smart_suggest": "<color=#38bdf8>Рекомендации:</color>",
   "widget_var_badge": "<color=#facc15><b>[Переменная: {0} = {1}]</b></color>",
-  "window_title": "NASA GMAT Orbit Simulation System"
+  "window_title": "NASA GMAT Orbit Simulation System",
+  "mga_asteroids_header": "<b><color=#38bdf8>Астероиды и карликовые планеты</color></b>",
+  "body_Ceres": "Церера (Ceres)",
+  "body_Vesta": "Веста (Vesta)",
+  "body_Pallas": "Паллада (Pallas)",
+  "body_Ryugu": "Рюгу (Ryugu)",
+  "body_Eros": "Эрос (Eros)",
+  "body_Ida": "Ида (Ida)",
+  "body_Psyche": "Психея (Psyche)",
+  "body_Arrokoth": "Аррокот (Arrokoth)",
+  "body_Bennu": "Бенну (Bennu)",
+  "body_Itokawa": "Итокава (Itokawa)",
+  "body_Juno": "Юнона (Juno)",
+  "body_Hygiea": "Гигея (Hygiea)"
 }

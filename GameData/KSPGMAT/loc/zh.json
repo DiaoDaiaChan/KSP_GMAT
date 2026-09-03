@@ -1726,5 +1726,18 @@
   "widget_obj_type": "<color=#64748b>对象类型:</color>",
   "widget_smart_suggest": "<color=#38bdf8>智能推荐:</color>",
   "widget_var_badge": "<color=#facc15><b>[变量: {0} = {1}]</b></color>",
-  "window_title": "NASA GMAT 轨道任务设计与高精度仿真系统"
+  "window_title": "NASA GMAT 轨道任务设计与高精度仿真系统",
+  "mga_asteroids_header": "<b><color=#38bdf8>小行星与矮行星 (Asteroids & Dwarf Planets)</color></b>",
+  "body_Ceres": "谷神星 (Ceres)",
+  "body_Vesta": "灶神星 (Vesta)",
+  "body_Pallas": "智神星 (Pallas)",
+  "body_Ryugu": "龙宫 (Ryugu)",
+  "body_Eros": "爱神星 (Eros)",
+  "body_Ida": "艾女星 (Ida)",
+  "body_Psyche": "灵神星 (Psyche)",
+  "body_Arrokoth": "阿罗科斯 (Arrokoth)",
+  "body_Bennu": "贝努 (Bennu)",
+  "body_Itokawa": "糸川 (Itokawa)",
+  "body_Juno": "婚神星 (Juno)",
+  "body_Hygiea": "健神星 (Hygiea)"
 }

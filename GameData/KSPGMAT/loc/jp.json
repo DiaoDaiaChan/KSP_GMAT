@@ -1726,5 +1726,18 @@
   "widget_obj_type": "<color=#64748b>種別:</color>",
   "widget_smart_suggest": "<color=#38bdf8>スマート提案:</color>",
   "widget_var_badge": "<color=#facc15><b>[変数: {0} = {1}]</b></color>",
-  "window_title": "NASA GMAT Orbit Simulation System"
+  "window_title": "NASA GMAT Orbit Simulation System",
+  "mga_asteroids_header": "<b><color=#38bdf8>小惑星・準惑星 (Asteroids & Dwarf Planets)</color></b>",
+  "body_Ceres": "ケレス (Ceres)",
+  "body_Vesta": "ベスタ (Vesta)",
+  "body_Pallas": "パラス (Pallas)",
+  "body_Ryugu": "リュウグウ (Ryugu)",
+  "body_Eros": "エロス (Eros)",
+  "body_Ida": "アイダ (Ida)",
+  "body_Psyche": "プシケ (Psyche)",
+  "body_Arrokoth": "アロコス (Arrokoth)",
+  "body_Bennu": "ベンヌ (Bennu)",
+  "body_Itokawa": "イトカワ (Itokawa)",
+  "body_Juno": "ユノ (Juno)",
+  "body_Hygiea": "ヒギエア (Hygiea)"
 }

@@ -1350,13 +1350,24 @@ namespace KSPGMAT.UI {
 
             planetPickerScrollPos = GUILayout.BeginScrollView(planetPickerScrollPos);
 
-            // 分组展示: 内太阳系 vs 外太阳系
-            var innerPlanets = filtered.FindAll(p => p.SMA < 2.5 * 1.496e8);
-            var outerPlanets = filtered.FindAll(p => p.SMA >= 2.5 * 1.496e8);
+            // 分组展示: 内行星 vs 小行星与矮行星 vs 外行星
+            var majorSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
+                "Mercury", "Venus", "Earth", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune", "Pluto"
+            };
+
+            var innerPlanets = filtered.FindAll(p => majorSet.Contains(p.Name) && p.SMA < 2.0 * 1.496e8);
+            var asteroidPlanets = filtered.FindAll(p => !majorSet.Contains(p.Name));
+            var outerPlanets = filtered.FindAll(p => majorSet.Contains(p.Name) && p.SMA >= 2.0 * 1.496e8);
 
             if (innerPlanets.Count > 0) {
                 GUILayout.Label(I18n.T("mga_inner_header"), labelValueStyle);
                 DrawPlanetGrid(innerPlanets);
+                GUILayout.Space(8);
+            }
+
+            if (asteroidPlanets.Count > 0) {
+                GUILayout.Label(I18n.T("mga_asteroids_header"), labelValueStyle);
+                DrawPlanetGrid(asteroidPlanets);
                 GUILayout.Space(8);
             }
 

@@ -159,6 +159,46 @@ namespace KSPGMAT.MGA {
                 Name = "Pluto", DisplayName = "冥王星 (Pluto)", Icon = "Pl",
                 Mu = 871.0, RadiusKm = 1188.3, SafeRadiusKm = 1208.3,
                 SMA = 5906380000.0, ECC = 0.2488, INC = 17.16, RAAN = 110.30, AOP = 113.83, MA0 = 14.53, EpochJ2000 = J2000_RSS_UT
+            },
+            ["Ceres"] = new SolarPlanet {
+                Name = "Ceres", DisplayName = "谷神星 (Ceres)", Icon = "Ce",
+                Mu = 62.63, RadiusKm = 473.0, SafeRadiusKm = 483.0,
+                SMA = 413700000.0, ECC = 0.0758, INC = 10.59, RAAN = 80.33, AOP = 72.6, MA0 = 95.99, EpochJ2000 = J2000_RSS_UT
+            },
+            ["Vesta"] = new SolarPlanet {
+                Name = "Vesta", DisplayName = "灶神星 (Vesta)", Icon = "Ve",
+                Mu = 17.29, RadiusKm = 262.7, SafeRadiusKm = 272.7,
+                SMA = 353260000.0, ECC = 0.0887, INC = 7.14, RAAN = 103.81, AOP = 151.2, MA0 = 20.86, EpochJ2000 = J2000_RSS_UT
+            },
+            ["Pallas"] = new SolarPlanet {
+                Name = "Pallas", DisplayName = "智神星 (Pallas)", Icon = "Pa",
+                Mu = 13.7, RadiusKm = 256.0, SafeRadiusKm = 266.0,
+                SMA = 414400000.0, ECC = 0.231, INC = 34.84, RAAN = 173.08, AOP = 310.2, MA0 = 61.3, EpochJ2000 = J2000_RSS_UT
+            },
+            ["Eros"] = new SolarPlanet {
+                Name = "Eros", DisplayName = "爱神星 (Eros)", Icon = "Er",
+                Mu = 0.000446, RadiusKm = 8.4, SafeRadiusKm = 10.0,
+                SMA = 217500000.0, ECC = 0.223, INC = 10.83, RAAN = 304.32, AOP = 178.8, MA0 = 310.2, EpochJ2000 = J2000_RSS_UT
+            },
+            ["Ryugu"] = new SolarPlanet {
+                Name = "Ryugu", DisplayName = "龙宫 (Ryugu)", Icon = "Ry",
+                Mu = 0.000030, RadiusKm = 0.45, SafeRadiusKm = 1.0,
+                SMA = 178000000.0, ECC = 0.190, INC = 5.88, RAAN = 251.6, AOP = 211.4, MA0 = 120.0, EpochJ2000 = J2000_RSS_UT
+            },
+            ["Ida"] = new SolarPlanet {
+                Name = "Ida", DisplayName = "艾女星 (Ida)", Icon = "Id",
+                Mu = 0.0028, RadiusKm = 15.7, SafeRadiusKm = 18.0,
+                SMA = 428000000.0, ECC = 0.045, INC = 1.14, RAAN = 324.0, AOP = 109.0, MA0 = 15.0, EpochJ2000 = J2000_RSS_UT
+            },
+            ["Psyche"] = new SolarPlanet {
+                Name = "Psyche", DisplayName = "灵神星 (Psyche)", Icon = "Ps",
+                Mu = 1.53, RadiusKm = 111.5, SafeRadiusKm = 120.0,
+                SMA = 437000000.0, ECC = 0.134, INC = 3.09, RAAN = 150.3, AOP = 228.4, MA0 = 180.0, EpochJ2000 = J2000_RSS_UT
+            },
+            ["Arrokoth"] = new SolarPlanet {
+                Name = "Arrokoth", DisplayName = "阿罗科斯 (Arrokoth)", Icon = "Ar",
+                Mu = 0.0001, RadiusKm = 18.0, SafeRadiusKm = 20.0,
+                SMA = 6660000000.0, ECC = 0.042, INC = 2.45, RAAN = 187.0, AOP = 170.0, MA0 = 200.0, EpochJ2000 = J2000_RSS_UT
             }
         };
 
@@ -166,9 +206,25 @@ namespace KSPGMAT.MGA {
         /// 基线 7.6: 纯净太阳系 (Pure Sol/RSS Only) 白名单。
         /// 仅允许真实太阳系天体 (水金地月火木土天海冥)，彻底过滤原版 Kerbol 虚构天体 (Moho/Eve/Kerbin/Mun/Minmus/Duna/Dres/Jool/Eeloo)。
         /// </summary>
+        /// <summary>
+        /// 过滤原版 Kerbol 虚构天体 (Moho/Eve/Kerbin/Mun/Minmus/Duna/Dres/Jool/Eeloo 等)，保证 Pure Sol/RSS Only。
+        /// </summary>
+        public static readonly HashSet<string> KerbolFictionalBlacklist = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
+            "Kerbin", "Mun", "Minmus", "Moho", "Eve", "Gilly", "Duna", "Ike", "Dres", 
+            "Jool", "Laythe", "Vall", "Tylo", "Bop", "Pol", "Eeloo"
+        };
+
+        /// <summary>
+        /// 基线 7.6 / 8.0: 纯净太阳系 (Pure Sol/RSS Only) 核心天体白名单。
+        /// 包含各大行星、矮行星、小行星及主带天体。
+        /// </summary>
         public static readonly HashSet<string> PureSolWhitelist = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
             "Mercury", "Venus", "Earth", "Moon", "Luna", "Mars",
-            "Jupiter", "Saturn", "Uranus", "Neptune", "Pluto"
+            "Jupiter", "Saturn", "Uranus", "Neptune", "Pluto",
+            "Ceres", "Vesta", "Pallas", "Juno", "Hygiea",
+            "Ryugu", "Eros", "Bennu", "Itokawa", "Ida", "Psyche", "Arrokoth", "Mathilde", "Gaspra", "Lutetia", "Steins",
+            "Chiron", "Chariklo", "Sedna", "Makemake", "Haumea", "Eris", "Quaoar", "Orcus", "Gonggong", "Varuna", "Salacia",
+            "Io", "Europa", "Ganymede", "Callisto", "Titan", "Enceladus", "Triton", "Charon"
         };
 
         public static SolarPlanet GetPlanet(string name) {
@@ -178,7 +234,7 @@ namespace KSPGMAT.MGA {
             //    基线 7.6: 仅接受纯净太阳系白名单天体，彻底过滤 Kerbol 虚构天体
             if (FlightGlobals.ready && FlightGlobals.Bodies != null && FlightGlobals.Bodies.Count > 0) {
                 var b = FlightGlobals.Bodies.Find(body => 
-                    (PureSolWhitelist.Contains(body.name) || PureSolWhitelist.Contains(body.bodyName)) &&
+                    (PureSolWhitelist.Contains(body.name) || PureSolWhitelist.Contains(body.bodyName) || !KerbolFictionalBlacklist.Contains(body.name)) &&
                     (body.name.Equals(name, StringComparison.OrdinalIgnoreCase) || 
                     body.bodyName.Equals(name, StringComparison.OrdinalIgnoreCase) ||
                     (!string.IsNullOrEmpty(body.displayName) && body.displayName.IndexOf(name, StringComparison.OrdinalIgnoreCase) >= 0)));
@@ -223,7 +279,7 @@ namespace KSPGMAT.MGA {
                 if (sun != null) {
                     var sunOrbiters = FlightGlobals.Bodies
                         .Where(b => b.referenceBody == sun && b != sun && b.orbit != null && b.orbit.semiMajorAxis > 0)
-                        .Where(b => PureSolWhitelist.Contains(b.name) || PureSolWhitelist.Contains(b.bodyName))
+                        .Where(b => PureSolWhitelist.Contains(b.name) || PureSolWhitelist.Contains(b.bodyName) || !KerbolFictionalBlacklist.Contains(b.name))
                         .OrderBy(b => b.orbit.semiMajorAxis)
                         .Select(b => GetPlanet(b.name))
                         .ToList();
@@ -231,9 +287,10 @@ namespace KSPGMAT.MGA {
                 }
             }
 
-            // 2. 离线标准太阳系顺序
+            // 2. 离线标准太阳系顺序 (含主要矮行星与探测小行星)
             string[] solStandardOrder = new string[] {
-                "Mercury", "Venus", "Earth", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune", "Pluto"
+                "Mercury", "Venus", "Earth", "Mars", "Ryugu", "Eros", "Vesta", "Ceres", "Pallas", "Ida", "Psyche",
+                "Jupiter", "Saturn", "Uranus", "Neptune", "Pluto", "Arrokoth"
             };
 
             var result = new List<SolarPlanet>();
@@ -270,7 +327,18 @@ namespace KSPGMAT.MGA {
             if (n.Contains("uranus")) return "Ur";
             if (n.Contains("neptune")) return "Ne";
             if (n.Contains("pluto")) return "Pl";
-            return "??";
+            if (n.Contains("ceres")) return "Ce";
+            if (n.Contains("vesta")) return "Ve";
+            if (n.Contains("pallas")) return "Pa";
+            if (n.Contains("ryugu")) return "Ry";
+            if (n.Contains("eros")) return "Er";
+            if (n.Contains("ida")) return "Id";
+            if (n.Contains("psyche")) return "Ps";
+            if (n.Contains("arrokoth")) return "Ar";
+            if (n.Contains("bennu")) return "Be";
+            if (n.Contains("itokawa")) return "It";
+            if (name.Length >= 2) return char.ToUpperInvariant(name[0]).ToString() + char.ToLowerInvariant(name[1]).ToString();
+            return name.ToUpperInvariant();
         }
     }
 }

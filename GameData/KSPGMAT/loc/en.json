@@ -1726,5 +1726,18 @@
   "widget_obj_type": "<color=#64748b>Object Type:</color>",
   "widget_smart_suggest": "<color=#38bdf8>Smart Suggestions:</color>",
   "widget_var_badge": "<color=#facc15><b>[Var: {0} = {1}]</b></color>",
-  "window_title": "NASA GMAT Orbit Simulation System"
+  "window_title": "NASA GMAT Orbit Simulation System",
+  "mga_asteroids_header": "<b><color=#38bdf8>Asteroids & Dwarf Planets</color></b>",
+  "body_Ceres": "Ceres",
+  "body_Vesta": "Vesta",
+  "body_Pallas": "Pallas",
+  "body_Ryugu": "Ryugu",
+  "body_Eros": "Eros",
+  "body_Ida": "Ida",
+  "body_Psyche": "Psyche",
+  "body_Arrokoth": "Arrokoth",
+  "body_Bennu": "Bennu",
+  "body_Itokawa": "Itokawa",
+  "body_Juno": "Juno",
+  "body_Hygiea": "Hygiea"
 }
