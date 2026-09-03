@@ -846,8 +846,9 @@ namespace KSPGMAT.MGA {
                 if (cb1 != null && cb2 != null && cb1.orbit != null && cb2.orbit != null) {
                     try {
                         // 基线7: 弃用 TWP (global::LambertSolver), 采用解析霍曼转移时间 (基于真实轨道半长轴)
-                        double a1 = cb1.orbit.semiMajorAxis;
-                        double a2 = cb2.orbit.semiMajorAxis;
+                        // KSP orbit.semiMajorAxis is in meters; convert to km to match SolarSystemCatalog.SunMu (km^3/s^2)
+                        double a1 = cb1.orbit.semiMajorAxis / 1000.0;
+                        double a2 = cb2.orbit.semiMajorAxis / 1000.0;
                         if (a1 > 0 && a2 > 0) {
                             double aTxLocal = (a1 + a2) * 0.5;
                             return (Math.PI * Math.Sqrt(Math.Pow(aTxLocal, 3) / SolarSystemCatalog.SunMu)) / 86400.0;

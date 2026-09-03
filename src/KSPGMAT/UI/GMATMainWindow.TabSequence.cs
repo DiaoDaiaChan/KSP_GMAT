@@ -1123,7 +1123,7 @@ namespace KSPGMAT.UI {
                 string newDc = $"DC_{missionSequence.Count + 1}";
                 double defaultVal = (cb == "Earth") ? 42164.14 : ((cb == "Luna" || cb == "Moon") ? 1837.4 : 7000.0);
                 missionSequence.Add(new MissionStep { type = "Target", label = I18n.Format("seq_target_label2", newDc), dc_name = newDc, dc_algorithm = "NewtonRaphson", dc_max_iter = 50 });
-                missionSequence.Add(new MissionStep { type = "Vary", vary_variable = $"{newDc}_Duration", vary_initial = 120.0, vary_lower = 10.0, vary_upper = 1000.0, vary_max_step = 10.0, dc_name = newDc, label = I18n.T("seq_vary_label3") });
+                missionSequence.Add(new MissionStep { type = "Vary", vary_variable = $"{newDc}_Duration", vary_initial = 120.0, vary_lower = 10.0, vary_upper = 1000.0, vary_max_step = 10.0, dc_name = newDc, label = I18n.Format("seq_vary_label3", newDc) });
                 missionSequence.Add(new MissionStep { type = "Achieve", achieve_param = $"Sat.{cb}.SMA", achieve_val = defaultVal, achieve_tolerance = 1.0, dc_name = newDc, label = I18n.Format("seq_achieve_label3", cb + ".SMA") });
                 missionSequence.Add(new MissionStep { type = "EndTarget", label = I18n.Format("seq_end_label2", newDc), dc_name = newDc });
             }
@@ -1156,7 +1156,7 @@ namespace KSPGMAT.UI {
                 }
                 if (GUILayout.Button("Vary", secondaryButtonStyle, GUILayout.Height(20))) {
                     string activeDc = GetAvailableSolverList()[0];
-                    missionSequence.Add(new MissionStep { type = "Vary", vary_variable = $"{activeDc}_Duration", vary_initial = 120.0, vary_lower = 10.0, vary_upper = 1000.0, vary_max_step = 10.0, dc_name = activeDc, label = I18n.T("seq_vary_label4") });
+                    missionSequence.Add(new MissionStep { type = "Vary", vary_variable = $"{activeDc}_Duration", vary_initial = 120.0, vary_lower = 10.0, vary_upper = 1000.0, vary_max_step = 10.0, dc_name = activeDc, label = I18n.Format("seq_vary_label4", activeDc) });
                 }
                 if (GUILayout.Button("Achieve", secondaryButtonStyle, GUILayout.Height(20))) {
                     string cb = GetContextCentralBody();
@@ -2636,7 +2636,7 @@ namespace KSPGMAT.UI {
                 GUILayout.Space(8);
                 string col = step.achieve_passed ? "#34d399" : "#f87171";
                 string icon = step.achieve_passed ? "✓" : "✗";
-                GUILayout.Label(I18n.ColorFormat("seq_collapsed_achieve", icon, step.achieved_value, step.achieved_variance), labelValueStyle);
+                GUILayout.Label(I18n.ColorFormat("seq_collapsed_achieve", col, icon, step.achieved_value, step.achieved_variance), labelValueStyle);
             } else if ((step.type == "FiniteBurn" || step.type == "ImpulsiveBurn" || step.type == "Maneuver") && (step.dv_v != 0 || step.dv_n != 0 || step.dv_b != 0 || step.has_solved_value)) {
                 GUILayout.Space(8);
                 double tot = Math.Sqrt(step.dv_v * step.dv_v + step.dv_n * step.dv_n + step.dv_b * step.dv_b);
