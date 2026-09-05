@@ -1159,8 +1159,8 @@ namespace KSPGMAT {
                     filterFlags = ParamCapability.ControlVariable;
                 } else if (cm == "stop" || cm == "prop_stop") {
                     filterFlags = ParamCapability.PropagateCondition;
-                } else if (cm == "prop_val" || cm == "variable_or_value") {
-                    filterFlags = ParamCapability.Reportable | ParamCapability.ControlVariable;
+                } else if (cm == "prop_val" || cm == "variable_or_value" || cm == "script_code") {
+                    filterFlags = ParamCapability.Reportable | ParamCapability.ControlVariable | ParamCapability.PropagateCondition;
                 }
             }
             return GMATNamespaceResolver.Resolve(text, vessel, filterFlags);

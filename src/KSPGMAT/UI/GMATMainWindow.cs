@@ -32,6 +32,7 @@ namespace KSPGMAT.UI {
         private Vector2 intelliSenseScroll = Vector2.zero;
         private List<IntelliSenseItem> intelliSenseItems = new List<IntelliSenseItem>();
         private string intelliSenseLastQuery = null;
+        private Action<IntelliSenseItem> intelliSenseCustomCallback = null;
 
         public static GMATMainWindow Instance { get; private set; }
 

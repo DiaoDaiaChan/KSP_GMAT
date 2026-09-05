@@ -64,9 +64,10 @@ namespace KSPGMAT.UI {
         /// <param name="style">GUIStyle 样式</param>
         /// <param name="widthOpt">GUILayout 宽度布局选项</param>
         /// <param name="intelliSenseContextMode">智能补全上下文模式 (如 "prop_val", "fburn_var", "variable_or_value")，为空则不激活补全</param>
-        /// <param name="stepIndex">当前时序节点索引 (用于补全回填模型)</param>
+        /// <param name="stepIndex">当前时序节点索引 (用于补全回填模型，若传入 customCallback 可为 -1)</param>
+        /// <param name="customCallback">可选自定义补全项选择回调 (优先于内置 step 回填)</param>
         /// <returns>当前文本框中的最新字符串内容</returns>
-        private string DrawDelayedSmartField(string controlId, string rawValue, double fallbackNumericValue, GUIStyle style, GUILayoutOption widthOpt, string intelliSenseContextMode = null, int stepIndex = -1) {
+        private string DrawDelayedSmartField(string controlId, string rawValue, double fallbackNumericValue, GUIStyle style, GUILayoutOption widthOpt, string intelliSenseContextMode = null, int stepIndex = -1, Action<IntelliSenseItem> customCallback = null) {
             GUI.SetNextControlName(controlId);
             bool isFocused = (GUI.GetNameOfFocusedControl() == controlId);
 
@@ -93,8 +94,8 @@ namespace KSPGMAT.UI {
 
             if (newStr != displayStr || (isFocused && !intelliSenseOpen && !intelliSenseDismissed && !string.IsNullOrEmpty(intelliSenseContextMode))) {
                 inputStringCache[controlId] = newStr;
-                if (!string.IsNullOrEmpty(intelliSenseContextMode) && stepIndex >= 0) {
-                    TriggerIntelliSense(newStr, intelliSenseContextMode, stepIndex);
+                if (!string.IsNullOrEmpty(intelliSenseContextMode) && (stepIndex >= 0 || customCallback != null)) {
+                    TriggerIntelliSense(newStr, intelliSenseContextMode, stepIndex, customCallback);
                 }
                 return newStr;
             }
@@ -138,33 +139,17 @@ namespace KSPGMAT.UI {
 
         /// <summary>
         /// 延迟字符串文本输入框：编辑期间保留中间未完成输入，失焦后安全提交，防止高频每帧 String 分配。
+        /// 全面统一接入可选智能补全与自定义回填机制。
         /// </summary>
         /// <param name="controlId">输入框唯一标识符</param>
         /// <param name="currentText">当前绑定的字符串</param>
         /// <param name="style">GUIStyle 样式</param>
         /// <param name="widthOpt">GUILayout 宽度布局选项</param>
+        /// <param name="intelliSenseContextMode">可选补全上下文模式 (如 "script_code", "vary", "achieve")</param>
+        /// <param name="customCallback">可选自定义补全项选择回调</param>
         /// <returns>最新编辑的字符串</returns>
-        private static string DrawDelayedTextField(string controlId, string currentText, GUIStyle style, GUILayoutOption widthOpt) {
-            GUI.SetNextControlName(controlId);
-            bool isFocused = (GUI.GetNameOfFocusedControl() == controlId);
-
-            string displayStr;
-            if (!inputStringCache.TryGetValue(controlId, out displayStr)) {
-                displayStr = currentText ?? "";
-                inputStringCache[controlId] = displayStr;
-            }
-
-            if (!isFocused) {
-                displayStr = currentText ?? "";
-                inputStringCache[controlId] = displayStr;
-            }
-
-            string newStr = GUILayout.TextField(displayStr, style ?? GUI.skin.textField, widthOpt, GUILayout.Height(20));
-            if (newStr != displayStr) {
-                inputStringCache[controlId] = newStr;
-                return newStr;
-            }
-            return displayStr;
+        private string DrawDelayedTextField(string controlId, string currentText, GUIStyle style, GUILayoutOption widthOpt, string intelliSenseContextMode = null, Action<IntelliSenseItem> customCallback = null) {
+            return DrawDelayedSmartField(controlId, currentText, 0.0, style, widthOpt, intelliSenseContextMode, -1, customCallback);
         }
 
         // =========================================================================
@@ -285,27 +270,66 @@ namespace KSPGMAT.UI {
         // =========================================================================
 
         /// <summary>
-        /// 唤起 GMAT IntelliSense 智能补全查询
+        /// 从代码行或文本中提取光标处正在键入的最后一个有效标识符或点语法命名空间 (例如 "Sat.Earth.S" 或 "GEO_")
+        /// </summary>
+        /// <param name="text">当前完整文本</param>
+        /// <param name="tokenStart">返回当前 Token 在文本中的起始偏移</param>
+        /// <returns>提取出的 Token 字符串</returns>
+        private static string ExtractIntelliSenseToken(string text, out int tokenStart) {
+            tokenStart = -1;
+            if (string.IsNullOrEmpty(text)) return "";
+            int end = text.Length;
+            while (end > 0 && char.IsWhiteSpace(text[end - 1])) end--;
+            if (end == 0) return "";
+            int start = end - 1;
+            while (start >= 0) {
+                char c = text[start];
+                if (char.IsLetterOrDigit(c) || c == '.' || c == '_') {
+                    start--;
+                } else {
+                    break;
+                }
+            }
+            tokenStart = start + 1;
+            return text.Substring(tokenStart, end - tokenStart);
+        }
+
+        /// <summary>
+        /// 唤起 GMAT IntelliSense 智能补全查询 (支持自定义回调回填，全面打通单步代码透视与通用文本组件)
         /// </summary>
         /// <param name="query">用户当前输入的文本前缀</param>
-        /// <param name="fieldName">目标字段类型 ("achieve", "vary", "prop_stop", "prop_val", "fburn_var")</param>
-        /// <param name="stepIndex">目标时序步骤索引</param>
-        private void TriggerIntelliSense(string query, string fieldName, int stepIndex) {
-            if (intelliSenseDismissed && intelliSenseLastQuery == query) return;
+        /// <param name="fieldName">目标字段类型 ("achieve", "vary", "prop_stop", "prop_val", "fburn_var", "script_code")</param>
+        /// <param name="stepIndex">目标时序步骤索引 (通用回填可传 -1)</param>
+        /// <param name="customCallback">自定义应用回填委托 (若不为 null，选中项时将优先执行该委托)</param>
+        private void TriggerIntelliSense(string query, string fieldName, int stepIndex, Action<IntelliSenseItem> customCallback = null) {
+            if (intelliSenseDismissed && intelliSenseLastQuery == query && intelliSenseCustomCallback == customCallback) return;
             intelliSenseTargetStepIndex = stepIndex;
             intelliSenseFieldName = fieldName;
             intelliSenseLastQuery = query;
+            intelliSenseCustomCallback = customCallback;
             intelliSenseItems = GMATParameterRegistry.QueryIntelliSense(query, FlightGlobals.ActiveVessel, fieldName);
             intelliSenseSelectedIndex = 0;
             intelliSenseOpen = (intelliSenseItems != null && intelliSenseItems.Count > 0);
         }
 
         /// <summary>
-        /// 将选中的 IntelliSense 补全项应用并回填到目标时序节点与数据模型中
+        /// 将选中的 IntelliSense 补全项应用并回填到目标时序节点或自定义代码区域中
         /// </summary>
         /// <param name="item">被选中的补全数据项</param>
         private void ApplyIntelliSense(IntelliSenseItem item) {
             if (item == null) return;
+
+            // 优先处理通用回调 (单步代码透视框、通用延迟文本框等)
+            if (intelliSenseCustomCallback != null) {
+                var cb = intelliSenseCustomCallback;
+                intelliSenseCustomCallback = null;
+                cb(item);
+                intelliSenseOpen = false;
+                intelliSenseDismissed = true;
+                intelliSenseLastQuery = item.InsertText;
+                return;
+            }
+
             if (intelliSenseTargetStepIndex >= 0 && intelliSenseTargetStepIndex < missionSequence.Count) {
                 var step = missionSequence[intelliSenseTargetStepIndex];
                 if (intelliSenseFieldName == "achieve") {
@@ -788,6 +812,38 @@ namespace KSPGMAT.UI {
 
             GUILayout.Space(2);
 
+            // 锚点定位与全屏智能补全窗对齐
+            if (Event.current.type == EventType.Repaint && isFocused) {
+                Rect r = GUILayoutUtility.GetLastRect();
+                Vector2 sp = GUIUtility.GUIToScreenPoint(new Vector2(r.x, r.y));
+                intelliSenseAnchorRect = new Rect(sp.x, sp.y, r.width, r.height);
+            }
+
+            // 主动快捷键支持：聚焦时按 Ctrl + Space 主动唤起智能补全
+            if (isFocused && Event.current.type == EventType.KeyDown && Event.current.control && Event.current.keyCode == KeyCode.Space) {
+                int tStart;
+                string tStr = ExtractIntelliSenseToken(editBuffer, out tStart);
+                int capStart = tStart;
+                string capTok = tStr;
+                TriggerIntelliSense(tStr, "script_code", -1, (item) => {
+                    string cur = stepCodeEditCache.ContainsKey(step) ? stepCodeEditCache[step] : editBuffer;
+                    if (capStart >= 0 && capStart <= cur.Length) {
+                        string before = cur.Substring(0, capStart);
+                        int afterStart = Math.Min(cur.Length, capStart + capTok.Length);
+                        string after = cur.Substring(afterStart);
+                        string replaced = before + item.InsertText + after;
+                        stepCodeEditCache[step] = replaced;
+                        bool parseOk = GMATScriptParser.ParseSingleStepScript(step, replaced);
+                        stepCodeSyncStatus[step] = parseOk;
+                        if (parseOk) {
+                            inputStringCache.Clear();
+                            ideHasUnsavedEdits = true;
+                        }
+                    }
+                });
+                Event.current.Use();
+            }
+
             // 可直接编辑的单步原生脚本输入框 (使用 ideEditorStyle，暗黑背景等宽字体)
             string newText = GUILayout.TextArea(editBuffer, ideEditorStyle, GUILayout.MinHeight(24), GUILayout.ExpandWidth(true));
             if (newText != editBuffer) {
@@ -798,6 +854,30 @@ namespace KSPGMAT.UI {
                     // 清理 inputStringCache 关联控件，强制上层各表单控件在下一帧重取最新模型值
                     inputStringCache.Clear();
                     ideHasUnsavedEdits = true;
+                }
+
+                // 统一智能自动补全接入：提取当前光标处正在输入的 Token (如 Sat.Earth.S 或变量名)
+                int tokenStart;
+                string token = ExtractIntelliSenseToken(newText, out tokenStart);
+                if (!string.IsNullOrEmpty(token) && (token.Contains(".") || token.Length >= 2)) {
+                    int capturedStart = tokenStart;
+                    string capturedToken = token;
+                    TriggerIntelliSense(token, "script_code", -1, (item) => {
+                        string cur = stepCodeEditCache.ContainsKey(step) ? stepCodeEditCache[step] : newText;
+                        if (capturedStart >= 0 && capturedStart <= cur.Length) {
+                            string before = cur.Substring(0, capturedStart);
+                            int afterStart = Math.Min(cur.Length, capturedStart + capturedToken.Length);
+                            string after = cur.Substring(afterStart);
+                            string replaced = before + item.InsertText + after;
+                            stepCodeEditCache[step] = replaced;
+                            bool parseOk = GMATScriptParser.ParseSingleStepScript(step, replaced);
+                            stepCodeSyncStatus[step] = parseOk;
+                            if (parseOk) {
+                                inputStringCache.Clear();
+                                ideHasUnsavedEdits = true;
+                            }
+                        }
+                    });
                 }
             }
 
