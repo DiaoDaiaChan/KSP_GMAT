@@ -117,7 +117,7 @@ namespace KSPGMAT.Service {
                             }
                         }
                     }
-                    var optMatch = Regex.Match(rawLine, @"Create\s+(?:SQP|fmincon|VF13ad|SNOPT)\s+([^;]+);?", RegexOptions.IgnoreCase);
+                    var optMatch = Regex.Match(rawLine, @"Create\s+(?:Yukon|VF13ad|fmincon|FminconOptimizer|SNOPT|SQP)\s+([^;]+);?", RegexOptions.IgnoreCase);
                     if (optMatch.Success) {
                         string[] optNames = optMatch.Groups[1].Value.Split(new[] { ' ', ',', '\t' }, StringSplitOptions.RemoveEmptyEntries);
                         foreach (var oName in optNames) {

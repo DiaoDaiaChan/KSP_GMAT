@@ -631,7 +631,18 @@ namespace KSPGMAT.Model {
                 @"\b([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\.(?:Node|AscendingNode|DescendingNode)\b",
                 "$1.$2.Latitude = 0.0");
 
-            // 5) 打靶区间与容差防退化守护 (基线 1.4-3): 逐行处理 Vary / Achieve
+            // 5) 优化器语法合规自愈 (基线 1.4): Create SQP <Name> → Create Yukon <Name> 以及 Tolerance 属性自愈
+            script = System.Text.RegularExpressions.Regex.Replace(
+                script,
+                @"\bCreate\s+SQP\s+([A-Za-z0-9_]+);?",
+                "Create Yukon $1;",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            script = System.Text.RegularExpressions.Regex.Replace(
+                script,
+                @"\b([A-Za-z0-9_]+)\.Tolerance\s*=\s*([^;]+);?",
+                "$1.FeasibilityTolerance = $2;\r\n$1.OptimalityTolerance = $2;");
+
+            // 6) 打靶区间与容差防退化守护 (基线 1.4-3): 逐行处理 Vary / Achieve
             System.Text.StringBuilder result = new System.Text.StringBuilder();
             using (System.IO.StringReader reader = new System.IO.StringReader(script)) {
                 string line;

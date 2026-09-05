@@ -247,14 +247,16 @@ namespace KSPGMAT.Service {
                             sb.AppendLine();
                         }
                     }
-                    if (st.type == "Optimize" || !string.IsNullOrEmpty(st.optimizer_name)) {
-                        string optName = GMATParameterRegistry.SanitizeGmatIdentifier(!string.IsNullOrEmpty(st.optimizer_name) ? st.optimizer_name : "SQP1", "SQP1");
+                    if (st.type == "Optimize" || st.type == "Minimize" || st.type == "NonlinearConstraint") {
+                        string optName = GMATParameterRegistry.SanitizeGmatIdentifier(!string.IsNullOrEmpty(st.optimizer_name) ? st.optimizer_name : "Yukon1", "Yukon1");
                         if (!declaredOptimizers.Contains(optName)) {
                             declaredOptimizers.Add(optName);
-                            sb.AppendLine($"Create SQP {optName};");
+                            sb.AppendLine($"Create Yukon {optName};");
                             sb.AppendLine($"{optName}.ShowProgress = true;");
-                            sb.AppendLine($"{optName}.MaximumIterations = 50;");
-                            sb.AppendLine($"{optName}.Tolerance = 0.001;");
+                            sb.AppendLine($"{optName}.ReportStyle = Normal;");
+                            sb.AppendLine($"{optName}.MaximumIterations = 200;");
+                            sb.AppendLine($"{optName}.FeasibilityTolerance = 0.0001;");
+                            sb.AppendLine($"{optName}.OptimalityTolerance = 0.0001;");
                             sb.AppendLine();
                         }
                     }
@@ -448,17 +450,17 @@ namespace KSPGMAT.Service {
                         sb.AppendLine($"Report {sub} {reportExpr};");
                     }
                     else if (stype == "Optimize") {
-                        string opt = GMATParameterRegistry.SanitizeGmatIdentifier(!string.IsNullOrEmpty(st.optimizer_name) ? st.optimizer_name : "SQP1", "SQP1");
+                        string opt = GMATParameterRegistry.SanitizeGmatIdentifier(!string.IsNullOrEmpty(st.optimizer_name) ? st.optimizer_name : "Yukon1", "Yukon1");
                         sb.AppendLine($"Optimize {opt} {{SolveMode = {st.solve_mode ?? "Solve"}, ExitMode = {st.exit_mode ?? "SaveAndContinue"}}};");
                     }
                     else if (stype == "Minimize") {
-                        string opt = GMATParameterRegistry.SanitizeGmatIdentifier(!string.IsNullOrEmpty(st.optimizer_name) ? st.optimizer_name : "SQP1", "SQP1");
+                        string opt = GMATParameterRegistry.SanitizeGmatIdentifier(!string.IsNullOrEmpty(st.optimizer_name) ? st.optimizer_name : "Yukon1", "Yukon1");
                         string minVar = !string.IsNullOrEmpty(st.minimize_variable) ? st.minimize_variable : "Sat.FuelMassBurned";
                         if (minVar.Contains(".")) minVar = $"{satName}.{GMATParameterRegistry.StripCraftPrefix(minVar)}";
                         sb.AppendLine($"   Minimize {opt}({minVar});");
                     }
                     else if (stype == "NonlinearConstraint") {
-                        string opt = GMATParameterRegistry.SanitizeGmatIdentifier(!string.IsNullOrEmpty(st.optimizer_name) ? st.optimizer_name : "SQP1", "SQP1");
+                        string opt = GMATParameterRegistry.SanitizeGmatIdentifier(!string.IsNullOrEmpty(st.optimizer_name) ? st.optimizer_name : "Yukon1", "Yukon1");
                         string lhs = !string.IsNullOrEmpty(st.constraint_lhs) ? st.constraint_lhs : "Sat.Earth.RMAG";
                         if (lhs.Contains(".")) lhs = $"{satName}.{GMATParameterRegistry.StripCraftPrefix(lhs)}";
                         string op = !string.IsNullOrEmpty(st.constraint_op) ? st.constraint_op : ">=";
@@ -506,17 +508,17 @@ namespace KSPGMAT.Service {
                 return "EndTarget;";
             }
             if (stype == "Optimize") {
-                string opt = GMATParameterRegistry.SanitizeGmatIdentifier(!string.IsNullOrEmpty(st.optimizer_name) ? st.optimizer_name : "SQP1", "SQP1");
+                string opt = GMATParameterRegistry.SanitizeGmatIdentifier(!string.IsNullOrEmpty(st.optimizer_name) ? st.optimizer_name : "Yukon1", "Yukon1");
                 return $"Optimize {opt} {{SolveMode = {st.solve_mode ?? "Solve"}, ExitMode = {st.exit_mode ?? "SaveAndContinue"}}};";
             }
             if (stype == "Minimize") {
-                string opt = GMATParameterRegistry.SanitizeGmatIdentifier(!string.IsNullOrEmpty(st.optimizer_name) ? st.optimizer_name : "SQP1", "SQP1");
+                string opt = GMATParameterRegistry.SanitizeGmatIdentifier(!string.IsNullOrEmpty(st.optimizer_name) ? st.optimizer_name : "Yukon1", "Yukon1");
                 string minVar = !string.IsNullOrEmpty(st.minimize_variable) ? st.minimize_variable : "Sat.FuelMassBurned";
                 if (minVar.Contains(".")) minVar = $"{safeSat}.{GMATParameterRegistry.StripCraftPrefix(minVar)}";
                 return $"Minimize {opt}({minVar});";
             }
             if (stype == "NonlinearConstraint") {
-                string opt = GMATParameterRegistry.SanitizeGmatIdentifier(!string.IsNullOrEmpty(st.optimizer_name) ? st.optimizer_name : "SQP1", "SQP1");
+                string opt = GMATParameterRegistry.SanitizeGmatIdentifier(!string.IsNullOrEmpty(st.optimizer_name) ? st.optimizer_name : "Yukon1", "Yukon1");
                 string lhs = !string.IsNullOrEmpty(st.constraint_lhs) ? st.constraint_lhs : "Sat.Earth.RMAG";
                 if (lhs.Contains(".")) lhs = $"{safeSat}.{GMATParameterRegistry.StripCraftPrefix(lhs)}";
                 string op = !string.IsNullOrEmpty(st.constraint_op) ? st.constraint_op : ">=";

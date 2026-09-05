@@ -185,7 +185,7 @@ namespace KSPGMAT {
         public string file_thrust_path = "";
 
         // 2. Optimization (Optimize / Minimize / NonlinearConstraint / EndOptimize)
-        public string optimizer_name = "SQP1"; // SQP1, VF13ad, SNOPT, Fmincon
+        public string optimizer_name = "Yukon1"; // Yukon1, VF13ad, SNOPT, Fmincon
         public string minimize_variable = "Sat.FuelMassBurned";
         public string constraint_lhs = "Sat.Luna.RMAG";
         public string constraint_op = ">="; // >=, <=, ==

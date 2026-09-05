@@ -51,11 +51,13 @@
 - **原生脚本块**: 序列末尾或卡片内部未被结构化解析的代码，自动收纳至 `CustomScript` 块并无损输出至求解脚本；GUI 提供卡片式文本编辑与快捷添加按钮。
 - **反向传播**: 传播卡片提供 `[逆行反向传播 (Backwards)]` 开关，对应 GMAT 原生 `Propagate Backwards`。
 
-### 2.5 模块 5：高级命令扩展与优化器支持
-- **SQP / 优化器支持**:
-  - `GMATScriptGenerator.cs` 自动扫描声明 `Create SQP SQP1;`。
-  - 支持 `Optimize SQP1` / `Minimize` / `NonlinearConstraint` / `EndOptimize` 结构化生成与单步透视。
-  - `GMATScriptParser.cs` 增设对 `Create SQP` 及优化器序列命令的解析。
+### 2.5 模块 5：高级命令扩展与优化器规范支持
+- **Yukon 官方优化器与按需声明修复**:
+  - 彻底修正了非优化任务过度声明优化器的缺陷：仅当任务序列中包含 `Optimize`、`Minimize` 或 `NonlinearConstraint` 时才按需声明优化器。
+  - 将非法的 `Create SQP` 修正为 GMAT 官方开箱即用支持的 SQP 优化器对象类型：**`Create Yukon Yukon1;`**（由 GMAT 内置的 `libYukonOptimizer` 插件提供，避免 Harwell 商业闭源 `VF13ad` 或未配置的 `fmincon` 缺失异常）。
+  - 为 `Yukon` 配置合规的官方收敛容差属性：`FeasibilityTolerance`、`OptimalityTolerance`（替换不支持的通用 `Tolerance`）。
+  - 在 `SanitizeGmatScript` 中加入自愈门禁：自动将历史遗留或手写的 `Create SQP <name>` 自愈替换为 `Create Yukon <name>`，并将 `<name>.Tolerance` 属性自愈转换为 `FeasibilityTolerance` 和 `OptimalityTolerance`。
+  - `GMATScriptParser.cs` 增设对 `Create Yukon`、`Create FminconOptimizer` 及各官方优化器的完整双向解析支持。
   - `TabSequence.cs` 为 `Optimize`、`Minimize`、`NonlinearConstraint` 提供了专属参数调整卡片，并适配胶囊徽章与指示条主题色。
 
 ---

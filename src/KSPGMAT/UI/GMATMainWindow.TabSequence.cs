@@ -1213,8 +1213,8 @@ namespace KSPGMAT.UI {
                 GUILayout.Space(2);
                 GUILayout.BeginHorizontal();
                 GUILayout.Label(I18n.T("seq_palette_optimization"), labelValueStyle, GUILayout.Width(80));
-                if (GUILayout.Button("Optimize", secondaryButtonStyle, GUILayout.Height(20))) missionSequence.Add(new MissionStep { type = "Optimize", label = I18n.T("seq_opt_label"), optimizer_name = "SQP1" });
-                if (GUILayout.Button("Minimize", secondaryButtonStyle, GUILayout.Height(20))) missionSequence.Add(new MissionStep { type = "Minimize", minimize_variable = "Sat.FuelMassBurned", optimizer_name = "SQP1", label = I18n.T("seq_min_label") });
+                if (GUILayout.Button("Optimize", secondaryButtonStyle, GUILayout.Height(20))) missionSequence.Add(new MissionStep { type = "Optimize", label = I18n.T("seq_opt_label"), optimizer_name = "Yukon1" });
+                if (GUILayout.Button("Minimize", secondaryButtonStyle, GUILayout.Height(20))) missionSequence.Add(new MissionStep { type = "Minimize", minimize_variable = "Sat.FuelMassBurned", optimizer_name = "Yukon1", label = I18n.T("seq_min_label") });
                 if (GUILayout.Button("NonlinearConstraint", secondaryButtonStyle, GUILayout.Height(20))) missionSequence.Add(new MissionStep { type = "NonlinearConstraint", constraint_lhs = "Sat.Earth.RMAG", constraint_op = ">=", constraint_val = 6578.14, label = I18n.T("seq_nlc_label") });
                 if (GUILayout.Button("EndOptimize", secondaryButtonStyle, GUILayout.Height(20))) missionSequence.Add(new MissionStep { type = "EndOptimize", label = I18n.T("seq_endopt_label") });
                 GUILayout.FlexibleSpace();
@@ -2593,7 +2593,7 @@ namespace KSPGMAT.UI {
             else if (step.type == "Optimize") {
                 GUILayout.BeginHorizontal();
                 GUILayout.Label(I18n.T("seq_opt_name_label"), labelValueStyle, GUILayout.Width(85));
-                step.optimizer_name = GUILayout.TextField(string.IsNullOrEmpty(step.optimizer_name) ? "SQP1" : step.optimizer_name, stepLabelInputStyle, GUILayout.Width(130), GUILayout.Height(20));
+                step.optimizer_name = GUILayout.TextField(string.IsNullOrEmpty(step.optimizer_name) ? "Yukon1" : step.optimizer_name, stepLabelInputStyle, GUILayout.Width(130), GUILayout.Height(20));
                 GUILayout.Space(10);
                 GUILayout.Label(I18n.T("seq_solve_mode"), gridLabelStyle, GUILayout.Width(75));
                 if (GUILayout.Button(step.solve_mode ?? "Solve", secondaryButtonStyle, GUILayout.Width(110), GUILayout.Height(20))) {
@@ -2605,7 +2605,7 @@ namespace KSPGMAT.UI {
             else if (step.type == "Minimize") {
                 GUILayout.BeginHorizontal();
                 GUILayout.Label(I18n.T("seq_min_opt_label"), labelValueStyle, GUILayout.Width(85));
-                step.optimizer_name = GUILayout.TextField(string.IsNullOrEmpty(step.optimizer_name) ? "SQP1" : step.optimizer_name, stepLabelInputStyle, GUILayout.Width(100), GUILayout.Height(20));
+                step.optimizer_name = GUILayout.TextField(string.IsNullOrEmpty(step.optimizer_name) ? "Yukon1" : step.optimizer_name, stepLabelInputStyle, GUILayout.Width(100), GUILayout.Height(20));
                 GUILayout.Space(8);
                 GUILayout.Label(I18n.T("seq_min_var_label"), gridLabelStyle, GUILayout.Width(75));
                 step.minimize_variable = GUILayout.TextField(string.IsNullOrEmpty(step.minimize_variable) ? "Sat.FuelMassBurned" : step.minimize_variable, stepLabelInputStyle, GUILayout.MinWidth(180), GUILayout.Height(20));
@@ -2615,7 +2615,7 @@ namespace KSPGMAT.UI {
             else if (step.type == "NonlinearConstraint") {
                 GUILayout.BeginHorizontal();
                 GUILayout.Label(I18n.T("seq_nlc_opt_label"), labelValueStyle, GUILayout.Width(75));
-                step.optimizer_name = GUILayout.TextField(string.IsNullOrEmpty(step.optimizer_name) ? "SQP1" : step.optimizer_name, stepLabelInputStyle, GUILayout.Width(85), GUILayout.Height(20));
+                step.optimizer_name = GUILayout.TextField(string.IsNullOrEmpty(step.optimizer_name) ? "Yukon1" : step.optimizer_name, stepLabelInputStyle, GUILayout.Width(85), GUILayout.Height(20));
                 GUILayout.Space(6);
                 GUILayout.Label(I18n.T("seq_nlc_param"), gridLabelStyle, GUILayout.Width(55));
                 step.constraint_lhs = GUILayout.TextField(string.IsNullOrEmpty(step.constraint_lhs) ? "Sat.Earth.RMAG" : step.constraint_lhs, stepLabelInputStyle, GUILayout.Width(140), GUILayout.Height(20));
