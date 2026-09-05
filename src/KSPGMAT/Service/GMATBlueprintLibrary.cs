@@ -550,6 +550,93 @@ Propagate Prop({SAT_NAME}) {{SAT_NAME}.ElapsedDays = 2.0};
 Report TrajectoryReport {SAT_NAME}.ElapsedSecs {SAT_NAME}.X {SAT_NAME}.Y {SAT_NAME}.Z {SAT_NAME}.VX {SAT_NAME}.VY {SAT_NAME}.VZ {SAT_NAME}.{CENTRAL_BODY}.Altitude {SAT_NAME}.SMA {SAT_NAME}.ECC {SAT_NAME}.INC {SAT_NAME}.TotalMass;
 "
             });
+
+            // -------------------------------------------------------------
+            // 范式 8：LEO-GTO-GEO 极小化最优转移 (LEO to GEO Optimization with Yukon SQP)
+            // -------------------------------------------------------------
+            _blueprints.Add(new GMATBlueprintItem {
+                Id = "p8_leo_geo_opt",
+                TitleKey = "bp_p8_title",
+                TitleDefault = "范式 8: LEO-GTO-GEO 极小化最优转移 (Yukon SQP Optimization)",
+                DescriptionKey = "bp_p8_desc",
+                DescriptionDefault = "采用开箱即用的 Yukon SQP 优化器，双脉冲联合寻优最佳倾角压平与圆化分配，以极小化全任务总 Delta-V 为目标求解。",
+                Category = "OrbitalTransfer",
+                ScriptTemplate =
+@"%----------------------------------------------------------------------
+% 范式 8: LEO-GTO-GEO 极小化最优转移 (Yukon SQP Optimization)
+%----------------------------------------------------------------------
+Create Spacecraft {SAT_NAME};
+{SAT_NAME}.DateFormat = UTCGregorian;
+{SAT_NAME}.Epoch = '{EPOCH}';
+{SAT_NAME}.CoordinateSystem = {CENTRAL_BODY}MJ2000Eq;
+{SAT_NAME}.DisplayStateType = Keplerian;
+{SAT_NAME}.SMA = 6678.14;
+{SAT_NAME}.ECC = 0.001;
+{SAT_NAME}.INC = 0.0;
+{SAT_NAME}.RAAN = 0.0;
+{SAT_NAME}.AOP = 0.0;
+{SAT_NAME}.TA = 0.0;
+
+Create ImpulsiveBurn TOI;
+TOI.CoordinateSystem = Local;
+TOI.Origin = {CENTRAL_BODY};
+TOI.Axes = VNB;
+TOI.Element1 = 2.42;
+
+Create ImpulsiveBurn GOI;
+GOI.CoordinateSystem = Local;
+GOI.Origin = {CENTRAL_BODY};
+GOI.Axes = VNB;
+GOI.Element1 = 1.475;
+
+Create Variable TotalDV;
+TotalDV = 0;
+
+Create ForceModel FM;
+FM.CentralBody = {CENTRAL_BODY};
+FM.PointMasses = {{CENTRAL_BODY}};
+
+Create Propagator Prop;
+Prop.FM = FM;
+Prop.Type = PrinceDormand78;
+
+Create Yukon Yukon1;
+Yukon1.ShowProgress = true;
+Yukon1.ReportStyle = Normal;
+Yukon1.MaximumIterations = 50;
+Yukon1.FeasibilityTolerance = 0.001;
+Yukon1.OptimalityTolerance = 0.001;
+
+BeginMissionSequence;
+
+% (a) 开启 SQP 优化序列：双脉冲联合寻优最小总 Delta-V
+Optimize Yukon1 {SolveMode = Solve, ExitMode = SaveAndContinue};
+   % 变量 1: 第一次点火 (近地点抬高远地点至 GEO 高度)
+   Vary Yukon1(TOI.Element1 = 2.42, {Perturbation = 0.0001, Lower = 2.0, Upper = 3.0, MaxStep = 0.05});
+   Maneuver TOI({SAT_NAME});
+   
+   % (b) 转移轨道滑行至远地点
+   Propagate Prop({SAT_NAME}) {{SAT_NAME}.{CENTRAL_BODY}.Apoapsis};
+   
+   % 变量 2: 第二次点火 (远地点圆化至地球同步高度)
+   Vary Yukon1(GOI.Element1 = 1.475, {Perturbation = 0.0001, Lower = 1.0, Upper = 2.0, MaxStep = 0.05});
+   Maneuver GOI({SAT_NAME});
+   
+   % (c) 代价函数计算
+   TotalDV = TOI.Element1 + GOI.Element1;
+   
+   % 目标函数: 最小化全任务总冲量
+   Minimize Yukon1(TotalDV);
+   
+   % 终端物理等式与不等式约束
+   NonlinearConstraint Yukon1({SAT_NAME}.{CENTRAL_BODY}.SMA = 42164.14);
+   NonlinearConstraint Yukon1({SAT_NAME}.{CENTRAL_BODY}.ECC <= 0.001);
+EndOptimize;
+
+% (d) 最终静止轨道推演
+Propagate Prop({SAT_NAME}) {{SAT_NAME}.ElapsedSecs = 86400};
+"
+            });
         }
     }
 }

@@ -46,6 +46,8 @@
   "bp_p6_title": "Парадигма 6: Электроракетный двигатель (Solar Electric Propulsion)",
   "bp_p7_desc": "16-значный вывод телеметрии в ReportFile для интеграции с Principia.",
   "bp_p7_title": "Парадигма 7: Отчет и экспорт данных (ReportFile & Pipeline)",
+  "bp_p8_desc": "Использует оптимизатор Yukon SQP для минимизации суммарного Delta-V при перелете на геостационарную орбиту.",
+  "bp_p8_title": "Парадигма 8: Оптимизация перелета LEO-GTO-GEO (Yukon SQP)",
   "body_Earth": "Earth",
   "body_Jupiter": "Jupiter",
   "body_Luna": "Moon",

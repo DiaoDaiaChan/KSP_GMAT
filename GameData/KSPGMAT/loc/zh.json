@@ -46,6 +46,8 @@
   "bp_p6_title": "范式 6: 低推力电推进连续外推 (Solar Electric Propulsion)",
   "bp_p7_desc": "双精度 16 位格式化遥测输出，导出笛卡尔状态、开普勒根数与飞行质量，对接 Principia 验证管线。",
   "bp_p7_title": "范式 7: 高精状态报表输出 (ReportFile & Pipeline)",
+  "bp_p8_desc": "采用开箱即用的 Yukon SQP 优化器，双脉冲联合寻优最佳倾角压平与圆化分配，以极小化全任务总 Delta-V 为目标求解。",
+  "bp_p8_title": "范式 8: LEO-GTO-GEO 极小化最优转移 (Yukon SQP Optimization)",
   "body_Earth": "地球 (Earth)",
   "body_Jupiter": "木星 (Jupiter)",
   "body_Luna": "月球 (Luna)",

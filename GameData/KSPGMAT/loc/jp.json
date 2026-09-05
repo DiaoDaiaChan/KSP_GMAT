@@ -46,6 +46,8 @@
   "bp_p6_title": "パラダイム 6: 電気推進連続外挿 (Solar Electric Propulsion)",
   "bp_p7_desc": "16桁精度テレメトリ出力、デカルト状態・ケプラー要素・質量をPrincipia連携用に書き出し。",
   "bp_p7_title": "パラダイム 7: 高精度テレメトリ出力 (ReportFile & Pipeline)",
+  "bp_p8_desc": "標準Yukon SQPオプティマイザを使用し、GEO投入のためのインパルス配分と傾斜角変更を同時最適化して総Delta-Vを最小化します。",
+  "bp_p8_title": "パラダイム 8: LEO-GTO-GEO 最小燃料最適化 (Yukon SQP)",
   "body_Earth": "地球",
   "body_Jupiter": "木星",
   "body_Luna": "月",
