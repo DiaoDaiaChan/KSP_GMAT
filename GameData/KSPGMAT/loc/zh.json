@@ -1853,5 +1853,10 @@
   "seq_min_opt_label": "执行优化器:",
   "seq_min_var_label": "最小化目标:",
   "seq_nlc_opt_label": "优化器:",
-  "seq_nlc_param": "约束量:"
+  "seq_nlc_param": "约束量:",
+  "seq_step_code_title": "GMAT 原生脚本 (可直接就地编辑数值与参数):",
+  "seq_step_synced": "已实时同步",
+  "seq_step_editing": "编辑中...",
+  "btn_step_code_reset": "还原模板",
+  "btn_step_code_copy": "复制"
 }

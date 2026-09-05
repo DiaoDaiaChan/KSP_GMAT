@@ -1853,5 +1853,10 @@
   "seq_min_opt_label": "オプティマイザ:",
   "seq_min_var_label": "最小化対象:",
   "seq_nlc_opt_label": "オプティマイザ:",
-  "seq_nlc_param": "制約量:"
+  "seq_nlc_param": "制約量:",
+  "seq_step_code_title": "GMAT ネイティブスクリプト (数値とパラメータを直接編集可能):",
+  "seq_step_synced": "リアルタイム同期済",
+  "seq_step_editing": "編集中...",
+  "btn_step_code_reset": "リセット",
+  "btn_step_code_copy": "コピー"
 }

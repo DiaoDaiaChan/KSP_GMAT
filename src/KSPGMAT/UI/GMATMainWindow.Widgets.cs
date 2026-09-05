@@ -728,16 +728,79 @@ namespace KSPGMAT.UI {
         // =========================================================================
 
         /// <summary>
-        /// 单步 GMAT 原生脚本透视展示组件：就地渲染暗黑高亮语法代码块
+        /// 单步代码透视就地编辑文本与状态缓存池
+        /// </summary>
+        private static readonly Dictionary<MissionStep, string> stepCodeEditCache = new Dictionary<MissionStep, string>();
+        private static readonly Dictionary<MissionStep, bool> stepCodeSyncStatus = new Dictionary<MissionStep, bool>();
+
+        /// <summary>
+        /// 单步 GMAT 原生脚本透视展示组件：支持暗黑高亮展示与实时就地直接编辑数值与参数 (Live Two-Way Binding)
         /// </summary>
         /// <param name="step">任务步骤</param>
         private void DrawStepCodePeekBox(MissionStep step) {
             if (step == null || !step.show_code_peek) return;
             GUILayout.Space(2);
             GUILayout.BeginVertical(nestedCardBoxStyle);
-            string peekCode = GMATScriptGenerator.GenerateStepScript(step);
-            string coloredPeek = ColorizeGmatSyntax(peekCode);
-            GUILayout.Label(coloredPeek, codeBlockStyle);
+
+            string controlId = $"StepCodePeek_{step.GetHashCode()}";
+            GUI.SetNextControlName(controlId);
+            bool isFocused = (GUI.GetNameOfFocusedControl() == controlId);
+
+            string editBuffer;
+            if (!stepCodeEditCache.TryGetValue(step, out editBuffer)) {
+                editBuffer = GMATScriptGenerator.GenerateStepScript(step);
+                stepCodeEditCache[step] = editBuffer;
+                stepCodeSyncStatus[step] = true;
+            }
+
+            // 当未聚焦且处于同步状态时，自动跟随上层表单的变化生成最新代码
+            if (!isFocused && stepCodeSyncStatus.TryGetValue(step, out bool synced) && synced) {
+                editBuffer = GMATScriptGenerator.GenerateStepScript(step);
+                stepCodeEditCache[step] = editBuffer;
+            }
+
+            // 顶部工具状态条
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(I18n.T("seq_step_code_title"), labelValueStyle);
+            GUILayout.FlexibleSpace();
+
+            bool isCurrentlySynced;
+            if (!stepCodeSyncStatus.TryGetValue(step, out isCurrentlySynced)) isCurrentlySynced = true;
+
+            string syncBadge = isCurrentlySynced 
+                ? $"<color=#10b981><b>✔ {I18n.T("seq_step_synced")}</b></color>"
+                : $"<color=#f59e0b><b>✎ {I18n.T("seq_step_editing")}</b></color>";
+            GUILayout.Label(syncBadge, labelValueStyle);
+            GUILayout.Space(6);
+
+            if (GUILayout.Button(I18n.T("btn_step_code_reset"), secondaryButtonStyle, GUILayout.Height(18))) {
+                editBuffer = GMATScriptGenerator.GenerateStepScript(step);
+                stepCodeEditCache[step] = editBuffer;
+                stepCodeSyncStatus[step] = true;
+                GUI.FocusControl(null);
+            }
+            GUILayout.Space(3);
+            if (GUILayout.Button(I18n.T("btn_step_code_copy"), secondaryButtonStyle, GUILayout.Height(18))) {
+                GUIUtility.systemCopyBuffer = editBuffer;
+                ScreenMessages.PostScreenMessage(I18n.T("btn_step_code_copy"), 2.0f, ScreenMessageStyle.UPPER_CENTER);
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(2);
+
+            // 可直接编辑的单步原生脚本输入框 (使用 ideEditorStyle，暗黑背景等宽字体)
+            string newText = GUILayout.TextArea(editBuffer, ideEditorStyle, GUILayout.MinHeight(24), GUILayout.ExpandWidth(true));
+            if (newText != editBuffer) {
+                stepCodeEditCache[step] = newText;
+                bool ok = GMATScriptParser.ParseSingleStepScript(step, newText);
+                stepCodeSyncStatus[step] = ok;
+                if (ok) {
+                    // 清理 inputStringCache 关联控件，强制上层各表单控件在下一帧重取最新模型值
+                    inputStringCache.Clear();
+                    ideHasUnsavedEdits = true;
+                }
+            }
+
             GUILayout.EndVertical();
         }
 

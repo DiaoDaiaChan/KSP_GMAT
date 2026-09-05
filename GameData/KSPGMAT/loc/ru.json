@@ -1853,5 +1853,10 @@
   "seq_min_opt_label": "Оптимизатор:",
   "seq_min_var_label": "Минимизировать:",
   "seq_nlc_opt_label": "Оптимизатор:",
-  "seq_nlc_param": "Ограничение:"
+  "seq_nlc_param": "Ограничение:",
+  "seq_step_code_title": "Скрипт GMAT (Прямое редактирование значений и параметров):",
+  "seq_step_synced": "Синхронизировано",
+  "seq_step_editing": "Редактирование...",
+  "btn_step_code_reset": "Сброс",
+  "btn_step_code_copy": "Копировать"
 }

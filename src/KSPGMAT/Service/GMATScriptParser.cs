@@ -701,5 +701,225 @@ namespace KSPGMAT.Service {
             } catch { /* 注册表异常时回退默认名 */ }
             return "DefaultProp";
         }
+
+        /// <summary>
+        /// 单步 GMAT 脚本即时反向解析引擎：支持用户在单步代码透视框中直接就地编辑代码与数值，
+        /// 实时反向解包并同步更新当前 MissionStep 的参数模型 (Two-Way Binding)。
+        /// </summary>
+        /// <param name="step">待更新的任务步骤模型</param>
+        /// <param name="lineScript">用户在单步代码透视框中输入的单步脚本文本</param>
+        /// <returns>若成功匹配并解析更新则返回 true；若语法未完成或不匹配则返回 false</returns>
+        public static bool ParseSingleStepScript(MissionStep step, string lineScript) {
+            if (step == null || string.IsNullOrWhiteSpace(lineScript)) return false;
+            string clean = lineScript.Trim();
+            if (clean.EndsWith(";")) clean = clean.Substring(0, clean.Length - 1).Trim();
+
+            try {
+                // 1. ACHIEVE
+                if (step.type == "Achieve") {
+                    var m = Regex.Match(clean, @"Achieve\s+([A-Za-z0-9_]+)\s*\(\s*([A-Za-z0-9_.]+)\s*=\s*([^,]+)(?:,\s*\{\s*Tolerance\s*=\s*([^}]+)\s*\})?\s*\)", RegexOptions.IgnoreCase);
+                    if (m.Success) {
+                        step.dc_name = m.Groups[1].Value.Trim();
+                        step.achieve_param = m.Groups[2].Value.Trim();
+                        string valStr = m.Groups[3].Value.Trim();
+                        step.achieve_val_str = valStr;
+                        if (double.TryParse(valStr, NumberStyles.Any, CultureInfo.InvariantCulture, out double parsedVal)) {
+                            step.achieve_val = parsedVal;
+                        }
+                        if (m.Groups.Count > 4 && !string.IsNullOrEmpty(m.Groups[4].Value)) {
+                            string tolStr = m.Groups[4].Value.Trim();
+                            step.achieve_tolerance_str = tolStr;
+                            if (double.TryParse(tolStr, NumberStyles.Any, CultureInfo.InvariantCulture, out double parsedTol)) {
+                                step.achieve_tolerance = parsedTol;
+                            }
+                        }
+                        step.label = $"Achieve {step.achieve_param}";
+                        return true;
+                    }
+                }
+
+                // 2. VARY
+                else if (step.type == "Vary") {
+                    var m = Regex.Match(clean, @"Vary\s+([A-Za-z0-9_]+)\s*\(\s*([A-Za-z0-9_.]+)\s*=\s*([^,]+)(?:,\s*\{([^}]+)\})?\s*\)", RegexOptions.IgnoreCase);
+                    if (m.Success) {
+                        step.dc_name = m.Groups[1].Value.Trim();
+                        step.vary_variable = m.Groups[2].Value.Trim();
+                        string initStr = m.Groups[3].Value.Trim();
+                        step.vary_initial_str = initStr;
+                        if (double.TryParse(initStr, NumberStyles.Any, CultureInfo.InvariantCulture, out double parsedInit)) {
+                            step.vary_initial = parsedInit;
+                        }
+                        string opts = m.Groups[4].Value;
+                        if (!string.IsNullOrEmpty(opts)) {
+                            var lowM = Regex.Match(opts, @"Lower\s*=\s*([^,}]+)");
+                            if (lowM.Success) {
+                                step.vary_lower_str = lowM.Groups[1].Value.Trim();
+                                if (double.TryParse(step.vary_lower_str, NumberStyles.Any, CultureInfo.InvariantCulture, out double l)) step.vary_lower = l;
+                            }
+                            var upM = Regex.Match(opts, @"Upper\s*=\s*([^,}]+)");
+                            if (upM.Success) {
+                                step.vary_upper_str = upM.Groups[1].Value.Trim();
+                                if (double.TryParse(step.vary_upper_str, NumberStyles.Any, CultureInfo.InvariantCulture, out double u)) step.vary_upper = u;
+                            }
+                            var stepM = Regex.Match(opts, @"MaxStep\s*=\s*([^,}]+)");
+                            if (stepM.Success) {
+                                step.vary_max_step_str = stepM.Groups[1].Value.Trim();
+                                if (double.TryParse(step.vary_max_step_str, NumberStyles.Any, CultureInfo.InvariantCulture, out double s)) step.vary_max_step = s;
+                            }
+                            var pertM = Regex.Match(opts, @"Perturbation\s*=\s*([^,}]+)");
+                            if (pertM.Success) {
+                                step.vary_perturbation_str = pertM.Groups[1].Value.Trim();
+                                if (double.TryParse(step.vary_perturbation_str, NumberStyles.Any, CultureInfo.InvariantCulture, out double p)) step.vary_perturbation = p;
+                            }
+                        }
+                        step.label = $"Vary {step.vary_variable}";
+                        return true;
+                    }
+                }
+
+                // 3. PROPAGATE
+                else if (step.type == "Propagate") {
+                    var m = Regex.Match(clean, @"Propagate(?:\s+Backwards)?(?:\s+Synchronized|\s+Single)?\s+([A-Za-z0-9_]+)\s*\(\s*([^)]+)\s*\)\s*\{\s*([^}]+)\s*\}", RegexOptions.IgnoreCase);
+                    if (m.Success) {
+                        step.propagator = m.Groups[1].Value.Trim();
+                        step.is_backwards = clean.IndexOf("Backwards", StringComparison.OrdinalIgnoreCase) >= 0;
+                        string stopCondRaw = m.Groups[3].Value.Trim();
+
+                        string[] condChunks = stopCondRaw.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                        step.stop_conditions.Clear();
+                        for (int c = 0; c < condChunks.Length; c++) {
+                            string chunk = condChunks[c].Trim();
+                            if (string.IsNullOrEmpty(chunk)) continue;
+                            if (Regex.IsMatch(chunk, @"^StopTolerance\s*=", RegexOptions.IgnoreCase)) {
+                                var tolParts = chunk.Split('=');
+                                if (tolParts.Length > 1 && double.TryParse(tolParts[1].Trim(), NumberStyles.Any, CultureInfo.InvariantCulture, out double parsedTol)) {
+                                    step.stop_tolerance = parsedTol;
+                                }
+                                continue;
+                            }
+                            var cond = new StopCondition();
+                            if (chunk.Contains("=")) {
+                                var parts = chunk.Split('=');
+                                cond.parameter = parts[0].Trim();
+                                string rVal = parts.Length > 1 ? parts[1].Trim() : "";
+                                cond.target_val_str = rVal;
+                                if (double.TryParse(rVal, NumberStyles.Any, CultureInfo.InvariantCulture, out double dVal)) {
+                                    cond.target_val = dVal;
+                                }
+                            } else {
+                                cond.parameter = chunk;
+                            }
+                            step.stop_conditions.Add(cond);
+                        }
+                        if (step.stop_conditions.Count > 0) {
+                            var first = step.stop_conditions[0];
+                            step.stop_type = first.parameter;
+                            step.target_val_str = first.target_val_str;
+                            step.target_val = first.target_val;
+                            step.duration_str = first.target_val_str;
+                            if (double.TryParse(first.target_val_str, NumberStyles.Any, CultureInfo.InvariantCulture, out double dur)) {
+                                if (step.stop_type.Contains("ElapsedDays")) step.duration = dur * 86400.0;
+                                else step.duration = dur;
+                            }
+                        }
+                        return true;
+                    }
+                }
+
+                // 4. FINITE BURN
+                else if (step.type == "FiniteBurn") {
+                    var m = Regex.Match(clean, @"BeginFiniteBurn\s+([A-Za-z0-9_]+)", RegexOptions.IgnoreCase);
+                    if (m.Success) {
+                        step.burn_name = m.Groups[1].Value.Trim();
+                        return true;
+                    }
+                }
+
+                // 5. IMPULSIVE BURN / MANEUVER
+                else if (step.type == "ImpulsiveBurn") {
+                    var m = Regex.Match(clean, @"Maneuver\s+([A-Za-z0-9_]+)", RegexOptions.IgnoreCase);
+                    if (m.Success) {
+                        step.burn_name = m.Groups[1].Value.Trim();
+                        return true;
+                    }
+                }
+
+                // 6. TARGET
+                else if (step.type == "Target") {
+                    var m = Regex.Match(clean, @"Target\s+([A-Za-z0-9_]+)(?:\s*\{\s*([^}]+)\s*\})?", RegexOptions.IgnoreCase);
+                    if (m.Success) {
+                        step.dc_name = m.Groups[1].Value.Trim();
+                        if (m.Groups.Count > 2 && !string.IsNullOrEmpty(m.Groups[2].Value)) {
+                            string body = m.Groups[2].Value;
+                            var smM = Regex.Match(body, @"SolveMode\s*=\s*([A-Za-z0-9_]+)", RegexOptions.IgnoreCase);
+                            if (smM.Success) step.solve_mode = smM.Groups[1].Value;
+                            var emM = Regex.Match(body, @"ExitMode\s*=\s*([A-Za-z0-9_]+)", RegexOptions.IgnoreCase);
+                            if (emM.Success) step.exit_mode = emM.Groups[1].Value;
+                        }
+                        return true;
+                    }
+                }
+
+                // 7. OPTIMIZE
+                else if (step.type == "Optimize") {
+                    var m = Regex.Match(clean, @"Optimize\s+([A-Za-z0-9_]+)(?:\s*\{\s*([^}]+)\s*\})?", RegexOptions.IgnoreCase);
+                    if (m.Success) {
+                        step.optimizer_name = m.Groups[1].Value.Trim();
+                        if (m.Groups.Count > 2 && !string.IsNullOrEmpty(m.Groups[2].Value)) {
+                            string body = m.Groups[2].Value;
+                            var smM = Regex.Match(body, @"SolveMode\s*=\s*([A-Za-z0-9_]+)", RegexOptions.IgnoreCase);
+                            if (smM.Success) step.solve_mode = smM.Groups[1].Value;
+                            var emM = Regex.Match(body, @"ExitMode\s*=\s*([A-Za-z0-9_]+)", RegexOptions.IgnoreCase);
+                            if (emM.Success) step.exit_mode = emM.Groups[1].Value;
+                        }
+                        return true;
+                    }
+                }
+
+                // 8. MINIMIZE
+                else if (step.type == "Minimize") {
+                    var m = Regex.Match(clean, @"Minimize\s+([A-Za-z0-9_]+)\s*\(\s*([A-Za-z0-9_.]+)\s*\)", RegexOptions.IgnoreCase);
+                    if (m.Success) {
+                        step.optimizer_name = m.Groups[1].Value.Trim();
+                        step.minimize_variable = m.Groups[2].Value.Trim();
+                        return true;
+                    }
+                }
+
+                // 9. NONLINEAR CONSTRAINT
+                else if (step.type == "NonlinearConstraint") {
+                    var m = Regex.Match(clean, @"NonlinearConstraint\s+([A-Za-z0-9_]+)\s*\(\s*([A-Za-z0-9_.]+)\s*(<=|>=|==|<|>|=)\s*([^)]+)\)", RegexOptions.IgnoreCase);
+                    if (m.Success) {
+                        step.optimizer_name = m.Groups[1].Value.Trim();
+                        step.constraint_lhs = m.Groups[2].Value.Trim();
+                        step.constraint_op = m.Groups[3].Value.Trim();
+                        string valStr = m.Groups[4].Value.Trim();
+                        if (double.TryParse(valStr, NumberStyles.Any, CultureInfo.InvariantCulture, out double nlcVal)) {
+                            step.constraint_val = nlcVal;
+                        }
+                        return true;
+                    }
+                }
+
+                // 10. EQUATION
+                else if (step.type == "Equation") {
+                    var m = Regex.Match(clean, @"([A-Za-z0-9_.]+)\s*=\s*([^;]+);?");
+                    if (m.Success) {
+                        step.variable = m.Groups[1].Value.Trim();
+                        step.expression = m.Groups[2].Value.Trim();
+                        return true;
+                    }
+                }
+
+                // 11. CUSTOM SCRIPT
+                else if (step.type == "CustomScript") {
+                    step.custom_verbatim_script = clean;
+                    return true;
+                }
+            } catch {
+                return false;
+            }
+            return false;
+        }
     }
 }

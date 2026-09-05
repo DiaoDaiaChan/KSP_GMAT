@@ -1853,5 +1853,10 @@
   "seq_min_opt_label": "Optimizer:",
   "seq_min_var_label": "Minimize Target:",
   "seq_nlc_opt_label": "Optimizer:",
-  "seq_nlc_param": "Constraint:"
+  "seq_nlc_param": "Constraint:",
+  "seq_step_code_title": "GMAT Script (Directly edit values & parameters):",
+  "seq_step_synced": "Live Synced",
+  "seq_step_editing": "Editing...",
+  "btn_step_code_reset": "Reset",
+  "btn_step_code_copy": "Copy"
 }
