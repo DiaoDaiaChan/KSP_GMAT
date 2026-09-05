@@ -492,6 +492,13 @@ namespace KSPGMAT.UI {
                     return new Color(0.38f, 0.82f, 1.0f, 1f);  // Cyan
                 case "Report":
                     return new Color(0.65f, 0.75f, 0.88f, 1f); // Steel
+                case "Optimize":
+                case "Minimize":
+                case "NonlinearConstraint":
+                case "EndOptimize":
+                    return new Color(0.85f, 0.45f, 0.95f, 1f); // Purple Orchid
+                case "CustomScript":
+                    return new Color(0.18f, 0.80f, 0.44f, 1f); // Mint Green
                 default:
                     return new Color(0.38f, 0.82f, 1.0f, 1f);
             }

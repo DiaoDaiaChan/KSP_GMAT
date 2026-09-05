@@ -213,8 +213,10 @@ namespace KSPGMAT.Service {
                 sb.AppendLine();
             }
 
-            // Solvers / DifferentialCorrectors
+            // Solvers / DifferentialCorrectors & Optimizers
             HashSet<string> declaredSolvers = new HashSet<string>();
+            HashSet<string> declaredOptimizers = new HashSet<string>();
+
             if (state.Solvers != null && state.Solvers.Count > 0) {
                 for (int s = 0; s < state.Solvers.Count; s++) {
                     var slv = state.Solvers[s];
@@ -242,6 +244,17 @@ namespace KSPGMAT.Service {
                             sb.AppendLine($"{sName}.DerivativeMethod = ForwardDifference;");
                             sb.AppendLine($"{sName}.Algorithm = NewtonRaphson;");
                             sb.AppendLine($"{sName}.MaximumIterations = 50;");
+                            sb.AppendLine();
+                        }
+                    }
+                    if (st.type == "Optimize" || !string.IsNullOrEmpty(st.optimizer_name)) {
+                        string optName = GMATParameterRegistry.SanitizeGmatIdentifier(!string.IsNullOrEmpty(st.optimizer_name) ? st.optimizer_name : "SQP1", "SQP1");
+                        if (!declaredOptimizers.Contains(optName)) {
+                            declaredOptimizers.Add(optName);
+                            sb.AppendLine($"Create SQP {optName};");
+                            sb.AppendLine($"{optName}.ShowProgress = true;");
+                            sb.AppendLine($"{optName}.MaximumIterations = 50;");
+                            sb.AppendLine($"{optName}.Tolerance = 0.001;");
                             sb.AppendLine();
                         }
                     }
@@ -322,8 +335,9 @@ namespace KSPGMAT.Service {
                     if (stype == "Propagate") {
                         string pName = !string.IsNullOrEmpty(st.propagator) ? st.propagator : "LEOProp";
                         string stopCond = FormatStopCondition(satName, cBody, st);
-                        sb.AppendLine($"% Propagate ({pName})");
-                        sb.AppendLine($"Propagate {pName}({satName}) {{{stopCond}}};");
+                        string backMod = st.is_backwards ? " Backwards" : "";
+                        sb.AppendLine($"% Propagate{backMod} ({pName})");
+                        sb.AppendLine($"Propagate{backMod} {pName}({satName}) {{{stopCond}}};");
                         if (!insideTarget) {
                             sb.AppendLine($"Report TrajReport {satName}.ElapsedSecs {satName}.X {satName}.Y {satName}.Z {satName}.VX {satName}.VY {satName}.VZ {satName}.{cBody}.Altitude {satName}.SMA {satName}.ECC {satName}.INC {satName}.RAAN {satName}.AOP {satName}.TA {satName}.TotalMass;");
                         }
@@ -433,6 +447,32 @@ namespace KSPGMAT.Service {
                         sb.AppendLine($"% Step Report ({sub})");
                         sb.AppendLine($"Report {sub} {reportExpr};");
                     }
+                    else if (stype == "Optimize") {
+                        string opt = GMATParameterRegistry.SanitizeGmatIdentifier(!string.IsNullOrEmpty(st.optimizer_name) ? st.optimizer_name : "SQP1", "SQP1");
+                        sb.AppendLine($"Optimize {opt} {{SolveMode = {st.solve_mode ?? "Solve"}, ExitMode = {st.exit_mode ?? "SaveAndContinue"}}};");
+                    }
+                    else if (stype == "Minimize") {
+                        string opt = GMATParameterRegistry.SanitizeGmatIdentifier(!string.IsNullOrEmpty(st.optimizer_name) ? st.optimizer_name : "SQP1", "SQP1");
+                        string minVar = !string.IsNullOrEmpty(st.minimize_variable) ? st.minimize_variable : "Sat.FuelMassBurned";
+                        if (minVar.Contains(".")) minVar = $"{satName}.{GMATParameterRegistry.StripCraftPrefix(minVar)}";
+                        sb.AppendLine($"   Minimize {opt}({minVar});");
+                    }
+                    else if (stype == "NonlinearConstraint") {
+                        string opt = GMATParameterRegistry.SanitizeGmatIdentifier(!string.IsNullOrEmpty(st.optimizer_name) ? st.optimizer_name : "SQP1", "SQP1");
+                        string lhs = !string.IsNullOrEmpty(st.constraint_lhs) ? st.constraint_lhs : "Sat.Earth.RMAG";
+                        if (lhs.Contains(".")) lhs = $"{satName}.{GMATParameterRegistry.StripCraftPrefix(lhs)}";
+                        string op = !string.IsNullOrEmpty(st.constraint_op) ? st.constraint_op : ">=";
+                        string val = st.constraint_val.ToString("G", CultureInfo.InvariantCulture);
+                        sb.AppendLine($"   NonlinearConstraint {opt}({lhs} {op} {val});");
+                    }
+                    else if (stype == "EndOptimize") {
+                        sb.AppendLine("EndOptimize;");
+                    }
+                    else if (stype == "CustomScript") {
+                        if (!string.IsNullOrWhiteSpace(st.custom_verbatim_script)) {
+                            sb.AppendLine(st.custom_verbatim_script.TrimEnd());
+                        }
+                    }
                 }
             }
 
@@ -441,6 +481,92 @@ namespace KSPGMAT.Service {
             sb.AppendLine($"Report TrajReport {satName}.ElapsedSecs {satName}.X {satName}.Y {satName}.Z {satName}.VX {satName}.VY {satName}.VZ {satName}.{cBody}.Altitude {satName}.SMA {satName}.ECC {satName}.INC {satName}.RAAN {satName}.AOP {satName}.TA {satName}.TotalMass;");
 
             return sb.ToString();
+        }
+
+        /// <summary>
+        /// 单步代码透视生成器：就地生成指定 MissionStep 对应的 GMAT 原生脚本片段，供 GUI 代码透视查看。
+        /// </summary>
+        public static string GenerateStepScript(MissionStep st, string satName = null, string centralBody = null) {
+            if (st == null) return "";
+            string safeSat = !string.IsNullOrEmpty(satName) ? satName : GMATStateManager.Current.GetSpacecraftName();
+            string safeBody = !string.IsNullOrEmpty(centralBody) ? centralBody : (GMATStateManager.Current.Spacecraft.CentralBody ?? "Earth");
+            string stype = st.type;
+
+            if (stype == "Propagate") {
+                string pName = !string.IsNullOrEmpty(st.propagator) ? st.propagator : "LEOProp";
+                string stopCond = FormatStopCondition(safeSat, safeBody, st);
+                string backMod = st.is_backwards ? " Backwards" : "";
+                return $"Propagate{backMod} {pName}({safeSat}) {{{stopCond}}};";
+            }
+            if (stype == "Target") {
+                string dc = GMATParameterRegistry.SanitizeGmatIdentifier(st.dc_name ?? "DC", "DC");
+                return $"Target {dc} {{SolveMode = {st.solve_mode ?? "Solve"}, ExitMode = {st.exit_mode ?? "SaveAndContinue"}}};";
+            }
+            if (stype == "EndTarget") {
+                return "EndTarget;";
+            }
+            if (stype == "Optimize") {
+                string opt = GMATParameterRegistry.SanitizeGmatIdentifier(!string.IsNullOrEmpty(st.optimizer_name) ? st.optimizer_name : "SQP1", "SQP1");
+                return $"Optimize {opt} {{SolveMode = {st.solve_mode ?? "Solve"}, ExitMode = {st.exit_mode ?? "SaveAndContinue"}}};";
+            }
+            if (stype == "Minimize") {
+                string opt = GMATParameterRegistry.SanitizeGmatIdentifier(!string.IsNullOrEmpty(st.optimizer_name) ? st.optimizer_name : "SQP1", "SQP1");
+                string minVar = !string.IsNullOrEmpty(st.minimize_variable) ? st.minimize_variable : "Sat.FuelMassBurned";
+                if (minVar.Contains(".")) minVar = $"{safeSat}.{GMATParameterRegistry.StripCraftPrefix(minVar)}";
+                return $"Minimize {opt}({minVar});";
+            }
+            if (stype == "NonlinearConstraint") {
+                string opt = GMATParameterRegistry.SanitizeGmatIdentifier(!string.IsNullOrEmpty(st.optimizer_name) ? st.optimizer_name : "SQP1", "SQP1");
+                string lhs = !string.IsNullOrEmpty(st.constraint_lhs) ? st.constraint_lhs : "Sat.Earth.RMAG";
+                if (lhs.Contains(".")) lhs = $"{safeSat}.{GMATParameterRegistry.StripCraftPrefix(lhs)}";
+                string op = !string.IsNullOrEmpty(st.constraint_op) ? st.constraint_op : ">=";
+                string val = st.constraint_val.ToString("G", CultureInfo.InvariantCulture);
+                return $"NonlinearConstraint {opt}({lhs} {op} {val});";
+            }
+            if (stype == "EndOptimize") {
+                return "EndOptimize;";
+            }
+            if (stype == "Vary") {
+                string dc = GMATParameterRegistry.SanitizeGmatIdentifier(st.dc_name ?? "DC", "DC");
+                string vVar = st.vary_variable ?? "";
+                if (vVar.Contains(".")) vVar = $"{safeSat}.{GMATParameterRegistry.StripCraftPrefix(vVar)}";
+                string init = !string.IsNullOrEmpty(st.vary_initial_str) ? st.vary_initial_str : st.vary_initial.ToString("G", CultureInfo.InvariantCulture);
+                string pert = !string.IsNullOrEmpty(st.vary_perturbation_str) ? st.vary_perturbation_str : "0.0001";
+                string low = !string.IsNullOrEmpty(st.vary_lower_str) ? st.vary_lower_str : st.vary_lower.ToString("G", CultureInfo.InvariantCulture);
+                string up = !string.IsNullOrEmpty(st.vary_upper_str) ? st.vary_upper_str : st.vary_upper.ToString("G", CultureInfo.InvariantCulture);
+                string step = !string.IsNullOrEmpty(st.vary_max_step_str) ? st.vary_max_step_str : "10";
+                return $"Vary {dc}({vVar} = {init}, {{Perturbation = {pert}, Lower = {low}, Upper = {up}, MaxStep = {step}}});";
+            }
+            if (stype == "Achieve") {
+                string dc = GMATParameterRegistry.SanitizeGmatIdentifier(st.dc_name ?? "DC", "DC");
+                string rawGoal = st.achieve_param ?? "";
+                string goalParam = GMATParameterRegistry.StripCraftPrefix(rawGoal);
+                if (goalParam.Contains("=")) goalParam = GMATParameterRegistry.StripCraftPrefix(goalParam.Split('=')[0].Trim());
+                if (!goalParam.Contains(".")) goalParam = $"{safeBody}.{goalParam}";
+                string val = !string.IsNullOrEmpty(st.achieve_val_str) ? st.achieve_val_str : st.achieve_val.ToString("G", CultureInfo.InvariantCulture);
+                string tol = !string.IsNullOrEmpty(st.achieve_tolerance_str) ? st.achieve_tolerance_str : "0.1";
+                return $"Achieve {dc}({safeSat}.{goalParam} = {val}, {{Tolerance = {tol}}});";
+            }
+            if (stype == "FiniteBurn") {
+                string fbName = GMATParameterRegistry.SanitizeGmatIdentifier(st.burn_name, "Finite1");
+                string pName = !string.IsNullOrEmpty(st.propagator) ? st.propagator : "LEOProp";
+                string dur = st.burn_use_vary_var ? (st.burn_vary_var_name ?? "") : (!string.IsNullOrEmpty(st.duration_str) ? st.duration_str : st.duration.ToString("G", CultureInfo.InvariantCulture));
+                return $"BeginFiniteBurn {fbName}({safeSat});\nPropagate {pName}({safeSat}) {{{safeSat}.ElapsedSecs = {dur}}};\nEndFiniteBurn {fbName}({safeSat});";
+            }
+            if (stype == "ImpulsiveBurn" || stype == "Maneuver") {
+                string bName = GMATParameterRegistry.SanitizeGmatIdentifier(st.burn_name ?? st.label, "Burn1");
+                return $"Maneuver {bName}({safeSat});";
+            }
+            if (stype == "CustomScript") {
+                return st.custom_verbatim_script ?? "";
+            }
+            if (stype == "Equation" || stype == "Set") {
+                return $"{st.variable} = {st.expression};";
+            }
+            if (stype == "Report") {
+                return $"Report {st.subscriber_name ?? "TrajReport"} {st.expression};";
+            }
+            return $"% Step: {st.label}";
         }
 
         private static string FormatStopCondition(string satName, string centralBody, MissionStep st) {

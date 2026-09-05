@@ -9,8 +9,31 @@ using KSPGMAT.Service;
 
 namespace KSPGMAT.UI {
     public partial class GMATMainWindow {
+        private GMATLintReport currentLintReport = null;
+        private bool showLintIssuesDrawer = false;
+        private Vector2 lintIssuesScroll = Vector2.zero;
+        private int targetJumpLine = -1;
+
+        private bool showBlueprintDrawer = false;
+        private Vector2 blueprintScrollPos = Vector2.zero;
+
         private void TriggerPropagationSolve(string rawCustomScript = null) {
             Vessel vessel = FlightGlobals.ActiveVessel;
+            string cBody = GMATStateManager.Current.Spacecraft.CentralBody ?? "Earth";
+            string scriptToSend = !string.IsNullOrEmpty(rawCustomScript) 
+                ? rawCustomScript 
+                : GMATScriptGenerator.GenerateScript(vessel, missionSequence, cBody, propagatorConfigs);
+
+            // 前置静态语法分析与自愈门禁 (Pre-flight Linter Gate)
+            var lint = GMATScriptLinter.Lint(scriptToSend);
+            currentLintReport = lint;
+            if (lint.HasErrors) {
+                showLintIssuesDrawer = true;
+                ScreenMessages.PostScreenMessage(I18n.T("ide_lint_block_solve"), 4.0f, ScreenMessageStyle.UPPER_CENTER);
+                activeTab = 1; // 保持在 Tab 1 (脚本 IDE 审查面板) 供用户检查诊断与一键自愈
+                return;
+            }
+
             activeTab = 2; // Switch to Mission Sequence (Tab 2)
             isPropagating = true;
             solveStartTime = Time.realtimeSinceStartup;
@@ -19,11 +42,6 @@ namespace KSPGMAT.UI {
 
             List<StageData> selectedStages = GetSelectedStagesList();
             ROEngineInfo selectedEngine = GetDefaultOrActiveEngine();
-
-            string cBody = GMATStateManager.Current.Spacecraft.CentralBody ?? "Earth";
-            string scriptToSend = !string.IsNullOrEmpty(rawCustomScript) 
-                ? rawCustomScript 
-                : GMATScriptGenerator.GenerateScript(vessel, missionSequence, cBody, propagatorConfigs);
 
             GMATClient.PropagateMissionWithRawScript(vessel, selectedStages, selectedEngine, missionSequence, propagatorConfigs, scriptToSend, (success, result) => {
                 isPropagating = false;

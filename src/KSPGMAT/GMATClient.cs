@@ -132,6 +132,9 @@ namespace KSPGMAT {
         public string label = "";
         public bool is_collapsed = false; // Target group collapsed in GUI
         public bool is_expanded = false; // Individual step details expanded in GUI
+        public bool show_code_peek = false; // Toggle single step GMAT code peek in GUI
+        public string custom_verbatim_script = ""; // Raw/unparsed GMAT code block preserved for round-trip fidelity
+        public bool is_backwards = false; // For Propagate Backwards
         public string dc_name = "DefaultDC";
         public string solve_mode = "Solve"; // Solve, RunInitialGuess
         public string exit_mode = "SaveAndContinue"; // SaveAndContinue, DiscardAndContinue

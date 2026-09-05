@@ -34,7 +34,7 @@
 - 暗黑令牌（`DarkBg #0a0c12` 等）；**禁止** `Color.white` 背景 / 蓝色聚焦亮斑。
 - 胶囊徽章配色固定：Propagate 深红、FiniteBurn 与 ThrustVector 琥珀、Impulsive 紫、Vary 青、Achieve 绿、Stage 金、Target 蓝、EndTarget 玄灰。
 - 模板折叠托盘：>6 个时最大高度 130px 平滑滚动。
-- 统一使用GMATMainWindow.Styles.cs里面的模板
+- 统一使用GMATMainWindow.Styles.cs GMATMainWindow.Widgets.cs 里面的模板
 
 ## 6. 物理时序 (simClock / 5.3)
 - 滑行 `simClock += duration`；特征点过境 `trajectory.Find(p => p.t > simClock + 0.1)`；点火锁定当前 `simClock`。

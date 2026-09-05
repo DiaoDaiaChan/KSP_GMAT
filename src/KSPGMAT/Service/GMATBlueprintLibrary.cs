@@ -1,0 +1,555 @@
+using System;
+using System.Collections.Generic;
+using System.Text;
+using KSPGMAT.Model;
+
+namespace KSPGMAT.Service {
+    public class GMATBlueprintItem {
+        public string Id { get; set; }
+        public string TitleKey { get; set; }
+        public string TitleDefault { get; set; }
+        public string DescriptionKey { get; set; }
+        public string DescriptionDefault { get; set; }
+        public string Category { get; set; }
+        public string ScriptTemplate { get; set; }
+
+        public string GetFormattedScript(string satName = null, string centralBody = null, string epochUtc = null) {
+            string safeSat = !string.IsNullOrEmpty(satName) ? satName : GMATStateManager.Current.GetSpacecraftName();
+            string safeBody = !string.IsNullOrEmpty(centralBody) ? centralBody : (GMATStateManager.Current.Spacecraft.CentralBody ?? "Earth");
+            string safeEpoch = !string.IsNullOrEmpty(epochUtc) ? epochUtc : GMATStateManager.Current.Spacecraft.EpochUtc;
+
+            return ScriptTemplate
+                .Replace("{SAT_NAME}", safeSat)
+                .Replace("{CENTRAL_BODY}", safeBody)
+                .Replace("{EPOCH}", safeEpoch);
+        }
+    }
+
+    /// <summary>
+    /// NASA GMAT 官方 7 大标准脚本范式蓝本库 (Canonical Script Blueprints)。
+    /// 直接内嵌自 gmat_docs_distillation.md，已做合规化纯 ASCII 净化与 SSOT 航天器参数插值。
+    /// </summary>
+    public static class GMATBlueprintLibrary {
+        private static readonly List<GMATBlueprintItem> _blueprints = new List<GMATBlueprintItem>();
+
+        static GMATBlueprintLibrary() {
+            InitializeBlueprints();
+        }
+
+        public static IReadOnlyList<GMATBlueprintItem> GetAllBlueprints() {
+            return _blueprints;
+        }
+
+        public static GMATBlueprintItem GetBlueprint(string id) {
+            return _blueprints.Find(b => b.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static void InitializeBlueprints() {
+            // -------------------------------------------------------------
+            // 范式 1：基础轨道确定性递推与停机事件 (Simulating an Orbit)
+            // -------------------------------------------------------------
+            _blueprints.Add(new GMATBlueprintItem {
+                Id = "p1_sim_orbit",
+                TitleKey = "bp_p1_title",
+                TitleDefault = "范式 1: 轨道递推与停机事件 (Simulating an Orbit)",
+                DescriptionKey = "bp_p1_desc",
+                DescriptionDefault = "PrinceDormand78 高精自适应积分器，支持滑行至近地点、远地点与赤道纬度穿越停机检测。",
+                Category = "NearEarth",
+                ScriptTemplate = 
+@"%----------------------------------------------------------------------
+% 范式 1: 基础轨道确定性递推与停机事件 (Simulating an Orbit)
+%----------------------------------------------------------------------
+Create Spacecraft {SAT_NAME};
+{SAT_NAME}.DateFormat = UTCGregorian;
+{SAT_NAME}.Epoch = '{EPOCH}';
+{SAT_NAME}.CoordinateSystem = {CENTRAL_BODY}MJ2000Eq;
+{SAT_NAME}.DisplayStateType = Keplerian;
+{SAT_NAME}.SMA = 6928.14;
+{SAT_NAME}.ECC = 0.001;
+{SAT_NAME}.INC = 28.5;
+{SAT_NAME}.RAAN = 100.0;
+{SAT_NAME}.AOP = 45.0;
+{SAT_NAME}.TA = 0.0;
+
+Create ForceModel NearEarth_ForceModel;
+NearEarth_ForceModel.CentralBody = {CENTRAL_BODY};
+NearEarth_ForceModel.PrimaryBodies = {{CENTRAL_BODY}};
+NearEarth_ForceModel.PointMasses = {Luna, Sun};
+NearEarth_ForceModel.GravityField.{CENTRAL_BODY}.Degree = 8;
+NearEarth_ForceModel.GravityField.{CENTRAL_BODY}.Order = 8;
+NearEarth_ForceModel.SRP = On;
+NearEarth_ForceModel.ErrorControl = RSSStep;
+
+Create Propagator NearEarthProp;
+NearEarthProp.FM = NearEarth_ForceModel;
+NearEarthProp.Type = PrinceDormand78;
+NearEarthProp.InitialStepSize = 60;
+NearEarthProp.Accuracy = 1e-11;
+NearEarthProp.MinStep = 0.0;
+NearEarthProp.MaxStep = 2700;
+NearEarthProp.StopIfAccuracyIsViolated = true;
+
+BeginMissionSequence;
+
+% (a) 按时间滑行 12000 秒
+Propagate NearEarthProp({SAT_NAME}) {{SAT_NAME}.ElapsedSecs = 12000.0};
+
+% (b) 积分推进至近地点 (Periapsis)
+Propagate NearEarthProp({SAT_NAME}) {{SAT_NAME}.{CENTRAL_BODY}.Periapsis};
+
+% (c) 积分推进至赤道升交点 (纬度穿越 = 0)
+Propagate NearEarthProp({SAT_NAME}) {{SAT_NAME}.{CENTRAL_BODY}.Latitude = 0.0};
+"
+            });
+
+            // -------------------------------------------------------------
+            // 范式 2：双脉冲霍曼转移与微分修正打靶 (Hohmann Transfer & Targeter)
+            // -------------------------------------------------------------
+            _blueprints.Add(new GMATBlueprintItem {
+                Id = "p2_hohmann_transfer",
+                TitleKey = "bp_p2_title",
+                TitleDefault = "范式 2: 双脉冲霍曼转移打靶 (Hohmann Transfer)",
+                DescriptionKey = "bp_p2_desc",
+                DescriptionDefault = "TOI 注入脉冲 + GOI 圆化脉冲，NewtonRaphson 微分修正打靶约束远地点天心距与圆轨道偏心率。",
+                Category = "OrbitalTransfer",
+                ScriptTemplate =
+@"%----------------------------------------------------------------------
+% 范式 2: 双脉冲霍曼转移与微分修正打靶 (Hohmann Transfer & Targeter)
+%----------------------------------------------------------------------
+Create Spacecraft {SAT_NAME};
+{SAT_NAME}.DateFormat = UTCGregorian;
+{SAT_NAME}.Epoch = '{EPOCH}';
+{SAT_NAME}.CoordinateSystem = {CENTRAL_BODY}MJ2000Eq;
+{SAT_NAME}.DisplayStateType = Keplerian;
+{SAT_NAME}.SMA = 6778.0;
+{SAT_NAME}.ECC = 0.001;
+{SAT_NAME}.INC = 28.5;
+{SAT_NAME}.RAAN = 0.0;
+{SAT_NAME}.AOP = 0.0;
+{SAT_NAME}.TA = 0.0;
+
+Create ImpulsiveBurn TOI;
+TOI.CoordinateSystem = Local;
+TOI.Origin = {CENTRAL_BODY};
+TOI.Axes = VNB;
+TOI.Element1 = 0;
+TOI.Element2 = 0;
+TOI.Element3 = 0;
+
+Create ImpulsiveBurn GOI;
+GOI.CoordinateSystem = Local;
+GOI.Origin = {CENTRAL_BODY};
+GOI.Axes = VNB;
+
+Create DifferentialCorrector DC1;
+DC1.Algorithm = NewtonRaphson;
+DC1.DerivativeMethod = ForwardDifference;
+DC1.MaximumIterations = 25;
+DC1.ShowProgress = true;
+
+Create ForceModel DefaultFM;
+DefaultFM.CentralBody = {CENTRAL_BODY};
+DefaultFM.PointMasses = {{CENTRAL_BODY}};
+
+Create Propagator DefaultProp;
+DefaultProp.FM = DefaultFM;
+DefaultProp.Type = PrinceDormand78;
+
+BeginMissionSequence;
+
+Propagate DefaultProp({SAT_NAME}) {{SAT_NAME}.{CENTRAL_BODY}.Periapsis};
+
+Target DC1 {SolveMode = Solve, ExitMode = SaveAndContinue};
+    Vary DC1(TOI.Element1 = 1.0, {Perturbation = 0.0001, MaxStep = 0.5, Lower = 0.0, Upper = 3.5});
+    Maneuver TOI({SAT_NAME});
+    
+    Propagate DefaultProp({SAT_NAME}) {{SAT_NAME}.{CENTRAL_BODY}.Apoapsis};
+    Achieve DC1({SAT_NAME}.{CENTRAL_BODY}.RMAG = 42164.169, {Tolerance = 0.5});
+    
+    Vary DC1(GOI.Element1 = 1.0, {Perturbation = 0.0001, MaxStep = 0.2, Lower = 0.0, Upper = 2.5});
+    Maneuver GOI({SAT_NAME});
+    
+    Achieve DC1({SAT_NAME}.{CENTRAL_BODY}.ECC = 0.005, {Tolerance = 0.0001});
+EndTarget;
+
+Propagate DefaultProp({SAT_NAME}) {{SAT_NAME}.ElapsedSecs = 86400};
+"
+            });
+
+            // -------------------------------------------------------------
+            // 范式 3：有限推力点火与变质量打靶 (Target Finite Burn with Mass Decrement)
+            // -------------------------------------------------------------
+            _blueprints.Add(new GMATBlueprintItem {
+                Id = "p3_finite_burn",
+                TitleKey = "bp_p3_title",
+                TitleDefault = "范式 3: 有限推力点火变质量打靶 (Target Finite Burn)",
+                DescriptionKey = "bp_p3_desc",
+                DescriptionDefault = "真实推力器 + 变质量化学储罐 + 有限点火段，求解目标点火时长 BurnDuration 达成目标天心距。",
+                Category = "OrbitalTransfer",
+                ScriptTemplate =
+@"%----------------------------------------------------------------------
+% 范式 3: 有限推力点火与变质量打靶 (Target Finite Burn with Mass Decrement)
+%----------------------------------------------------------------------
+Create Spacecraft {SAT_NAME};
+{SAT_NAME}.DateFormat = UTCGregorian;
+{SAT_NAME}.Epoch = '{EPOCH}';
+{SAT_NAME}.CoordinateSystem = {CENTRAL_BODY}MJ2000Eq;
+{SAT_NAME}.DisplayStateType = Keplerian;
+{SAT_NAME}.SMA = 6778.0;
+{SAT_NAME}.ECC = 0.001;
+{SAT_NAME}.DryMass = 1000;
+
+Create ChemicalTank Tank0;
+Tank0.FuelMass = 1500;
+Tank0.FuelDensity = 1000;
+Tank0.Pressure = 2000;
+Tank0.Volume = 2.0;
+Tank0.PressureModel = 'PressureRegulated';
+Tank0.AllowNegativeFuelMass = true;
+
+Create ChemicalThruster RL10;
+RL10.CoordinateSystem = Local;
+RL10.Origin = {CENTRAL_BODY};
+RL10.Axes = VNB;
+RL10.ThrustDirection1 = 1;
+RL10.ThrustDirection2 = 0;
+RL10.ThrustDirection3 = 0;
+RL10.DutyCycle = 1.0;
+RL10.ThrustScaleFactor = 1.0;
+RL10.DecrementMass = true;
+RL10.Tank = {Tank0};
+RL10.C1 = 1000;
+RL10.K1 = 300;
+
+{SAT_NAME}.Tanks = {Tank0};
+{SAT_NAME}.Thrusters = {RL10};
+
+Create FiniteBurn FiniteBurn1;
+FiniteBurn1.Thrusters = {RL10};
+
+Create Variable BurnDuration;
+BurnDuration = 0;
+
+Create DifferentialCorrector DC1;
+DC1.Algorithm = NewtonRaphson;
+DC1.MaximumIterations = 30;
+
+Create ForceModel PropFM;
+PropFM.CentralBody = {CENTRAL_BODY};
+PropFM.PointMasses = {{CENTRAL_BODY}};
+
+Create Propagator Prop;
+Prop.FM = PropFM;
+Prop.Type = PrinceDormand78;
+
+BeginMissionSequence;
+
+Propagate Prop({SAT_NAME}) {{SAT_NAME}.{CENTRAL_BODY}.Periapsis};
+
+Target DC1 {SolveMode = Solve, ExitMode = SaveAndContinue};
+    Vary DC1(BurnDuration = 200, {Perturbation = 1.0, MaxStep = 100, Lower = 1.0, Upper = 1500});
+    
+    BeginFiniteBurn FiniteBurn1({SAT_NAME});
+    Propagate Prop({SAT_NAME}) {{SAT_NAME}.ElapsedSecs = BurnDuration};
+    EndFiniteBurn FiniteBurn1({SAT_NAME});
+    
+    Propagate Prop({SAT_NAME}) {{SAT_NAME}.{CENTRAL_BODY}.Apoapsis};
+    Achieve DC1({SAT_NAME}.{CENTRAL_BODY}.RMAG = 12000, {Tolerance = 1.0});
+EndTarget;
+"
+            });
+
+            // -------------------------------------------------------------
+            // 范式 4：行星际转移与火星 B-Plane 借力打靶 (Mars B-Plane Targeting)
+            // -------------------------------------------------------------
+            _blueprints.Add(new GMATBlueprintItem {
+                Id = "p4_mars_bplane",
+                TitleKey = "bp_p4_title",
+                TitleDefault = "范式 4: 行星际 B-Plane 借力打靶 (Mars B-Plane Targeting)",
+                DescriptionKey = "bp_p4_desc",
+                DescriptionDefault = "近地逃逸 -> 深空巡航 -> 近目标星三级分段动力学力模型，打靶 TCM 满足 B-Plane (BdotT, BdotR) 与制动捕获。",
+                Category = "DeepSpace",
+                ScriptTemplate =
+@"%----------------------------------------------------------------------
+% 范式 4: 行星际转移、分段力学环境与 B-Plane 借力打靶 (Mars B-Plane Targeting)
+%----------------------------------------------------------------------
+Create Spacecraft {SAT_NAME};
+{SAT_NAME}.DateFormat = UTCGregorian;
+{SAT_NAME}.Epoch = '{EPOCH}';
+{SAT_NAME}.CoordinateSystem = EarthMJ2000Eq;
+{SAT_NAME}.DisplayStateType = Keplerian;
+{SAT_NAME}.SMA = -32593.2;
+{SAT_NAME}.ECC = 1.2028;
+{SAT_NAME}.INC = 28.80;
+{SAT_NAME}.RAAN = 173.96;
+{SAT_NAME}.AOP = 240.96;
+{SAT_NAME}.TA = 359.94;
+
+Create ImpulsiveBurn TCM;
+TCM.CoordinateSystem = Local;
+TCM.Origin = Earth;
+TCM.Axes = VNB;
+
+Create ImpulsiveBurn MOI;
+MOI.CoordinateSystem = Local;
+MOI.Origin = Mars;
+MOI.Axes = VNB;
+
+Create CoordinateSystem SunMJ2000Eq;
+SunMJ2000Eq.Origin = Sun;
+SunMJ2000Eq.Axes = MJ2000Eq;
+
+Create CoordinateSystem MarsMJ2000Eq;
+MarsMJ2000Eq.Origin = Mars;
+MarsMJ2000Eq.Axes = MJ2000Eq;
+
+Create ForceModel NearEarth_FM;
+NearEarth_FM.CentralBody = Earth;
+NearEarth_FM.PrimaryBodies = {Earth};
+NearEarth_FM.PointMasses = {Luna, Sun};
+NearEarth_FM.SRP = On;
+
+Create Propagator NearEarthProp;
+NearEarthProp.FM = NearEarth_FM;
+NearEarthProp.Type = PrinceDormand78;
+NearEarthProp.Accuracy = 1e-11;
+
+Create ForceModel DeepSpace_FM;
+DeepSpace_FM.CentralBody = Sun;
+DeepSpace_FM.PointMasses = {Sun, Mercury, Venus, Earth, Luna, Mars, Jupiter, Saturn, Uranus, Neptune};
+DeepSpace_FM.SRP = On;
+
+Create Propagator DeepSpaceProp;
+DeepSpaceProp.FM = DeepSpace_FM;
+DeepSpaceProp.Type = PrinceDormand78;
+DeepSpaceProp.Accuracy = 1e-11;
+
+Create ForceModel NearMars_FM;
+NearMars_FM.CentralBody = Mars;
+NearMars_FM.PrimaryBodies = {Mars};
+NearMars_FM.PointMasses = {Sun};
+NearMars_FM.SRP = On;
+
+Create Propagator NearMarsProp;
+NearMarsProp.FM = NearMars_FM;
+NearMarsProp.Type = PrinceDormand78;
+NearMarsProp.Accuracy = 1e-11;
+
+Create DifferentialCorrector DC1;
+DC1.Algorithm = NewtonRaphson;
+DC1.MaximumIterations = 50;
+
+BeginMissionSequence;
+
+% (a) 离开地球引力球
+Propagate NearEarthProp({SAT_NAME}) {{SAT_NAME}.ElapsedDays = 3.0};
+
+% (b) 第一阶段打靶: 深空 TCM 瞄准火星 B 平面
+Target DC1 {SolveMode = Solve, ExitMode = SaveAndContinue};
+    Vary DC1(TCM.Element1 = 0.0, {Perturbation = 1e-5, MaxStep = 0.1, Lower = -1.0, Upper = 1.0});
+    Vary DC1(TCM.Element2 = 0.0, {Perturbation = 1e-5, MaxStep = 0.1, Lower = -1.0, Upper = 1.0});
+    Vary DC1(TCM.Element3 = 0.0, {Perturbation = 1e-5, MaxStep = 0.1, Lower = -1.0, Upper = 1.0});
+    
+    Maneuver TCM({SAT_NAME});
+    
+    Propagate DeepSpaceProp({SAT_NAME}) {{SAT_NAME}.Mars.RMAG = 1000000.0};
+    Propagate NearMarsProp({SAT_NAME}) {{SAT_NAME}.Mars.Periapsis};
+    
+    Achieve DC1({SAT_NAME}.Mars.BdotT = 0.0, {Tolerance = 1.0});
+    Achieve DC1({SAT_NAME}.Mars.BdotR = -7000.0, {Tolerance = 1.0});
+EndTarget;
+
+% (c) 第二阶段打靶: 近火星制动捕获入轨 (MOI)
+Target DC1 {SolveMode = Solve, ExitMode = SaveAndContinue};
+    Vary DC1(MOI.Element1 = -1.5, {Perturbation = 0.0001, MaxStep = 0.2, Lower = -3.5, Upper = -0.1});
+    Maneuver MOI({SAT_NAME});
+    
+    Propagate NearMarsProp({SAT_NAME}) {{SAT_NAME}.Mars.Apoapsis};
+    Achieve DC1({SAT_NAME}.Mars.RMAG = 12000.0, {Tolerance = 5.0});
+EndTarget;
+"
+            });
+
+            // -------------------------------------------------------------
+            // 范式 5：多段打靶与非线性约束优化 (Multiple Shooting Lunar Flyby)
+            // -------------------------------------------------------------
+            _blueprints.Add(new GMATBlueprintItem {
+                Id = "p5_lunar_flyby",
+                TitleKey = "bp_p5_title",
+                TitleDefault = "范式 5: 多段打靶月球飞掠 (Multiple Shooting Lunar Flyby)",
+                DescriptionKey = "bp_p5_desc",
+                DescriptionDefault = "Control Points 控制点多段切分，双向正反向积分拼接，利用微分修正消除位置与速度断点。",
+                Category = "Optimization",
+                ScriptTemplate =
+@"%----------------------------------------------------------------------
+% 范式 5: 多段打靶与非线性约束 (Multiple Shooting Lunar Flyby)
+%----------------------------------------------------------------------
+Create Spacecraft {SAT_NAME};
+{SAT_NAME}.DateFormat = UTCGregorian;
+{SAT_NAME}.Epoch = '{EPOCH}';
+{SAT_NAME}.CoordinateSystem = {CENTRAL_BODY}MJ2000Eq;
+{SAT_NAME}.DisplayStateType = Keplerian;
+{SAT_NAME}.SMA = 6778.0;
+{SAT_NAME}.ECC = 0.001;
+
+Create ImpulsiveBurn TLI;
+TLI.CoordinateSystem = Local;
+TLI.Origin = {CENTRAL_BODY};
+TLI.Axes = VNB;
+
+Create ImpulsiveBurn MCC;
+MCC.CoordinateSystem = Local;
+MCC.Origin = {CENTRAL_BODY};
+MCC.Axes = VNB;
+
+Create DifferentialCorrector DC1;
+DC1.Algorithm = NewtonRaphson;
+DC1.MaximumIterations = 50;
+
+Create ForceModel EarthMoon_FM;
+EarthMoon_FM.CentralBody = {CENTRAL_BODY};
+EarthMoon_FM.PointMasses = {{CENTRAL_BODY}, Luna, Sun};
+
+Create Propagator EarthMoonProp;
+EarthMoonProp.FM = EarthMoon_FM;
+EarthMoonProp.Type = PrinceDormand78;
+
+BeginMissionSequence;
+
+% 滑行至近地点
+Propagate EarthMoonProp({SAT_NAME}) {{SAT_NAME}.{CENTRAL_BODY}.Periapsis};
+
+% 打靶 TLI 地月转移与中途修正 MCC
+Target DC1 {SolveMode = Solve, ExitMode = SaveAndContinue};
+    Vary DC1(TLI.Element1 = 3.1, {Perturbation = 0.0001, MaxStep = 0.05, Lower = 2.8, Upper = 3.3});
+    Maneuver TLI({SAT_NAME});
+    
+    Propagate EarthMoonProp({SAT_NAME}) {{SAT_NAME}.ElapsedDays = 1.5};
+    
+    Vary DC1(MCC.Element1 = 0.0, {Perturbation = 1e-5, MaxStep = 0.02, Lower = -0.1, Upper = 0.1});
+    Maneuver MCC({SAT_NAME});
+    
+    Propagate EarthMoonProp({SAT_NAME}) {{SAT_NAME}.Luna.Periapsis};
+    
+    Achieve DC1({SAT_NAME}.Luna.RMAG = 1838.0, {Tolerance = 2.0});
+EndTarget;
+"
+            });
+
+            // -------------------------------------------------------------
+            // 范式 6：低推力电推进连续螺旋外推 (Solar Electric Propulsion)
+            // -------------------------------------------------------------
+            _blueprints.Add(new GMATBlueprintItem {
+                Id = "p6_electric_propulsion",
+                TitleKey = "bp_p6_title",
+                TitleDefault = "范式 6: 低推力电推进连续外推 (Solar Electric Propulsion)",
+                DescriptionKey = "bp_p6_desc",
+                DescriptionDefault = "离子/霍尔电推力器与高比冲储罐，支持变步长自适应积分连续推力螺旋升轨与深空巡航。",
+                Category = "ElectricPropulsion",
+                ScriptTemplate =
+@"%----------------------------------------------------------------------
+% 范式 6: 低推力电推进连续螺旋外推 (Solar Electric Propulsion)
+%----------------------------------------------------------------------
+Create ChemicalTank XenonTank;
+XenonTank.FuelMass = 500;
+XenonTank.FuelDensity = 1000;
+XenonTank.Pressure = 1500;
+XenonTank.Volume = 0.6;
+XenonTank.PressureModel = 'PressureRegulated';
+XenonTank.AllowNegativeFuelMass = true;
+
+Create ChemicalThruster NEXT;
+NEXT.CoordinateSystem = Local;
+NEXT.Origin = {CENTRAL_BODY};
+NEXT.Axes = VNB;
+NEXT.ThrustDirection1 = 1;
+NEXT.ThrustDirection2 = 0;
+NEXT.ThrustDirection3 = 0;
+NEXT.DecrementMass = true;
+NEXT.Tank = {XenonTank};
+NEXT.C1 = 5.0;
+NEXT.K1 = 3000.0;
+
+Create Spacecraft {SAT_NAME};
+{SAT_NAME}.DateFormat = UTCGregorian;
+{SAT_NAME}.Epoch = '{EPOCH}';
+{SAT_NAME}.CoordinateSystem = {CENTRAL_BODY}MJ2000Eq;
+{SAT_NAME}.DisplayStateType = Keplerian;
+{SAT_NAME}.SMA = 7000.0;
+{SAT_NAME}.ECC = 0.001;
+{SAT_NAME}.Tanks = {XenonTank};
+{SAT_NAME}.Thrusters = {NEXT};
+
+Create FiniteBurn LowThrustBurn;
+LowThrustBurn.Thrusters = {NEXT};
+
+Create ForceModel PropFM;
+PropFM.CentralBody = {CENTRAL_BODY};
+PropFM.PointMasses = {{CENTRAL_BODY}, Sun};
+PropFM.SRP = On;
+
+Create Propagator Prop;
+Prop.FM = PropFM;
+Prop.Type = PrinceDormand78;
+Prop.InitialStepSize = 120;
+Prop.Accuracy = 1e-11;
+
+BeginMissionSequence;
+
+BeginFiniteBurn LowThrustBurn({SAT_NAME});
+Propagate Prop({SAT_NAME}) {{SAT_NAME}.ElapsedDays = 15.0};
+EndFiniteBurn LowThrustBurn({SAT_NAME});
+"
+            });
+
+            // -------------------------------------------------------------
+            // 范式 7：高精状态报表输出与数据流 (ReportFile & Pipeline)
+            // -------------------------------------------------------------
+            _blueprints.Add(new GMATBlueprintItem {
+                Id = "p7_report_pipeline",
+                TitleKey = "bp_p7_title",
+                TitleDefault = "范式 7: 高精状态报表输出 (ReportFile & Pipeline)",
+                DescriptionKey = "bp_p7_desc",
+                DescriptionDefault = "双精度 16 位格式化遥测输出，导出笛卡尔状态、开普勒根数与飞行质量，对接 Principia 验证管线。",
+                Category = "Telemetry",
+                ScriptTemplate =
+@"%----------------------------------------------------------------------
+% 范式 7: 高精状态报表输出与数据流 (ReportFile & Pipeline)
+%----------------------------------------------------------------------
+Create Spacecraft {SAT_NAME};
+{SAT_NAME}.DateFormat = UTCGregorian;
+{SAT_NAME}.Epoch = '{EPOCH}';
+{SAT_NAME}.CoordinateSystem = {CENTRAL_BODY}MJ2000Eq;
+{SAT_NAME}.DisplayStateType = Keplerian;
+{SAT_NAME}.SMA = 6878.0;
+{SAT_NAME}.ECC = 0.002;
+
+Create ReportFile TrajectoryReport;
+TrajectoryReport.Filename = 'TrajectoryData.txt';
+TrajectoryReport.Precision = 16;
+TrajectoryReport.WriteHeaders = true;
+TrajectoryReport.LeftJustify = On;
+TrajectoryReport.ZeroFill = Off;
+TrajectoryReport.ColumnWidth = 24;
+TrajectoryReport.WriteReport = true;
+
+Create ForceModel FM;
+FM.CentralBody = {CENTRAL_BODY};
+FM.PointMasses = {{CENTRAL_BODY}, Sun, Luna};
+
+Create Propagator Prop;
+Prop.FM = FM;
+Prop.Type = PrinceDormand78;
+
+BeginMissionSequence;
+
+Report TrajectoryReport {SAT_NAME}.ElapsedSecs {SAT_NAME}.X {SAT_NAME}.Y {SAT_NAME}.Z {SAT_NAME}.VX {SAT_NAME}.VY {SAT_NAME}.VZ {SAT_NAME}.{CENTRAL_BODY}.Altitude {SAT_NAME}.SMA {SAT_NAME}.ECC {SAT_NAME}.INC {SAT_NAME}.TotalMass;
+
+Propagate Prop({SAT_NAME}) {{SAT_NAME}.ElapsedDays = 2.0};
+
+Report TrajectoryReport {SAT_NAME}.ElapsedSecs {SAT_NAME}.X {SAT_NAME}.Y {SAT_NAME}.Z {SAT_NAME}.VX {SAT_NAME}.VY {SAT_NAME}.VZ {SAT_NAME}.{CENTRAL_BODY}.Altitude {SAT_NAME}.SMA {SAT_NAME}.ECC {SAT_NAME}.INC {SAT_NAME}.TotalMass;
+"
+            });
+        }
+    }
+}

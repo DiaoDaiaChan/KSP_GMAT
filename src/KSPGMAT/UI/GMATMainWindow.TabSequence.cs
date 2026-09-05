@@ -847,6 +847,10 @@ namespace KSPGMAT.UI {
                         }
                     }
 
+                    if (GUILayout.Button(step.show_code_peek ? "</> ●" : "</>", step.show_code_peek ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Width(36), GUILayout.Height(18))) {
+                        step.show_code_peek = !step.show_code_peek;
+                    }
+
                     if (GUILayout.Button("✕", deleteButtonStyle, GUILayout.Width(22), GUILayout.Height(18))) {
                         stepToDelete = i;
                     }
@@ -855,6 +859,8 @@ namespace KSPGMAT.UI {
                     if (!step.is_collapsed) {
                         DrawStepCardDetails(i, step);
                     }
+
+                    DrawStepCodePeekBox(step);
 
                     GUILayout.EndVertical();
 
@@ -937,6 +943,10 @@ namespace KSPGMAT.UI {
                     }
                 }
 
+                if (GUILayout.Button(step.show_code_peek ? "</> ●" : "</>", step.show_code_peek ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Width(36), GUILayout.Height(18))) {
+                    step.show_code_peek = !step.show_code_peek;
+                }
+
                 if (GUILayout.Button("✕", deleteButtonStyle, GUILayout.Width(22), GUILayout.Height(18))) {
                     stepToDelete = i;
                 }
@@ -945,6 +955,8 @@ namespace KSPGMAT.UI {
                 if (!step.is_collapsed) {
                     DrawStepCardDetails(i, step);
                 }
+
+                DrawStepCodePeekBox(step);
 
                 GUILayout.EndVertical();
 
@@ -1158,6 +1170,13 @@ namespace KSPGMAT.UI {
             }
             if (GUILayout.Button(I18n.T("add_report"), secondaryButtonStyle, GUILayout.Height(24))) {
                 missionSequence.Add(new MissionStep { type = "Report", label = I18n.T("seq_report_label") });
+            }
+            if (GUILayout.Button(I18n.T("add_custom_script"), secondaryButtonStyle, GUILayout.Height(24))) {
+                missionSequence.Add(new MissionStep {
+                    type = "CustomScript",
+                    custom_verbatim_script = "% Native GMAT Script Block\n",
+                    label = I18n.T("seq_custom_script_label")
+                });
             }
             GUILayout.EndHorizontal();
 
@@ -1604,6 +1623,10 @@ namespace KSPGMAT.UI {
                         step.propagator = pr;
                     }
                 }
+
+                GUILayout.Space(8);
+                step.is_backwards = GUILayout.Toggle(step.is_backwards, I18n.T("seq_step_backwards"), GUILayout.Width(110));
+
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
 
@@ -2563,6 +2586,71 @@ namespace KSPGMAT.UI {
                     GUILayout.EndVertical(); // Closes nestedCardBoxStyle
                 }
             }
+
+            // =========================================================================
+            // 8. OPTIMIZE COMMAND GROUP (OPTIMIZE, MINIMIZE, NONLINEARCONSTRAINT)
+            // =========================================================================
+            else if (step.type == "Optimize") {
+                GUILayout.BeginHorizontal();
+                GUILayout.Label(I18n.T("seq_opt_name_label"), labelValueStyle, GUILayout.Width(85));
+                step.optimizer_name = GUILayout.TextField(string.IsNullOrEmpty(step.optimizer_name) ? "SQP1" : step.optimizer_name, stepLabelInputStyle, GUILayout.Width(130), GUILayout.Height(20));
+                GUILayout.Space(10);
+                GUILayout.Label(I18n.T("seq_solve_mode"), gridLabelStyle, GUILayout.Width(75));
+                if (GUILayout.Button(step.solve_mode ?? "Solve", secondaryButtonStyle, GUILayout.Width(110), GUILayout.Height(20))) {
+                    step.solve_mode = (step.solve_mode == "Solve") ? "RunInitialGuess" : "Solve";
+                }
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+            }
+            else if (step.type == "Minimize") {
+                GUILayout.BeginHorizontal();
+                GUILayout.Label(I18n.T("seq_min_opt_label"), labelValueStyle, GUILayout.Width(85));
+                step.optimizer_name = GUILayout.TextField(string.IsNullOrEmpty(step.optimizer_name) ? "SQP1" : step.optimizer_name, stepLabelInputStyle, GUILayout.Width(100), GUILayout.Height(20));
+                GUILayout.Space(8);
+                GUILayout.Label(I18n.T("seq_min_var_label"), gridLabelStyle, GUILayout.Width(75));
+                step.minimize_variable = GUILayout.TextField(string.IsNullOrEmpty(step.minimize_variable) ? "Sat.FuelMassBurned" : step.minimize_variable, stepLabelInputStyle, GUILayout.MinWidth(180), GUILayout.Height(20));
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+            }
+            else if (step.type == "NonlinearConstraint") {
+                GUILayout.BeginHorizontal();
+                GUILayout.Label(I18n.T("seq_nlc_opt_label"), labelValueStyle, GUILayout.Width(75));
+                step.optimizer_name = GUILayout.TextField(string.IsNullOrEmpty(step.optimizer_name) ? "SQP1" : step.optimizer_name, stepLabelInputStyle, GUILayout.Width(85), GUILayout.Height(20));
+                GUILayout.Space(6);
+                GUILayout.Label(I18n.T("seq_nlc_param"), gridLabelStyle, GUILayout.Width(55));
+                step.constraint_lhs = GUILayout.TextField(string.IsNullOrEmpty(step.constraint_lhs) ? "Sat.Earth.RMAG" : step.constraint_lhs, stepLabelInputStyle, GUILayout.Width(140), GUILayout.Height(20));
+                
+                string[] ops = new string[] { ">=", "<=", "==" };
+                for (int o = 0; o < ops.Length; o++) {
+                    bool isOp = (step.constraint_op == ops[o]);
+                    if (GUILayout.Button(ops[o], isOp ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Width(35), GUILayout.Height(20))) {
+                        step.constraint_op = ops[o];
+                    }
+                }
+
+                GUILayout.Space(6);
+                step.constraint_val = DrawDelayedNumericField($"nlc_val_{i}", step.constraint_val, numericInputStyle, GUILayout.Width(90), "G");
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+            }
+
+            // =========================================================================
+            // 9. CUSTOM SCRIPT CARD (LOSSLESS ROUND-TRIP CODE BLOCK)
+            // =========================================================================
+            else if (step.type == "CustomScript") {
+                GUILayout.BeginVertical(nestedCardBoxStyle);
+                GUILayout.BeginHorizontal();
+                GUILayout.Label(I18n.T("seq_custom_script_tip"), labelValueStyle);
+                GUILayout.FlexibleSpace();
+                if (GUILayout.Button(I18n.T("btn_clear_script"), deleteButtonStyle, GUILayout.Width(90), GUILayout.Height(18))) {
+                    step.custom_verbatim_script = "";
+                }
+                GUILayout.EndHorizontal();
+
+                GUILayout.Space(2);
+                step.custom_verbatim_script = GUILayout.TextArea(step.custom_verbatim_script ?? "", ideEditorStyle, GUILayout.MinHeight(60), GUILayout.ExpandWidth(true));
+                GUILayout.EndVertical();
+            }
         }
 
         private string GetStepTypeBadgeText(string type) {
@@ -2595,7 +2683,7 @@ namespace KSPGMAT.UI {
                 case "BeginFileThrust": return I18n.T("type_beginfilethrust");
                 case "EndFileThrust": return I18n.T("type_endfilethrust");
                 case "Stop": return I18n.T("type_stop");
-                case "Breakpoint": return I18n.T("type_breakpoint");
+                case "CustomScript": return I18n.T("type_customscript");
                 default: return type ?? "Command";
             }
         }

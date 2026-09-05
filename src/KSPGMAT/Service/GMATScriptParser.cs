@@ -103,7 +103,7 @@ namespace KSPGMAT.Service {
                         }
                     }
 
-                    // 5. Solvers / DifferentialCorrectors
+                    // 5. Solvers / DifferentialCorrectors & Optimizers
                     var dcMatch = Regex.Match(rawLine, @"Create\s+DifferentialCorrector\s+([^;]+);?", RegexOptions.IgnoreCase);
                     if (dcMatch.Success) {
                         string[] dcNames = dcMatch.Groups[1].Value.Split(new[] { ' ', ',', '\t' }, StringSplitOptions.RemoveEmptyEntries);
@@ -114,6 +114,16 @@ namespace KSPGMAT.Service {
                                 if (!result.solver_models.Exists(s => s.Name.Equals(clean, StringComparison.OrdinalIgnoreCase))) {
                                     result.solver_models.Add(new GMATSolverModel { Name = clean, Algorithm = "NewtonRaphson", DerivativeMethod = "ForwardDifference", MaxIterations = 50, ShowProgress = true });
                                 }
+                            }
+                        }
+                    }
+                    var optMatch = Regex.Match(rawLine, @"Create\s+(?:SQP|fmincon|VF13ad|SNOPT)\s+([^;]+);?", RegexOptions.IgnoreCase);
+                    if (optMatch.Success) {
+                        string[] optNames = optMatch.Groups[1].Value.Split(new[] { ' ', ',', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                        foreach (var oName in optNames) {
+                            string clean = oName.Trim();
+                            if (!string.IsNullOrEmpty(clean) && !result.solvers.Contains(clean)) {
+                                result.solvers.Add(clean);
                             }
                         }
                     }
@@ -279,10 +289,12 @@ namespace KSPGMAT.Service {
                         string pName = propMatch.Groups[1].Value;
                         string stopCondRaw = propMatch.Groups[3].Value.Trim();
 
+                        bool isBack = rawLine.IndexOf("Backwards", StringComparison.OrdinalIgnoreCase) >= 0;
                         var st = new MissionStep {
                             type = "Propagate",
                             propagator = pName,
-                            label = $"Propagate ({pName})"
+                            is_backwards = isBack,
+                            label = isBack ? $"BackProp ({pName})" : $"Propagate ({pName})"
                         };
 
                         // Split by comma while respecting potential nested braces
@@ -555,12 +567,61 @@ namespace KSPGMAT.Service {
                         continue;
                     }
 
-                    // 10. Equation / Assignment Command (e.g. Sat.DryMass = 1200 or burntime = 150)
+                    // 10. Optimization Commands
+                    var optBeginMatch = Regex.Match(rawLine, @"Optimize\s+([A-Za-z0-9_]+)", RegexOptions.IgnoreCase);
+                    if (optBeginMatch.Success) {
+                        string optName = optBeginMatch.Groups[1].Value;
+                        result.sequence.Add(new MissionStep {
+                            type = "Optimize",
+                            optimizer_name = optName,
+                            label = $"Optimize ({optName})"
+                        });
+                        continue;
+                    }
+                    var minMatch = Regex.Match(rawLine, @"Minimize\s+([A-Za-z0-9_]+)\s*\(\s*([A-Za-z0-9_.]+)\s*\)", RegexOptions.IgnoreCase);
+                    if (minMatch.Success) {
+                        string optName = minMatch.Groups[1].Value;
+                        string minVar = minMatch.Groups[2].Value.Trim();
+                        result.sequence.Add(new MissionStep {
+                            type = "Minimize",
+                            optimizer_name = optName,
+                            minimize_variable = minVar,
+                            label = $"Minimize ({minVar})"
+                        });
+                        continue;
+                    }
+                    var nlcMatch = Regex.Match(rawLine, @"NonlinearConstraint\s+([A-Za-z0-9_]+)\s*\(\s*([A-Za-z0-9_.]+)\s*(<=|>=|==|<|>|=)\s*([^)]+)\)", RegexOptions.IgnoreCase);
+                    if (nlcMatch.Success) {
+                        string optName = nlcMatch.Groups[1].Value;
+                        string lhs = nlcMatch.Groups[2].Value.Trim();
+                        string op = nlcMatch.Groups[3].Value.Trim();
+                        string valStr = nlcMatch.Groups[4].Value.Trim();
+                        double.TryParse(valStr, NumberStyles.Any, CultureInfo.InvariantCulture, out double nlcVal);
+                        result.sequence.Add(new MissionStep {
+                            type = "NonlinearConstraint",
+                            optimizer_name = optName,
+                            constraint_lhs = lhs,
+                            constraint_op = op,
+                            constraint_val = nlcVal,
+                            label = $"NLC ({lhs} {op} {valStr})"
+                        });
+                        continue;
+                    }
+                    if (rawLine.StartsWith("EndOptimize", StringComparison.OrdinalIgnoreCase)) {
+                        result.sequence.Add(new MissionStep {
+                            type = "EndOptimize",
+                            label = "EndOptimize"
+                        });
+                        continue;
+                    }
+
+                    // 11. Equation / Assignment Command (e.g. Sat.DryMass = 1200 or burntime = 150)
                     if (rawLine.Contains("=") && 
                         !rawLine.StartsWith("Propagate", StringComparison.OrdinalIgnoreCase) && 
                         !rawLine.StartsWith("Vary", StringComparison.OrdinalIgnoreCase) && 
                         !rawLine.StartsWith("Achieve", StringComparison.OrdinalIgnoreCase) && 
                         !rawLine.StartsWith("Target", StringComparison.OrdinalIgnoreCase) &&
+                        !rawLine.StartsWith("NonlinearConstraint", StringComparison.OrdinalIgnoreCase) &&
                         !rawLine.Contains(".ThrustDirection")) {
                         var eqMatch = Regex.Match(rawLine, @"([A-Za-z0-9_.]+)\s*=\s*([^;]+);?");
                         if (eqMatch.Success) {
@@ -571,6 +632,20 @@ namespace KSPGMAT.Service {
                                 variable = lhs,
                                 expression = rhs,
                                 label = $"{lhs} = {rhs}"
+                            });
+                            continue;
+                        }
+                    }
+
+                    // 11. 无损往返保留 (Lossless Round-Trip): 收集无法结构化的原生 GMAT 语句 (如 Optimize, If, While, BeginScript, 注释)
+                    if (!string.IsNullOrWhiteSpace(rawLine) && !rawLine.StartsWith("%") && !rawLine.StartsWith("BeginMissionSequence", StringComparison.OrdinalIgnoreCase)) {
+                        if (result.sequence.Count > 0 && result.sequence[result.sequence.Count - 1].type == "CustomScript") {
+                            result.sequence[result.sequence.Count - 1].custom_verbatim_script += "\n" + rawLine;
+                        } else {
+                            result.sequence.Add(new MissionStep {
+                                type = "CustomScript",
+                                custom_verbatim_script = rawLine,
+                                label = rawLine.Length > 28 ? rawLine.Substring(0, 25) + "..." : rawLine
                             });
                         }
                     }

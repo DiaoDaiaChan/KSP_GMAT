@@ -722,5 +722,227 @@ namespace KSPGMAT.UI {
             GUILayout.EndHorizontal();
             return val;
         }
+
+        // =========================================================================
+        // 5. 脚本与任务时序复用组件 (Script & Mission Sequence Reusable Widgets)
+        // =========================================================================
+
+        /// <summary>
+        /// 单步 GMAT 原生脚本透视展示组件：就地渲染暗黑高亮语法代码块
+        /// </summary>
+        /// <param name="step">任务步骤</param>
+        private void DrawStepCodePeekBox(MissionStep step) {
+            if (step == null || !step.show_code_peek) return;
+            GUILayout.Space(2);
+            GUILayout.BeginVertical(nestedCardBoxStyle);
+            string peekCode = GMATScriptGenerator.GenerateStepScript(step);
+            string coloredPeek = ColorizeGmatSyntax(peekCode);
+            GUILayout.Label(coloredPeek, codeBlockStyle);
+            GUILayout.EndVertical();
+        }
+
+        /// <summary>
+        /// 脚本静态语法分析与自愈门禁状态条组件 (包含健康徽章、一键自愈与问题诊断折叠列表)
+        /// </summary>
+        /// <param name="currentScript">当前待分析的脚本文本</param>
+        /// <param name="vessel">当前航天器</param>
+        private void DrawScriptLinterStatusBar(string currentScript, Vessel vessel) {
+            GMATLintReport activeLint = GMATScriptLinter.Lint(currentScript);
+            currentLintReport = activeLint;
+
+            GUILayout.BeginHorizontal(nestedCardBoxStyle);
+            string statusBadge;
+            if (activeLint.IsClean) {
+                statusBadge = $"<color=#10b981><b>{I18n.T("ide_lint_status_clean")}</b></color>";
+            } else if (activeLint.HasErrors) {
+                statusBadge = $"<color=#ef4444><b>{I18n.Format("ide_lint_status_issues", activeLint.ErrorCount, activeLint.WarningCount)}</b></color>";
+            } else {
+                statusBadge = $"<color=#f59e0b><b>{I18n.Format("ide_lint_status_issues", activeLint.ErrorCount, activeLint.WarningCount)}</b></color>";
+            }
+            GUILayout.Label(statusBadge, labelValueStyle);
+            GUILayout.FlexibleSpace();
+
+            if (!activeLint.IsClean) {
+                if (GUILayout.Button(I18n.Format("ide_lint_toggle_issues", activeLint.Issues.Count), secondaryButtonStyle, GUILayout.Height(20))) {
+                    showLintIssuesDrawer = !showLintIssuesDrawer;
+                }
+                GUILayout.Space(4);
+                if (GUILayout.Button(I18n.T("ide_lint_autofix"), successButtonStyle, GUILayout.Height(20))) {
+                    string fixedScript = GMATScriptLinter.FixScript(currentScript);
+                    if (ideViewMode != 0) {
+                        ideCustomBuffer = fixedScript;
+                        ideHasUnsavedEdits = true;
+                    } else {
+                        SaveAndSyncIdeScriptToSequence(fixedScript, vessel);
+                    }
+                    ScreenMessages.PostScreenMessage(I18n.T("ide_lint_autofix"), 2.5f, ScreenMessageStyle.UPPER_CENTER);
+                }
+            }
+            GUILayout.EndHorizontal();
+
+            if (showLintIssuesDrawer && !activeLint.IsClean) {
+                GUILayout.BeginVertical(nestedCardBoxStyle);
+                lintIssuesScroll = GUILayout.BeginScrollView(lintIssuesScroll, GUILayout.MaxHeight(90));
+                for (int iss = 0; iss < activeLint.Issues.Count; iss++) {
+                    var issue = activeLint.Issues[iss];
+                    string sevTag = (issue.Severity == GMATLintSeverity.Error) ? "<color=#ef4444>[ERR]</color>" : ((issue.Severity == GMATLintSeverity.Warning) ? "<color=#f59e0b>[WARN]</color>" : "<color=#38bdf8>[INFO]</color>");
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label($"{sevTag} <color=#64748b>L{issue.LineNumber}:</color> {issue.DefaultMessage}", labelValueStyle);
+                    GUILayout.FlexibleSpace();
+                    if (GUILayout.Button($"➔ L{issue.LineNumber}", secondaryButtonStyle, GUILayout.Width(50), GUILayout.Height(18))) {
+                        targetJumpLine = issue.LineNumber;
+                        ideScriptScroll.y = Mathf.Max(0, (issue.LineNumber - 3) * 18);
+                    }
+                    GUILayout.EndHorizontal();
+                }
+                GUILayout.EndScrollView();
+                GUILayout.EndVertical();
+            }
+        }
+
+        /// <summary>
+        /// 官方 7 大标准脚本范式库抽屉组件 (Canonical Blueprints Drawer)
+        /// </summary>
+        private void DrawScriptBlueprintDrawer() {
+            if (!showBlueprintDrawer) return;
+
+            GUILayout.BeginVertical(nestedCardBoxStyle);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label($"<color=#38bdf8><b>{I18n.T("ide_bp_drawer_title")}</b></color>", labelValueStyle);
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button("✖", secondaryButtonStyle, GUILayout.Width(20), GUILayout.Height(18))) {
+                showBlueprintDrawer = false;
+            }
+            GUILayout.EndHorizontal();
+            GUILayout.Space(4);
+
+            blueprintScrollPos = GUILayout.BeginScrollView(blueprintScrollPos, GUILayout.MaxHeight(150));
+            var allBlueprints = GMATBlueprintLibrary.GetAllBlueprints();
+            for (int b = 0; b < allBlueprints.Count; b++) {
+                var bp = allBlueprints[b];
+                GUILayout.BeginVertical(cardBoxStyle);
+                GUILayout.BeginHorizontal();
+                GUILayout.Label($"<b>{I18n.T(bp.TitleKey, bp.TitleDefault)}</b> <color=#64748b>({bp.Category})</color>", labelValueStyle);
+                GUILayout.FlexibleSpace();
+                if (GUILayout.Button(I18n.T("ide_bp_replace"), actionButtonStyle, GUILayout.Height(18))) {
+                    string formatted = bp.GetFormattedScript();
+                    ideCustomBuffer = formatted;
+                    ideHasUnsavedEdits = true;
+                    ideViewMode = 1; // Switch to Edit mode
+                    showBlueprintDrawer = false;
+                    ScreenMessages.PostScreenMessage(I18n.Format("ide_bp_loaded", I18n.T(bp.TitleKey, bp.TitleDefault)), 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                }
+                GUILayout.Space(3);
+                if (GUILayout.Button(I18n.T("ide_bp_insert"), secondaryButtonStyle, GUILayout.Height(18))) {
+                    string formatted = bp.GetFormattedScript();
+                    InsertIntoIdeBuffer(formatted);
+                    ideHasUnsavedEdits = true;
+                    ideViewMode = 1; // Switch to Edit mode
+                    showBlueprintDrawer = false;
+                    ScreenMessages.PostScreenMessage(I18n.Format("ide_bp_loaded", I18n.T(bp.TitleKey, bp.TitleDefault)), 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                }
+                GUILayout.EndHorizontal();
+                GUILayout.Label($"<color=#94a3b8>{I18n.T(bp.DescriptionKey, bp.DescriptionDefault)}</color>", labelValueStyle);
+                GUILayout.EndVertical();
+                GUILayout.Space(2);
+            }
+            GUILayout.EndScrollView();
+            GUILayout.EndVertical();
+            GUILayout.Space(4);
+        }
+
+        /// <summary>
+        /// 双栏视觉差异比对与合并视图组件 (Myers Diff Visual Split-View)
+        /// </summary>
+        /// <param name="baselineText">原生纯净基准脚本</param>
+        /// <param name="userText">用户工作区脚本缓冲区</param>
+        /// <param name="vessel">当前活跃飞船</param>
+        /// <param name="rightW">右侧面板总宽度</param>
+        private void DrawScriptDiffViewer(string baselineText, string userText, Vessel vessel, float rightW) {
+            var diff = GMATDiffEngine.ComputeDiff(baselineText, userText);
+
+            GUILayout.BeginVertical(GUILayout.ExpandHeight(true));
+
+            // Diff Control & Stats Bar
+            GUILayout.BeginHorizontal(nestedCardBoxStyle);
+            string statsText = diff.HasDifferences 
+                ? I18n.Format("ide_diff_stats", diff.InsertCount, diff.DeleteCount, diff.ModifyCount)
+                : I18n.T("ide_diff_no_changes");
+            string statColor = diff.HasDifferences ? "#fbbf24" : "#10b981";
+            GUILayout.Label($"<color={statColor}><b>{statsText}</b></color>", labelValueStyle);
+            GUILayout.FlexibleSpace();
+
+            GUI.enabled = diff.HasDifferences;
+            if (GUILayout.Button(I18n.T("ide_diff_revert_all"), secondaryButtonStyle, GUILayout.Height(20))) {
+                ideCustomBuffer = baselineText;
+                ideLastLiveScriptSnapshot = baselineText;
+                ideHasUnsavedEdits = false;
+                ScreenMessages.PostScreenMessage(I18n.T("res_restored"), 2.0f, ScreenMessageStyle.UPPER_CENTER);
+            }
+            GUILayout.Space(4);
+            if (GUILayout.Button(I18n.T("ide_diff_apply_all"), successButtonStyle, GUILayout.Height(20))) {
+                SaveAndSyncIdeScriptToSequence(userText, vessel);
+            }
+            GUI.enabled = true;
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(2);
+
+            // Column Headers
+            float paneW = (rightW - 30f) * 0.49f;
+            GUILayout.BeginHorizontal();
+            GUILayout.Label($"<color=#38bdf8><b>{I18n.T("ide_diff_baseline")}</b></color>", labelValueStyle, GUILayout.Width(paneW));
+            GUILayout.Space(16);
+            GUILayout.Label($"<color=#f59e0b><b>{I18n.T("ide_diff_workspace")}</b></color>", labelValueStyle, GUILayout.Width(paneW));
+            GUILayout.EndHorizontal();
+
+            // Synchronized Scrollable Diff Body
+            ideScriptScroll = GUILayout.BeginScrollView(ideScriptScroll, GUILayout.ExpandHeight(true));
+            for (int d = 0; d < diff.Lines.Count; d++) {
+                var dl = diff.Lines[d];
+                GUILayout.BeginHorizontal();
+
+                // Left Line (Baseline)
+                string leftNum = (dl.LineNumberA > 0) ? $"<color=#64748b>{dl.LineNumberA,3}:</color> " : "<color=#334155>   :</color> ";
+                string leftContent = dl.ContentA ?? "";
+                string leftDisplay;
+                if (dl.Type == GMATDiffType.Equal) {
+                    leftDisplay = leftNum + ColorizeGmatSyntax(leftContent);
+                } else if (dl.Type == GMATDiffType.Delete) {
+                    leftDisplay = leftNum + $"<color=#f87171><b>- {leftContent}</b></color>";
+                } else if (dl.Type == GMATDiffType.Modify) {
+                    leftDisplay = leftNum + $"<color=#fbbf24><b>~ {leftContent}</b></color>";
+                } else {
+                    leftDisplay = leftNum + "<color=#334155><i>----------------</i></color>";
+                }
+                GUILayout.Label(leftDisplay, codeBlockStyle, GUILayout.Width(paneW));
+
+                // Center Divider Indicator
+                string midTag = (dl.Type == GMATDiffType.Equal) ? "<color=#334155>|</color>" : 
+                                (dl.Type == GMATDiffType.Insert) ? "<color=#34d399>+</color>" : 
+                                (dl.Type == GMATDiffType.Delete) ? "<color=#f87171>-</color>" : "<color=#fbbf24>~</color>";
+                GUILayout.Label(midTag, labelValueStyle, GUILayout.Width(14));
+
+                // Right Line (User Workspace)
+                string rightNum = (dl.LineNumberB > 0) ? $"<color=#64748b>{dl.LineNumberB,3}:</color> " : "<color=#334155>   :</color> ";
+                string rightContent = dl.ContentB ?? "";
+                string rightDisplay;
+                if (dl.Type == GMATDiffType.Equal) {
+                    rightDisplay = rightNum + ColorizeGmatSyntax(rightContent);
+                } else if (dl.Type == GMATDiffType.Insert) {
+                    rightDisplay = rightNum + $"<color=#34d399><b>+ {rightContent}</b></color>";
+                } else if (dl.Type == GMATDiffType.Modify) {
+                    rightDisplay = rightNum + $"<color=#fbbf24><b>~ {rightContent}</b></color>";
+                } else {
+                    rightDisplay = rightNum + "<color=#334155><i>----------------</i></color>";
+                }
+                GUILayout.Label(rightDisplay, codeBlockStyle, GUILayout.Width(paneW));
+
+                GUILayout.EndHorizontal();
+            }
+            GUILayout.EndScrollView();
+
+            GUILayout.EndVertical();
+        }
     }
 }

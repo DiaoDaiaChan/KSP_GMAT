@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
 using KSPGMAT.Model;
+using KSPGMAT.Service;
 
 namespace KSPGMAT.UI {
     public partial class GMATMainWindow {
@@ -910,6 +911,10 @@ namespace KSPGMAT.UI {
             }
             GUI.enabled = true;
 
+            if (GUILayout.Button(showBlueprintDrawer ? I18n.T("ide_btn_blueprints") + " ▲" : I18n.T("ide_btn_blueprints") + " ▼", showBlueprintDrawer ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(22))) {
+                showBlueprintDrawer = !showBlueprintDrawer;
+            }
+
             if (GUILayout.Button(I18n.T("btn_external_ide"), secondaryButtonStyle, GUILayout.Height(22))) {
                 OpenScriptInExternalEditor(currentScriptToUse);
             }
@@ -984,6 +989,14 @@ namespace KSPGMAT.UI {
 
             GUILayout.Space(4);
 
+            // --- 官方 7 大标准脚本范式库抽屉 (Canonical Blueprints Drawer) ---
+            DrawScriptBlueprintDrawer();
+
+            // --- 前置静态语法分析与自愈诊断条 (Pre-flight Static Linter) ---
+            DrawScriptLinterStatusBar(currentScriptToUse, vessel);
+
+            GUILayout.Space(4);
+
             if (ideViewMode == 0) {
                 // 1. Full Syntax Highlighted Preview (Always real-time live script)
                 ideScriptScroll = GUILayout.BeginScrollView(ideScriptScroll, GUILayout.ExpandHeight(true));
@@ -1009,38 +1022,10 @@ namespace KSPGMAT.UI {
                 DrawFloatingAutocompletePopup(vessel);
                 GUILayout.EndVertical();
             } else {
-                // 3. Split Mode: Left Editable TextArea | Right Real-time Highlighted Preview
-                GUILayout.BeginHorizontal(GUILayout.ExpandHeight(true));
-                
-                // Left Pane: Editor (50% Width)
-                GUILayout.BeginVertical(GUILayout.Width(rightW * 0.49f), GUILayout.ExpandHeight(true));
-                GUILayout.Label(I18n.T("res_edit_pane"), labelValueStyle);
-                ideScriptScroll = GUILayout.BeginScrollView(ideScriptScroll, GUILayout.ExpandHeight(true));
-                GUI.SetNextControlName("GmatIdeTextArea");
-                ideCustomBuffer = GUILayout.TextArea(ideCustomBuffer, ideEditorStyle ?? GUI.skin.textArea, GUILayout.ExpandHeight(true), GUILayout.ExpandWidth(true));
-                GUILayout.EndScrollView();
-                DrawFloatingAutocompletePopup(vessel);
-                GUILayout.EndVertical();
-
-                GUILayout.Space(4);
-
-                // Right Pane: Synchronized Syntax Highlighted Output (50% Width)
-                GUILayout.BeginVertical(GUILayout.Width(rightW * 0.49f), GUILayout.ExpandHeight(true));
-                GUILayout.Label(I18n.T("res_highlight_pane"), labelValueStyle);
-                GUILayout.BeginScrollView(ideScriptScroll, GUILayout.ExpandHeight(true));
-                string[] scriptLines = (ideCustomBuffer ?? "").Split(new char[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-                for (int l = 0; l < scriptLines.Length; l++) {
-                    string rawLine = scriptLines[l];
-                    string lineNum = $"<color=#64748b>{l + 1,3}:</color> ";
-                    string coloredLine = ColorizeGmatSyntax(rawLine);
-                    GUILayout.BeginHorizontal();
-                    GUILayout.Label(lineNum + coloredLine, codeBlockStyle);
-                    GUILayout.EndHorizontal();
-                }
-                GUILayout.EndScrollView();
-                GUILayout.EndVertical();
-
-                GUILayout.EndHorizontal();
+                // 3. True Visual Diff & Merge Mode (Myers Diff algorithm)
+                string baselineText = liveScript ?? "";
+                string userText = ideCustomBuffer ?? baselineText;
+                DrawScriptDiffViewer(baselineText, userText, vessel, rightW);
             }
 
             GUILayout.EndVertical();
