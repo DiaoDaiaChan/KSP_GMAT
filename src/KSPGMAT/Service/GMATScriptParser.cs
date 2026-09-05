@@ -354,14 +354,23 @@ namespace KSPGMAT.Service {
                     }
 
                     // 3. Target
-                    var tgtMatch = Regex.Match(rawLine, @"Target\s+([A-Za-z0-9_]+)", RegexOptions.IgnoreCase);
+                    var tgtMatch = Regex.Match(rawLine, @"Target\s+([A-Za-z0-9_]+)(?:\s*\{\s*([^}]+)\s*\})?", RegexOptions.IgnoreCase);
                     if (tgtMatch.Success) {
                         currentDC = tgtMatch.Groups[1].Value;
-                        result.sequence.Add(new MissionStep {
+                        var step = new MissionStep {
                             type = "Target",
                             dc_name = currentDC,
                             label = $"Target ({currentDC})"
-                        });
+                        };
+                        if (tgtMatch.Groups.Count > 2 && !string.IsNullOrEmpty(tgtMatch.Groups[2].Value)) {
+                            string body = tgtMatch.Groups[2].Value;
+                            var smM = Regex.Match(body, @"SolveMode\s*=\s*([A-Za-z0-9_]+)", RegexOptions.IgnoreCase);
+                            if (smM.Success) step.solve_mode = smM.Groups[1].Value;
+                            var emM = Regex.Match(body, @"ExitMode\s*=\s*([A-Za-z0-9_]+)", RegexOptions.IgnoreCase);
+                            if (emM.Success) step.exit_mode = emM.Groups[1].Value;
+                        }
+                        result.sequence.Add(step);
+                        continue;
                     }
 
                     // 4. Vary
@@ -473,6 +482,7 @@ namespace KSPGMAT.Service {
                                 label = $"Vary {varExpr}"
                             });
                         }
+                        continue;
                     }
 
                     // 5. Achieve
@@ -500,6 +510,7 @@ namespace KSPGMAT.Service {
                             achieve_tolerance_str = tolStr,
                             label = $"Achieve {param}"
                         });
+                        continue;
                     }
 
                     // 6. EndTarget
@@ -509,6 +520,7 @@ namespace KSPGMAT.Service {
                             dc_name = currentDC,
                             label = $"EndTarget ({currentDC})"
                         });
+                        continue;
                     }
 
                     // 7. Impulsive Maneuver
@@ -520,6 +532,7 @@ namespace KSPGMAT.Service {
                             burn_name = bName,
                             label = $"Maneuver ({bName})"
                         });
+                        continue;
                     }
 
                     // 8. Report Command
@@ -535,6 +548,7 @@ namespace KSPGMAT.Service {
                                 label = $"Report ({subName})"
                             });
                         }
+                        continue;
                     }
 
                     // 9. Direct Thrust Vector Assignment in Sequence (e.g. Sat.RL10.ThrustDirection1 = 1;)
@@ -568,14 +582,22 @@ namespace KSPGMAT.Service {
                     }
 
                     // 10. Optimization Commands
-                    var optBeginMatch = Regex.Match(rawLine, @"Optimize\s+([A-Za-z0-9_]+)", RegexOptions.IgnoreCase);
+                    var optBeginMatch = Regex.Match(rawLine, @"Optimize\s+([A-Za-z0-9_]+)(?:\s*\{\s*([^}]+)\s*\})?", RegexOptions.IgnoreCase);
                     if (optBeginMatch.Success) {
                         string optName = optBeginMatch.Groups[1].Value;
-                        result.sequence.Add(new MissionStep {
+                        var step = new MissionStep {
                             type = "Optimize",
                             optimizer_name = optName,
                             label = $"Optimize ({optName})"
-                        });
+                        };
+                        if (optBeginMatch.Groups.Count > 2 && !string.IsNullOrEmpty(optBeginMatch.Groups[2].Value)) {
+                            string body = optBeginMatch.Groups[2].Value;
+                            var smM = Regex.Match(body, @"SolveMode\s*=\s*([A-Za-z0-9_]+)", RegexOptions.IgnoreCase);
+                            if (smM.Success) step.solve_mode = smM.Groups[1].Value;
+                            var emM = Regex.Match(body, @"ExitMode\s*=\s*([A-Za-z0-9_]+)", RegexOptions.IgnoreCase);
+                            if (emM.Success) step.exit_mode = emM.Groups[1].Value;
+                        }
+                        result.sequence.Add(step);
                         continue;
                     }
                     var minMatch = Regex.Match(rawLine, @"Minimize\s+([A-Za-z0-9_]+)\s*\(\s*([A-Za-z0-9_.]+)\s*\)", RegexOptions.IgnoreCase);
@@ -637,8 +659,8 @@ namespace KSPGMAT.Service {
                         }
                     }
 
-                    // 11. 无损往返保留 (Lossless Round-Trip): 收集无法结构化的原生 GMAT 语句 (如 Optimize, If, While, BeginScript, 注释)
-                    if (!string.IsNullOrWhiteSpace(rawLine) && !rawLine.StartsWith("%") && !rawLine.StartsWith("BeginMissionSequence", StringComparison.OrdinalIgnoreCase)) {
+                    // 11. 无损往返保留 (Lossless Round-Trip): 收集无法结构化的原生 GMAT 语句 (如 If, While, CallGmatFunction, 原始命令等)
+                    if (!string.IsNullOrWhiteSpace(rawLine) && rawLine != ";" && !rawLine.StartsWith("%") && !rawLine.StartsWith("BeginMissionSequence", StringComparison.OrdinalIgnoreCase)) {
                         if (result.sequence.Count > 0 && result.sequence[result.sequence.Count - 1].type == "CustomScript") {
                             result.sequence[result.sequence.Count - 1].custom_verbatim_script += "\n" + rawLine;
                         } else {
