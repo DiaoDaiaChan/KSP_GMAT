@@ -12,11 +12,21 @@ using KSPGMAT;
 namespace KSPGMAT.UI {
     public partial class GMATMainWindow {
         private string GetParentTargetDcName(int stepIndex) {
+            int targetDepth = 0;
+            int optimizeDepth = 0;
             for (int j = stepIndex - 1; j >= 0; j--) {
-                if (missionSequence[j].type == "Target") {
-                    return string.IsNullOrEmpty(missionSequence[j].dc_name) ? "DefaultDC" : missionSequence[j].dc_name;
+                string t = missionSequence[j].type;
+                if (t == "EndTarget") {
+                    targetDepth++;
+                } else if (t == "Target") {
+                    if (targetDepth > 0) targetDepth--;
+                    else return string.IsNullOrEmpty(missionSequence[j].dc_name) ? "DefaultDC" : missionSequence[j].dc_name;
+                } else if (t == "EndOptimize") {
+                    optimizeDepth++;
+                } else if (t == "Optimize") {
+                    if (optimizeDepth > 0) optimizeDepth--;
+                    else return string.IsNullOrEmpty(missionSequence[j].optimizer_name) ? "Yukon1" : missionSequence[j].optimizer_name;
                 }
-                if (missionSequence[j].type == "EndTarget") break;
             }
             return "DefaultDC";
         }
@@ -32,12 +42,16 @@ namespace KSPGMAT.UI {
                 }
             }
 
-            // 2. From active sequence
+            // 2. From active sequence (Target DC & Optimize Yukon)
             if (missionSequence != null) {
                 for (int j = 0; j < missionSequence.Count; j++) {
                     if (missionSequence[j].type == "Target" && !string.IsNullOrEmpty(missionSequence[j].dc_name)) {
                         string sName = missionSequence[j].dc_name;
                         if (!list.Contains(sName)) list.Add(sName);
+                    }
+                    if (missionSequence[j].type == "Optimize" && !string.IsNullOrEmpty(missionSequence[j].optimizer_name)) {
+                        string optName = missionSequence[j].optimizer_name;
+                        if (!list.Contains(optName)) list.Add(optName);
                     }
                 }
             }
@@ -1156,6 +1170,16 @@ namespace KSPGMAT.UI {
                 missionSequence.Add(new MissionStep { type = "Vary", vary_variable = $"{newDc}_Duration", vary_initial = 120.0, vary_lower = 10.0, vary_upper = 1000.0, vary_max_step = 10.0, dc_name = newDc, label = I18n.Format("seq_vary_label3", newDc) });
                 missionSequence.Add(new MissionStep { type = "Achieve", achieve_param = $"Sat.{cb}.SMA", achieve_val = defaultVal, achieve_tolerance = 1.0, dc_name = newDc, label = I18n.Format("seq_achieve_label3", cb + ".SMA") });
                 missionSequence.Add(new MissionStep { type = "EndTarget", label = I18n.Format("seq_end_label2", newDc), dc_name = newDc });
+            }
+            if (GUILayout.Button(I18n.T("add_optimize"), actionButtonStyle, GUILayout.Height(24))) {
+                string cb = GetContextCentralBody();
+                string newOpt = $"Yukon_{missionSequence.Count + 1}";
+                double defaultVal = (cb == "Earth") ? 42164.14 : ((cb == "Luna" || cb == "Moon") ? 1837.4 : 7000.0);
+                missionSequence.Add(new MissionStep { type = "Optimize", label = I18n.Format("seq_opt_label2", newOpt), optimizer_name = newOpt, solve_mode = "Solve", exit_mode = "SaveAndContinue" });
+                missionSequence.Add(new MissionStep { type = "Vary", vary_variable = $"{newOpt}_Duration", vary_initial = 120.0, vary_lower = 10.0, vary_upper = 1000.0, vary_max_step = 10.0, dc_name = newOpt, optimizer_name = newOpt, label = I18n.Format("seq_vary_label3", newOpt) });
+                missionSequence.Add(new MissionStep { type = "Minimize", minimize_variable = "Sat.FuelMassBurned", optimizer_name = newOpt, label = I18n.T("seq_min_label") });
+                missionSequence.Add(new MissionStep { type = "NonlinearConstraint", constraint_lhs = $"Sat.{cb}.SMA", constraint_op = "==", constraint_val = defaultVal, optimizer_name = newOpt, label = I18n.Format("seq_achieve_label3", cb + ".SMA") });
+                missionSequence.Add(new MissionStep { type = "EndOptimize", label = I18n.Format("seq_endopt_label2", newOpt), optimizer_name = newOpt });
             }
             if (GUILayout.Button(I18n.T("add_finiteburn"), secondaryButtonStyle, GUILayout.Height(24))) {
                 missionSequence.Add(CreateFiniteBurnStep(I18n.T("seq_finite_burn_label")));

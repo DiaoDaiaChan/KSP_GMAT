@@ -174,6 +174,7 @@ namespace KSPGMAT.UI {
                 string label = isSel ? $"<b>[✓ {sName}]</b>" : sName;
                 if (GUILayout.Button(label, isSel ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
                     step.dc_name = sName;
+                    step.optimizer_name = sName;
                 }
             }
         }
