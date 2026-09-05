@@ -873,21 +873,10 @@ namespace KSPGMAT.UI {
 
             GUILayout.FlexibleSpace();
 
-            string[] ideModes = new string[] { I18n.T("ide_mode_full"), I18n.T("ide_mode_res"), I18n.T("ide_mode_seq") };
-            for (int m = 0; m < ideModes.Length; m++) {
-                bool isM = (ideScriptViewMode == m);
-                if (GUILayout.Button(ideModes[m], isM ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
-                    ideScriptViewMode = m;
-                    liveScript = GenerateLiveGmatScript(ideScriptViewMode);
-                    if (!ideHasUnsavedEdits) {
-                        ideCustomBuffer = liveScript;
-                        ideLastLiveScriptSnapshot = liveScript;
-                    }
-                }
-            }
-            GUILayout.Space(6);
+            // 统一规范的 3 种编辑器视图切换：高亮预览、自由编辑、双栏差异比对
+            GUILayout.Label($"<color=#94a3b8>{I18n.T("ide_view_mode_label")}:</color>", labelValueStyle);
+            GUILayout.Space(4);
 
-            // 3-Mode Switcher: Preview, Edit, Split View
             string[] viewModes = new string[] { I18n.T("ide_view_highlight"), I18n.T("ide_view_edit"), I18n.T("ide_view_split") };
             for (int vm = 0; vm < viewModes.Length; vm++) {
                 bool isVm = (ideViewMode == vm);

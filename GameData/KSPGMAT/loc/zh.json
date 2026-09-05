@@ -503,6 +503,7 @@
   "ide_title": "GMAT 原生脚本审查与自由编辑",
   "ide_view_edit": "编辑",
   "ide_view_highlight": "高亮",
+  "ide_view_mode_label": "视图模式",
   "ide_view_mode_toggle": "只读高亮模式",
   "ide_view_split": "分栏",
   "img_load_fail": "图像加载失败: {0}",

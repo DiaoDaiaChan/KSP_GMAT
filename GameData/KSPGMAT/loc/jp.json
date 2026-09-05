@@ -503,6 +503,7 @@
   "ide_title": "GMAT Script Review & Free Editor",
   "ide_view_edit": "編集",
   "ide_view_highlight": "Highlight",
+  "ide_view_mode_label": "表示モード",
   "ide_view_mode_toggle": "Highlighted View",
   "ide_view_split": "Split",
   "img_load_fail": "Image load 失敗: {0}",
