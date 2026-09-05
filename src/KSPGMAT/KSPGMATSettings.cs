@@ -31,6 +31,11 @@ namespace KSPGMAT {
             set {
                 spiceBspPath = value;
                 Write("spice_bsp_path", value);
+                try {
+                    if (!string.IsNullOrEmpty(value) && File.Exists(value) && KSPGMAT.MGA.PykepNative.IsAvailable) {
+                        KSPGMAT.MGA.PykepNative.LoadSpiceKernel(value);
+                    }
+                } catch { }
             }
         }
 

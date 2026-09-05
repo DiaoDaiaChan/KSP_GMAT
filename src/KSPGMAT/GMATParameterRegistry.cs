@@ -405,11 +405,13 @@ namespace KSPGMAT {
             string[] candidatePaths = new string[] {
                 !string.IsNullOrEmpty(dllDir) ? Path.Combine(dllDir, "gmat_capabilities.json") : "",
                 !string.IsNullOrEmpty(dllDir) ? Path.Combine(dllDir, "..", "gmat_capabilities.json") : "",
-                Path.Combine(KSPUtil.ApplicationRootPath, "GameData", "KSPGMAT", "gmat_capabilities.json"),
-                Path.Combine(KSPUtil.ApplicationRootPath, "GameData", "KSPGMAT", "Plugins", "gmat_capabilities.json"),
+                Path.Combine(gmatBin, "KSP_GMAT", "Plugins", "gmat_capabilities.json"),
                 Path.Combine(gmatBin, "KSP_GMAT", "GameData", "KSPGMAT", "gmat_capabilities.json"),
+                Path.Combine(gmatBin, "gmat_service", "gmat_capabilities.json"),
                 Path.Combine(gmatBin, "gmat_capabilities.json"),
-                Path.Combine(userProfile, "GMAT", "bin", "gmat_capabilities.json")
+                Path.Combine(userProfile, "gmat-win-R2026a", "bin", "gmat_service", "gmat_capabilities.json"),
+                Path.Combine(userProfile, "GMAT", "bin", "gmat_capabilities.json"),
+                Path.Combine(KSPUtil.ApplicationRootPath, "GameData", "KSPGMAT", "gmat_capabilities.json")
             };
 
             foreach (var path in candidatePaths) {

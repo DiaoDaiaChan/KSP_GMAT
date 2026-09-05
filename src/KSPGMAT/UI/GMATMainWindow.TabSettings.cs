@@ -50,7 +50,7 @@ namespace KSPGMAT.UI {
             GUILayout.EndHorizontal();
 
             if (GMATClient.HasFullSpiceEphemeris) {
-                GUILayout.Label(I18n.ColorFormat("settings_spice_loaded", GMATClient.DetectedSpiceKernelName, GMATClient.DetectedSpiceKernelPath), labelValueStyle);
+                GUILayout.Label(I18n.Format("settings_spice_loaded", GMATClient.DetectedSpiceKernelName, GMATClient.DetectedSpiceKernelPath), labelValueStyle);
             } else {
                 GUILayout.Label(I18n.T("settings_spice_missing"), labelValueStyle);
             }

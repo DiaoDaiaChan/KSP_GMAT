@@ -4,6 +4,7 @@ using System.IO;
 using System.Text;
 using UnityEngine;
 using KSPGMAT.MGA;
+using KSPGMAT.Model;
 
 namespace KSPGMAT.UI {
     public partial class GMATMainWindow {
@@ -271,9 +272,16 @@ namespace KSPGMAT.UI {
                         s.achieve_param = psdPendingSelectedValue;
                         pendingFocusControl = $"Field_Achieve_{paramPickerTargetStepIndex}";
                         GUI.FocusControl(pendingFocusControl);
-                    } else if (paramPickerMode == "stop" || paramPickerMode == "prop_stop") {
+                    } else if (paramPickerMode == "stop" || paramPickerMode.StartsWith("prop_stop")) {
+                        int cIdx = 0;
+                        if (paramPickerMode.StartsWith("prop_stop_")) {
+                            int.TryParse(paramPickerMode.Substring("prop_stop_".Length), out cIdx);
+                        }
+                        if (s.stop_conditions != null && cIdx < s.stop_conditions.Count) {
+                            s.stop_conditions[cIdx].parameter = psdPendingSelectedValue;
+                        }
                         s.stop_type = psdPendingSelectedValue;
-                        pendingFocusControl = $"Field_PropStop_{paramPickerTargetStepIndex}";
+                        pendingFocusControl = $"Field_PropStop_{paramPickerTargetStepIndex}_{cIdx}";
                         GUI.FocusControl(pendingFocusControl);
                     }
                 }
@@ -1401,16 +1409,27 @@ namespace KSPGMAT.UI {
                     if (idx < planets.Count) {
                         var p = planets[idx];
                         string currentTarget = "";
-                        if (planetPickerTargetType == 0) currentTarget = mgaConfig.DepartureBody;
-                        else if (planetPickerTargetType == 1) currentTarget = mgaConfig.DestinationBody;
-                        else if (planetPickerTargetType == 2 && planetPickerFlybyIndex >= 0 && planetPickerFlybyIndex < mgaConfig.FlybySequence.Count) 
+                        string badge = "";
+
+                        if (planetPickerTargetType == 0) {
+                            currentTarget = mgaConfig.DepartureBody;
+                            if (p.Name.Equals(mgaConfig.DestinationBody, StringComparison.OrdinalIgnoreCase)) {
+                                badge = " <color=#f87171>" + I18n.T("mga_picker_current_dest") + "</color>";
+                            }
+                        } else if (planetPickerTargetType == 1) {
+                            currentTarget = mgaConfig.DestinationBody;
+                            if (p.Name.Equals(mgaConfig.DepartureBody, StringComparison.OrdinalIgnoreCase)) {
+                                badge = " <color=#f87171>" + I18n.T("mga_picker_current_dep") + "</color>";
+                            }
+                        } else if (planetPickerTargetType == 2 && planetPickerFlybyIndex >= 0 && planetPickerFlybyIndex < mgaConfig.FlybySequence.Count) {
                             currentTarget = mgaConfig.FlybySequence[planetPickerFlybyIndex];
+                        }
 
                         bool isSelected = p.Name.Equals(currentTarget, StringComparison.OrdinalIgnoreCase);
                         GUIStyle cardStyle = isSelected ? actionButtonStyle : secondaryButtonStyle;
 
                         double smaAU = p.SMA / 1.495978707e8;
-                        string btnText = I18n.Format("mga_planet_btn", p.Icon, p.GetDisplayName(), p.Name, smaAU, p.RadiusKm);
+                        string btnText = I18n.Format("mga_planet_btn", p.Icon, p.GetDisplayName() + badge, p.Name, smaAU, p.RadiusKm);
 
                         if (GUILayout.Button(btnText, cardStyle, GUILayout.Height(42), GUILayout.ExpandWidth(true))) {
                             SelectPlanetFromPicker(p.Name);
@@ -1425,6 +1444,10 @@ namespace KSPGMAT.UI {
         private void SelectPlanetFromPicker(string planetName) {
             if (planetPickerTargetType == 0) {
                 // 出发天体
+                if (planetName.Equals(mgaConfig.DestinationBody, StringComparison.OrdinalIgnoreCase)) {
+                    ScreenMessages.PostScreenMessage(I18n.T("mga_err_same_dep_dest"), 3.5f, ScreenMessageStyle.UPPER_CENTER);
+                    return;
+                }
                 mgaConfig.DepartureBody = planetName;
                 if (mgaWorkflowMode == 0) {
                     mgaConfig.FlybySequence = new List<string> { mgaConfig.DestinationBody };
@@ -1433,9 +1456,14 @@ namespace KSPGMAT.UI {
                 mgaSolutions.Clear();
                 RefreshCandidateChains(mgaWorkflowMode == 1);
                 RefreshMgaCanvas();
+                showPlanetPickerModal = false;
                 ScreenMessages.PostScreenMessage(I18n.Format("mga_departure_set", planetName), 2.5f, ScreenMessageStyle.UPPER_CENTER);
             } else if (planetPickerTargetType == 1) {
                 // 目标天体
+                if (planetName.Equals(mgaConfig.DepartureBody, StringComparison.OrdinalIgnoreCase)) {
+                    ScreenMessages.PostScreenMessage(I18n.T("mga_err_same_dep_dest"), 3.5f, ScreenMessageStyle.UPPER_CENTER);
+                    return;
+                }
                 mgaConfig.DestinationBody = planetName;
                 if (mgaWorkflowMode == 0) {
                     mgaConfig.FlybySequence = new List<string> { planetName };
@@ -1449,6 +1477,7 @@ namespace KSPGMAT.UI {
                 mgaSolutions.Clear();
                 RefreshCandidateChains(mgaWorkflowMode == 1);
                 RefreshMgaCanvas();
+                showPlanetPickerModal = false;
                 ScreenMessages.PostScreenMessage(I18n.Format("mga_destination_set", planetName), 2.5f, ScreenMessageStyle.UPPER_CENTER);
             } else if (planetPickerTargetType == 2) {
                 // 替换中间借力节点
@@ -1470,6 +1499,15 @@ namespace KSPGMAT.UI {
                 customChainInput = string.Join(",", mgaConfig.FlybySequence);
                 RefreshMgaCanvas();
                 ScreenMessages.PostScreenMessage(I18n.Format("mga_flyby_appended", planetName), 2.5f, ScreenMessageStyle.UPPER_CENTER);
+            } else if (planetPickerTargetType == 4) {
+                // 设置 MGA 任务序列步骤天体
+                if (planetPickerFlybyIndex >= 0 && planetPickerFlybyIndex < MGAStateManager.Current.MissionSequence.Count) {
+                    var step = MGAStateManager.Current.MissionSequence[planetPickerFlybyIndex];
+                    step.body_name = planetName;
+                    step.label = $"{planetName} {step.type}";
+                    MGAStateManager.Current.NotifyStateChanged();
+                    ScreenMessages.PostScreenMessage(I18n.Format("mga_step_body_set", planetPickerFlybyIndex + 1, planetName), 2.5f, ScreenMessageStyle.UPPER_CENTER);
+                }
             }
             showPlanetPickerModal = false;
         }

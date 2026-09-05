@@ -8,6 +8,7 @@ using System.Globalization;
 using UnityEngine;
 using KSPGMAT.Model;
 using KSPGMAT.Service;
+using KSPGMAT.MGA;
 
 namespace KSPGMAT {
     [Serializable]
@@ -74,10 +75,19 @@ namespace KSPGMAT {
     }
 
     [Serializable]
+    public class StopCondition {
+        public string parameter = "Sat.Luna.Periapsis"; // e.g. "Sat.Luna.Periapsis", "Sat.ElapsedDays", "Sat.Earth.Altitude"
+        public string target_val_str = ""; // e.g. "6", "300.0", "TLI_Duration"
+        public double target_val = 0.0;
+        public double stop_tolerance = 1e-5;
+    }
+
+    [Serializable]
     public class MissionStep {
         public string type = "Propagate"; // 27 Native GMAT Commands: Propagate, Maneuver, BeginFiniteBurn, EndFiniteBurn, BeginFileThrust, EndFileThrust, Target, Vary, Achieve, EndTarget, Optimize, Minimize, NonlinearConstraint, EndOptimize, If, Else, EndIf, While, EndWhile, For, EndFor, Equation, ScriptEvent, Set, Global, CallGmatFunction, CallBuiltinGmatFunction, Report, Write, Toggle, ClearPlot, PenUp, PenDown, UpdateDynamicData, FindEvents, Stop, Breakpoint, CommandEcho, MarkPoint
         public string propagator = "LEOProp"; // GMAT Propagator object name
         public string stop_type = "Time"; // Time, Days, Apoapsis, Periapsis, Altitude, RMAG, TA, Node
+        public List<StopCondition> stop_conditions = new List<StopCondition>(); // Multi-condition stopping (Logical OR / Guarded stop in GMAT)
         public double duration = 3600.0;
         public string duration_str = ""; // Supports variable assignment e.g. "GTODuration" or "Burntime"
         public double target_val = 200.0; // Stop condition parameter value (km, deg, etc.)
@@ -427,6 +437,7 @@ namespace KSPGMAT {
                     // 0. 优先读取 backend.cfg 中统一配置的 spice_bsp_path
                     string cfgPath = KSPGMATSettings.SpiceBspPath;
                     if (!string.IsNullOrEmpty(cfgPath) && File.Exists(cfgPath)) {
+                        SyncSpiceToPykep(cfgPath);
                         return cfgPath;
                     }
 
@@ -435,15 +446,15 @@ namespace KSPGMAT {
                     foreach (var name in names) {
                         // 1. GMAT data/planetary_ephem/spk/
                         string p1 = Path.Combine(binDir, "..", "data", "planetary_ephem", "spk", name);
-                        if (File.Exists(p1)) return p1;
+                        if (File.Exists(p1)) { SyncSpiceToPykep(p1); return p1; }
                         string p2 = Path.Combine(binDir, "data", "planetary_ephem", "spk", name);
-                        if (File.Exists(p2)) return p2;
+                        if (File.Exists(p2)) { SyncSpiceToPykep(p2); return p2; }
                     }
                     // 2. Windows 用户 Documents 目录
                     string userDoc = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
                     foreach (var name in names) {
                         string pDoc = Path.Combine(userDoc, name);
-                        if (File.Exists(pDoc)) return pDoc;
+                        if (File.Exists(pDoc)) { SyncSpiceToPykep(pDoc); return pDoc; }
                     }
                     // 3. KSP GameData 目录
                     string root = "";
@@ -452,7 +463,7 @@ namespace KSPGMAT {
                     string gameDataPath = Path.Combine(root, "GameData", "KSPGMAT", "data");
                     foreach (var name in names) {
                         string pGd = Path.Combine(gameDataPath, name);
-                        if (File.Exists(pGd)) return pGd;
+                        if (File.Exists(pGd)) { SyncSpiceToPykep(pGd); return pGd; }
                     }
                 } catch {}
                 return null;
@@ -460,10 +471,25 @@ namespace KSPGMAT {
         }
 
         /// <summary>
+        /// 将 GMAT 当前设置或探测到的 SPICE 星历同步加载至 PyKEP 原生动力学引擎
+        /// </summary>
+        public static void SyncSpiceToPykep(string kernelPath = null) {
+            try {
+                string p = kernelPath;
+                if (string.IsNullOrEmpty(p)) p = DetectedSpiceKernelPath;
+                if (!string.IsNullOrEmpty(p) && File.Exists(p) && PykepNative.IsAvailable) {
+                    if (!PykepNative.HasSpiceLoaded || !string.Equals(PykepNative.LoadedSpicePath, p, StringComparison.OrdinalIgnoreCase)) {
+                        PykepNative.LoadSpiceKernel(p);
+                    }
+                }
+            } catch {}
+        }
+
+        /// <summary>
         /// 100% 真实天文历元格式化 (用于游戏内物理、MGA 寻优与 UI 真实显示，无任何人工偏移)
         /// </summary>
         public static string FormatUtcGregorian(double ut) {
-            double jd = 2433647.5 + (ut / 86400.0);
+            double jd = EphemerisTimeSystem.UtToJd(ut);
             return JdToUtcGregorian(jd);
         }
 
@@ -495,8 +521,8 @@ namespace KSPGMAT {
                     int y = year + 4800 - a;
                     int m_adj = month + 12 * a - 3;
                     double jdn = day + (153 * m_adj + 2) / 5 + 365 * y + y / 4 - y / 100 + y / 400 - 32045;
-                    double jd = jdn + (hour - 12) / 24.0 + min / 1440.0 + sec / 86400.0;
-                    return (jd - 2433647.5) * 86400.0;
+                    double jd = jdn + (hour - 12) / 24.0 + min / 1440.0 + sec / EphemerisTimeSystem.SECONDS_PER_DAY;
+                    return EphemerisTimeSystem.JdToUt(jd);
                 }
             } catch {}
             return 0;
@@ -508,12 +534,7 @@ namespace KSPGMAT {
         /// 针对 1957 年前的早期历史存档 (如 RP-1 1951 开局)，自动对 GMAT 脚本的 Sat.Epoch 进行安全映射，确保 GMAT C++ 解析器 100% 成功执行。
         /// </summary>
         public static string FormatGmatSafeEpoch(double ut) {
-            double jd = 2433647.5 + (ut / 86400.0);
-            if (jd < 2436116.0) { // 2436116.0 = 04 Oct 1957 12:00:00.000 (GMAT 官方硬性边界)
-                double safeBaseJd = 2437000.0; // 07 Mar 1960
-                double offset = (jd > 2430000.0) ? (jd - 2433647.5) : jd;
-                jd = safeBaseJd + offset;
-            }
+            double jd = EphemerisTimeSystem.UtToGmatSafeJd(ut);
             return JdToUtcGregorian(jd);
         }
 
@@ -605,14 +626,13 @@ namespace KSPGMAT {
         }
 
         public static double KspUtToJd(double ut) {
-            double gameEpochJd = 2433647.5; // Sol-Configs / RSS default: 1951-01-01
-            double jd = gameEpochJd + (ut / 86400.0);
-            if (jd < 2436116.5) jd = 2437000.0 + (ut / 86400.0);
+            double jd = EphemerisTimeSystem.UtToJd(ut);
+            if (jd < EphemerisTimeSystem.GMAT_MIN_EPOCH_JD + 0.5) jd = 2437000.0 + (ut / EphemerisTimeSystem.SECONDS_PER_DAY);
             return jd;
         }
 
         public static double JdToGmatMjd(double jd) {
-            return jd - 2430000.0;
+            return EphemerisTimeSystem.JdToMjd(jd);
         }
 
         public static void CalibrateEphem(double ut, Action<bool, string> callback) {

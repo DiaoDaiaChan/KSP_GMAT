@@ -1,0 +1,57 @@
+{
+  "mission_name": "坎巴拉原版绿星-宿命大巡游",
+  "category": "坎巴拉/原版",
+  "description": "Kerbin-Eve-Kerbin-Jool 坎系经典行星际引力跳板架构",
+  "icon": "✨",
+  "departure_body": "Kerbin",
+  "destination_body": "Jool",
+  "flyby_sequence": [
+    "Eve",
+    "Kerbin",
+    "Jool"
+  ],
+  "departure_pe_km": 100.0,
+  "departure_ap_km": 100.0,
+  "destination_pe_km": 500.0,
+  "destination_ap_km": 500.0,
+  "no_insertion_burn": false,
+  "engine_mode": 0,
+  "leg_strategies": [
+    0,
+    0,
+    0
+  ],
+  "flyby_strategies": [
+    0,
+    0
+  ],
+  "earliest_departure_date": "01 Jan 2001 00:00:00",
+  "latest_departure_date": "01 Jan 2004 00:00:00",
+  "tof_days": [
+    60.0,
+    90.0,
+    240.0
+  ],
+  "min_tof_days": [
+    30.0,
+    50.0,
+    150.0
+  ],
+  "max_tof_days": [
+    120.0,
+    180.0,
+    450.0
+  ],
+  "dsm_eta_default": 0.5,
+  "low_thrust_max_thrust_n": 0.5,
+  "low_thrust_isp_s": 3000.0,
+  "spacecraft_wet_mass_kg": 1500.0,
+  "target_b_dot_t_km": 0.0,
+  "target_b_dot_r_km": 0.0,
+  "historic_launch_ut": 0.0,
+  "historic_total_dv_min_ms": 3200.0,
+  "historic_total_dv_max_ms": 4800.0,
+  "historic_flight_days_min": 350.0,
+  "historic_flight_days_max": 450.0,
+  "sequence_steps": []
+}

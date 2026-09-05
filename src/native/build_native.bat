@@ -15,7 +15,7 @@ if not exist "GameData\KSPGMAT\native" mkdir "GameData\KSPGMAT\native"
 
 echo [BUILD] Compiling pykep_bridge.cpp with official ESA keplerian_toolbox library...
 
-cl.exe /O2 /LD /std:c++17 /EHsc /DNOMINMAX /DWIN32_LEAN_AND_MEAN ^
+cl.exe /O2 /LD /std:c++17 /EHsc /utf-8 /DNOMINMAX /DWIN32_LEAN_AND_MEAN ^
     /I"%CONDA_LIB%\include" ^
     "src\native\pykep_native\pykep_bridge.cpp" ^
     /Fe:"GameData\KSPGMAT\native\pykep_native.bin" ^

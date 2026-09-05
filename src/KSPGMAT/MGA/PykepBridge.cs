@@ -46,16 +46,118 @@ namespace KSPGMAT.MGA {
         public double FlybyPeriapsisAltitudeKm { get; set; }
         public double FlybyDeltaVKms { get; set; }
         public bool IsFeasible { get; set; }
+
+        // Feature 1: MGA-1DSM Deep Space Maneuver Details
+        public bool HasDSM { get; set; }
+        public DSMResult DSM { get; set; }
+        public Vector3d DSMPositionKm { get; set; }
+        public MGALegStrategy Strategy { get; set; } = MGALegStrategy.Ballistic;
     }
 
     /// <summary>
-    /// MGA 事件类型枚举 (100% 对齐 KSP-MGA-Planner)
+    /// 航段推进与动力学策略枚举 (Per-Leg Astrodynamic Strategy)
+    /// </summary>
+    public enum MGALegStrategy {
+        Ballistic = 0,               // 纯弹道 (Pure Ballistic Lambert)
+        DeepSpaceManeuver1DSM = 1,    // 深空机动 1-DSM (Midcourse In-flight Burn)
+        ContinuousLowThrust = 2      // 连续低推力 (Sims-Flanagan SEP)
+    }
+
+    /// <summary>
+    /// 中间交会节点飞掠与打靶策略枚举 (Per-Node Flyby & Targeting Strategy)
+    /// </summary>
+    public enum MGAFlybyStrategy {
+        UnpoweredFlyby = 0,          // 纯无动力自由双曲借力 (Unpowered Flyby)
+        PoweredFlyby = 1,            // 动力飞掠 (Powered Assist)
+        BPlaneTargeted = 2           // B 平面精准穿靶 (B-Plane Targeted TCM)
+    }
+
+    /// <summary>
+    /// MGA 求解引擎全局动力学模式 (Engine Dynamics Mode)
+    /// </summary>
+    public enum MGAEngineMode {
+        BallisticImpulsive = 0,    // 传统纯脉冲借力 (Ballistic MGA)
+        DeepSpaceManeuver1DSM = 1, // 官方 MGA-1DSM (含中道深空机动与共振)
+        LowThrustSimsFlanagan = 2, // 连续低推力打靶 (Sims-Flanagan / SEP)
+        HeterogeneousHybrid = 3    // 异构分段混合策略 (Multi-Strategy Hybrid)
+    }
+
+    /// <summary>
+    /// MGA 事件类型枚举 (100% 对齐 KSP-MGA-Planner 与真实任务事件)
     /// </summary>
     public enum MGAEventType {
         Escape,          // 1: <Origin> escape (出发脱离机动)
         DSM,             // 2: <From>-<To> DSM (深空变轨/中途机动)
         Flyby,           // 3: <Body> flyby (经过天体的引力助推飞掠)
-        Circularization  // 4: <Destination> circularization / capture (目标行星捕获/圆化机动)
+        Circularization, // 4: <Destination> circularization / capture (目标行星捕获/圆化机动)
+        TCM,             // 5: <From>-<To> TCM (B平面中道修正)
+        LowThrustSegment // 6: 连续低推力打靶航段
+    }
+
+    public class DSMResult {
+        public double EpochOffsetSec { get; set; }
+        public Vector3d PositionKm { get; set; }
+        public Vector3d DeltaVKms { get; set; }
+        public double DeltaVMs { get; set; }
+        public double ProgradeMs { get; set; }
+        public double NormalMs { get; set; }
+        public double RadialMs { get; set; }
+    }
+
+    public class BPlaneResult {
+        public double BDotTKm { get; set; }
+        public double BDotRKm { get; set; }
+        public double BMagKm { get; set; }
+        public double ThetaDeg { get; set; }
+        public double VInfMagKms { get; set; }
+        public Vector3d SHat { get; set; }
+        public Vector3d THat { get; set; }
+        public Vector3d RHat { get; set; }
+    }
+
+    public class TCMResult {
+        public Vector3d DeltaVKms { get; set; }
+        public double DeltaVMs { get; set; }
+        public double ProgradeMs { get; set; }
+        public double NormalMs { get; set; }
+        public double RadialMs { get; set; }
+    }
+
+    public class PrimerVectorResult {
+        public int SampleCount { get; set; }
+        public double[] TimesSec { get; set; }
+        public double[] PMags { get; set; }
+        public double MaxPMag { get; set; }
+        public double MaxPTimeSec { get; set; }
+        public bool IsOptimal { get; set; }
+    }
+
+    public class MEEResult {
+        public double P { get; set; }
+        public double F { get; set; }
+        public double G { get; set; }
+        public double H { get; set; }
+        public double K { get; set; }
+        public double L { get; set; }
+    }
+
+    public class SimsFlanaganResult {
+        public double DeltaRKm { get; set; }
+        public double DeltaVKms { get; set; }
+        public double DeltaMKg { get; set; }
+        public double TotalDeltaVMs { get; set; }
+        public double FinalMassKg { get; set; }
+        public int SegmentCount { get; set; }
+        public List<Vector3d> SegmentPositionsKm { get; set; } = new List<Vector3d>();
+        public List<Vector3d> ThrottleVectors { get; set; } = new List<Vector3d>();
+    }
+
+    public class ParetoTradeOffPoint {
+        public double TotalFlightDays { get; set; }
+        public double TotalDeltaVKms { get; set; }
+        public double LaunchDeltaVKms { get; set; }
+        public double FlybyDeltaVKms { get; set; }
+        public double[] Genome { get; set; }
     }
 
     /// <summary>
@@ -70,6 +172,7 @@ namespace KSPGMAT.MGA {
         public string ToBody { get; set; }
         public double EpochUT { get; set; }
         public double DeltaVMs { get; set; }
+        public Vector3d PositionKm { get; set; }
         
         // 3 轴机动矢量分量 (m/s)
         public double ProgradeMs { get; set; }
@@ -111,6 +214,14 @@ namespace KSPGMAT.MGA {
         public bool AllLegsFeasible { get; set; }
         public string FlybyChainSummary { get; set; }
 
+        // Advanced Astrodynamics Results (Features 2 - 6)
+        public PrimerVectorResult PrimerVector { get; set; }
+        public BPlaneResult BPlane { get; set; }
+        public TCMResult SuggestedTCM { get; set; }
+        public MEEResult DepartureMEE { get; set; }
+        public SimsFlanaganResult LowThrustSolution { get; set; }
+        public List<ParetoTradeOffPoint> ParetoFront { get; set; } = new List<ParetoTradeOffPoint>();
+
         public void BuildEvents(MGAConfig config) {
             Events.Clear();
             if (Legs == null || Legs.Count == 0) return;
@@ -127,34 +238,59 @@ namespace KSPGMAT.MGA {
                 FromBody = leg0.FromBody,
                 ToBody = leg0.ToBody,
                 EpochUT = DepartureUT,
+                PositionKm = leg0.DeparturePosKm,
                 DeltaVMs = LaunchDeltaVKms * 1000.0,
-                ProgradeMs = leg0.ProgradeMs,
-                NormalMs = leg0.NormalMs,
-                RadialMs = leg0.RadialMs,
-                PhaseAngleDeg = leg0.PhaseAngleDeg,
-                EjectionAngleDeg = leg0.EjectionAngleDeg,
-                EjectionLANDeg = leg0.EjectionLANDeg,
-                EjectionInclinationDeg = leg0.EjectionInclinationDeg,
-                C3Kms2 = leg0.C3Kms2,
+                ProgradeMs = (!double.IsNaN(leg0.ProgradeMs) && Math.Abs(leg0.ProgradeMs) > 1e-4) ? leg0.ProgradeMs : (LaunchDeltaVKms * 1000.0),
+                NormalMs = double.IsNaN(leg0.NormalMs) ? 0.0 : leg0.NormalMs,
+                RadialMs = double.IsNaN(leg0.RadialMs) ? 0.0 : leg0.RadialMs,
+                PhaseAngleDeg = double.IsNaN(leg0.PhaseAngleDeg) ? 0.0 : leg0.PhaseAngleDeg,
+                EjectionAngleDeg = double.IsNaN(leg0.EjectionAngleDeg) ? 0.0 : leg0.EjectionAngleDeg,
+                EjectionLANDeg = double.IsNaN(leg0.EjectionLANDeg) ? 0.0 : leg0.EjectionLANDeg,
+                EjectionInclinationDeg = double.IsNaN(leg0.EjectionInclinationDeg) ? 0.0 : leg0.EjectionInclinationDeg,
+                C3Kms2 = double.IsNaN(leg0.C3Kms2) ? 0.0 : leg0.C3Kms2,
                 VInfOutKms = leg0.VInfDepartureKms.magnitude,
                 IsFeasible = true
             });
             seq++;
 
-            // 2. 依次构建中间飞掠与深空机动 (Flybys & DSMs)
+            // 1.1 首段若存在 DSM (Deep Space Maneuver)
+            if (leg0.HasDSM && leg0.DSM != null) {
+                Events.Add(new MGAEventItem {
+                    SequenceNumber = seq,
+                    Title = $"{seq}: {leg0.FromBody}-{leg0.ToBody} DSM",
+                    EventType = MGAEventType.DSM,
+                    BodyName = leg0.FromBody,
+                    FromBody = leg0.FromBody,
+                    ToBody = leg0.ToBody,
+                    EpochUT = leg0.DepartureUT + leg0.DSM.EpochOffsetSec,
+                    PositionKm = leg0.DSMPositionKm,
+                    DeltaVMs = leg0.DSM.DeltaVMs,
+                    ProgradeMs = leg0.DSM.ProgradeMs,
+                    NormalMs = leg0.DSM.NormalMs,
+                    RadialMs = leg0.DSM.RadialMs,
+                    IsFeasible = true
+                });
+                seq++;
+            }
+
+            // 2. 依次构建中间飞掠、推进机动与后续段 DSM
             for (int k = 1; k < Legs.Count; k++) {
                 var leg = Legs[k];
                 var prevLeg = Legs[k - 1];
 
-                // 2.1 天体引力助推飞掠事件 (Flyby)
+                string flybyTitle = (leg.FlybyDeltaVKms > 0.001) ? 
+                    $"{seq}: {leg.FromBody} powered flyby" : 
+                    $"{seq}: {leg.FromBody} flyby";
+
                 Events.Add(new MGAEventItem {
                     SequenceNumber = seq,
-                    Title = $"{seq}: {leg.FromBody} flyby",
+                    Title = flybyTitle,
                     EventType = MGAEventType.Flyby,
                     BodyName = leg.FromBody,
                     FromBody = prevLeg.FromBody,
                     ToBody = leg.ToBody,
                     EpochUT = leg.DepartureUT,
+                    PositionKm = leg.DeparturePosKm,
                     DeltaVMs = leg.FlybyDeltaVKms * 1000.0,
                     ProgradeMs = leg.ProgradeMs,
                     NormalMs = leg.NormalMs,
@@ -168,8 +304,8 @@ namespace KSPGMAT.MGA {
                 });
                 seq++;
 
-                // 2.2 如果需要深空机动动力修正 (DSM)
-                if (leg.FlybyDeltaVKms > 0.001) {
+                // 后续段 DSM
+                if (leg.HasDSM && leg.DSM != null) {
                     Events.Add(new MGAEventItem {
                         SequenceNumber = seq,
                         Title = $"{seq}: {leg.FromBody}-{leg.ToBody} DSM",
@@ -177,12 +313,13 @@ namespace KSPGMAT.MGA {
                         BodyName = leg.FromBody,
                         FromBody = leg.FromBody,
                         ToBody = leg.ToBody,
-                        EpochUT = leg.DepartureUT,
-                        DeltaVMs = leg.FlybyDeltaVKms * 1000.0,
-                        ProgradeMs = leg.ProgradeMs,
-                        NormalMs = leg.NormalMs,
-                        RadialMs = leg.RadialMs,
-                        IsFeasible = leg.IsFeasible
+                        EpochUT = leg.DepartureUT + leg.DSM.EpochOffsetSec,
+                        PositionKm = leg.DSMPositionKm,
+                        DeltaVMs = leg.DSM.DeltaVMs,
+                        ProgradeMs = leg.DSM.ProgradeMs,
+                        NormalMs = leg.DSM.NormalMs,
+                        RadialMs = leg.DSM.RadialMs,
+                        IsFeasible = true
                     });
                     seq++;
                 }
@@ -199,6 +336,7 @@ namespace KSPGMAT.MGA {
                     FromBody = lastLeg.FromBody,
                     ToBody = lastLeg.ToBody,
                     EpochUT = ArrivalUT,
+                    PositionKm = lastLeg.ArrivalPosKm,
                     DeltaVMs = 0.0,
                     VInfInKms = lastLeg.VInfArrivalKms.magnitude,
                     IsFeasible = true
@@ -212,6 +350,7 @@ namespace KSPGMAT.MGA {
                     FromBody = lastLeg.FromBody,
                     ToBody = lastLeg.ToBody,
                     EpochUT = ArrivalUT,
+                    PositionKm = lastLeg.ArrivalPosKm,
                     DeltaVMs = InsertionDeltaVKms * 1000.0,
                     ProgradeMs = -InsertionDeltaVKms * 1000.0,
                     NormalMs = 0.0,
@@ -226,17 +365,52 @@ namespace KSPGMAT.MGA {
     }
 
     /// <summary>
-    /// MGA 规划配置输入 (100% 对齐 KSP-MGA-Planner)
+    /// MGA 规划配置输入 (100% 对齐 KSP-MGA-Planner 与高级动力学特性)
     /// </summary>
     public class MGAConfig {
         public string DepartureBody { get; set; } = "Earth";
         public string DestinationBody { get; set; } = "Saturn";
         public List<string> FlybySequence { get; set; } = new List<string> { "Venus", "Venus", "Earth", "Jupiter", "Saturn" };
         
+        public MGAEngineMode EngineMode { get; set; } = MGAEngineMode.BallisticImpulsive;
+        public List<MGALegStrategy> LegStrategies { get; set; } = new List<MGALegStrategy>();
+        public List<MGAFlybyStrategy> FlybyStrategies { get; set; } = new List<MGAFlybyStrategy>();
+
+        public void SyncStrategiesWithChain(int legCount) {
+            if (LegStrategies == null) LegStrategies = new List<MGALegStrategy>();
+            while (LegStrategies.Count < legCount) {
+                var defStrat = (EngineMode == MGAEngineMode.DeepSpaceManeuver1DSM) ? MGALegStrategy.DeepSpaceManeuver1DSM :
+                               (EngineMode == MGAEngineMode.LowThrustSimsFlanagan ? MGALegStrategy.ContinuousLowThrust : MGALegStrategy.Ballistic);
+                LegStrategies.Add(defStrat);
+            }
+            if (LegStrategies.Count > legCount) LegStrategies.RemoveRange(legCount, LegStrategies.Count - legCount);
+
+            int fbCount = Math.Max(0, legCount - 1);
+            if (FlybyStrategies == null) FlybyStrategies = new List<MGAFlybyStrategy>();
+            while (FlybyStrategies.Count < fbCount) {
+                FlybyStrategies.Add(MGAFlybyStrategy.UnpoweredFlyby);
+            }
+            if (FlybyStrategies.Count > fbCount) FlybyStrategies.RemoveRange(fbCount, FlybyStrategies.Count - fbCount);
+        }
+
+        public double DsmEtaDefault { get; set; } = 0.5;
+        public List<double> DsmEtas { get; set; } = new List<double>();
+        public List<double> FlybyRpKms { get; set; } = new List<double>();
+        public List<double> FlybyBetasRad { get; set; } = new List<double>();
+
+        public double LowThrustMaxThrustN { get; set; } = 0.5;
+        public double LowThrustIspSec { get; set; } = 3000.0;
+        public double SpacecraftWetMassKg { get; set; } = 1500.0;
+        public int LowThrustSegments { get; set; } = 10;
+        public double TargetBDotTKm { get; set; } = 0.0;
+        public double TargetBDotRKm { get; set; } = 0.0;
+
         public int MaxSwingBys { get; set; } = 4;
         public int MaxResonances { get; set; } = 1;
         public int MaxBackLegs { get; set; } = 1;
         public int MaxBackSpacing { get; set; } = 2;
+        public bool ConstrainByVesselDeltaV { get; set; } = false;
+        public double VesselMaxDeltaVMs { get; set; } = 0.0;
 
         public double EarliestDepartureUT { get; set; }
         public double LatestDepartureUT { get; set; }
@@ -244,7 +418,8 @@ namespace KSPGMAT.MGA {
         public double DepartureAltitudeKm { get => DeparturePeAKm; set => DeparturePeAKm = value; }
         public double DeparturePeAKm { get; set; } = 200.0;
         public double DepartureApAKm { get; set; } = 200.0;
-        public double DepartureInclinationDeg { get; set; } = 0.0;
+        public double DepartureInclinationDeg { get; set; } = 28.5;
+        public bool LockDepartureInclination { get; set; } = false;
 
         public double DestinationAltitudeKm { get => DestinationPeAKm; set => DestinationPeAKm = value; }
         public double DestinationPeAKm { get; set; } = 200.0;
@@ -308,6 +483,113 @@ namespace KSPGMAT.MGA {
         public NativeLegResult[] legs;
     }
 
+    [StructLayout(LayoutKind.Sequential, Pack = 8)]
+    public struct NativeDSMResult {
+        public double epoch_offset_sec;
+        public double pos_x, pos_y, pos_z;
+        public double dv_x, dv_y, dv_z;
+        public double dv_mag_ms;
+        public double prograde_ms;
+        public double normal_ms;
+        public double radial_ms;
+    }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 8)]
+    public struct NativeLeg1DSMResult {
+        public double tof_sec;
+        public double r1x, r1y, r1z;
+        public double r2x, r2y, r2z;
+        public double v1x, v1y, v1z;
+        public double v2x, v2y, v2z;
+        public double v_inf_dep_x, v_inf_dep_y, v_inf_dep_z;
+        public double v_inf_arr_x, v_inf_arr_y, v_inf_arr_z;
+        public double flyby_turn_deg;
+        public double flyby_rp_km;
+        public double flyby_beta_deg;
+        public double flyby_dv_kms;
+        public int has_dsm;
+        public NativeDSMResult dsm;
+        public int is_feasible;
+    }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 8)]
+    public struct NativeMGA1DSMSolution {
+        public double launch_dv_kms;
+        public double total_dsm_dv_kms;
+        public double total_flyby_dv_kms;
+        public double insertion_dv_kms;
+        public double total_dv_kms;
+        public double total_flight_days;
+        public double c3_kms2;
+        public double ejection_angle_deg;
+        public double ejection_inc_deg;
+        public double ejection_lan_deg;
+        public int all_feasible;
+        public int leg_count;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)]
+        public NativeLeg1DSMResult[] legs;
+    }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 8)]
+    public struct NativeBPlaneResult {
+        public double b_dot_t_km;
+        public double b_dot_r_km;
+        public double b_mag_km;
+        public double theta_deg;
+        public double v_inf_mag_kms;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 3)]
+        public double[] s_hat;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 3)]
+        public double[] t_hat;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 3)]
+        public double[] r_hat;
+    }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 8)]
+    public struct NativeTCMResult {
+        public double dv_x, dv_y, dv_z;
+        public double dv_mag_ms;
+        public double prograde_ms;
+        public double normal_ms;
+        public double radial_ms;
+    }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 8)]
+    public struct NativePrimerVectorResult {
+        public int sample_count;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)]
+        public double[] times_sec;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)]
+        public double[] p_mags;
+        public double max_p_mag;
+        public double max_p_time_sec;
+        public int is_optimal;
+    }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 8)]
+    public struct NativeMEE {
+        public double p;
+        public double f;
+        public double g;
+        public double h;
+        public double k;
+        public double L;
+    }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 8)]
+    public struct NativeSimsFlanaganResult {
+        public double delta_r_km;
+        public double delta_v_kms;
+        public double delta_m_kg;
+        public double total_dv_ms;
+        public double final_mass_kg;
+        public int n_segments;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 96)]
+        public double[] segment_pos;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 96)]
+        public double[] throttle;
+    }
+
     /// <summary>
     /// 纯粹的 PyKEP 官方 C++ 原生动力学桥接层与数据转换器
     /// (Pure Native PyKEP Bridge & Data Marshaler - 0 Custom Math Calculation in C#)
@@ -320,22 +602,89 @@ namespace KSPGMAT.MGA {
             [In] double[] tofs_sec,
             int leg_count,
             double dep_pe_km, double dep_ap_km,
+            double dep_inc_deg,
             double arr_pe_km, double arr_ap_km,
             int no_insertion,
             out NativeMGASolution out_sol);
 
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int PykepMGA1DSMEvaluateDelegate(
+            [In] NativePlanetState[] dep_planets,
+            [In] NativePlanetState[] arr_planets,
+            [In] double[] tofs_sec,
+            [In] double[] dsm_etas,
+            [In] double[] fb_rps_km,
+            [In] double[] fb_betas_rad,
+            int leg_count,
+            double dep_pe_km, double dep_ap_km, double dep_inc_deg,
+            double arr_pe_km, double arr_ap_km, int no_insertion,
+            out NativeMGA1DSMSolution out_sol);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int PykepMGAHybridEvaluateDelegate(
+            [In] NativePlanetState[] dep_planets,
+            [In] NativePlanetState[] arr_planets,
+            [In] double[] tofs_sec,
+            [In] int[] leg_strategies,
+            [In] int[] flyby_strategies,
+            [In] double[] dsm_etas,
+            [In] double[] fb_rps_km,
+            [In] double[] fb_betas_rad,
+            int leg_count,
+            double dep_pe_km, double dep_ap_km, double dep_inc_deg,
+            double arr_pe_km, double arr_ap_km, int no_insertion,
+            out NativeMGA1DSMSolution out_sol);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int PykepCalcKeplerSTMDelegate(
+            [In] double[] r0_km, [In] double[] v0_kms, double dt_sec, double mu,
+            [Out] double[] out_stm_6x6);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int PykepCalcBPlaneDelegate(
+            [In] double[] r_rel_km, [In] double[] v_rel_kms, double mu,
+            out NativeBPlaneResult out_bp);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int PykepCalcBPlaneTCMDelegate(
+            [In] double[] r_tcm_km, [In] double[] v_tcm_kms, double dt_to_enc_sec,
+            [In] double[] r_enc_curr_km, [In] double[] v_enc_curr_kms,
+            double target_b_dot_t_km, double target_b_dot_r_km, double body_mu,
+            out NativeTCMResult out_tcm);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int PykepCalcPrimerVectorDelegate(
+            [In] double[] r1_km, [In] double[] v1_kms,
+            [In] double[] dv1_kms, [In] double[] dv2_kms,
+            double tof_sec, double mu,
+            out NativePrimerVectorResult out_pv);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int PykepCartesianToMEEDelegate(
+            [In] double[] r_km, [In] double[] v_kms, double mu, out NativeMEE out_mee);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int PykepMEEToCartesianDelegate(
+            in NativeMEE mee, double mu, [Out] double[] out_r_km, [Out] double[] out_v_kms);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int PykepSimsFlanaganEvaluateDelegate(
+            [In] double[] r1_km, [In] double[] v1_kms, double m0_kg,
+            [In] double[] r2_km, [In] double[] v2_kms, double mf_guess_kg,
+            double tof_sec, double max_thrust_N, double isp_sec, double mu,
+            int n_seg, [In] double[] throttles_3n,
+            out NativeSimsFlanaganResult out_sf);
+
         private static PykepMGAEvaluateDelegate _fnMGAEvaluate;
-
-        private static bool _patchFormulaBlockedLogged = false;
-
-        /// <summary>
-        /// 基线7: C# 二体ΔV近似公式仅允许在显式开启托管回退时使用 (每会话仅记录一次禁用警告)。
-        /// </summary>
-        private static void LogPatchFormulaBlocked() {
-            if (_patchFormulaBlockedLogged) return;
-            _patchFormulaBlockedLogged = true;
-            KSPGMATLog.Error("C# 二体ΔV近似公式已被基线7禁用，仅 AllowManagedFallback=true 时可作显式近似使用");
-        }
+        private static PykepMGAHybridEvaluateDelegate _fnMGAHybridEvaluate;
+        private static PykepMGA1DSMEvaluateDelegate _fnMGA1DSMEvaluate;
+        private static PykepCalcKeplerSTMDelegate _fnCalcKeplerSTM;
+        private static PykepCalcBPlaneDelegate _fnCalcBPlane;
+        private static PykepCalcBPlaneTCMDelegate _fnCalcBPlaneTCM;
+        private static PykepCalcPrimerVectorDelegate _fnCalcPrimerVector;
+        private static PykepCartesianToMEEDelegate _fnCartesianToMEE;
+        private static PykepMEEToCartesianDelegate _fnMEEToCartesian;
+        private static PykepSimsFlanaganEvaluateDelegate _fnSimsFlanaganEvaluate;
 
         static PykepBridge() {
             try {
@@ -345,6 +694,57 @@ namespace KSPGMAT.MGA {
                         _fnMGAEvaluate = (PykepMGAEvaluateDelegate)Marshal.GetDelegateForFunctionPointer(pEval, typeof(PykepMGAEvaluateDelegate));
                         KSPGMATLog.Info("[PykepBridge] Successfully linked native pykep_mga_evaluate C++ pipeline!");
                     }
+
+                    IntPtr pHybrid = PykepNative.GetProcAddressExport("pykep_mga_hybrid_evaluate");
+                    if (pHybrid != IntPtr.Zero) {
+                        _fnMGAHybridEvaluate = (PykepMGAHybridEvaluateDelegate)Marshal.GetDelegateForFunctionPointer(pHybrid, typeof(PykepMGAHybridEvaluateDelegate));
+                        KSPGMATLog.Info("[PykepBridge] Successfully linked native pykep_mga_hybrid_evaluate C++ pipeline!");
+                    }
+
+                    IntPtr p1Dsm = PykepNative.GetProcAddressExport("pykep_mga_1dsm_evaluate");
+                    if (p1Dsm != IntPtr.Zero) {
+                        _fnMGA1DSMEvaluate = (PykepMGA1DSMEvaluateDelegate)Marshal.GetDelegateForFunctionPointer(p1Dsm, typeof(PykepMGA1DSMEvaluateDelegate));
+                        KSPGMATLog.Info("[PykepBridge] Successfully linked native pykep_mga_1dsm_evaluate C++ pipeline!");
+                    }
+
+                    IntPtr pStm = PykepNative.GetProcAddressExport("pykep_calc_kepler_stm");
+                    if (pStm != IntPtr.Zero) {
+                        _fnCalcKeplerSTM = (PykepCalcKeplerSTMDelegate)Marshal.GetDelegateForFunctionPointer(pStm, typeof(PykepCalcKeplerSTMDelegate));
+                        KSPGMATLog.Info("[PykepBridge] Successfully linked native pykep_calc_kepler_stm C++ pipeline!");
+                    }
+
+                    IntPtr pBp = PykepNative.GetProcAddressExport("pykep_calc_bplane");
+                    if (pBp != IntPtr.Zero) {
+                        _fnCalcBPlane = (PykepCalcBPlaneDelegate)Marshal.GetDelegateForFunctionPointer(pBp, typeof(PykepCalcBPlaneDelegate));
+                    }
+
+                    IntPtr pTcm = PykepNative.GetProcAddressExport("pykep_calc_bplane_tcm");
+                    if (pTcm != IntPtr.Zero) {
+                        _fnCalcBPlaneTCM = (PykepCalcBPlaneTCMDelegate)Marshal.GetDelegateForFunctionPointer(pTcm, typeof(PykepCalcBPlaneTCMDelegate));
+                        KSPGMATLog.Info("[PykepBridge] Successfully linked native pykep_calc_bplane_tcm C++ pipeline!");
+                    }
+
+                    IntPtr pPv = PykepNative.GetProcAddressExport("pykep_calc_primer_vector");
+                    if (pPv != IntPtr.Zero) {
+                        _fnCalcPrimerVector = (PykepCalcPrimerVectorDelegate)Marshal.GetDelegateForFunctionPointer(pPv, typeof(PykepCalcPrimerVectorDelegate));
+                        KSPGMATLog.Info("[PykepBridge] Successfully linked native pykep_calc_primer_vector C++ pipeline!");
+                    }
+
+                    IntPtr pC2M = PykepNative.GetProcAddressExport("pykep_cartesian_to_mee");
+                    if (pC2M != IntPtr.Zero) {
+                        _fnCartesianToMEE = (PykepCartesianToMEEDelegate)Marshal.GetDelegateForFunctionPointer(pC2M, typeof(PykepCartesianToMEEDelegate));
+                    }
+
+                    IntPtr pM2C = PykepNative.GetProcAddressExport("pykep_mee_to_cartesian");
+                    if (pM2C != IntPtr.Zero) {
+                        _fnMEEToCartesian = (PykepMEEToCartesianDelegate)Marshal.GetDelegateForFunctionPointer(pM2C, typeof(PykepMEEToCartesianDelegate));
+                    }
+
+                    IntPtr pSf = PykepNative.GetProcAddressExport("pykep_sims_flanagan_evaluate");
+                    if (pSf != IntPtr.Zero) {
+                        _fnSimsFlanaganEvaluate = (PykepSimsFlanaganEvaluateDelegate)Marshal.GetDelegateForFunctionPointer(pSf, typeof(PykepSimsFlanaganEvaluateDelegate));
+                        KSPGMATLog.Info("[PykepBridge] Successfully linked native pykep_sims_flanagan_evaluate C++ pipeline!");
+                    }
                 }
             } catch (Exception ex) {
                 KSPGMATLog.Warn($"[PykepBridge] Native MGA bridge linkage note: {ex.Message}");
@@ -352,37 +752,19 @@ namespace KSPGMAT.MGA {
         }
 
         public static double CalculateDepartureDeltaV(double vInfDepKms, SolarPlanet planet, double peAKm, double apAKm) {
-            if (!PykepNative.AllowManagedFallback) {
-                LogPatchFormulaBlocked();
-                return double.NaN;
-            }
             if (planet == null || planet.Mu <= 0) return 0.0;
-            double rp = planet.RadiusKm + Math.Max(0.0, peAKm);
-            double ra = planet.RadiusKm + Math.Max(peAKm, apAKm);
-            double aPark = (rp + ra) * 0.5;
-            double vPark = Math.Sqrt(planet.Mu * (2.0 / rp - 1.0 / aPark));
-            double vHypPeri = Math.Sqrt(vInfDepKms * vInfDepKms + 2.0 * planet.Mu / rp);
-            return Math.Max(0.0, vHypPeri - vPark);
+            return PykepNative.CalculateDepartureDeltaV(vInfDepKms, planet.Mu, planet.RadiusKm, peAKm, apAKm);
         }
 
         public static double CalculateArrivalInsertionDeltaV(double vInfArrKms, SolarPlanet planet, double peAKm, double apAKm, bool flybyOnly) {
-            if (!PykepNative.AllowManagedFallback) {
-                LogPatchFormulaBlocked();
-                return double.NaN;
-            }
             if (flybyOnly || planet == null || planet.Mu <= 0) return 0.0;
-            double rp = planet.RadiusKm + Math.Max(0.0, peAKm);
-            double ra = planet.RadiusKm + Math.Max(peAKm, apAKm);
-            double aTarget = (rp + ra) * 0.5;
-            double vTargetPeri = Math.Sqrt(planet.Mu * (2.0 / rp - 1.0 / aTarget));
-            double vHypPeri = Math.Sqrt(vInfArrKms * vInfArrKms + 2.0 * planet.Mu / rp);
-            return Math.Max(0.0, vHypPeri - vTargetPeri);
+            return PykepNative.CalculateArrivalInsertionDeltaV(vInfArrKms, planet.Mu, planet.RadiusKm, peAKm, apAKm, false);
         }
 
         /// <summary>
         /// 原生调用 PyKEP C++ 评估多段 MGA 轨道 (数据封送并直接解算)
         /// </summary>
-        public static MGASolution BuildFullSolution(double[] genome, List<string> fullChain, MGAConfig config) {
+        public static MGASolution BuildFullSolution(double[] genome, List<string> fullChain, MGAConfig config, bool computeAdvanced = true) {
             if (genome == null || fullChain == null || fullChain.Count < 2) return null;
             int legCount = fullChain.Count - 1;
             if (legCount > 16) return null;
@@ -421,25 +803,261 @@ namespace KSPGMAT.MGA {
                 currentUT = arrUT;
             }
 
+            if (config != null) config.SyncStrategiesWithChain(legCount);
+
+            // 1. 优先使用官方统一异构分段混合求解器 (Hybrid Multi-Strategy Evaluator)
+            if (_fnMGAHybridEvaluate != null) {
+                var legStrats = new int[legCount];
+                for (int k = 0; k < legCount; k++) {
+                    if (config != null && config.LegStrategies != null && k < config.LegStrategies.Count) {
+                        legStrats[k] = (int)config.LegStrategies[k];
+                    } else if (config != null && config.EngineMode == MGAEngineMode.DeepSpaceManeuver1DSM) {
+                        legStrats[k] = 1;
+                    } else if (config != null && config.EngineMode == MGAEngineMode.LowThrustSimsFlanagan) {
+                        legStrats[k] = 2;
+                    } else {
+                        legStrats[k] = 0;
+                    }
+                }
+
+                int fbCount = Math.Max(1, legCount - 1);
+                var fbStrats = new int[fbCount];
+                for (int k = 0; k < fbCount; k++) {
+                    if (config != null && config.FlybyStrategies != null && k < config.FlybyStrategies.Count) {
+                        fbStrats[k] = (int)config.FlybyStrategies[k];
+                    } else {
+                        fbStrats[k] = 0;
+                    }
+                }
+
+                var dsmEtas = new double[legCount];
+                var fbRps = new double[legCount];
+                var fbBetas = new double[legCount];
+
+                for (int k = 0; k < legCount; k++) {
+                    dsmEtas[k] = (config != null && config.DsmEtas != null && k < config.DsmEtas.Count && config.DsmEtas[k] > 0) ? config.DsmEtas[k] : (config != null ? config.DsmEtaDefault : 0.5);
+                    fbRps[k] = (config != null && config.FlybyRpKms != null && k < config.FlybyRpKms.Count) ? config.FlybyRpKms[k] : 0.0;
+                    fbBetas[k] = (config != null && config.FlybyBetasRad != null && k < config.FlybyBetasRad.Count) ? config.FlybyBetasRad[k] : 0.0;
+                }
+
+                int status = _fnMGAHybridEvaluate(
+                    depPlanets, arrPlanets, tofs,
+                    legStrats, fbStrats,
+                    dsmEtas, fbRps, fbBetas,
+                    legCount,
+                    config != null ? config.DeparturePeAKm : 200.0, config != null ? config.DepartureApAKm : 200.0,
+                    config != null ? config.DepartureInclinationDeg : 0.0,
+                    config != null ? config.DestinationPeAKm : 200.0, config != null ? config.DestinationApAKm : 200.0,
+                    (config != null && config.NoInsertionBurn) ? 1 : 0,
+                    out NativeMGA1DSMSolution n1Sol);
+
+                if (status == 0) {
+                    var sol1 = MapNative1DSMSolution(n1Sol, genome[0], fullChain, config);
+                    for (int k = 0; k < sol1.Legs.Count && k < legStrats.Length; k++) {
+                        sol1.Legs[k].Strategy = (MGALegStrategy)legStrats[k];
+                    }
+                    if (computeAdvanced) {
+                        PopulateAdvancedAstrodynamics(sol1, genome, fullChain, config);
+                    }
+                    return sol1;
+                }
+            }
+
+            // 1.1 回退到单独的 1-DSM 分支
+            if (config != null && config.EngineMode == MGAEngineMode.DeepSpaceManeuver1DSM && _fnMGA1DSMEvaluate != null) {
+                var dsmEtas = new double[legCount];
+                var fbRps = new double[legCount];
+                var fbBetas = new double[legCount];
+
+                for (int k = 0; k < legCount; k++) {
+                    dsmEtas[k] = (config.DsmEtas != null && k < config.DsmEtas.Count && config.DsmEtas[k] > 0) ? config.DsmEtas[k] : config.DsmEtaDefault;
+                    fbRps[k] = (config.FlybyRpKms != null && k < config.FlybyRpKms.Count) ? config.FlybyRpKms[k] : 0.0;
+                    fbBetas[k] = (config.FlybyBetasRad != null && k < config.FlybyBetasRad.Count) ? config.FlybyBetasRad[k] : 0.0;
+                }
+
+                int status = _fnMGA1DSMEvaluate(
+                    depPlanets, arrPlanets, tofs,
+                    dsmEtas, fbRps, fbBetas,
+                    legCount,
+                    config.DeparturePeAKm, config.DepartureApAKm,
+                    config.DepartureInclinationDeg,
+                    config.DestinationPeAKm, config.DestinationApAKm,
+                    config.NoInsertionBurn ? 1 : 0,
+                    out NativeMGA1DSMSolution n1Sol);
+
+                if (status == 0) {
+                    var sol1 = MapNative1DSMSolution(n1Sol, genome[0], fullChain, config);
+                    if (computeAdvanced) {
+                        PopulateAdvancedAstrodynamics(sol1, genome, fullChain, config);
+                    }
+                    return sol1;
+                }
+            }
+
+            // 2. 默认或回退到标准纯脉冲多重借力 (Ballistic MGA)
             if (_fnMGAEvaluate != null) {
                 int status = _fnMGAEvaluate(
                     depPlanets, arrPlanets, tofs, legCount,
                     config.DeparturePeAKm, config.DepartureApAKm,
+                    config.DepartureInclinationDeg,
                     config.DestinationPeAKm, config.DestinationApAKm,
                     config.NoInsertionBurn ? 1 : 0,
                     out NativeMGASolution nativeSol);
 
                 if (status == 0) {
-                    return MapNativeSolution(nativeSol, genome[0], fullChain, config);
+                    var sol = MapNativeSolution(nativeSol, genome[0], fullChain, config);
+                    if (computeAdvanced) {
+                        PopulateAdvancedAstrodynamics(sol, genome, fullChain, config);
+                    }
+                    return sol;
                 }
             }
 
-            // 原生 MGA 桥不可用或评估失败 -> 基线7门控: 默认禁止托管近似回退
-            if (!PykepNative.AllowManagedFallback) {
-                PykepNative.ReportManagedFallbackBlocked();
-                return null;
+            // 原生 MGA 桥解算失败或未就绪：100% 遵守基线0/7/11，严禁托管自编公式拟合
+            return null;
+        }
+
+        private static void PopulateAdvancedAstrodynamics(MGASolution sol, double[] genome, List<string> fullChain, MGAConfig config) {
+            if (sol == null || sol.Legs == null || sol.Legs.Count == 0 || config == null) return;
+
+            try {
+                var leg0 = sol.Legs[0];
+                var lastLeg = sol.Legs.Last();
+
+                // Feature 5: 无奇异 MEE 修正等分轨道根数
+                if (SolarSystemCatalog.SunMu > 0) {
+                    sol.DepartureMEE = CartesianToMEE(leg0.DeparturePosKm, leg0.DepartureVelKms, SolarSystemCatalog.SunMu);
+                }
+
+                // Feature 3: 劳登主矢量最优性评估 (Primer Vector)
+                var pDep = SolarSystemCatalog.GetPlanet(leg0.FromBody);
+                var pArr = SolarSystemCatalog.GetPlanet(lastLeg.ToBody);
+                if (pDep != null && pArr != null) {
+                    pDep.GetHeliocentricState(leg0.DepartureUT, out Vector3d _, out Vector3d vDepPla);
+                    pArr.GetHeliocentricState(lastLeg.ArrivalUT, out Vector3d rDestPla, out Vector3d vDestPla);
+
+                    Vector3d dv1 = leg0.DepartureVelKms - vDepPla;
+                    Vector3d dv2 = lastLeg.ArrivalVelKms - vDestPla;
+                    sol.PrimerVector = CalculatePrimerVector(leg0.DeparturePosKm, leg0.DepartureVelKms, dv1, dv2, leg0.ToFDays * 86400.0);
+
+                    // Feature 2: 目标天体双曲飞掠 B-Plane 与 TCM 中道修正计算
+                    if (pArr.Mu > 0) {
+                        Vector3d rRel = lastLeg.ArrivalPosKm - rDestPla;
+                        Vector3d vRel = lastLeg.ArrivalVelKms - vDestPla;
+                        sol.BPlane = CalculateBPlane(rRel, vRel, pArr.Mu);
+
+                        // 计算中道 1/2 处 TCM 点火
+                        double midUT = leg0.DepartureUT + leg0.ToFDays * 86400.0 * 0.5;
+                        double dtToEnc = (lastLeg.ArrivalUT - midUT);
+                        Vector3d rMid = (leg0.DeparturePosKm + leg0.ArrivalPosKm) * 0.5;
+                        Vector3d vMid = leg0.DepartureVelKms;
+                        sol.SuggestedTCM = CalculateBPlaneTCM(rMid, vMid, dtToEnc, rRel, vRel, config.TargetBDotTKm, config.TargetBDotRKm, pArr.Mu);
+                    }
+                }
+
+                // Feature 6: 连续低推力模拟 (Sims-Flanagan)
+                if (config.EngineMode == MGAEngineMode.LowThrustSimsFlanagan) {
+                    double tofSec = leg0.ToFDays * 86400.0;
+                    int nSeg = Math.Max(4, Math.Min(32, config.LowThrustSegments));
+                    var throttles = new double[nSeg * 3];
+                    for (int i = 0; i < nSeg; i++) {
+                        throttles[3 * i] = 1.0;
+                    }
+                    sol.LowThrustSolution = EvaluateSimsFlanagan(
+                        leg0.DeparturePosKm, leg0.DepartureVelKms, config.SpacecraftWetMassKg,
+                        leg0.ArrivalPosKm, leg0.ArrivalVelKms, config.SpacecraftWetMassKg * 0.85,
+                        tofSec, config.LowThrustMaxThrustN, config.LowThrustIspSec, SolarSystemCatalog.SunMu,
+                        nSeg, throttles);
+                }
+
+                // Feature 4: 帕累托前沿权衡曲线 (Pareto Trade-Off Curve)
+                if (sol.ParetoFront == null || sol.ParetoFront.Count == 0) {
+                    sol.ParetoFront = GenerateParetoFront(genome, fullChain, config, 9);
+                }
+            } catch (Exception ex) {
+                KSPGMATLog.Warn($"[PykepBridge] PopulateAdvancedAstrodynamics note: {ex.Message}");
             }
-            return ManagedMGAEvaluate(depPlanets, arrPlanets, tofs, genome[0], fullChain, config);
+        }
+
+        private static MGASolution MapNative1DSMSolution(NativeMGA1DSMSolution nSol, double startUT, List<string> fullChain, MGAConfig config) {
+            var sol = new MGASolution {
+                DepartureUT = startUT,
+                ArrivalUT = startUT + nSol.total_flight_days * 86400.0,
+                TotalFlightDays = nSol.total_flight_days,
+                LaunchDeltaVKms = nSol.launch_dv_kms,
+                InsertionDeltaVKms = nSol.insertion_dv_kms,
+                TotalDeltaVKms = nSol.total_dv_kms,
+                AllLegsFeasible = nSol.all_feasible != 0,
+                FlybyChainSummary = string.Join("  ->  ", fullChain)
+            };
+
+            double curUT = startUT;
+            for (int k = 0; k < nSol.leg_count; k++) {
+                var nl = nSol.legs[k];
+                double arrUT = curUT + nl.tof_sec;
+
+                var leg = new MGALegResult {
+                    LegIndex = k,
+                    FromBody = fullChain[k],
+                    ToBody = fullChain[k + 1],
+                    DepartureUT = curUT,
+                    ArrivalUT = arrUT,
+                    ToFDays = nl.tof_sec / 86400.0,
+                    DeparturePosKm = new Vector3d(nl.r1x, nl.r1y, nl.r1z),
+                    ArrivalPosKm = new Vector3d(nl.r2x, nl.r2y, nl.r2z),
+                    DepartureVelKms = new Vector3d(nl.v1x, nl.v1y, nl.v1z),
+                    ArrivalVelKms = new Vector3d(nl.v2x, nl.v2y, nl.v2z),
+                    VInfDepartureKms = new Vector3d(nl.v_inf_dep_x, nl.v_inf_dep_y, nl.v_inf_dep_z),
+                    VInfArrivalKms = new Vector3d(nl.v_inf_arr_x, nl.v_inf_arr_y, nl.v_inf_arr_z),
+                    FlybyTurningAngleDeg = nl.flyby_turn_deg,
+                    FlybyPeriapsisRadiusKm = nl.flyby_rp_km,
+                    FlybyPeriapsisAltitudeKm = nl.flyby_rp_km - SolarSystemCatalog.GetPlanet(fullChain[k]).RadiusKm,
+                    FlybyDeltaVKms = nl.flyby_dv_kms,
+                    IsFeasible = nl.is_feasible != 0,
+                    HasDSM = nl.has_dsm != 0
+                };
+
+                if (nl.has_dsm != 0) {
+                    leg.DSM = new DSMResult {
+                        EpochOffsetSec = nl.dsm.epoch_offset_sec,
+                        PositionKm = new Vector3d(nl.dsm.pos_x, nl.dsm.pos_y, nl.dsm.pos_z),
+                        DeltaVKms = new Vector3d(nl.dsm.dv_x, nl.dsm.dv_y, nl.dsm.dv_z),
+                        DeltaVMs = nl.dsm.dv_mag_ms,
+                        ProgradeMs = nl.dsm.prograde_ms,
+                        NormalMs = nl.dsm.normal_ms,
+                        RadialMs = nl.dsm.radial_ms
+                    };
+                    leg.DSMPositionKm = leg.DSM.PositionKm;
+                    leg.ProgradeMs = nl.dsm.prograde_ms;
+                    leg.NormalMs = nl.dsm.normal_ms;
+                    leg.RadialMs = nl.dsm.radial_ms;
+                } else {
+                    leg.ProgradeMs = (k == 0) ? (nSol.launch_dv_kms * 1000.0) : (nl.flyby_dv_kms * 1000.0);
+                    leg.NormalMs = 0.0;
+                    leg.RadialMs = 0.0;
+                }
+
+                if (k == 0) {
+                    leg.C3Kms2 = nSol.c3_kms2;
+                    leg.EjectionDeltaVKms = nSol.launch_dv_kms;
+                    leg.EjectionAngleDeg = nSol.ejection_angle_deg;
+                    leg.EjectionInclinationDeg = nSol.ejection_inc_deg;
+                    leg.EjectionLANDeg = nSol.ejection_lan_deg;
+                    if (leg.ProgradeMs == 0 && nSol.launch_dv_kms > 0) {
+                        leg.ProgradeMs = nSol.launch_dv_kms * 1000.0;
+                    }
+                    leg.PhaseAngleDeg = (Math.Atan2(nl.r2y, nl.r2x) - Math.Atan2(nl.r1y, nl.r1x)) * Mathf.Rad2Deg;
+                    if (leg.PhaseAngleDeg < 0) leg.PhaseAngleDeg += 360.0;
+                } else if (k == nSol.leg_count - 1) {
+                    leg.InsertionDeltaVKms = nSol.insertion_dv_kms;
+                }
+
+                sol.Legs.Add(leg);
+                curUT = arrUT;
+            }
+
+            sol.BuildEvents(config);
+            return sol;
         }
 
         private static MGASolution MapNativeSolution(NativeMGASolution nSol, double startUT, List<string> fullChain, MGAConfig config) {
@@ -476,7 +1094,7 @@ namespace KSPGMAT.MGA {
                     FlybyPeriapsisRadiusKm = nl.flyby_rp_km,
                     FlybyPeriapsisAltitudeKm = nl.flyby_rp_km - SolarSystemCatalog.GetPlanet(fullChain[k]).RadiusKm,
                     FlybyDeltaVKms = nl.flyby_dv_kms,
-                    ProgradeMs = nl.prograde_ms,
+                    ProgradeMs = (k == 0 && Math.Abs(nl.prograde_ms) < 1e-4) ? (nSol.launch_dv_kms * 1000.0) : nl.prograde_ms,
                     NormalMs = nl.normal_ms,
                     RadialMs = nl.radial_ms,
                     IsFeasible = nl.is_feasible != 0
@@ -488,6 +1106,9 @@ namespace KSPGMAT.MGA {
                     leg.EjectionAngleDeg = nSol.ejection_angle_deg;
                     leg.EjectionInclinationDeg = nSol.ejection_inc_deg;
                     leg.EjectionLANDeg = nSol.ejection_lan_deg;
+                    if (leg.ProgradeMs == 0 && nSol.launch_dv_kms > 0) {
+                        leg.ProgradeMs = nSol.launch_dv_kms * 1000.0;
+                    }
                     leg.PhaseAngleDeg = (Math.Atan2(nl.r2y, nl.r2x) - Math.Atan2(nl.r1y, nl.r1x)) * Mathf.Rad2Deg;
                     if (leg.PhaseAngleDeg < 0) leg.PhaseAngleDeg += 360.0;
                 } else if (k == nSol.leg_count - 1) {
@@ -499,135 +1120,159 @@ namespace KSPGMAT.MGA {
             }
 
             sol.BuildEvents(config);
+
+            try {
+                UnityEngine.Debug.Log($"[KSPGMAT-Pykep] 映射原生 MGA 解: 序列='{sol.FlybyChainSummary}' | 发射ΔV={sol.LaunchDeltaVKms * 1000.0:F1} m/s, 制动ΔV={sol.InsertionDeltaVKms * 1000.0:F1} m/s, 总ΔV={sol.TotalDeltaVKms * 1000.0:F1} m/s, 飞行={sol.TotalFlightDays:F1}天, 可行性={sol.AllLegsFeasible}");
+                for (int k = 0; k < sol.Legs.Count; k++) {
+                    var l = sol.Legs[k];
+                    UnityEngine.Debug.Log($"[KSPGMAT-Pykep]   Leg #{k + 1}: {l.FromBody} -> {l.ToBody} | 出发UT={l.DepartureUT:F1}, 到达UT={l.ArrivalUT:F1}, 飞行={l.ToFDays:F1}d, 相角={l.PhaseAngleDeg:F1}°, C3={l.C3Kms2:F2} km²/s², VNC=({l.ProgradeMs:F1}, {l.NormalMs:F1}, {l.RadialMs:F1}) m/s, R1={l.DeparturePosKm.magnitude / 1.496e8:F3}AU, R2={l.ArrivalPosKm.magnitude / 1.496e8:F3}AU");
+                }
+            } catch { }
+
             return sol;
         }
 
-        private static MGASolution ManagedMGAEvaluate(
-            NativePlanetState[] depPlanets, NativePlanetState[] arrPlanets, double[] tofs,
-            double startUT, List<string> fullChain, MGAConfig config)
-        {
-            // 基线7: 托管近似评估仅在显式开启回退时允许
-            if (!PykepNative.AllowManagedFallback) {
-                PykepNative.ReportManagedFallbackBlocked();
-                return null;
-            }
-            int legCount = depPlanets.Length;
-            var sol = new MGASolution {
-                DepartureUT = startUT,
-                AllLegsFeasible = true,
-                FlybyChainSummary = string.Join("  ->  ", fullChain)
+        // =====================================================================
+        // PUBLIC ASTRODYNAMICS WRAPPER METHODS (Pure Native Callers)
+        // =====================================================================
+
+        public static PrimerVectorResult CalculatePrimerVector(Vector3d r1, Vector3d v1, Vector3d dv1, Vector3d dv2, double tofSec) {
+            if (_fnCalcPrimerVector == null || tofSec <= 0) return null;
+            double[] r1Arr = new double[] { r1.x, r1.y, r1.z };
+            double[] v1Arr = new double[] { v1.x, v1.y, v1.z };
+            double[] dv1Arr = new double[] { dv1.x, dv1.y, dv1.z };
+            double[] dv2Arr = new double[] { dv2.x, dv2.y, dv2.z };
+            int status = _fnCalcPrimerVector(r1Arr, v1Arr, dv1Arr, dv2Arr, tofSec, SolarSystemCatalog.SunMu, out NativePrimerVectorResult nPv);
+            if (status != 0) return null;
+            int n = Math.Min(nPv.sample_count, 32);
+            var res = new PrimerVectorResult {
+                SampleCount = n,
+                TimesSec = new double[n],
+                PMags = new double[n],
+                MaxPMag = nPv.max_p_mag,
+                MaxPTimeSec = nPv.max_p_time_sec,
+                IsOptimal = nPv.is_optimal != 0
             };
+            Array.Copy(nPv.times_sec, res.TimesSec, n);
+            Array.Copy(nPv.p_mags, res.PMags, n);
+            return res;
+        }
 
-            double curUT = startUT;
-            double totalSec = 0.0;
-            Vector3d lastVOut = Vector3d.zero;
-            double totalDV = 0.0;
+        public static BPlaneResult CalculateBPlane(Vector3d rRel, Vector3d vRel, double bodyMu) {
+            if (_fnCalcBPlane == null || bodyMu <= 0) return null;
+            double[] rArr = new double[] { rRel.x, rRel.y, rRel.z };
+            double[] vArr = new double[] { vRel.x, vRel.y, vRel.z };
+            int status = _fnCalcBPlane(rArr, vArr, bodyMu, out NativeBPlaneResult nBp);
+            if (status != 0) return null;
+            return new BPlaneResult {
+                BDotTKm = nBp.b_dot_t_km,
+                BDotRKm = nBp.b_dot_r_km,
+                BMagKm = nBp.b_mag_km,
+                ThetaDeg = nBp.theta_deg,
+                VInfMagKms = nBp.v_inf_mag_kms,
+                SHat = new Vector3d(nBp.s_hat[0], nBp.s_hat[1], nBp.s_hat[2]),
+                THat = new Vector3d(nBp.t_hat[0], nBp.t_hat[1], nBp.t_hat[2]),
+                RHat = new Vector3d(nBp.r_hat[0], nBp.r_hat[1], nBp.r_hat[2])
+            };
+        }
 
-            for (int k = 0; k < legCount; k++) {
-                double tof = tofs[k];
-                totalSec += tof;
-                double arrUT = curUT + tof;
+        public static TCMResult CalculateBPlaneTCM(Vector3d rTcm, Vector3d vTcm, double dtToEncSec, Vector3d rEncCurr, Vector3d vEncCurr, double targetBDotT, double targetBDotR, double bodyMu) {
+            if (_fnCalcBPlaneTCM == null || bodyMu <= 0) return null;
+            double[] rTcmArr = new double[] { rTcm.x, rTcm.y, rTcm.z };
+            double[] vTcmArr = new double[] { vTcm.x, vTcm.y, vTcm.z };
+            double[] rEncArr = new double[] { rEncCurr.x, rEncCurr.y, rEncCurr.z };
+            double[] vEncArr = new double[] { vEncCurr.x, vEncCurr.y, vEncCurr.z };
+            int status = _fnCalcBPlaneTCM(rTcmArr, vTcmArr, dtToEncSec, rEncArr, vEncArr, targetBDotT, targetBDotR, bodyMu, out NativeTCMResult nTcm);
+            if (status != 0) return null;
+            return new TCMResult {
+                DeltaVKms = new Vector3d(nTcm.dv_x, nTcm.dv_y, nTcm.dv_z),
+                DeltaVMs = nTcm.dv_mag_ms,
+                ProgradeMs = nTcm.prograde_ms,
+                NormalMs = nTcm.normal_ms,
+                RadialMs = nTcm.radial_ms
+            };
+        }
 
-                var p1 = depPlanets[k];
-                var p2 = arrPlanets[k];
+        public static MEEResult CartesianToMEE(Vector3d r, Vector3d v, double mu) {
+            if (_fnCartesianToMEE == null || mu <= 0) return null;
+            double[] rArr = new double[] { r.x, r.y, r.z };
+            double[] vArr = new double[] { v.x, v.y, v.z };
+            int status = _fnCartesianToMEE(rArr, vArr, mu, out NativeMEE mee);
+            if (status != 0) return null;
+            return new MEEResult { P = mee.p, F = mee.f, G = mee.g, H = mee.h, K = mee.k, L = mee.L };
+        }
 
-                Vector3d r1 = new Vector3d(p1.rx, p1.ry, p1.rz);
-                Vector3d r2 = new Vector3d(p2.rx, p2.ry, p2.rz);
-                Vector3d vp1 = new Vector3d(p1.vx, p1.vy, p1.vz);
-                Vector3d vp2 = new Vector3d(p2.vx, p2.vy, p2.vz);
+        public static SimsFlanaganResult EvaluateSimsFlanagan(Vector3d r1, Vector3d v1, double m0Kg, Vector3d r2, Vector3d v2, double mfGuessKg, double tofSec, double maxThrustN, double ispSec, double mu, int nSeg, double[] throttles) {
+            if (_fnSimsFlanaganEvaluate == null || tofSec <= 0 || nSeg <= 0) return null;
+            double[] r1Arr = new double[] { r1.x, r1.y, r1.z };
+            double[] v1Arr = new double[] { v1.x, v1.y, v1.z };
+            double[] r2Arr = new double[] { r2.x, r2.y, r2.z };
+            double[] v2Arr = new double[] { v2.x, v2.y, v2.z };
+            int status = _fnSimsFlanaganEvaluate(r1Arr, v1Arr, m0Kg, r2Arr, v2Arr, mfGuessKg, tofSec, maxThrustN, ispSec, mu, nSeg, throttles, out NativeSimsFlanaganResult nSf);
+            if (status != 0) return null;
+            var res = new SimsFlanaganResult {
+                DeltaRKm = nSf.delta_r_km,
+                DeltaVKms = nSf.delta_v_kms,
+                DeltaMKg = nSf.delta_m_kg,
+                TotalDeltaVMs = nSf.total_dv_ms,
+                FinalMassKg = nSf.final_mass_kg,
+                SegmentCount = nSf.n_segments
+            };
+            for (int i = 0; i < nSf.n_segments; i++) {
+                res.SegmentPositionsKm.Add(new Vector3d(nSf.segment_pos[3 * i], nSf.segment_pos[3 * i + 1], nSf.segment_pos[3 * i + 2]));
+                res.ThrottleVectors.Add(new Vector3d(nSf.throttle[3 * i], nSf.throttle[3 * i + 1], nSf.throttle[3 * i + 2]));
+            }
+            return res;
+        }
 
-                PykepNative.SolveLambert(r1, r2, tof, SolarSystemCatalog.SunMu, false, out Vector3d v1, out Vector3d v2);
+        public static List<ParetoTradeOffPoint> GenerateParetoFront(double[] bestGenome, List<string> fullChain, MGAConfig config, int count = 9) {
+            var front = new List<ParetoTradeOffPoint>();
+            if (bestGenome == null || fullChain == null || fullChain.Count < 2) return front;
 
-                var leg = new MGALegResult {
-                    LegIndex = k,
-                    FromBody = fullChain[k],
-                    ToBody = fullChain[k + 1],
-                    DepartureUT = curUT,
-                    ArrivalUT = arrUT,
-                    ToFDays = tof / 86400.0,
-                    DeparturePosKm = r1,
-                    ArrivalPosKm = r2,
-                    DepartureVelKms = v1,
-                    ArrivalVelKms = v2,
-                    VInfDepartureKms = v1 - vp1,
-                    VInfArrivalKms = v2 - vp2,
-                    IsFeasible = true
-                };
+            double[] scaleFactors = new double[] { 0.70, 0.77, 0.85, 0.92, 1.0, 1.10, 1.22, 1.35, 1.50 };
+            for (int s = 0; s < Math.Min(count, scaleFactors.Length); s++) {
+                double factor = scaleFactors[s];
+                double[] sampleGenome = (double[])bestGenome.Clone();
+                for (int k = 1; k < sampleGenome.Length; k++) {
+                    sampleGenome[k] *= factor;
+                }
+                var testSol = BuildFullSolution(sampleGenome, fullChain, config, computeAdvanced: false);
+                if (testSol != null && testSol.TotalDeltaVKms > 0 && !double.IsNaN(testSol.TotalDeltaVKms)) {
+                    front.Add(new ParetoTradeOffPoint {
+                        TotalFlightDays = testSol.TotalFlightDays,
+                        TotalDeltaVKms = testSol.TotalDeltaVKms,
+                        LaunchDeltaVKms = testSol.LaunchDeltaVKms,
+                        FlybyDeltaVKms = testSol.TotalDeltaVKms - testSol.LaunchDeltaVKms - testSol.InsertionDeltaVKms,
+                        Genome = sampleGenome
+                    });
+                }
+            }
+            front.Sort((a, b) => a.TotalFlightDays.CompareTo(b.TotalFlightDays));
+            return front;
+        }
 
-                double vInfDepMag = leg.VInfDepartureKms.magnitude;
-
-                if (k == 0) {
-                    leg.C3Kms2 = vInfDepMag * vInfDepMag;
-                    sol.LaunchDeltaVKms = CalculateDepartureDeltaV(vInfDepMag, SolarSystemCatalog.GetPlanet(fullChain[0]), config.DeparturePeAKm, config.DepartureApAKm);
-                    leg.EjectionDeltaVKms = sol.LaunchDeltaVKms;
-                    totalDV += sol.LaunchDeltaVKms;
-
-                    leg.ProgradeMs = sol.LaunchDeltaVKms * 1000.0;
-                    leg.NormalMs = 0.0;
-                    leg.RadialMs = 0.0;
-
-                    double dec = Math.Asin(Math.Max(-1.0, Math.Min(1.0, leg.VInfDepartureKms.z / Math.Max(1e-6, vInfDepMag)))) * Mathf.Rad2Deg;
-                    double ra = Math.Atan2(leg.VInfDepartureKms.y, leg.VInfDepartureKms.x) * Mathf.Rad2Deg;
-                    if (ra < 0) ra += 360.0;
-                    leg.EjectionInclinationDeg = Math.Abs(dec);
-                    leg.EjectionLANDeg = ra;
-
-                    double rPark = p1.radius + config.DeparturePeAKm;
-                    double eHyp = 1.0 + (rPark * vInfDepMag * vInfDepMag) / Math.Max(1e-6, p1.mu);
-                    double beta = Math.Acos(-1.0 / Math.Max(1.0001, eHyp)) * Mathf.Rad2Deg;
-                    double ejAng = 180.0 - (beta - 90.0);
-                    if (ejAng > 180.0) ejAng = 360.0 - ejAng;
-                    leg.EjectionAngleDeg = ejAng;
-                    leg.PhaseAngleDeg = (Math.Atan2(r2.y, r2.x) - Math.Atan2(r1.y, r1.x)) * Mathf.Rad2Deg;
-                    if (leg.PhaseAngleDeg < 0) leg.PhaseAngleDeg += 360.0;
-                } else {
-                    Vector3d vIn = lastVOut;
-                    Vector3d vOut = leg.VInfDepartureKms;
-
-                    bool feasible = PykepNative.EvaluateFlyby(
-                        vIn, vOut, p1.mu, p1.safe_radius,
-                        out double turnDeg, out double rpKm, out double flybyDV);
-
-                    leg.FlybyTurningAngleDeg = turnDeg;
-                    leg.FlybyPeriapsisRadiusKm = rpKm;
-                    leg.FlybyPeriapsisAltitudeKm = rpKm - p1.radius;
-                    leg.FlybyDeltaVKms = flybyDV;
-                    leg.IsFeasible = feasible && (rpKm >= p1.safe_radius);
-                    if (!leg.IsFeasible) sol.AllLegsFeasible = false;
-
-                    totalDV += flybyDV;
-
-                    if (flybyDV > 0.001) {
-                        Vector3d dVVec = vOut - vIn;
-                        Vector3d vHat = (vIn.sqrMagnitude > 1e-6) ? vIn.normalized : vp1.normalized;
-                        Vector3d nHat = Vector3d.Cross(r1, vHat).normalized;
-                        if (nHat.sqrMagnitude < 0.5) nHat = Vector3d.up;
-                        Vector3d cHat = Vector3d.Cross(vHat, nHat).normalized;
-
-                        leg.ProgradeMs = Vector3d.Dot(dVVec, vHat) * 1000.0;
-                        leg.NormalMs = Vector3d.Dot(dVVec, nHat) * 1000.0;
-                        leg.RadialMs = Vector3d.Dot(dVVec, cHat) * 1000.0;
+        private static double ComputeFitness(MGASolution sol, MGAConfig config) {
+            if (sol == null || double.IsNaN(sol.TotalDeltaVKms)) return 1e9;
+            double fit = sol.TotalDeltaVKms + (sol.AllLegsFeasible ? 0.0 : 50.0);
+            if (config != null) {
+                if (config.ConstrainByVesselDeltaV && config.VesselMaxDeltaVMs > 0) {
+                    double totalMs = sol.TotalDeltaVKms * 1000.0;
+                    if (totalMs > config.VesselMaxDeltaVMs) {
+                        double overKms = (totalMs - config.VesselMaxDeltaVMs) / 1000.0;
+                        fit += overKms * 15.0 + 30.0; // 显著罚函数惩罚超出飞船当前可用 ΔV 预算的解
                     }
                 }
-
-                lastVOut = leg.VInfArrivalKms;
-                sol.Legs.Add(leg);
-                curUT = arrUT;
+                if (config.LockDepartureInclination && sol.Legs != null && sol.Legs.Count > 0) {
+                    double actualInc = sol.Legs[0].EjectionInclinationDeg;
+                    double targetInc = config.DepartureInclinationDeg;
+                    double incErr = Math.Abs(actualInc - targetInc);
+                    if (incErr > 0.05) {
+                        // 逃逸倾角锁定约束罚函数：若逃逸倾角偏离锁定值，按每度 25 km/s + 50 km/s 罚项强力约束
+                        fit += incErr * 25.0 + 50.0;
+                    }
+                }
             }
-
-            if (!config.NoInsertionBurn) {
-                double vInfArr = lastVOut.magnitude;
-                var pDest = SolarSystemCatalog.GetPlanet(fullChain.Last());
-                sol.InsertionDeltaVKms = CalculateArrivalInsertionDeltaV(vInfArr, pDest, config.DestinationPeAKm, config.DestinationApAKm, false);
-                totalDV += sol.InsertionDeltaVKms;
-                sol.Legs.Last().InsertionDeltaVKms = sol.InsertionDeltaVKms;
-            }
-
-            sol.ArrivalUT = curUT;
-            sol.TotalFlightDays = totalSec / 86400.0;
-            sol.TotalDeltaVKms = totalDV;
-            sol.BuildEvents(config);
-            return sol;
+            return fit;
         }
 
         /// <summary>
@@ -689,8 +1334,8 @@ namespace KSPGMAT.MGA {
                 for (int d = 0; d < dim; d++) {
                     pop[i][d] = lowerBounds[d] + random.NextDouble() * (upperBounds[d] - lowerBounds[d]);
                 }
-                var sol = BuildFullSolution(pop[i], fullChain, config);
-                fitness[i] = (sol != null && !double.IsNaN(sol.TotalDeltaVKms)) ? (sol.TotalDeltaVKms + (sol.AllLegsFeasible ? 0.0 : 50.0)) : 1e9;
+                var sol = BuildFullSolution(pop[i], fullChain, config, computeAdvanced: false);
+                fitness[i] = ComputeFitness(sol, config);
             }
 
             for (int gen = 0; gen < maxGens; gen++) {
@@ -721,8 +1366,8 @@ namespace KSPGMAT.MGA {
                         }
                     }
 
-                    var candSol = BuildFullSolution(candidate, fullChain, config);
-                    double candFit = (candSol != null && !double.IsNaN(candSol.TotalDeltaVKms)) ? (candSol.TotalDeltaVKms + (candSol.AllLegsFeasible ? 0.0 : 50.0)) : 1e9;
+                    var candSol = BuildFullSolution(candidate, fullChain, config, computeAdvanced: false);
+                    double candFit = ComputeFitness(candSol, config);
                     if (candFit < fitness[i]) {
                         pop[i] = candidate;
                         fitness[i] = candFit;
@@ -737,7 +1382,7 @@ namespace KSPGMAT.MGA {
 
             foreach (var idx in rankedIndices) {
                 if (fitness[idx] >= 1e8) continue;
-                var sol = BuildFullSolution(pop[idx], fullChain, config);
+                var sol = BuildFullSolution(pop[idx], fullChain, config, computeAdvanced: true);
                 if (sol != null && !double.IsNaN(sol.TotalDeltaVKms)) {
                     int keyUT = (int)(sol.DepartureUT / (86400.0 * 3.0));
                     if (!seenDeparture.Contains(keyUT)) {
@@ -776,23 +1421,36 @@ namespace KSPGMAT.MGA {
             string origin = config.DepartureBody;
             string dest = config.DestinationBody;
 
-            var originP = SolarSystemCatalog.GetPlanet(origin);
-            var destP = SolarSystemCatalog.GetPlanet(dest);
+            // 出发与目标天体相同时无星际转移物理意义，直接返回空列表，杜绝无向 BFS 指数级爆炸与主线程卡死
+            if (origin.Equals(dest, StringComparison.OrdinalIgnoreCase)) return results;
 
-            int oIdx = SolarSystemCatalog.GetPlanetIndex(origin);
-            int dIdx = SolarSystemCatalog.GetPlanetIndex(dest);
+            var planetList = SolarSystemCatalog.GetAvailablePlanets();
+            if (planetList == null || planetList.Count == 0) return results;
 
-            if (oIdx < 0 || dIdx < 0) return results;
+            var bodyIndexMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < planetList.Count; i++) {
+                if (!string.IsNullOrEmpty(planetList[i].Name) && !bodyIndexMap.ContainsKey(planetList[i].Name)) {
+                    bodyIndexMap[planetList[i].Name] = i;
+                }
+            }
+
+            if (!bodyIndexMap.TryGetValue(origin, out int oIdx) || !bodyIndexMap.TryGetValue(dest, out int dIdx)) {
+                return results;
+            }
 
             var queue = new Queue<(List<string> chain, int resonances, int backLegs)>();
             queue.Enqueue((new List<string> { origin }, 0, 0));
 
             int maxLegs = config.MaxSwingBys + 1;
+            int visitedCount = 0;
 
             while (queue.Count > 0) {
+                // 安全熔断上限，严防异常分支造成游戏卡死
+                if (++visitedCount > 3000 || results.Count >= 100) break;
+
                 var (currentChain, curRes, curBack) = queue.Dequeue();
                 string currentBody = currentChain.Last();
-                int cIdx = SolarSystemCatalog.GetPlanetIndex(currentBody);
+                if (!bodyIndexMap.TryGetValue(currentBody, out int cIdx)) cIdx = -1;
 
                 if (currentChain.Count > 1 && currentBody.Equals(dest, StringComparison.OrdinalIgnoreCase)) {
                     if (!results.Any(r => r.SequenceEqual(currentChain))) {
@@ -803,7 +1461,6 @@ namespace KSPGMAT.MGA {
 
                 if (currentChain.Count >= maxLegs + 1) continue;
 
-                var planetList = SolarSystemCatalog.GetAvailablePlanets();
                 for (int nextIdx = 0; nextIdx < planetList.Count; nextIdx++) {
                     var nextP = planetList[nextIdx];
                     string nextBody = nextP.Name;
@@ -839,6 +1496,10 @@ namespace KSPGMAT.MGA {
         }
 
         public static double GetHohmannTransferTimeDays(string fromBody, string toBody) {
+            if (string.IsNullOrEmpty(fromBody) || string.IsNullOrEmpty(toBody) ||
+                fromBody.Equals(toBody, StringComparison.OrdinalIgnoreCase)) {
+                return 0.0;
+            }
             CelestialBody cb1 = null, cb2 = null;
             if (FlightGlobals.ready && FlightGlobals.Bodies != null) {
                 cb1 = FlightGlobals.Bodies.Find(b => b.name.Equals(fromBody, StringComparison.OrdinalIgnoreCase) || b.bodyName.Equals(fromBody, StringComparison.OrdinalIgnoreCase));
@@ -866,6 +1527,10 @@ namespace KSPGMAT.MGA {
         }
 
         public static double GetSynodicPeriodDays(string fromBody, string toBody) {
+            if (string.IsNullOrEmpty(fromBody) || string.IsNullOrEmpty(toBody) ||
+                fromBody.Equals(toBody, StringComparison.OrdinalIgnoreCase)) {
+                return 365.25;
+            }
             CelestialBody cb1 = null, cb2 = null;
             if (FlightGlobals.ready && FlightGlobals.Bodies != null) {
                 cb1 = FlightGlobals.Bodies.Find(b => b.name.Equals(fromBody, StringComparison.OrdinalIgnoreCase) || b.bodyName.Equals(fromBody, StringComparison.OrdinalIgnoreCase));
@@ -887,13 +1552,20 @@ namespace KSPGMAT.MGA {
         }
 
         public static (double bestDepUT, double tofDays, double approxDV) CalculateHohmannWindow(
-            string fromBody, string toBody, double searchStartUT, double searchSpanDays = 0) 
+            string fromBody, string toBody, double searchStartUT, double searchSpanDays = 0, double targetIncDeg = -1.0) 
         {
-            // 基线7: 彻底弃用 TWP (global::LambertSolver)。
+            // 基线7.0/7.8: 彻底弃用 TWP (global::LambertSolver)。
             // 窗口相角采用基线7.8解析公式 φ = π − ω2·T_hoh, 会合周期 T_syn = 2π/|ω1 − ω2|;
-            // ΔV 评估必须由原生 PyKEP 兰伯特完成, 原生不可用且未开启托管回退时报错。
-            if (!PykepNative.IsAvailable && !PykepNative.AllowManagedFallback) {
-                PykepNative.ReportManagedFallbackBlocked();
+            // ΔV 评估必须由原生 PyKEP 兰伯特完成, 原生不可用时严禁托管近似回退, 统一返回 NaN 失败标志。
+            if (!PykepNative.IsAvailable) {
+                KSPGMATLog.Error("PykepNative 原生库不可用，无法进行霍曼窗口物理评估 (返回失败标志 NaN)");
+                return (double.NaN, double.NaN, double.NaN);
+            }
+
+            if (string.IsNullOrEmpty(fromBody) || string.IsNullOrEmpty(toBody) ||
+                fromBody.Equals(toBody, StringComparison.OrdinalIgnoreCase)) {
+                KSPGMATLog.Warn("霍曼窗口计算出发天体与目标天体相同，已安全退出");
+                return (double.NaN, double.NaN, double.NaN);
             }
 
             var p1 = SolarSystemCatalog.GetPlanet(fromBody);
@@ -915,12 +1587,19 @@ namespace KSPGMAT.MGA {
             reqPhase = ((reqPhase % (2.0 * Math.PI)) + 2.0 * Math.PI) % (2.0 * Math.PI);
 
             double scanSpanDays = (searchSpanDays > 0) ? searchSpanDays : (synodicDays * 1.5);
+            if (targetIncDeg >= 0 && searchSpanDays <= 0) {
+                // 倾角约束模式下扫描范围拓宽至 2 个会合周期，确保覆盖多圈相角几何
+                scanSpanDays = Math.Max(scanSpanDays, synodicDays * 2.0);
+            }
             double scanEndUT = searchStartUT + scanSpanDays * 86400.0;
 
-            // 1) 相角粗扫描: 定位 φ(t) = (θ2 − θ1) mod 2π 最接近 φ 的标称发射窗口
-            double nominalUT = searchStartUT;
-            double minPhaseErr = double.MaxValue;
+            // 1) 相角扫描: 收集相角最接近理论霍曼相角的候选发射窗口
+            var candidateUTs = new List<double>();
             double phaseStep = Math.Max(3600.0, synodicSec / 400.0);
+            double prevErr = double.MaxValue;
+            double prevUT = searchStartUT;
+            bool wasDecreasing = false;
+
             for (double ut = searchStartUT; ut <= scanEndUT; ut += phaseStep) {
                 p1.GetHeliocentricState(ut, out Vector3d posA, out Vector3d velA);
                 p2.GetHeliocentricState(ut, out Vector3d posB, out Vector3d velB);
@@ -928,47 +1607,77 @@ namespace KSPGMAT.MGA {
                 phase = ((phase % (2.0 * Math.PI)) + 2.0 * Math.PI) % (2.0 * Math.PI);
                 double err = Math.Abs(phase - reqPhase);
                 if (err > Math.PI) err = 2.0 * Math.PI - err;
-                if (err < minPhaseErr) {
-                    minPhaseErr = err;
-                    nominalUT = ut;
+
+                if (err < prevErr) {
+                    wasDecreasing = true;
+                } else if (wasDecreasing) {
+                    if (prevErr < 0.25) {
+                        candidateUTs.Add(prevUT);
+                    }
+                    wasDecreasing = false;
                 }
+                prevErr = err;
+                prevUT = ut;
+            }
+            if (candidateUTs.Count == 0) {
+                candidateUTs.Add(searchStartUT);
             }
 
-            // 2) 精扫: 以标称窗口为中心调用原生 PyKEP 兰伯特评估 ΔV (禁止 TWP 遗留算法)
-            double bestUT = nominalUT;
+            // 2) 精扫: 以候选窗口为中心调用原生 PyKEP 兰伯特评估 ΔV 与逃逸赤纬几何
+            double bestUT = candidateUTs[0];
             double bestTofDays = baseTofDays;
             double minDV = double.MaxValue;
 
-            double fineSpanSec = Math.Max(2.0 * 86400.0, synodicSec / 4.0);
-            double fineStartUT = nominalUT - fineSpanSec;
-            double fineEndUT = nominalUT + fineSpanSec;
+            double fineSpanSec = Math.Max(2.0 * 86400.0, synodicSec / 6.0);
             double fineStep = Math.Max(3600.0, synodicSec / 200.0);
 
-            for (double ut = fineStartUT; ut <= fineEndUT; ut += fineStep) {
-                p1.GetHeliocentricState(ut, out Vector3d pos1, out Vector3d vel1);
+            foreach (double candUT in candidateUTs) {
+                double fineStartUT = candUT - fineSpanSec;
+                double fineEndUT = candUT + fineSpanSec;
 
-                for (double tofMul = 0.85; tofMul <= 1.15; tofMul += 0.15) {
-                    double tofSec = baseTofSec * tofMul;
-                    p2.GetHeliocentricState(ut + tofSec, out Vector3d pos2, out Vector3d vel2);
+                for (double ut = fineStartUT; ut <= fineEndUT; ut += fineStep) {
+                    p1.GetHeliocentricState(ut, out Vector3d pos1, out Vector3d vel1);
 
-                    if (PykepNative.SolveLambert(pos1, pos2, tofSec, sunMu, false, out Vector3d v1, out Vector3d v2)) {
-                        double vInf1 = (v1 - vel1).magnitude;
-                        double vInf2 = (v2 - vel2).magnitude;
+                    for (double tofMul = 0.85; tofMul <= 1.15; tofMul += 0.15) {
+                        double tofSec = baseTofSec * tofMul;
+                        p2.GetHeliocentricState(ut + tofSec, out Vector3d pos2, out Vector3d vel2);
 
-                        // 基线7: 出射 ΔV 补丁为 C# 二体公式, 仅在显式开启托管回退时允许
-                        if (PykepNative.AllowManagedFallback) {
+                        if (PykepNative.SolveLambert(pos1, pos2, tofSec, sunMu, false, out Vector3d v1, out Vector3d v2)) {
+                            Vector3d vInf1Vec = v1 - vel1;
+                            double vInf1 = vInf1Vec.magnitude;
+                            double vInf2 = (v2 - vel2).magnitude;
+
+                            // 原生 C++ 评估发射与到达 ΔV
                             double dv1 = CalculateDepartureDeltaV(vInf1, p1, 200.0, 200.0);
-                            if (double.IsNaN(dv1)) continue;
-
-                            double totalDV = dv1 + vInf2;
-                            if (totalDV < minDV) {
-                                minDV = totalDV;
-                                bestUT = ut;
-                                bestTofDays = tofSec / 86400.0;
+                            if (!double.IsNaN(dv1)) {
+                                double totalDV = dv1 + vInf2;
+                                if (targetIncDeg >= 0) {
+                                    // 逃逸渐近线与赤道平面的夹角 (赤纬 declination) = asin(v_z / |v|)
+                                    double decRad = Math.Asin(Math.Max(-1.0, Math.Min(1.0, vInf1Vec.z / Math.Max(1e-6, vInf1))));
+                                    double absDecDeg = Math.Abs(decRad) * (180.0 / Math.PI);
+                                    if (absDecDeg > targetIncDeg) {
+                                        // 渐近线赤纬超出锁定倾角，必须进行大角度面外机动，施加重惩罚
+                                        totalDV += (absDecDeg - targetIncDeg) * 50.0 + 100.0;
+                                    } else {
+                                        // 允许范围内，微调奖励最接近锁定倾角(最佳方位角)的窗口
+                                        totalDV += Math.Abs(absDecDeg - targetIncDeg) * 2.0;
+                                    }
+                                }
+                                if (totalDV < minDV) {
+                                    minDV = totalDV;
+                                    bestUT = ut;
+                                    bestTofDays = tofSec / 86400.0;
+                                }
                             }
                         }
                     }
                 }
+            }
+
+            // 精扫未找到任何有效原生兰伯特解: 返回 NaN 失败标志, 严禁返回近似窗口冒充物理结果
+            if (minDV >= double.MaxValue * 0.5) {
+                KSPGMATLog.Error("霍曼窗口精扫未找到有效原生兰伯特解 (返回失败标志 NaN)");
+                return (double.NaN, double.NaN, double.NaN);
             }
 
             return (bestUT, bestTofDays, minDV);

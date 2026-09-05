@@ -76,3 +76,5 @@ temp_*.script
 
 # Allow GameData Release DLL
 !GameData/KSPGMAT/Plugins/KSPGMAT.dll
+
+pykep_sourcecode/

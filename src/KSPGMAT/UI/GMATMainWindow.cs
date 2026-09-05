@@ -4,6 +4,7 @@ using System.IO;
 using System.Text;
 using UnityEngine;
 using KSPGMAT.Model;
+using KSPGMAT.MGA;
 
 namespace KSPGMAT.UI {
     public partial class GMATMainWindow : MonoBehaviour {
@@ -280,6 +281,9 @@ namespace KSPGMAT.UI {
         void Awake() {
             Instance = this;
             try {
+                KSPGMAT.MGA.SolarSystemCatalog.InitializeMainThread();
+            } catch {}
+            try {
                 I18n.AutoDetect();
             } catch {}
             solveStageText = I18n.T("solve_stage_ready");
@@ -298,6 +302,10 @@ namespace KSPGMAT.UI {
         }
 
         void Update() {
+            try {
+                KSPGMAT.MGA.SolarSystemCatalog.UpdateFlightGlobalsState();
+            } catch {}
+
             // i18n dynamic language registration: rescan loc/ when its contents changed (e.g. a new ru.json)
             if (Time.realtimeSinceStartup - lastI18nRescanTime > I18N_RESCAN_INTERVAL) {
                 lastI18nRescanTime = Time.realtimeSinceStartup;
@@ -364,8 +372,8 @@ namespace KSPGMAT.UI {
             float screenW = Screen.width > 0 ? Screen.width : 1920;
             float screenH = Screen.height > 0 ? Screen.height : 1080;
 
-            float initW = Mathf.Clamp(screenW * 0.72f, 980f, 1360f);
-            float initH = Mathf.Clamp(screenH * 0.76f, 640f, 860f);
+            float initW = Mathf.Clamp(screenW * 0.78f, 1060f, 1440f);
+            float initH = Mathf.Clamp(screenH * 0.82f, 720f, 920f);
             float initX = Mathf.Max(20f, (screenW - initW) * 0.5f);
             float initY = Mathf.Max(20f, (screenH - initH) * 0.5f);
 
@@ -725,16 +733,16 @@ namespace KSPGMAT.UI {
             Vessel v = FlightGlobals.ActiveVessel;
             if (v != null) {
                 GUILayout.Space(6);
-                GUILayout.Label(I18n.ColorFormat("topbar_vessel", v.vesselName, v.mainBody.name), labelValueStyle);
+                GUILayout.Label(I18n.Format("topbar_vessel", v.vesselName, v.mainBody.name), labelValueStyle);
             }
 
             GUILayout.Space(8);
             if (GMATClient.HasFullSpiceEphemeris) {
                 string kernelName = GMATClient.DetectedSpiceKernelName;
-                GUILayout.Label(I18n.ColorFormat("topbar_spice_loaded", kernelName), labelValueStyle);
+                GUILayout.Label(I18n.Format("topbar_spice_loaded", kernelName), labelValueStyle);
             } else {
-                double currentJd = 2433647.5 + (Planetarium.GetUniversalTime() / 86400.0);
-                bool isBefore1957 = currentJd < 2436116.0;
+                double currentJd = EphemerisTimeSystem.UtToJd(Planetarium.GetUniversalTime());
+                bool isBefore1957 = currentJd < EphemerisTimeSystem.GMAT_MIN_EPOCH_JD;
                 if (isBefore1957) {
                     GUILayout.Label(I18n.T("topbar_epoch_pre1957"), labelValueStyle);
                 } else {

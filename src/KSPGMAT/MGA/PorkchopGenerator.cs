@@ -85,7 +85,6 @@ namespace KSPGMAT.MGA {
             double depStartUT, double depSpanDays, 
             double tofMinDays, double tofMaxDays,
             double depAltKm = 200.0, double arrAltKm = 200.0,
-            double depIncDeg = 0.0,
             bool flybyOnly = false,
             int gridW = 100, int gridH = 75,
             Action<float, string> onProgress = null) 
@@ -94,7 +93,7 @@ namespace KSPGMAT.MGA {
                 fromBody, toBody, 
                 depStartUT, depSpanDays, 
                 tofMinDays, tofMaxDays, 
-                depAltKm, arrAltKm, depIncDeg,
+                depAltKm, arrAltKm,
                 flybyOnly, gridW, gridH, onProgress));
 
             // Safely render texture on the main thread after Task.Run completes
@@ -107,7 +106,6 @@ namespace KSPGMAT.MGA {
             double depStartUT, double depSpanDays, 
             double tofMinDays, double tofMaxDays,
             double depAltKm, double arrAltKm,
-            double depIncDeg,
             bool flybyOnly, int gridW, int gridH,
             Action<float, string> onProgress) 
         {
@@ -138,17 +136,15 @@ namespace KSPGMAT.MGA {
             var p1 = SolarSystemCatalog.GetPlanet(fromBody);
             var p2 = SolarSystemCatalog.GetPlanet(toBody);
             double sunMu = SolarSystemCatalog.SunMu;
-            double rPark1 = p1.RadiusKm + depAltKm;
-            double vPark1 = Math.Sqrt(p1.Mu / rPark1);
-            double rPark2 = p2.RadiusKm + arrAltKm;
-            double vPark2 = Math.Sqrt(p2.Mu / rPark2);
 
-            int totalCells = gridW * gridH;
-            int computedCells = 0;
+            if (string.IsNullOrEmpty(fromBody) || string.IsNullOrEmpty(toBody) ||
+                fromBody.Equals(toBody, StringComparison.OrdinalIgnoreCase)) {
+                KSPGMATLog.Warn("出发天体与目标天体相同，无法生成猪排图");
+                return null;
+            }
 
-            // 基线7: 原生不可用且未开启托管回退时, 明确记录错误 (每会话一次), 网格 ΔV 将全部标为无效
-            if (!PykepNative.IsAvailable && !PykepNative.AllowManagedFallback) {
-                PykepNative.ReportManagedFallbackBlocked();
+            if (!PykepNative.IsAvailable) {
+                KSPGMATLog.Error("PykepNative 原生库未就绪，无法生成猪排图");
             }
 
             Parallel.For(0, gridW, gx => {
@@ -175,12 +171,15 @@ namespace KSPGMAT.MGA {
                         double vInfArr = vInfArrVec.magnitude;
                         c3 = vInfDep * vInfDep;   // 原生兰伯特输出 + 原生历表速度的精确超速能量 (非近似)
 
-                        // 基线7: C# 二体 ΔV 补丁仅在显式开启托管回退 (AllowManagedFallback=true) 时允许;
-                        // 默认 (false) 时该格 ΔV 标为无效 (NaN), 不允许静默自算。
-                        if (PykepNative.AllowManagedFallback) {
-                            ejDV = PykepBridge.CalculateDepartureDeltaV(vInfDep, p1, depAltKm, depAltKm) * 1000.0;
+                        // 100% 原生 C++ 动力学计算脱离脉冲与捕获脉冲 (0 托管自编公式)
+                        double depDvKm = PykepBridge.CalculateDepartureDeltaV(vInfDep, p1, depAltKm, depAltKm);
+                        if (!double.IsNaN(depDvKm)) {
+                            ejDV = depDvKm * 1000.0;
                             if (!flybyOnly) {
-                                inDV = PykepBridge.CalculateArrivalInsertionDeltaV(vInfArr, p2, arrAltKm, arrAltKm, false) * 1000.0;
+                                double arrDvKm = PykepBridge.CalculateArrivalInsertionDeltaV(vInfArr, p2, arrAltKm, arrAltKm, false);
+                                if (!double.IsNaN(arrDvKm)) {
+                                    inDV = arrDvKm * 1000.0;
+                                }
                             }
                             totDV = ejDV + inDV;
                         } else {
@@ -194,8 +193,6 @@ namespace KSPGMAT.MGA {
                     grid.EjectDVGrid[gx, gy] = ejDV;
                     grid.InsertDVGrid[gx, gy] = inDV;
                     grid.C3Grid[gx, gy] = c3;
-
-                    System.Threading.Interlocked.Increment(ref computedCells);
                 }
             });
 

@@ -1,6 +1,6 @@
 # KSP_GMAT Agent 编码守则 (baseline_agent.md)
 
-> **用法**：每次对话开始时，把本文件内容附给 coding agent，要求其编写/修改代码时**始终遵守**以下铁律。
+> **用法**：每次对话开始时，把本文件内容附给 coding agent，要求其编写/修改代码时**始终遵守**以下铁律。完成代码时重复：我已遵守baseline
 
 ---
 
@@ -44,8 +44,8 @@
 - 游戏内物理：`FormatUtcGregorian`（真实 UT，1:1 锁相）。
 - GMAT 后端脚本输出：**一律** `FormatGmatSafeEpoch`（<1957 安全映射）。
 
-## 8. 纯净太阳系
-- 只允许真实太阳系天体（用 `PureSolWhitelist`）；**严禁**引入/绘制 Kerbol 虚构天体（Kerbin/Mun/Duna/Jool...）。
+## 8. 天体系统通用直读原则 (Planet Pack Universal In-Game Discovery)
+- 严禁硬编码白名单过滤星球包。直接从 `FlightGlobals.Bodies` 动态读取游戏内物理天体参数与开普勒轨道根数，全量支持 RSS / OPM / JNSQ / Stock 及任意第三方星球包。离线独立测试环境自动回退标准太阳系离线字典。
 
 ## 9. 动力学清单
 - 积分器/求解器/大气模型清单以 `gmat_capabilities.json` 注册表为真值源，**严禁在 C# 写死清单**（如 `LEOProp`/`RungeKutta89` 兜底要经注册表）。

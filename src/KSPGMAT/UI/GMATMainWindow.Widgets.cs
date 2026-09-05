@@ -317,13 +317,24 @@ namespace KSPGMAT.UI {
                     }
                     pendingFocusControl = $"Field_Achieve_{intelliSenseTargetStepIndex}";
                     GUI.FocusControl(pendingFocusControl);
-                } else if (intelliSenseFieldName == "prop_stop") {
+                } else if (intelliSenseFieldName.StartsWith("prop_stop")) {
+                    int cIdx = 0;
+                    if (intelliSenseFieldName.StartsWith("prop_stop_")) {
+                        int.TryParse(intelliSenseFieldName.Substring("prop_stop_".Length), out cIdx);
+                    }
+                    if (step.stop_conditions != null && cIdx < step.stop_conditions.Count) {
+                        step.stop_conditions[cIdx].parameter = item.InsertText;
+                        if (item.RecommendedValue != 0) {
+                            step.stop_conditions[cIdx].target_val = item.RecommendedValue;
+                            step.stop_conditions[cIdx].target_val_str = item.RecommendedValue.ToString("F3");
+                        }
+                    }
                     step.stop_type = item.InsertText;
                     if (item.RecommendedValue != 0) {
                         step.target_val = item.RecommendedValue;
                         step.target_val_str = item.RecommendedValue.ToString("F3");
                     }
-                    pendingFocusControl = $"Field_PropStop_{intelliSenseTargetStepIndex}";
+                    pendingFocusControl = $"Field_PropStop_{intelliSenseTargetStepIndex}_{cIdx}";
                     GUI.FocusControl(pendingFocusControl);
                 } else if (intelliSenseFieldName == "vary") {
                     step.vary_variable = item.InsertText;

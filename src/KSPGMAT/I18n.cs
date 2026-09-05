@@ -53,7 +53,7 @@ namespace KSPGMAT {
 
                 string locDir = LocateLocDirectory();
                 if (locDir == null) {
-                    Debug.LogWarning("[KSPGMAT] i18n loc/ directory not found; UI strings may fall back to raw keys.");
+                    try { Debug.LogWarning("[KSPGMAT] i18n loc/ directory not found; UI strings may fall back to raw keys."); } catch {}
                     return;
                 }
 
@@ -288,8 +288,12 @@ namespace KSPGMAT {
             try { userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile); } catch {}
             string kspRoot = "";
             try { kspRoot = KSPUtil.ApplicationRootPath; } catch {}
+            string cur = "";
+            try { cur = Directory.GetCurrentDirectory(); } catch {}
 
             string[] candidates = new string[] {
+                !string.IsNullOrEmpty(cur) ? Path.Combine(cur, "GameData", "KSPGMAT", "loc") : "",
+                !string.IsNullOrEmpty(cur) ? Path.Combine(cur, "loc") : "",
                 !string.IsNullOrEmpty(dllDir) ? Path.Combine(dllDir, "loc") : "",
                 !string.IsNullOrEmpty(dllDir) ? Path.Combine(dllDir, "..", "loc") : "",
                 !string.IsNullOrEmpty(dllDir) ? Path.Combine(dllDir, "..", "GameData", "KSPGMAT", "loc") : "",

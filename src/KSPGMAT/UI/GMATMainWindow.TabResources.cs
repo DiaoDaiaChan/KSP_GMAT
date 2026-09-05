@@ -86,7 +86,7 @@ namespace KSPGMAT.UI {
             if (valAlerts != null && valAlerts.Count > 0) {
                 GUILayout.BeginVertical(nestedCardBoxStyle);
                 GUILayout.BeginHorizontal();
-                GUILayout.Label(I18n.ColorFormat("res_validation", valAlerts.Count), labelValueStyle);
+                GUILayout.Label(I18n.Format("res_validation", valAlerts.Count), labelValueStyle);
                 GUILayout.FlexibleSpace();
                 if (GUILayout.Button(I18n.T("btn_dismiss"), secondaryButtonStyle, GUILayout.Width(50), GUILayout.Height(18))) {
                     valAlerts.Clear();
@@ -138,8 +138,8 @@ namespace KSPGMAT.UI {
                 GUILayout.BeginHorizontal();
                 double newDry = DrawDoubleField(I18n.T("res_sc_dry"), effDryMass, 140, 100, "F2", "sc_dry_mass");
                 if (newDry != effDryMass) scModel.DryMassKg = newDry;
-                GUILayout.Label(I18n.ColorFormat("res_sc_fuel", totalFuelMassKg), labelValueStyle, GUILayout.Width(180));
-                GUILayout.Label(I18n.ColorFormat("res_sc_wet", effDryMass + totalFuelMassKg), labelValueStyle);
+                GUILayout.Label(I18n.Format("res_sc_fuel", totalFuelMassKg), labelValueStyle, GUILayout.Width(180));
+                GUILayout.Label(I18n.Format("res_sc_wet", effDryMass + totalFuelMassKg), labelValueStyle);
                 GUILayout.EndHorizontal();
 
                 GUILayout.BeginHorizontal();
@@ -156,8 +156,8 @@ namespace KSPGMAT.UI {
                 List<string> attachedTkNames = GMATStateManager.Current.GetAttachedTankIds();
                 List<string> attachedEngNames = GMATStateManager.Current.GetAttachedThrusterIds();
 
-                GUILayout.Label(I18n.ColorFormat("res_sc_tanks", string.Join(", ", attachedTkNames.ToArray())), labelValueStyle);
-                GUILayout.Label(I18n.ColorFormat("res_sc_thrusters", string.Join(", ", attachedEngNames.ToArray())), labelValueStyle);
+                GUILayout.Label(I18n.Format("res_sc_tanks", string.Join(", ", attachedTkNames.ToArray())), labelValueStyle);
+                GUILayout.Label(I18n.Format("res_sc_thrusters", string.Join(", ", attachedEngNames.ToArray())), labelValueStyle);
                 GUILayout.EndVertical();
 
                 GUILayout.EndVertical();
@@ -254,7 +254,7 @@ namespace KSPGMAT.UI {
                         eng.IspVac = DrawDoubleField(I18n.T("res_thr_isp"), eng.IspVac, 85, 65, "F1", $"thr_isp_{eg}_{eng.Id}");
                         
                         // Bound Tank Switcher
-                        GUILayout.Label(I18n.ColorFormat("res_thr_bound_tank", eng.BoundTankId), labelValueStyle, GUILayout.Width(130));
+                        GUILayout.Label(I18n.Format("res_thr_bound_tank", eng.BoundTankId), labelValueStyle, GUILayout.Width(130));
                         if (curTanks.Count > 1) {
                             if (GUILayout.Button(I18n.T("btn_switch"), secondaryButtonStyle, GUILayout.Height(18), GUILayout.Width(45))) {
                                 int curTkIdx = curTanks.FindIndex(t => t.Id == eng.BoundTankId);
@@ -392,7 +392,7 @@ namespace KSPGMAT.UI {
                     var cfg = propagatorConfigs[pKey];
                     GUILayout.BeginVertical(nestedCardBoxStyle);
                     GUILayout.BeginHorizontal();
-                    GUILayout.Label(I18n.ColorFormat("res_prop_item", pKey), labelValueStyle);
+                    GUILayout.Label(I18n.Format("res_prop_item", pKey), labelValueStyle);
                     GUILayout.FlexibleSpace();
                     if (GUILayout.Button(I18n.T("btn_force_model"), secondaryButtonStyle, GUILayout.Height(18))) {
                         selectedPropagatorKey = pKey;
@@ -420,7 +420,7 @@ namespace KSPGMAT.UI {
                     cfg.centralBody = DrawTextField(I18n.T("res_prop_central"), cfg.centralBody, 80, 80);
                     cfg.gravityModel = DrawTextField(I18n.T("res_prop_gravity"), cfg.gravityModel, 80, 80);
                     cfg.dragAtmosphereModel = DrawTextField(I18n.T("res_prop_atmo"), cfg.dragAtmosphereModel, 70, 90);
-                    GUILayout.Label(I18n.ColorFormat("res_prop_srp", cfg.enableSRP ? I18n.T("res_prop_on") : I18n.T("res_prop_off")), labelValueStyle, GUILayout.Width(100));
+                    GUILayout.Label(I18n.Format("res_prop_srp", cfg.enableSRP ? I18n.T("res_prop_on") : I18n.T("res_prop_off")), labelValueStyle, GUILayout.Width(100));
                     GUILayout.FlexibleSpace();
                     GUILayout.EndHorizontal();
 
@@ -451,7 +451,7 @@ namespace KSPGMAT.UI {
                 };
                 for (int cs = 0; cs < coords.Length; cs++) {
                     GUILayout.BeginVertical(nestedCardBoxStyle);
-                    GUILayout.Label(I18n.ColorFormat("res_cs_item", coords[cs]), labelValueStyle);
+                    GUILayout.Label(I18n.Format("res_cs_item", coords[cs]), labelValueStyle);
                     GUILayout.Label($"<color=#94a3b8>{descs[cs]}</color>", labelValueStyle);
                     GUILayout.EndVertical();
                     GUILayout.Space(2);
@@ -511,7 +511,7 @@ namespace KSPGMAT.UI {
                     
                     // Card Title Bar
                     GUILayout.BeginHorizontal();
-                    GUILayout.Label(I18n.ColorFormat("res_solver_item", sol.Name), labelValueStyle);
+                    GUILayout.Label(I18n.Format("res_solver_item", sol.Name), labelValueStyle);
                     GUILayout.FlexibleSpace();
                     if (solvers.Count > 1) {
                         if (GUILayout.Button(I18n.T("btn_delete_small"), deleteButtonStyle, GUILayout.Height(18), GUILayout.Width(50))) {
@@ -1102,7 +1102,7 @@ namespace KSPGMAT.UI {
             // Floating Popup Container
             GUILayout.BeginVertical(nestedCardBoxStyle, GUILayout.Height(Mathf.Min(170, maxItems * 26 + 36)));
             GUILayout.BeginHorizontal();
-            GUILayout.Label(I18n.ColorFormat("res_autocomplete_title", currentWord), labelValueStyle);
+            GUILayout.Label(I18n.Format("res_autocomplete_title", currentWord), labelValueStyle);
             GUILayout.FlexibleSpace();
             GUILayout.Label(I18n.T("res_autocomplete_hint"), labelValueStyle);
             GUILayout.EndHorizontal();

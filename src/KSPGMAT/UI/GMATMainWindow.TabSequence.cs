@@ -154,6 +154,24 @@ namespace KSPGMAT.UI {
             hoveredStepIndex = nextHoveredStepIndex;
             nextHoveredStepIndex = -1;
 
+            // 顶部全局序列体系切换条: 常规近地轨道序列 vs 行星际引力助推序列 (统一交互语言)
+            GUILayout.BeginHorizontal();
+            bool isNear = (activeSequenceMode == 0);
+            if (GUILayout.Button(I18n.T("seq_mode_nearbody", "🛰️ 常规/近地轨道序列 (NearBody)"), isNear ? actionButtonStyle : secondaryButtonStyle, GUILayout.Height(24))) {
+                activeSequenceMode = 0;
+            }
+            if (GUILayout.Button(I18n.T("seq_mode_mga", "🪐 行星际引力助推序列 (MGA Sequence)"), !isNear ? actionButtonStyle : secondaryButtonStyle, GUILayout.Height(24))) {
+                activeSequenceMode = 1;
+            }
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+            GUILayout.Space(4);
+
+            if (activeSequenceMode == 1) {
+                DrawTabMGASequence(vessel);
+                return;
+            }
+
             float totalW = windowRect.width - 36f;
             float rightColW = Mathf.Clamp(totalW * 0.32f, 310f, 420f);
             float leftColW = totalW - rightColW - 12f;
@@ -1572,7 +1590,7 @@ namespace KSPGMAT.UI {
 
         private void DrawStepCardDetails(int i, MissionStep step) {
             // =========================================================================
-            // 1. PROPAGATE STEP CARD (CLEAN IDE INTELLISENSE)
+            // 1. PROPAGATE STEP CARD (CLEAN IDE INTELLISENSE & MULTI-STOP CONDITIONS)
             // =========================================================================
             if (step.type == "Propagate") {
                 GUILayout.BeginHorizontal();
@@ -1589,95 +1607,155 @@ namespace KSPGMAT.UI {
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
 
-                // Stop Condition Row
+                // Multi-Stop Conditions List Initialization
+                if (step.stop_conditions == null) step.stop_conditions = new List<StopCondition>();
+                if (step.stop_conditions.Count == 0) {
+                    step.stop_conditions.Add(new StopCondition {
+                        parameter = !string.IsNullOrEmpty(step.stop_type) ? step.stop_type : "Sat.Luna.Periapsis",
+                        target_val_str = !string.IsNullOrEmpty(step.target_val_str) ? step.target_val_str : (!string.IsNullOrEmpty(step.duration_str) ? step.duration_str : ""),
+                        target_val = step.target_val != 0.0 ? step.target_val : (step.duration > 0 ? step.duration : 0.0),
+                        stop_tolerance = step.stop_tolerance
+                    });
+                }
+
+                // Render each Stop Condition
+                int condToRemove = -1;
+                for (int c = 0; c < step.stop_conditions.Count; c++) {
+                    var cond = step.stop_conditions[c];
+                    GUILayout.Space(2);
+                    GUILayout.BeginHorizontal();
+
+                    string condLabel = (c == 0) ? I18n.T("seq_stop_cond_label") : ("  └ " + I18n.T("seq_cond_or"));
+                    GUILayout.Label(condLabel, labelValueStyle, GUILayout.Width(65));
+
+                    GUI.SetNextControlName($"Field_PropStop_{i}_{c}");
+                    string prevStop = cond.parameter ?? "Sat.Luna.Periapsis";
+                    string newStop = GUILayout.TextField(prevStop, GUILayout.MinWidth(180), GUILayout.Width(220), GUILayout.Height(20));
+
+                    if (Event.current.type == EventType.Repaint) {
+                        if (GUI.GetNameOfFocusedControl() == $"Field_PropStop_{i}_{c}") {
+                            Rect r = GUILayoutUtility.GetLastRect();
+                            Vector2 sp = GUIUtility.GUIToScreenPoint(new Vector2(r.x, r.y));
+                            intelliSenseAnchorRect = new Rect(sp.x, sp.y, r.width, r.height);
+                        }
+                    }
+                    if (newStop != prevStop || (GUI.GetNameOfFocusedControl() == $"Field_PropStop_{i}_{c}" && !intelliSenseOpen && !intelliSenseDismissed)) {
+                        cond.parameter = newStop;
+                        TriggerIntelliSense(newStop, $"prop_stop_{c}", i);
+                    }
+
+                    if (GUILayout.Button(I18n.T("btn_cond_library"), secondaryButtonStyle, GUILayout.Width(75), GUILayout.Height(20))) {
+                        OpenParamPicker(i, $"prop_stop_{c}");
+                    }
+
+                    string propBadge = GMATParameterRegistry.GetParamBadgeI18n(cond.parameter);
+                    if (!string.IsNullOrEmpty(propBadge)) {
+                        GUILayout.Label($"<color=#38bdf8><b>[{propBadge}]</b></color>", labelValueStyle);
+                    }
+
+                    if (IsPureOrbitalEvent(cond.parameter)) {
+                        GUILayout.Label(I18n.T("seq_orbital_event"), labelValueStyle);
+                    } else {
+                        GUILayout.Space(8);
+                        GUILayout.Label(I18n.T("seq_target_threshold"), gridLabelStyle, GUILayout.Width(95));
+
+                        string curRaw = !string.IsNullOrEmpty(cond.target_val_str) ? cond.target_val_str : (cond.target_val > 0.0 ? cond.target_val.ToString("G", CultureInfo.InvariantCulture) : null);
+                        double defNum = cond.target_val != 0.0 ? cond.target_val : 3600.0;
+
+                        string newRaw = DrawDelayedSmartField($"prop_tval_{i}_{c}", curRaw, defNum, numericInputStyle, GUILayout.Width(110), $"prop_val_{c}", i);
+                        if (newRaw != curRaw) {
+                            cond.target_val_str = newRaw;
+                            if (double.TryParse(newRaw, NumberStyles.Any, CultureInfo.InvariantCulture, out double dVal)) {
+                                cond.target_val = dVal;
+                            }
+                        }
+
+                        // Variable Reference Badge
+                        if (GMATStateManager.Current != null && GMATStateManager.Current.Variables != null) {
+                            var matchedVar = GMATStateManager.Current.Variables.Find(v => v.Name.Equals(cond.target_val_str, StringComparison.OrdinalIgnoreCase));
+                            if (matchedVar != null) {
+                                GUILayout.Label(I18n.ColorFormat("widget_var_badge", matchedVar.Name, matchedVar.InitialValue), labelValueStyle);
+                            }
+                        }
+                    }
+
+                    // Remove secondary condition button
+                    if (c > 0) {
+                        if (GUILayout.Button("✕", deleteButtonStyle, GUILayout.Width(22), GUILayout.Height(20))) {
+                            condToRemove = c;
+                        }
+                    }
+
+                    GUILayout.FlexibleSpace();
+                    GUILayout.EndHorizontal();
+                }
+
+                if (condToRemove >= 0 && condToRemove < step.stop_conditions.Count) {
+                    step.stop_conditions.RemoveAt(condToRemove);
+                }
+
+                // Add Condition / Timeout Guard Toolbar Row
                 GUILayout.Space(2);
                 GUILayout.BeginHorizontal();
-                GUILayout.Label(I18n.T("seq_stop_cond_label"), labelValueStyle, GUILayout.Width(65));
+                GUILayout.Space(70);
 
-                GUI.SetNextControlName($"Field_PropStop_{i}");
-                string prevStop = step.stop_type ?? "Sat.Luna.Periapsis";
-                string newStop = GUILayout.TextField(prevStop, GUILayout.MinWidth(180), GUILayout.Width(220), GUILayout.Height(20));
+                if (GUILayout.Button(I18n.T("seq_add_cond"), secondaryButtonStyle, GUILayout.Height(18))) {
+                    step.stop_conditions.Add(new StopCondition {
+                        parameter = "Sat.ElapsedDays",
+                        target_val_str = "6.0",
+                        target_val = 6.0
+                    });
+                }
 
-                if (Event.current.type == EventType.Repaint) {
-                    if (GUI.GetNameOfFocusedControl() == $"Field_PropStop_{i}") {
-                        Rect r = GUILayoutUtility.GetLastRect();
-                        Vector2 sp = GUIUtility.GUIToScreenPoint(new Vector2(r.x, r.y));
-                        intelliSenseAnchorRect = new Rect(sp.x, sp.y, r.width, r.height);
+                GUILayout.Space(6);
+                if (GUILayout.Button(I18n.T("seq_add_timeout_guard"), secondaryButtonStyle, GUILayout.Height(18))) {
+                    bool alreadyHasDays = step.stop_conditions.Exists(sc => sc.parameter != null && sc.parameter.Contains("ElapsedDays"));
+                    if (!alreadyHasDays) {
+                        step.stop_conditions.Add(new StopCondition {
+                            parameter = "Sat.ElapsedDays",
+                            target_val_str = "6.0",
+                            target_val = 6.0
+                        });
                     }
                 }
-                if (newStop != prevStop || (GUI.GetNameOfFocusedControl() == $"Field_PropStop_{i}" && !intelliSenseOpen && !intelliSenseDismissed)) {
-                    step.stop_type = newStop;
-                    TriggerIntelliSense(newStop, "prop_stop", i);
-                }
 
-                if (GUILayout.Button(I18n.T("btn_cond_library"), secondaryButtonStyle, GUILayout.Width(75), GUILayout.Height(20))) {
-                    OpenParamPicker(i, "prop_stop");
-                }
-
-                string propBadge = GMATParameterRegistry.GetParamBadgeI18n(step.stop_type);
-                if (!string.IsNullOrEmpty(propBadge)) {
-                    GUILayout.Label($"<color=#38bdf8><b>[{propBadge}]</b></color>", labelValueStyle);
-                }
-
-                if (IsPureOrbitalEvent(step.stop_type)) {
-                    GUILayout.Label(I18n.T("seq_orbital_event"), labelValueStyle);
-                } else {
-                    GUILayout.Space(8);
-                    GUILayout.Label(I18n.T("seq_target_threshold"), gridLabelStyle, GUILayout.Width(95));
-
-                    string curRaw = !string.IsNullOrEmpty(step.target_val_str) ? step.target_val_str : (!string.IsNullOrEmpty(step.duration_str) ? step.duration_str : null);
-                    double defNum = step.target_val != 0.0 ? step.target_val : (step.duration > 0.0 ? step.duration : 3600.0);
-
-                    string newRaw = DrawDelayedSmartField($"prop_tval_{i}", curRaw, defNum, numericInputStyle, GUILayout.Width(130), "prop_val", i);
-                    if (newRaw != curRaw) {
-                        step.target_val_str = newRaw;
-                        step.duration_str = newRaw;
-                        if (double.TryParse(newRaw, NumberStyles.Any, CultureInfo.InvariantCulture, out double dVal)) {
-                            step.target_val = dVal;
-                            step.duration = dVal;
-                            step.burn_use_vary_var = false;
-                        } else {
-                            step.burn_use_vary_var = true;
-                            step.burn_vary_var_name = newRaw;
-                        }
-                    }
-
-                    // Variable Name Reference Badge
-                    if (GMATStateManager.Current != null && GMATStateManager.Current.Variables != null) {
-                        var matchedVar = GMATStateManager.Current.Variables.Find(v => v.Name.Equals(step.target_val_str, StringComparison.OrdinalIgnoreCase));
-                        if (matchedVar != null) {
-                            GUILayout.Label(I18n.ColorFormat("widget_var_badge", matchedVar.Name, matchedVar.InitialValue), labelValueStyle);
-                        }
-                    }
+                if (step.stop_conditions.Count > 1) {
+                    GUILayout.Space(10);
+                    GUILayout.Label(I18n.T("seq_or_logic_tip"), labelValueStyle);
                 }
 
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
 
-
+                // Synchronize first condition with legacy fields
+                if (step.stop_conditions.Count > 0) {
+                    var primary = step.stop_conditions[0];
+                    step.stop_type = primary.parameter;
+                    step.target_val_str = primary.target_val_str;
+                    step.target_val = primary.target_val;
+                    step.duration_str = primary.target_val_str;
+                    if (double.TryParse(primary.target_val_str, NumberStyles.Any, CultureInfo.InvariantCulture, out double dVal)) {
+                        if (step.stop_type.Contains("ElapsedDays")) step.duration = dVal * 86400.0;
+                        else step.duration = dVal;
+                        step.burn_use_vary_var = false;
+                    } else if (!string.IsNullOrEmpty(primary.target_val_str)) {
+                        step.burn_use_vary_var = true;
+                        step.burn_vary_var_name = primary.target_val_str;
+                    }
+                }
             }
 
             // =========================================================================
             // 2. VARY STEP CARD (STREAMLINED COMPACT 2-ROW WITH MULTI-VECTOR CHIPS)
             // =========================================================================
             else if (step.type == "Vary") {
-                // Row 1: Fully Expanding Variable Input + Official GMAT [Edit] Dialog Button (Image 3)
+                // Row 1: Variable Name & Inline Solver Dropdown
                 GUILayout.BeginHorizontal();
-                GUILayout.Label(I18n.T("seq_vary_var_label"), labelValueStyle, GUILayout.Width(130));
+                GUILayout.Label(I18n.T("seq_vary_var_label"), labelValueStyle, GUILayout.Width(65));
 
                 GUI.SetNextControlName($"Field_Vary_{i}");
-                string prevVary = step.vary_variable ?? "burntime";
-                string newVary = GUILayout.TextField(prevVary, GUILayout.MinWidth(200), GUILayout.ExpandWidth(true), GUILayout.Height(22));
-                if (newVary != prevVary) step.vary_variable = newVary;
-
-                if (GUILayout.Button(I18n.T("btn_edit_var"), tabButtonActiveStyle, GUILayout.Width(130), GUILayout.Height(22))) {
-                    OpenGMATParameterSelectDialog(i, "vary", step.vary_variable);
-                }
-
-                string varyBadge = GMATParameterRegistry.GetParamBadgeI18n(step.vary_variable);
-                if (!string.IsNullOrEmpty(varyBadge)) {
-                    GUILayout.Label($"<color=#facc15><b>[{varyBadge}]</b></color>", labelValueStyle);
-                }
+                string prevVar = step.vary_variable ?? "GTO_Duration";
+                string newVar = GUILayout.TextField(prevVar, GUILayout.MinWidth(140), GUILayout.Width(175), GUILayout.Height(20));
 
                 if (Event.current.type == EventType.Repaint) {
                     if (GUI.GetNameOfFocusedControl() == $"Field_Vary_{i}") {
@@ -1686,17 +1764,22 @@ namespace KSPGMAT.UI {
                         intelliSenseAnchorRect = new Rect(sp.x, sp.y, r.width, r.height);
                     }
                 }
-                if (newVary != prevVary || (GUI.GetNameOfFocusedControl() == $"Field_Vary_{i}" && !intelliSenseOpen && !intelliSenseDismissed)) {
-                    step.vary_variable = newVary;
-                    TriggerIntelliSense(newVary, "vary", i);
+                if (newVar != prevVar || (GUI.GetNameOfFocusedControl() == $"Field_Vary_{i}" && !intelliSenseOpen && !intelliSenseDismissed)) {
+                    step.vary_variable = newVar;
+                    TriggerIntelliSense(newVar, "vary", i);
                 }
 
-                GUILayout.Space(10);
+                if (GUILayout.Button(I18n.T("btn_edit_var"), secondaryButtonStyle, GUILayout.Width(75), GUILayout.Height(20))) {
+                    OpenParamPicker(i, "vary");
+                }
+
+                // Inline Solver Picker
+                GUILayout.Space(8);
                 DrawInlineSolverPicker(step, i);
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
 
-                // Row 2: Search Bounds & Inline Solved Value Result
+                // Row 2: Search Bounds, Perturbation & Inline Solved Value Result
                 GUILayout.Space(3);
                 GUILayout.BeginHorizontal();
                 GUILayout.Label(I18n.T("seq_init_label"), gridLabelStyle, GUILayout.Width(35));
@@ -1724,6 +1807,15 @@ namespace KSPGMAT.UI {
                 step.vary_max_step_str = DrawDelayedSmartField($"vary_step_{i}", step.vary_max_step_str, (step.vary_max_step <= 0 ? 0.1 : step.vary_max_step), numericInputStyle, GUILayout.Width(55), null, i);
                 if (double.TryParse(step.vary_max_step_str, NumberStyles.Any, CultureInfo.InvariantCulture, out double parsedVaryStep)) {
                     step.vary_max_step = parsedVaryStep;
+                }
+
+                GUILayout.Space(6);
+                GUILayout.Label(I18n.T("seq_pert_label"), gridLabelStyle, GUILayout.Width(35));
+                step.vary_perturbation_str = DrawDelayedSmartField($"vary_pert_{i}", step.vary_perturbation_str, (step.vary_perturbation <= 0.0 ? 0.0001 : step.vary_perturbation), numericInputStyle, GUILayout.Width(65), null, i);
+                if (double.TryParse(step.vary_perturbation_str, NumberStyles.Any, CultureInfo.InvariantCulture, out double parsedVaryPert)) {
+                    step.vary_perturbation = parsedVaryPert > 0.0 ? parsedVaryPert : 0.0001;
+                } else if (step.vary_perturbation <= 0.0) {
+                    step.vary_perturbation = 0.0001;
                 }
 
                 // Inline Solved Value

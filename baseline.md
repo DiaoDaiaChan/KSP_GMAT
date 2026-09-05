@@ -186,6 +186,8 @@ Key 统一采用小写下划线 `snake_case`，并按模块分类：
 | `res_` | 求解结果与轨道数据 | `res_summary_header`, `res_no_burns`, `res_write_principia` |
 | `settings_`| 设置页路径与引擎选项 | `settings_lang_header`, `settings_bin_path` |
 | `tip_` | 浮动物理知识与操作说明 | `tip_vary_perturbation`, `tip_achieve_tolerance` |
+| `mga_` | 深空借力 MGA 规划器界面 | `mga_params_header`, `mga_window_recommended`, `mga_native_unavailable` |
+| `porkchop_` | 猪排图生成器界面 | `porkchop_best`, `porkchop_hover`, `porkchop_tof_axis` |
 
 ## 2.3 UI 代码接入标准规范
 ```csharp
@@ -505,8 +507,8 @@ $$\Delta t_{\text{lead}} = \frac{1}{\beta} - \frac{t_{\text{burn}} \cdot m_f}{m_
   - `gmat_root`：指定 GMAT `bin` 安装目录；
   - `spice_bsp_path`：指定 NASA JPL SPICE 星历文件路径（如 `de440.bsp` / `de430.bsp` / `de421.bsp`）。
 - **纯净太阳系 (Pure Sol/RSS Only)**：
-  - 系统专为真实太阳系打造，彻底移除原版（Stock）虚构天体（Kerbin, Eve, Duna 等）；
-  - 核心天体库严格限定为标准太阳系天体：水星 (Mercury)、金星 (Venus)、地球 (Earth)、月球 (Moon/Luna)、火星 (Mars)、木星 (Jupiter)、土星 (Saturn)、天王星 (Uranus)、海王星 (Neptune)、冥王星 (Pluto)。
+  - 系统专为真实太阳系打造，核心天体库以标准太阳系天体为准：水星 (Mercury)、金星 (Venus)、地球 (Earth)、月球 (Moon/Luna)、火星 (Mars)、木星 (Jupiter)、土星 (Saturn)、天王星 (Uranus)、海王星 (Neptune)、冥王星 (Pluto)；
+  - **动态天体注册（基线扩展登记 2026-09-03）**：天体目录运行时经 `SolarSystemBodies.SolarSystemCatalog.SyncFromFlightGlobals()` 从 `FlightGlobals` 全量动态发现并注册，以兼容第三方星球包（RSS/OPM/JNSQ 等）附加小天体；纯 Sol 天体与第三方扩展天体均可被规划器使用，渲染侧按 `IsMajorPlanetOrMissionBody` 过滤显示。原版（Stock）虚构天体（Kerbin, Eve, Duna 等）不参与核心力学计算。
 
 ## 7.7 日心轨道全景画布高精渲染与等距物理比例规范 (Orbit Canvas Engine)
 - **绝对等距几何比例 (1:1 Strict Isometric Scale)**：

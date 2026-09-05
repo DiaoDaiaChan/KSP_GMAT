@@ -29,20 +29,20 @@ namespace KSPGMAT.UI {
             // Orbit & ICRF
             GUILayout.BeginVertical(cardBoxStyle);
             GUILayout.Label(I18n.T("craft_orbit_header"), headerStyle);
-            GUILayout.Label(I18n.ColorFormat("craft_central_body", vessel.mainBody.name, Planetarium.GetUniversalTime()), labelValueStyle);
+            GUILayout.Label(I18n.Format("craft_central_body", vessel.mainBody.name, Planetarium.GetUniversalTime()), labelValueStyle);
 
             Vector3d pos_km, vel_kms;
             bool ok = PrincipiaInterop.GetVesselStateICRF(vessel, out pos_km, out vel_kms);
             if (ok) {
-                GUILayout.Label(I18n.ColorFormat("craft_icrf_pos", pos_km.magnitude, pos_km.x, pos_km.y, pos_km.z), labelValueStyle);
-                GUILayout.Label(I18n.ColorFormat("craft_icrf_vel", vel_kms.magnitude, vel_kms.x, vel_kms.y, vel_kms.z), labelValueStyle);
+                GUILayout.Label(I18n.Format("craft_icrf_pos", pos_km.magnitude, pos_km.x, pos_km.y, pos_km.z), labelValueStyle);
+                GUILayout.Label(I18n.Format("craft_icrf_vel", vel_kms.magnitude, vel_kms.x, vel_kms.y, vel_kms.z), labelValueStyle);
             } else {
                 GUILayout.Label(I18n.T("craft_no_principia"), labelValueStyle);
             }
 
             if (vessel.orbit != null) {
-                GUILayout.Label(I18n.ColorFormat("craft_kepler", vessel.orbit.semiMajorAxis / 1000.0, vessel.orbit.eccentricity, vessel.orbit.inclination), labelValueStyle);
-                GUILayout.Label(I18n.ColorFormat("craft_apsides", vessel.orbit.PeA / 1000.0, vessel.orbit.ApA / 1000.0), labelValueStyle);
+                GUILayout.Label(I18n.Format("craft_kepler", vessel.orbit.semiMajorAxis / 1000.0, vessel.orbit.eccentricity, vessel.orbit.inclination), labelValueStyle);
+                GUILayout.Label(I18n.Format("craft_apsides", vessel.orbit.PeA / 1000.0, vessel.orbit.ApA / 1000.0), labelValueStyle);
             }
             GUILayout.EndVertical();
 
@@ -77,7 +77,7 @@ namespace KSPGMAT.UI {
                 double moonDist_km = Vector3d.Distance(moonBody.position, vessel.mainBody.position) / 1000.0;
                 GUILayout.BeginHorizontal();
                 GUILayout.Label(I18n.T("craft_moon_label"), labelValueStyle, GUILayout.Width(110));
-                GUILayout.Label(I18n.ColorFormat("craft_moon_val", moonDist_km), labelValueStyle);
+                GUILayout.Label(I18n.Format("craft_moon_val", moonDist_km), labelValueStyle);
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
             }
@@ -123,7 +123,7 @@ namespace KSPGMAT.UI {
             }
             GUILayout.EndHorizontal();
 
-            GUILayout.Label(I18n.ColorFormat("craft_wet_mass", vessel.totalMass), labelValueStyle);
+            GUILayout.Label(I18n.Format("craft_wet_mass", vessel.totalMass), labelValueStyle);
             if (cachedStages != null && cachedStages.Count > 0) {
                 double combinedDv = 0.0;
                 double combinedFuel = 0.0;
@@ -155,8 +155,8 @@ namespace KSPGMAT.UI {
                 GUILayout.Space(4);
                 GUILayout.BeginVertical(GUI.skin.box);
                 GUILayout.Label(I18n.T("craft_combined_header"), labelValueStyle);
-                GUILayout.Label(I18n.ColorFormat("craft_combined_dv", combinedDv, combinedStartMass), labelValueStyle);
-                GUILayout.Label(I18n.ColorFormat("craft_combined_fuel", combinedFuel, minDry), labelValueStyle);
+                GUILayout.Label(I18n.Format("craft_combined_dv", combinedDv, combinedStartMass), labelValueStyle);
+                GUILayout.Label(I18n.Format("craft_combined_fuel", combinedFuel, minDry), labelValueStyle);
                 GUILayout.EndVertical();
             } else {
                 GUILayout.Label(I18n.T("craft_no_stages"), labelValueStyle);
@@ -198,7 +198,7 @@ namespace KSPGMAT.UI {
                     var curEng = cachedEngines[selectedEngineIndex];
                     GUILayout.Space(4);
                     GUILayout.BeginVertical(GUI.skin.box);
-                    GUILayout.Label(I18n.ColorFormat("craft_propellant", curEng.propellantDesc), labelValueStyle);
+                    GUILayout.Label(I18n.Format("craft_propellant", curEng.propellantDesc), labelValueStyle);
 
                     GUILayout.BeginHorizontal();
                     GUILayout.Label(I18n.T("craft_fuel_mass_label"), labelValueStyle, GUILayout.Width(75));
@@ -220,7 +220,7 @@ namespace KSPGMAT.UI {
                     GUILayout.Label("kPa", labelValueStyle, GUILayout.Width(40));
                     GUILayout.EndHorizontal();
 
-                    GUILayout.Label(I18n.ColorFormat("craft_vac_thrust", curEng.thrustKN, curEng.ispVac), labelValueStyle);
+                    GUILayout.Label(I18n.Format("craft_vac_thrust", curEng.thrustKN, curEng.ispVac), labelValueStyle);
                     GUILayout.EndVertical();
                 }
             } else {
@@ -290,12 +290,12 @@ namespace KSPGMAT.UI {
             // 2. User Custom Coordinate Systems List
             if (GMATParameterRegistry.UserCoordinateSystems.Count > 0) {
                 GUILayout.Space(4);
-                GUILayout.Label(I18n.ColorFormat("craft_cs_custom_count", GMATParameterRegistry.UserCoordinateSystems.Count), labelValueStyle);
+                GUILayout.Label(I18n.Format("craft_cs_custom_count", GMATParameterRegistry.UserCoordinateSystems.Count), labelValueStyle);
                 for (int u = 0; u < GMATParameterRegistry.UserCoordinateSystems.Count; u++) {
                     var ucs = GMATParameterRegistry.UserCoordinateSystems[u];
                     GUILayout.BeginVertical(nestedCardBoxStyle);
                     GUILayout.BeginHorizontal();
-                    GUILayout.Label(I18n.ColorFormat("craft_cs_item", ucs.name, ucs.origin, ucs.axes), labelValueStyle);
+                    GUILayout.Label(I18n.Format("craft_cs_item", ucs.name, ucs.origin, ucs.axes), labelValueStyle);
                     GUILayout.FlexibleSpace();
 
                     if (GUILayout.Button(I18n.T("btn_edit"), secondaryButtonStyle, GUILayout.Width(50), GUILayout.Height(20))) {
@@ -310,7 +310,7 @@ namespace KSPGMAT.UI {
                     GUILayout.EndHorizontal();
 
                     if (ucs.axes == "ObjectReferenced") {
-                        GUILayout.Label(I18n.ColorFormat("craft_cs_follow", ucs.primary, ucs.secondary, ucs.xAxis, ucs.zAxis), labelValueStyle);
+                        GUILayout.Label(I18n.Format("craft_cs_follow", ucs.primary, ucs.secondary, ucs.xAxis, ucs.zAxis), labelValueStyle);
                     }
                     GUILayout.EndVertical();
                     GUILayout.Space(2);

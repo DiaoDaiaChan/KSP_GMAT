@@ -182,7 +182,6 @@ namespace KSPGMAT.UI {
             tabButtonStyle.border = new RectOffset(2, 2, 2, 2);
             tabButtonStyle.fontSize = 11;
             tabButtonStyle.fontStyle = FontStyle.Bold;
-            tabButtonStyle.richText = true;
 
             tabButtonActiveStyle = new GUIStyle(tabButtonStyle);
             tabButtonActiveStyle.normal.background = activeTabBg;
@@ -197,7 +196,6 @@ namespace KSPGMAT.UI {
             tabButtonActiveStyle.onActive.background = activeTabBg;
             tabButtonActiveStyle.onFocused.background = activeTabBg;
             tabButtonActiveStyle.border = new RectOffset(2, 2, 2, 2);
-            tabButtonActiveStyle.richText = true;
 
             // 5. Action Buttons
             actionButtonStyle = new GUIStyle(GUI.skin.button);
@@ -213,7 +211,6 @@ namespace KSPGMAT.UI {
             actionButtonStyle.border = new RectOffset(2, 2, 2, 2);
             actionButtonStyle.fontSize = 12;
             actionButtonStyle.fontStyle = FontStyle.Bold;
-            actionButtonStyle.richText = true;
 
             successButtonStyle = new GUIStyle(GUI.skin.button);
             successButtonStyle.normal.background = successBtnBg;
@@ -228,7 +225,6 @@ namespace KSPGMAT.UI {
             successButtonStyle.border = new RectOffset(2, 2, 2, 2);
             successButtonStyle.fontSize = 12;
             successButtonStyle.fontStyle = FontStyle.Bold;
-            successButtonStyle.richText = true;
 
             secondaryButtonStyle = new GUIStyle(GUI.skin.button);
             secondaryButtonStyle.normal.background = secondaryBtnBg;
@@ -242,7 +238,6 @@ namespace KSPGMAT.UI {
             secondaryButtonStyle.onFocused.background = secondaryBtnBg;
             secondaryButtonStyle.border = new RectOffset(2, 2, 2, 2);
             secondaryButtonStyle.fontSize = 11;
-            secondaryButtonStyle.richText = true;
 
             deleteButtonStyle = new GUIStyle(GUI.skin.button);
             deleteButtonStyle.normal.background = deleteBtnBg;
@@ -257,31 +252,22 @@ namespace KSPGMAT.UI {
             deleteButtonStyle.border = new RectOffset(2, 2, 2, 2);
             deleteButtonStyle.fontSize = 11;
             deleteButtonStyle.fontStyle = FontStyle.Bold;
-            deleteButtonStyle.richText = true;
-
-            try {
-                GUI.skin.toggle.richText = true;
-                GUI.skin.button.richText = true;
-                GUI.skin.label.richText = true;
-            } catch {}
 
             // 6. Labels & Tooltips
             headerStyle = new GUIStyle(GUI.skin.label);
             headerStyle.fontSize = 12;
             headerStyle.fontStyle = FontStyle.Bold;
             headerStyle.normal.textColor = new Color(0.40f, 0.82f, 1.0f);
-            headerStyle.richText = true;
 
             subHeaderStyle = new GUIStyle(GUI.skin.label);
             subHeaderStyle.fontSize = 11;
             subHeaderStyle.fontStyle = FontStyle.Bold;
             subHeaderStyle.normal.textColor = new Color(0.85f, 0.85f, 0.60f);
-            subHeaderStyle.richText = true;
 
             labelValueStyle = new GUIStyle(GUI.skin.label);
             labelValueStyle.fontSize = 11;
             labelValueStyle.normal.textColor = new Color(0.92f, 0.94f, 0.97f);
-            labelValueStyle.richText = true;
+            labelValueStyle.richText = true; // 支持 I18n.ColorFormat 的 <color> 数值着色
 
             tooltipStyle = new GUIStyle(GUI.skin.box);
             tooltipStyle.normal.background = MakeBoxTex(8, 8, new Color(0.04f, 0.05f, 0.08f, 0.98f), new Color(0.24f, 0.65f, 0.95f, 0.8f), 1);
@@ -291,7 +277,6 @@ namespace KSPGMAT.UI {
             tooltipStyle.wordWrap = true;
             tooltipStyle.padding = new RectOffset(10, 10, 8, 8);
             tooltipStyle.alignment = TextAnchor.UpperLeft;
-            tooltipStyle.richText = true;
 
             // 7. Modern Step Pill Badges (Balanced, readable chips)
             pillPropStyle = new GUIStyle(GUI.skin.box);
@@ -301,7 +286,6 @@ namespace KSPGMAT.UI {
             pillPropStyle.fontSize = 10;
             pillPropStyle.padding = new RectOffset(6, 6, 2, 2);
             pillPropStyle.alignment = TextAnchor.MiddleCenter;
-            pillPropStyle.richText = true;
 
             pillVaryStyle = new GUIStyle(GUI.skin.box);
             pillVaryStyle.normal.background = pillVaryBg;
@@ -310,7 +294,6 @@ namespace KSPGMAT.UI {
             pillVaryStyle.fontSize = 10;
             pillVaryStyle.padding = new RectOffset(6, 6, 2, 2);
             pillVaryStyle.alignment = TextAnchor.MiddleCenter;
-            pillVaryStyle.richText = true;
 
             pillAchieveStyle = new GUIStyle(GUI.skin.box);
             pillAchieveStyle.normal.background = pillAchieveBg;
@@ -319,7 +302,6 @@ namespace KSPGMAT.UI {
             pillAchieveStyle.fontSize = 10;
             pillAchieveStyle.padding = new RectOffset(6, 6, 2, 2);
             pillAchieveStyle.alignment = TextAnchor.MiddleCenter;
-            pillAchieveStyle.richText = true;
 
             pillBurnStyle = new GUIStyle(GUI.skin.box);
             pillBurnStyle.normal.background = pillBurnBg;
@@ -328,7 +310,6 @@ namespace KSPGMAT.UI {
             pillBurnStyle.fontSize = 10;
             pillBurnStyle.padding = new RectOffset(6, 6, 2, 2);
             pillBurnStyle.alignment = TextAnchor.MiddleCenter;
-            pillBurnStyle.richText = true;
 
             pillImpulseStyle = new GUIStyle(GUI.skin.box);
             pillImpulseStyle.normal.background = pillImpulseBg;
@@ -337,7 +318,6 @@ namespace KSPGMAT.UI {
             pillImpulseStyle.fontSize = 10;
             pillImpulseStyle.padding = new RectOffset(6, 6, 2, 2);
             pillImpulseStyle.alignment = TextAnchor.MiddleCenter;
-            pillImpulseStyle.richText = true;
 
             pillStageStyle = new GUIStyle(GUI.skin.box);
             pillStageStyle.normal.background = pillStageBg;
@@ -346,7 +326,6 @@ namespace KSPGMAT.UI {
             pillStageStyle.fontSize = 10;
             pillStageStyle.padding = new RectOffset(6, 6, 2, 2);
             pillStageStyle.alignment = TextAnchor.MiddleCenter;
-            pillStageStyle.richText = true;
 
             pillTargetStyle = new GUIStyle(GUI.skin.box);
             pillTargetStyle.normal.background = pillTargetBg;
@@ -355,7 +334,6 @@ namespace KSPGMAT.UI {
             pillTargetStyle.fontSize = 10;
             pillTargetStyle.padding = new RectOffset(6, 6, 2, 2);
             pillTargetStyle.alignment = TextAnchor.MiddleCenter;
-            pillTargetStyle.richText = true;
 
             pillEndTargetStyle = new GUIStyle(GUI.skin.box);
             pillEndTargetStyle.normal.background = pillEndTargetBg;
@@ -364,7 +342,6 @@ namespace KSPGMAT.UI {
             pillEndTargetStyle.fontSize = 10;
             pillEndTargetStyle.padding = new RectOffset(6, 6, 2, 2);
             pillEndTargetStyle.alignment = TextAnchor.MiddleCenter;
-            pillEndTargetStyle.richText = true;
 
             pillGenericStyle = new GUIStyle(GUI.skin.box);
             pillGenericStyle.normal.background = secondaryBtnBg;
@@ -372,7 +349,6 @@ namespace KSPGMAT.UI {
             pillGenericStyle.fontSize = 10;
             pillGenericStyle.padding = new RectOffset(6, 6, 2, 2);
             pillGenericStyle.alignment = TextAnchor.MiddleCenter;
-            pillGenericStyle.richText = true;
 
             // 8. Numerical & Grid Styles
             gridLabelStyle = new GUIStyle(GUI.skin.label);

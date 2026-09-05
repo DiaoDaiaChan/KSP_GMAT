@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using UnityEngine;
+using KSPGMAT.MGA;
 
 namespace KSPGMAT.Model {
     /// <summary>
@@ -205,6 +206,8 @@ namespace KSPGMAT.Model {
         private static GMATStateManager _instance;
         public static GMATStateManager Current => _instance ?? (_instance = new GMATStateManager());
 
+        public MGAStateManager MGA => MGAStateManager.Current;
+
         public GMATSpacecraftModel Spacecraft { get; set; } = new GMATSpacecraftModel();
         public List<GMATTankModel> Tanks { get; set; } = new List<GMATTankModel>();
         public List<GMATThrusterModel> Thrusters { get; set; } = new List<GMATThrusterModel>();
@@ -370,7 +373,7 @@ namespace KSPGMAT.Model {
             Spacecraft.UniversalTime = Planetarium.GetUniversalTime();
 
             // 精确计算 1951 年起算历元 (消除 1960 年截断)
-            double jdVal = 2433647.5 + (Spacecraft.UniversalTime / 86400.0);
+            double jdVal = EphemerisTimeSystem.UtToJd(Spacecraft.UniversalTime);
             Spacecraft.EpochUtc = GMATClient.JdToUtcGregorian(jdVal);
 
             // 获取 ICRF 6 状态矢量

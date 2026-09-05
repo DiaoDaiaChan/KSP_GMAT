@@ -273,11 +273,11 @@ namespace KSPGMAT.Service {
                         continue; // Handled in BeginFiniteBurn coalesce
                     }
 
-                    // 2. Propagate
-                    var propMatch = Regex.Match(rawLine, @"Propagate\s+([A-Za-z0-9_]+)\s*\(\s*([A-Za-z0-9_]+)\s*\)\s*\{\s*([^}]+)\s*\}", RegexOptions.IgnoreCase);
+                    // 2. Propagate (Supports Multi-Stopping Conditions e.g. {Sat.Luna.Periapsis, Sat.ElapsedDays = 6})
+                    var propMatch = Regex.Match(rawLine, @"Propagate(?:\s+Backwards)?(?:\s+Synchronized|\s+Single)?\s+([A-Za-z0-9_]+)\s*\(\s*([^)]+)\s*\)\s*\{\s*([^}]+)\s*\}", RegexOptions.IgnoreCase);
                     if (propMatch.Success) {
                         string pName = propMatch.Groups[1].Value;
-                        string stopCond = propMatch.Groups[3].Value.Trim();
+                        string stopCondRaw = propMatch.Groups[3].Value.Trim();
 
                         var st = new MissionStep {
                             type = "Propagate",
@@ -285,27 +285,60 @@ namespace KSPGMAT.Service {
                             label = $"Propagate ({pName})"
                         };
 
-                        if (stopCond.Contains("=")) {
-                            var parts = stopCond.Split('=');
-                            st.stop_type = parts[0].Trim();
-                            string rVal = parts.Length > 1 ? parts[1].Trim() : "3600.0";
-                            st.target_val_str = rVal;
-                            st.duration_str = rVal;
-                            if (double.TryParse(rVal, NumberStyles.Any, CultureInfo.InvariantCulture, out double dur)) {
+                        // Split by comma while respecting potential nested braces
+                        string[] condChunks = stopCondRaw.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                        for (int c = 0; c < condChunks.Length; c++) {
+                            string chunk = condChunks[c].Trim();
+                            if (string.IsNullOrEmpty(chunk)) continue;
+
+                            // Check if chunk is a StopTolerance option, e.g. "StopTolerance = 1e-5"
+                            if (Regex.IsMatch(chunk, @"^StopTolerance\s*=", RegexOptions.IgnoreCase)) {
+                                var tolParts = chunk.Split('=');
+                                if (tolParts.Length > 1 && double.TryParse(tolParts[1].Trim(), NumberStyles.Any, CultureInfo.InvariantCulture, out double parsedTol)) {
+                                    st.stop_tolerance = parsedTol;
+                                    if (st.stop_conditions.Count > 0) st.stop_conditions[st.stop_conditions.Count - 1].stop_tolerance = parsedTol;
+                                }
+                                continue;
+                            }
+
+                            var cond = new StopCondition();
+                            if (chunk.Contains("=")) {
+                                var parts = chunk.Split('=');
+                                cond.parameter = parts[0].Trim();
+                                string rVal = parts.Length > 1 ? parts[1].Trim() : "";
+                                cond.target_val_str = rVal;
+                                if (double.TryParse(rVal, NumberStyles.Any, CultureInfo.InvariantCulture, out double dVal)) {
+                                    cond.target_val = dVal;
+                                }
+                            } else {
+                                cond.parameter = chunk;
+                            }
+                            st.stop_conditions.Add(cond);
+                        }
+
+                        // Sync primary stop condition for legacy backward compatibility
+                        if (st.stop_conditions.Count > 0) {
+                            var first = st.stop_conditions[0];
+                            st.stop_type = first.parameter;
+                            st.target_val_str = first.target_val_str;
+                            st.target_val = first.target_val;
+                            st.duration_str = first.target_val_str;
+
+                            if (double.TryParse(first.target_val_str, NumberStyles.Any, CultureInfo.InvariantCulture, out double dur)) {
                                 if (st.stop_type.Contains("ElapsedDays")) st.duration = dur * 86400.0;
                                 else st.duration = dur;
                                 st.target_val = dur;
                                 st.burn_use_vary_var = false;
-                            } else {
-                                st.duration_str = rVal;
-                                st.target_val_str = rVal;
+                            } else if (!string.IsNullOrEmpty(first.target_val_str)) {
                                 st.burn_use_vary_var = true;
-                                st.burn_vary_var_name = rVal;
+                                st.burn_vary_var_name = first.target_val_str;
                             }
                         } else {
-                            st.stop_type = stopCond;
+                            st.stop_type = stopCondRaw;
                         }
+
                         result.sequence.Add(st);
+                        continue;
                     }
 
                     // 3. Target

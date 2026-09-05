@@ -29,14 +29,23 @@ namespace KSPGMAT.Service {
             sb.AppendLine("% =============================================================\n");
 
             if (GMATClient.HasFullSpiceEphemeris) {
-                sb.AppendLine("% NASA JPL SPICE Ephemeris (Covering 1550-2650 AD, zero-offset full direct)");
+                string spkPath = GMATClient.DetectedSpiceKernelPath;
+                string kernelName = GMATClient.DetectedSpiceKernelName;
+                sb.AppendLine($"% NASA JPL SPICE Ephemeris: {kernelName} (High-Precision Numerical Ephemeris DE440/DE430)");
                 sb.AppendLine("GMAT SolarSystem.EphemerisSource = 'SPICE';");
+                if (!string.IsNullOrEmpty(spkPath) && File.Exists(spkPath)) {
+                    string safeSpk = spkPath.Replace("\\", "/");
+                    sb.AppendLine($"GMAT SolarSystem.SPKFilename = '{safeSpk}';");
+                }
                 sb.AppendLine("GMAT Mars.NAIFId = 4;");
                 sb.AppendLine("GMAT Jupiter.NAIFId = 5;");
                 sb.AppendLine("GMAT Saturn.NAIFId = 6;");
                 sb.AppendLine("GMAT Uranus.NAIFId = 7;");
                 sb.AppendLine("GMAT Neptune.NAIFId = 8;");
                 sb.AppendLine("GMAT Pluto.NAIFId = 9;\n");
+            } else {
+                sb.AppendLine("% Standard Ephemeris: GMAT Built-in Analytical DE405/DE421");
+                sb.AppendLine("GMAT SolarSystem.EphemerisSource = 'DE405';\n");
             }
 
             var leg0 = solution.Legs[0];
