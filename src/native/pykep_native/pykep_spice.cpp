@@ -456,8 +456,8 @@ EXPORT_API int pykep_spice_planet_elements(
         double mu = 0.0;
 
         if (name_norm == "moon") {
-            // 月球在母星 (地球 399) 引力场与黄道惯性系 (ECLIPJ2000) 下直接由 DE440 真实矢量求解开普勒根数 (0 魔法数字)
-            ok = g_spk_reader.get_moon_geocentric_state(epoch_ut, "ECLIPJ2000", &rx, &ry, &rz, &vx, &vy, &vz);
+            // 月球在母星 (地球 399) 引力场与赤道惯性系 (J2000) 下直接由 DE440 真实矢量求解开普勒根数 (与 Principia / RSS 严格对齐)
+            ok = g_spk_reader.get_moon_geocentric_state(epoch_ut, "J2000", &rx, &ry, &rz, &vx, &vy, &vz);
             mu = (mu_central_kms > 0.0 && mu_central_kms < 1e8) ? mu_central_kms : 398600.4418;
         } else {
             // 行星在日心引力场下定义开普勒公转根数 (J2000 赤道系对齐 Principia/RSS)
