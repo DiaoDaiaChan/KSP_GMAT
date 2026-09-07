@@ -1,5 +1,5 @@
 // ============================================================================
-// ESA PyKEP / keplerian_toolbox Official Native C-API Bridge
+// ESA PyKEP v3 (kep3) Official Native C-API Bridge
 // Module 1: Ballistic Lambert Solver & Multiple Gravity Assist (MGA) Evaluator
 // Copyright (c) 2004-2026 Dario Izzo, Advanced Concepts Team (ESA ACT)
 // Integrated for KSP_GMAT Interplanetary Trajectory & MGA Engine
@@ -16,14 +16,14 @@ EXPORT_API int pykep_lambert_solve(
 {
     if (tof_sec <= 0.0 || mu <= 0.0) return -1;
 
-    kep_toolbox::array3D r1 = {r1x, r1y, r1z};
-    kep_toolbox::array3D r2 = {r2x, r2y, r2z};
+    std::array<double, 3> r1 = {r1x, r1y, r1z};
+    std::array<double, 3> r2 = {r2x, r2y, r2z};
 
     try {
         int nmax = (tof_sec > 86400.0 * 250.0) ? 2 : 0;
-        kep_toolbox::lambert_problem lp(r1, r2, tof_sec, mu, retrograde != 0, nmax);
-        const auto& v1_solutions = lp.get_v1();
-        const auto& v2_solutions = lp.get_v2();
+        kep3::lambert_problem lp(r1, r2, tof_sec, mu, retrograde != 0, nmax);
+        const auto& v1_solutions = lp.get_v0();
+        const auto& v2_solutions = lp.get_v1();
 
         if (v1_solutions.empty() || v2_solutions.empty()) return -1;
 
@@ -48,13 +48,13 @@ EXPORT_API int pykep_lambert_multirev(
         return -1;
     }
 
-    kep_toolbox::array3D r1 = {r1x, r1y, r1z};
-    kep_toolbox::array3D r2 = {r2x, r2y, r2z};
+    std::array<double, 3> r1 = {r1x, r1y, r1z};
+    std::array<double, 3> r2 = {r2x, r2y, r2z};
 
     try {
-        kep_toolbox::lambert_problem lp(r1, r2, tof_sec, mu, retrograde != 0, std::max(0, std::min(4, nmax)));
-        const auto& v1_list = lp.get_v1();
-        const auto& v2_list = lp.get_v2();
+        kep3::lambert_problem lp(r1, r2, tof_sec, mu, retrograde != 0, std::max(0, std::min(4, nmax)));
+        const auto& v1_list = lp.get_v0();
+        const auto& v2_list = lp.get_v1();
 
         int n_sol = (int)std::min((size_t)max_solutions, v1_list.size());
         *out_solution_count = n_sol;
@@ -76,7 +76,7 @@ EXPORT_API int pykep_lambert_multirev(
     }
 }
 
-EXPORT_API int pykep_mga_evaluate(
+EXPORT_API int pykep_mga_evaluate_mu(
     const NativePlanetState* dep_planets,
     const NativePlanetState* arr_planets,
     const double* tofs_sec,
@@ -85,11 +85,14 @@ EXPORT_API int pykep_mga_evaluate(
     double dep_inc_deg,
     double arr_pe_km, double arr_ap_km,
     int no_insertion,
+    double mu_central,
     NativeMGASolution* out_sol)
 {
     if (!dep_planets || !arr_planets || !tofs_sec || !out_sol || leg_count <= 0 || leg_count > 16) {
         return -1;
     }
+
+    double effective_mu = (mu_central > 0.0) ? mu_central : SUN_MU;
 
     try {
         std::memset(out_sol, 0, sizeof(NativeMGASolution));
@@ -99,8 +102,8 @@ EXPORT_API int pykep_mga_evaluate(
         double total_tof_sec = 0.0;
 
         struct LegCandidateBranches {
-            std::vector<kep_toolbox::array3D> v1;
-            std::vector<kep_toolbox::array3D> v2;
+            std::vector<std::array<double, 3>> v1;
+            std::vector<std::array<double, 3>> v2;
         };
         std::vector<LegCandidateBranches> leg_branches(leg_count);
 
@@ -118,27 +121,27 @@ EXPORT_API int pykep_mga_evaluate(
             double r1_len = std::sqrt(p1.rx * p1.rx + p1.ry * p1.ry + p1.rz * p1.rz);
             double r2_len = std::sqrt(p2.rx * p2.rx + p2.ry * p2.ry + p2.rz * p2.rz);
             double r_avg = (r1_len + r2_len) * 0.5;
-            double t_planet = 2.0 * PI * std::sqrt(r_avg * r_avg * r_avg / SUN_MU);
+            double t_planet = 2.0 * PI * std::sqrt(r_avg * r_avg * r_avg / effective_mu);
 
             int nmax = 0;
             if (t_planet > 1.0 && tof > 0.85 * t_planet) {
                 nmax = (int)std::min(4.0, std::floor(tof / t_planet));
             }
 
-            kep_toolbox::array3D r1 = {p1.rx, p1.ry, p1.rz};
-            kep_toolbox::array3D r2 = {p2.rx, p2.ry, p2.rz};
+            std::array<double, 3> r1 = {p1.rx, p1.ry, p1.rz};
+            std::array<double, 3> r2 = {p2.rx, p2.ry, p2.rz};
 
             try {
-                kep_toolbox::lambert_problem lp(r1, r2, tof, SUN_MU, false, nmax);
-                leg_branches[k].v1 = lp.get_v1();
-                leg_branches[k].v2 = lp.get_v2();
+                kep3::lambert_problem lp(r1, r2, tof, effective_mu, false, nmax);
+                leg_branches[k].v1 = lp.get_v0();
+                leg_branches[k].v2 = lp.get_v1();
             } catch (...) {}
 
             if (leg_branches[k].v1.empty()) {
                 try {
-                    kep_toolbox::lambert_problem lp(r1, r2, tof, SUN_MU, true, nmax);
-                    leg_branches[k].v1 = lp.get_v1();
-                    leg_branches[k].v2 = lp.get_v2();
+                    kep3::lambert_problem lp(r1, r2, tof, effective_mu, true, nmax);
+                    leg_branches[k].v1 = lp.get_v0();
+                    leg_branches[k].v2 = lp.get_v1();
                 } catch (...) {}
             }
 
@@ -162,7 +165,12 @@ EXPORT_API int pykep_mga_evaluate(
                     double v_arr_y = v2[1] - p_dest.vy;
                     double v_arr_z = v2[2] - p_dest.vz;
                     double v_arr_mag = std::sqrt(v_arr_x * v_arr_x + v_arr_y * v_arr_y + v_arr_z * v_arr_z);
-                    cur_cost += calc_vis_viva_arr(v_arr_mag, p_dest.mu, p_dest.radius, arr_pe_km, arr_ap_km);
+                    bool is_central_arr = is_central_body(p_dest, effective_mu);
+                    if (is_central_arr) {
+                        cur_cost += v_arr_mag;
+                    } else {
+                        cur_cost += calc_vis_viva_arr(v_arr_mag, p_dest.mu, p_dest.radius, arr_pe_km, arr_ap_km);
+                    }
                 }
                 if (cur_cost < min_total_cost) {
                     min_total_cost = cur_cost;
@@ -184,7 +192,27 @@ EXPORT_API int pykep_mga_evaluate(
                     double v_inf_y = v1[1] - p_dep.vy;
                     double v_inf_z = v1[2] - p_dep.vz;
                     double v_inf_mag = std::sqrt(v_inf_x * v_inf_x + v_inf_y * v_inf_y + v_inf_z * v_inf_z);
-                    added_cost = calc_vis_viva_dep_inc(v_inf_mag, p_dep.mu, p_dep.radius, dep_pe_km, dep_ap_km, dep_inc_deg, v_inf_z, nullptr);
+                    bool is_central_dep = is_central_body(p_dep, effective_mu);
+                    if (is_central_dep) {
+                        const auto& p_arr_first = arr_planets[0];
+                        double r_dest_km = std::sqrt(p_arr_first.rx * p_arr_first.rx + p_arr_first.ry * p_arr_first.ry + p_arr_first.rz * p_arr_first.rz);
+
+                        // 停泊轨道角动量矢量 h_park = p_dep.r x p_dep.v
+                        double h_park_x = p_dep.ry * p_dep.vz - p_dep.rz * p_dep.vy;
+                        double h_park_y = p_dep.rz * p_dep.vx - p_dep.rx * p_dep.vz;
+                        double h_park_z = p_dep.rx * p_dep.vy - p_dep.ry * p_dep.vx;
+                        double h_park_mag = std::sqrt(h_park_x * h_park_x + h_park_y * h_park_y + h_park_z * h_park_z);
+
+                        double beta_rad = 0.0;
+                        if (h_park_mag > 1e-6 && r_dest_km > 1e-6) {
+                            double sin_beta = std::abs(p_arr_first.rx * h_park_x + p_arr_first.ry * h_park_y + p_arr_first.rz * h_park_z) / (r_dest_km * h_park_mag);
+                            beta_rad = std::asin(std::max(-1.0, std::min(1.0, sin_beta)));
+                        }
+
+                        added_cost = calc_central_departure_dv(p_dep.mu, p_dep.radius, dep_pe_km, dep_ap_km, r_dest_km, beta_rad, nullptr);
+                    } else {
+                        added_cost = calc_vis_viva_dep_inc(v_inf_mag, p_dep.mu, p_dep.radius, dep_pe_km, dep_ap_km, dep_inc_deg, v_inf_z, nullptr);
+                    }
                 } else {
                     double dv = pykep_flyby_dv(v_out_prev[0], v_out_prev[1], v_out_prev[2],
                                                v1[0] - p_dep.vx, v1[1] - p_dep.vy, v1[2] - p_dep.vz,
@@ -223,20 +251,69 @@ EXPORT_API int pykep_mga_evaluate(
 
             if (k == 0) {
                 double v_inf_mag = std::sqrt(leg.v_inf_dep_x * leg.v_inf_dep_x + leg.v_inf_dep_y * leg.v_inf_dep_y + leg.v_inf_dep_z * leg.v_inf_dep_z);
-                out_sol->c3_kms2 = v_inf_mag * v_inf_mag;
-                out_sol->launch_dv_kms = calc_vis_viva_dep_inc(v_inf_mag, p1.mu, p1.radius, dep_pe_km, dep_ap_km, dep_inc_deg, leg.v_inf_dep_z, &out_sol->ejection_inc_deg);
+                bool is_central_dep = is_central_body(p1, effective_mu);
+
+                if (is_central_dep) {
+                    out_sol->c3_kms2 = 0.0;
+                    double r_dest_km = std::sqrt(p2.rx * p2.rx + p2.ry * p2.ry + p2.rz * p2.rz);
+
+                    // 停泊轨道角动量矢量 h_park = p1.r x p1.v
+                    double h_park_x = p1.ry * p1.vz - p1.rz * p1.vy;
+                    double h_park_y = p1.rz * p1.vx - p1.rx * p1.vz;
+                    double h_park_z = p1.rx * p1.vy - p1.ry * p1.vx;
+                    double h_park_mag = std::sqrt(h_park_x * h_park_x + h_park_y * h_park_y + h_park_z * h_park_z);
+
+                    double beta_rad = 0.0;
+                    if (h_park_mag > 1e-6 && r_dest_km > 1e-6) {
+                        double sin_beta = std::abs(p2.rx * h_park_x + p2.ry * h_park_y + p2.rz * h_park_z) / (r_dest_km * h_park_mag);
+                        beta_rad = std::asin(std::max(-1.0, std::min(1.0, sin_beta)));
+                    }
+
+                    out_sol->launch_dv_kms = calc_central_departure_dv(p1.mu, p1.radius, dep_pe_km, dep_ap_km, r_dest_km, beta_rad, nullptr);
+
+                    double hx = p1.ry * v1[2] - p1.rz * v1[1];
+                    double hy = p1.rz * v1[0] - p1.rx * v1[2];
+                    double hz = p1.rx * v1[1] - p1.ry * v1[0];
+                    double h_mag = std::sqrt(hx * hx + hy * hy + hz * hz);
+                    if (h_mag < 1e-6) {
+                        hx = p1.ry * p2.rz - p1.rz * p2.ry;
+                        hy = p1.rz * p2.rx - p1.rx * p2.rz;
+                        hz = p1.rx * p2.ry - p1.ry * p2.rx;
+                        h_mag = std::sqrt(hx * hx + hy * hy + hz * hz);
+                    }
+                    if (h_mag > 1e-6) {
+                        out_sol->ejection_inc_deg = std::acos(std::max(-1.0, std::min(1.0, hz / h_mag))) * RAD2DEG;
+                        double nx = -hy;
+                        double ny = hx;
+                        double n_mag = std::sqrt(nx * nx + ny * ny);
+                        if (n_mag > 1e-6) {
+                            double lan = std::atan2(ny, nx) * RAD2DEG;
+                            if (lan < 0.0) lan += 360.0;
+                            out_sol->ejection_lan_deg = lan;
+                        } else {
+                            out_sol->ejection_lan_deg = 0.0;
+                        }
+                    } else {
+                        out_sol->ejection_inc_deg = 0.0;
+                        out_sol->ejection_lan_deg = 0.0;
+                    }
+                    out_sol->ejection_angle_deg = 180.0;
+                } else {
+                    out_sol->c3_kms2 = v_inf_mag * v_inf_mag;
+                    out_sol->launch_dv_kms = calc_vis_viva_dep_inc(v_inf_mag, p1.mu, p1.radius, dep_pe_km, dep_ap_km, dep_inc_deg, leg.v_inf_dep_z, &out_sol->ejection_inc_deg);
+
+                    double ra = std::atan2(leg.v_inf_dep_y, leg.v_inf_dep_x) * RAD2DEG;
+                    if (ra < 0) ra += 360.0;
+                    out_sol->ejection_lan_deg = ra;
+
+                    double r_park = p1.radius + dep_pe_km;
+                    double e_hyp = 1.0 + (r_park * v_inf_mag * v_inf_mag) / std::max(1e-6, p1.mu);
+                    double beta = std::acos(-1.0 / std::max(1.0001, e_hyp)) * RAD2DEG;
+                    double ej_ang = 180.0 - (beta - 90.0);
+                    if (ej_ang > 180.0) ej_ang = 360.0 - ej_ang;
+                    out_sol->ejection_angle_deg = ej_ang;
+                }
                 total_dv += out_sol->launch_dv_kms;
-
-                double ra = std::atan2(leg.v_inf_dep_y, leg.v_inf_dep_x) * RAD2DEG;
-                if (ra < 0) ra += 360.0;
-                out_sol->ejection_lan_deg = ra;
-
-                double r_park = p1.radius + dep_pe_km;
-                double e_hyp = 1.0 + (r_park * v_inf_mag * v_inf_mag) / std::max(1e-6, p1.mu);
-                double beta = std::acos(-1.0 / std::max(1.0001, e_hyp)) * RAD2DEG;
-                double ej_ang = 180.0 - (beta - 90.0);
-                if (ej_ang > 180.0) ej_ang = 360.0 - ej_ang;
-                out_sol->ejection_angle_deg = ej_ang;
 
                 double v_body_mag = std::sqrt(p1.vx * p1.vx + p1.vy * p1.vy + p1.vz * p1.vz);
                 if (v_body_mag > 1e-6) {
@@ -295,7 +372,12 @@ EXPORT_API int pykep_mga_evaluate(
                 out_sol->legs[leg_count - 1].v_inf_arr_y * out_sol->legs[leg_count - 1].v_inf_arr_y +
                 out_sol->legs[leg_count - 1].v_inf_arr_z * out_sol->legs[leg_count - 1].v_inf_arr_z);
 
-            out_sol->insertion_dv_kms = calc_vis_viva_arr(v_inf_arr_mag, p_dest.mu, p_dest.radius, arr_pe_km, arr_ap_km);
+            bool is_central_arr = is_central_body(p_dest, effective_mu);
+            if (is_central_arr) {
+                out_sol->insertion_dv_kms = v_inf_arr_mag;
+            } else {
+                out_sol->insertion_dv_kms = calc_vis_viva_arr(v_inf_arr_mag, p_dest.mu, p_dest.radius, arr_pe_km, arr_ap_km);
+            }
             total_dv += out_sol->insertion_dv_kms;
         }
 
@@ -306,4 +388,21 @@ EXPORT_API int pykep_mga_evaluate(
         if (out_sol) out_sol->all_feasible = 0;
         return -99;
     }
+}
+
+EXPORT_API int pykep_mga_evaluate(
+    const NativePlanetState* dep_planets,
+    const NativePlanetState* arr_planets,
+    const double* tofs_sec,
+    int leg_count,
+    double dep_pe_km, double dep_ap_km,
+    double dep_inc_deg,
+    double arr_pe_km, double arr_ap_km,
+    int no_insertion,
+    NativeMGASolution* out_sol)
+{
+    return pykep_mga_evaluate_mu(dep_planets, arr_planets, tofs_sec, leg_count,
+                                 dep_pe_km, dep_ap_km, dep_inc_deg,
+                                 arr_pe_km, arr_ap_km, no_insertion,
+                                 SUN_MU, out_sol);
 }

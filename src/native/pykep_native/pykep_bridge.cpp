@@ -14,3 +14,4 @@
 #include "pykep_mee.cpp"
 #include "pykep_sims_flanagan.cpp"
 #include "pykep_spice.cpp"
+#include "pykep_align_injection.cpp"

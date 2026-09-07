@@ -145,11 +145,29 @@ namespace KSPGMAT.UI {
             targetGroupBoxStyle.border = new RectOffset(3, 3, 3, 3);
             targetGroupBoxStyle.padding = new RectOffset(8, 8, 8, 8);
 
-            // Dynamic Interactive Glow Styles for Step Cards
             Texture2D groupHoverBg = MakeBoxTex(8, 8, new Color(0.045f, 0.070f, 0.115f, 0.98f), new Color(0.38f, 0.75f, 1.0f, 1.0f), 2);
             targetGroupHoverBoxStyle = new GUIStyle(targetGroupBoxStyle);
             targetGroupHoverBoxStyle.normal.background = groupHoverBg;
             targetGroupHoverBoxStyle.hover.background = groupHoverBg;
+
+            // Optimize Group Container Styles (Distinctive Violet/Orchid Theme)
+            Texture2D optGroupBorderBg = MakeBoxTex(8, 8, new Color(0.040f, 0.028f, 0.065f, 0.96f), new Color(0.48f, 0.22f, 0.65f, 0.95f), 2);
+            optimizeGroupBoxStyle = new GUIStyle(GUI.skin.box);
+            optimizeGroupBoxStyle.normal.background = optGroupBorderBg;
+            optimizeGroupBoxStyle.onNormal.background = optGroupBorderBg;
+            optimizeGroupBoxStyle.hover.background = optGroupBorderBg;
+            optimizeGroupBoxStyle.onHover.background = optGroupBorderBg;
+            optimizeGroupBoxStyle.active.background = optGroupBorderBg;
+            optimizeGroupBoxStyle.onActive.background = optGroupBorderBg;
+            optimizeGroupBoxStyle.focused.background = optGroupBorderBg;
+            optimizeGroupBoxStyle.onFocused.background = optGroupBorderBg;
+            optimizeGroupBoxStyle.border = new RectOffset(3, 3, 3, 3);
+            optimizeGroupBoxStyle.padding = new RectOffset(8, 8, 8, 8);
+
+            Texture2D optGroupHoverBg = MakeBoxTex(8, 8, new Color(0.052f, 0.038f, 0.082f, 0.98f), new Color(0.75f, 0.38f, 0.95f, 1.0f), 2);
+            optimizeGroupHoverBoxStyle = new GUIStyle(optimizeGroupBoxStyle);
+            optimizeGroupHoverBoxStyle.normal.background = optGroupHoverBg;
+            optimizeGroupHoverBoxStyle.hover.background = optGroupHoverBg;
 
             Texture2D stepHoverBg = MakeBoxTex(8, 8, new Color(0.055f, 0.085f, 0.135f, 0.98f), new Color(0.22f, 0.74f, 0.97f, 0.95f), 1);
             stepHoverBoxStyle = new GUIStyle(nestedCardBoxStyle);
@@ -258,11 +276,13 @@ namespace KSPGMAT.UI {
             headerStyle.fontSize = 12;
             headerStyle.fontStyle = FontStyle.Bold;
             headerStyle.normal.textColor = new Color(0.40f, 0.82f, 1.0f);
+            headerStyle.richText = true;
 
             subHeaderStyle = new GUIStyle(GUI.skin.label);
             subHeaderStyle.fontSize = 11;
             subHeaderStyle.fontStyle = FontStyle.Bold;
             subHeaderStyle.normal.textColor = new Color(0.85f, 0.85f, 0.60f);
+            subHeaderStyle.richText = true;
 
             labelValueStyle = new GUIStyle(GUI.skin.label);
             labelValueStyle.fontSize = 11;
@@ -343,6 +363,15 @@ namespace KSPGMAT.UI {
             pillEndTargetStyle.padding = new RectOffset(6, 6, 2, 2);
             pillEndTargetStyle.alignment = TextAnchor.MiddleCenter;
 
+            Texture2D pillEndOptBg = MakeBoxTex(8, 8, new Color(0.12f, 0.08f, 0.18f, 0.95f), new Color(0.38f, 0.22f, 0.50f, 0.9f), 1);
+            pillEndOptStyle = new GUIStyle(GUI.skin.box);
+            pillEndOptStyle.normal.background = pillEndOptBg;
+            pillEndOptStyle.normal.textColor = new Color(0.85f, 0.72f, 0.95f);
+            pillEndOptStyle.fontStyle = FontStyle.Bold;
+            pillEndOptStyle.fontSize = 10;
+            pillEndOptStyle.padding = new RectOffset(6, 6, 2, 2);
+            pillEndOptStyle.alignment = TextAnchor.MiddleCenter;
+
             pillGenericStyle = new GUIStyle(GUI.skin.box);
             pillGenericStyle.normal.background = secondaryBtnBg;
             pillGenericStyle.normal.textColor = new Color(0.65f, 0.75f, 0.88f);
@@ -376,8 +405,8 @@ namespace KSPGMAT.UI {
             numericInputStyle.normal.textColor = Color.white;
             numericInputStyle.focused.textColor = Color.white;
             numericInputStyle.fontSize = 11;
-            numericInputStyle.alignment = TextAnchor.MiddleRight;
-            numericInputStyle.padding = new RectOffset(6, 6, 2, 2);
+            numericInputStyle.alignment = TextAnchor.MiddleCenter;
+            numericInputStyle.padding = new RectOffset(5, 5, 2, 2);
             numericInputStyle.border = new RectOffset(2, 2, 2, 2);
 
             stepLabelInputStyle = new GUIStyle(GUI.skin.textField);
@@ -453,6 +482,11 @@ namespace KSPGMAT.UI {
         private GUIStyle GetTargetGroupBoxStyle(int groupIndex, bool isHovered = false) {
             if (isHovered && targetGroupHoverBoxStyle != null) return targetGroupHoverBoxStyle;
             return targetGroupBoxStyle ?? cardBoxStyle;
+        }
+
+        private GUIStyle GetOptimizeGroupBoxStyle(int groupIndex, bool isHovered = false) {
+            if (isHovered && optimizeGroupHoverBoxStyle != null) return optimizeGroupHoverBoxStyle;
+            return optimizeGroupBoxStyle ?? cardBoxStyle;
         }
 
         private GUIStyle GetStepBoxStyle(string stepType, bool isHovered = false, bool isSolving = false, bool isBeingDragged = false) {

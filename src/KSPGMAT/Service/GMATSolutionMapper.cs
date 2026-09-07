@@ -37,11 +37,15 @@ namespace KSPGMAT.Service {
                 dc_summary = new DCSummary()
             };
 
-            // 1. 解析各个 DifferentialCorrector*.data 官方结构化文件 (Per-DC 作用域隔离)
+            // 1. 解析各个 DifferentialCorrector*.data 与 Yukon/fmincon*.data 官方结构化文件 (Per-Solver 作用域隔离)
             var dcSummaries = ParseDifferentialCorrectorFiles(outputDir);
+            var optSummaries = ParseOptimizerFiles(outputDir);
+            foreach (var kvp in optSummaries) {
+                dcSummaries[kvp.Key] = kvp.Value;
+            }
             var globalSolvedVars = ExtractGlobalSolvedVariables(stdout);
 
-            // 整合汇总 DC 数据
+            // 整合汇总求解器与优化器数据
             bool anyDcFailed = false;
             int totalIterations = 0;
             foreach (var kvp in dcSummaries) {
@@ -142,6 +146,81 @@ namespace KSPGMAT.Service {
                     map[dcName] = summary;
                 } catch (Exception ex) {
                     KSPGMATLog.Warn($"[GMATSolutionMapper] Error parsing {file}: {ex.Message}");
+                }
+            }
+            return map;
+        }
+
+        /// <summary>
+        /// 解析 Yukon*.data 与 fmincon*.data 优化器结构化输出文件，提取最终最优变量与收敛指标
+        /// </summary>
+        public static Dictionary<string, DCSummary> ParseOptimizerFiles(string outputDir) {
+            var map = new Dictionary<string, DCSummary>(StringComparer.OrdinalIgnoreCase);
+            if (string.IsNullOrEmpty(outputDir) || !Directory.Exists(outputDir)) return map;
+
+            var optFiles = new List<string>();
+            optFiles.AddRange(Directory.GetFiles(outputDir, "Yukon*.data"));
+            optFiles.AddRange(Directory.GetFiles(outputDir, "fmincon*.data"));
+
+            foreach (var file in optFiles) {
+                try {
+                    string filename = Path.GetFileNameWithoutExtension(file);
+                    string optName = filename;
+                    if (optName.StartsWith("Yukon", StringComparison.OrdinalIgnoreCase)) {
+                        optName = optName.Substring(5).Trim();
+                    } else if (optName.StartsWith("fmincon", StringComparison.OrdinalIgnoreCase)) {
+                        optName = optName.Substring(7).Trim();
+                    }
+                    if (string.IsNullOrEmpty(optName)) {
+                        optName = GMATStateManager.Current.Solvers?.Find(s => s.Type == "Yukon" || s.Type == "SQP")?.Name ?? "Yukon1";
+                    }
+
+                    string content = File.ReadAllText(file);
+                    bool failed = content.Contains("failed to converge") || content.Contains("infeasible") || content.Contains("Error");
+                    bool converged = (content.Contains("converged") || content.Contains("Optimization terminated in")) && !failed;
+
+                    var summary = new DCSummary {
+                        converged = converged,
+                        iterations = 1,
+                        final_variables = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase),
+                        goals_summary = new List<DCGoalEntry>()
+                    };
+
+                    // 提取迭代次数: 例如 "Optimization terminated in 32 iterations" 或 "Iteration 31;"
+                    var iterMatch = Regex.Match(content, @"Optimization terminated in (\d+) iterations");
+                    if (iterMatch.Success && int.TryParse(iterMatch.Groups[1].Value, out int iters)) {
+                        summary.iterations = iters;
+                    } else {
+                        var lastIterMatch = Regex.Matches(content, @"Iteration (\d+)");
+                        if (lastIterMatch.Count > 0) {
+                            int.TryParse(lastIterMatch[lastIterMatch.Count - 1].Groups[1].Value, out summary.iterations);
+                        }
+                    }
+
+                    // 提取 "Final Variable values:" 块
+                    int finalVarIdx = content.LastIndexOf("Final Variable values:");
+                    string searchBlock = (finalVarIdx >= 0) ? content.Substring(finalVarIdx) : content;
+
+                    var varMatches = Regex.Matches(searchBlock, @"([A-Za-z_][\w.]*)\s*=\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)");
+                    foreach (Match m in varMatches) {
+                        string vName = m.Groups[1].Value.Trim();
+                        if (vName.Equals("Iteration", StringComparison.OrdinalIgnoreCase) ||
+                            vName.Equals("Function", StringComparison.OrdinalIgnoreCase) ||
+                            vName.Equals("Cost", StringComparison.OrdinalIgnoreCase) ||
+                            vName.Equals("Delta", StringComparison.OrdinalIgnoreCase)) continue;
+
+                        if (double.TryParse(m.Groups[2].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out double val)) {
+                            summary.final_variables[vName] = val;
+                            if (vName.Contains(".")) {
+                                string shortName = vName.Substring(vName.LastIndexOf('.') + 1);
+                                summary.final_variables[shortName] = val;
+                            }
+                        }
+                    }
+
+                    map[optName] = summary;
+                } catch (Exception ex) {
+                    KSPGMATLog.Warn($"[GMATSolutionMapper] Error parsing optimizer file {file}: {ex.Message}");
                 }
             }
             return map;
@@ -257,6 +336,10 @@ namespace KSPGMAT.Service {
                     : 0.0;
             }
 
+            string activeCentralBody = !string.IsNullOrEmpty(GMATStateManager.Current.Spacecraft.CentralBody)
+                ? GMATStateManager.Current.Spacecraft.CentralBody
+                : (FlightGlobals.ActiveVessel?.mainBody?.name ?? FlightGlobals.currentMainBody?.name ?? "Earth");
+
             string currentDC = "";
             double currentGroupDuration = 0;
             double currentGroupDir1 = 1.0, currentGroupDir2 = 0.0, currentGroupDir3 = 0.0;
@@ -272,6 +355,17 @@ namespace KSPGMAT.Service {
                     currentGroupHasTVC = false;
                 }
                 else if (st.type == "EndTarget") {
+                    currentDC = "";
+                }
+                else if (st.type == "Optimize") {
+                    string defaultOpt = GMATStateManager.Current.Solvers?.Find(s => s.Type == "Yukon" || s.Type == "SQP")?.Name ?? "Yukon1";
+                    currentDC = !string.IsNullOrEmpty(st.optimizer_name) ? st.optimizer_name : defaultOpt;
+                    currentGroupDuration = 0;
+                    currentGroupDir1 = 1.0; currentGroupDir2 = 0.0; currentGroupDir3 = 0.0;
+                    currentGroupHasTVC = false;
+                }
+                else if (st.type == "EndOptimize") {
+                    currentDC = "";
                 }
                 else if (st.type == "Vary") {
                     string vVar = st.vary_variable ?? "";
@@ -413,7 +507,7 @@ namespace KSPGMAT.Service {
                     var sbEntry = new SolvedBurn {
                         type = "Finite",
                         name = !string.IsNullOrEmpty(st.burn_name) ? st.burn_name : (st.label ?? $"Burn_{i + 1}"),
-                        origin = GMATStateManager.Current.Spacecraft.CentralBody ?? "Earth",
+                        origin = activeCentralBody,
                         duration = dur,
                         thrust_kn = thrustKN,
                         isp = ispVac,
@@ -433,20 +527,40 @@ namespace KSPGMAT.Service {
                     simClock += dur;
                 }
                 else if (st.type == "ImpulsiveBurn" || st.type == "Maneuver") {
-                    double mag = Math.Sqrt(st.dv_v * st.dv_v + st.dv_n * st.dv_n + st.dv_b * st.dv_b);
+                    string bName = GMATParameterRegistry.SanitizeGmatIdentifier(st.burn_name ?? st.label, "Burn1");
+                    double dvV = st.dv_v;
+                    double dvN = st.dv_n;
+                    double dvB = st.dv_b;
+
+                    Dictionary<string, double> activeVars = (!string.IsNullOrEmpty(currentDC) && dcSummaries.ContainsKey(currentDC))
+                        ? dcSummaries[currentDC].final_variables : globalSolvedVars;
+
+                    if (activeVars != null) {
+                        string k1 = $"{bName}.Element1", k2 = $"{bName}.Element2", k3 = $"{bName}.Element3";
+                        if (activeVars.ContainsKey(k1)) dvV = activeVars[k1];
+                        else if (activeVars.ContainsKey("Element1")) dvV = activeVars["Element1"];
+
+                        if (activeVars.ContainsKey(k2)) dvN = activeVars[k2];
+                        else if (activeVars.ContainsKey("Element2")) dvN = activeVars["Element2"];
+
+                        if (activeVars.ContainsKey(k3)) dvB = activeVars[k3];
+                        else if (activeVars.ContainsKey("Element3")) dvB = activeVars["Element3"];
+                    }
+
+                    double mag = Math.Sqrt(dvV * dvV + dvN * dvN + dvB * dvB);
                     double burnStartTime = simClock;
 
                     burns.Add(new SolvedBurn {
                         type = "Impulsive",
-                        name = !string.IsNullOrEmpty(st.burn_name) ? st.burn_name : (st.label ?? $"Impulsive_{i + 1}"),
-                        origin = GMATStateManager.Current.Spacecraft.CentralBody ?? "Earth",
+                        name = bName,
+                        origin = activeCentralBody,
                         duration = 0,
                         thrust_kn = 0,
                         isp = 0,
                         fuel_burned = 0,
-                        dv_v = st.dv_v,
-                        dv_n = st.dv_n,
-                        dv_b = st.dv_b,
+                        dv_v = dvV,
+                        dv_n = dvN,
+                        dv_b = dvB,
                         magnitude = mag,
                         epoch_offset = burnStartTime,
                         has_native_delta_v = false,
@@ -480,6 +594,13 @@ namespace KSPGMAT.Service {
                     currentDC = GMATParameterRegistry.SanitizeGmatIdentifier(step.dc_name ?? "DC", "DC");
                 }
                 else if (step.type == "EndTarget") {
+                    currentDC = "";
+                }
+                else if (step.type == "Optimize") {
+                    string defaultOpt = GMATStateManager.Current.Solvers?.Find(s => s.Type == "Yukon" || s.Type == "SQP")?.Name ?? "Yukon1";
+                    currentDC = GMATParameterRegistry.SanitizeGmatIdentifier(!string.IsNullOrEmpty(step.optimizer_name) ? step.optimizer_name : defaultOpt, defaultOpt);
+                }
+                else if (step.type == "EndOptimize") {
                     currentDC = "";
                 }
 
@@ -669,6 +790,7 @@ namespace KSPGMAT.Service {
                                     if (tokens.Length > 12) double.TryParse(tokens[12], NumberStyles.Any, CultureInfo.InvariantCulture, out rep.aop_deg);
                                     if (tokens.Length > 13) double.TryParse(tokens[13], NumberStyles.Any, CultureInfo.InvariantCulture, out rep.ta_deg);
                                     if (tokens.Length > 14) double.TryParse(tokens[14], NumberStyles.Any, CultureInfo.InvariantCulture, out rep.rmag_km);
+                                    if (tokens.Length > 15) double.TryParse(tokens[15], NumberStyles.Any, CultureInfo.InvariantCulture, out rep.total_mass_kg);
                                     double dryMass = 0.0;
                                     if (tokens.Length > 16) double.TryParse(tokens[16], NumberStyles.Any, CultureInfo.InvariantCulture, out dryMass);
                                     rep.fuel_mass_kg = rep.total_mass_kg > dryMass ? (rep.total_mass_kg - dryMass) : 0.0;
@@ -698,19 +820,30 @@ namespace KSPGMAT.Service {
 
         /// <summary>
         /// 获取 SSOT 中心天体半径 (km)，用于报告缺失 RMAG/Altitude 时的兜底。
-        /// Luna/Moon 双向映射；后台线程安全 (GetPlanet 内部已 try/catch 兜底)。
+        /// 基线 8 规范: 优先直接从 FlightGlobals.Bodies 动态直读，全量支持 RSS / OPM / JNSQ / Stock 及任意第三方星球包。
         /// </summary>
         private static double GetCentralBodyRadiusKm(string centralBody) {
-            const double earthRadiusKm = 6378.14;
-            if (string.IsNullOrEmpty(centralBody)) return earthRadiusKm;
+            if (!string.IsNullOrEmpty(centralBody) && FlightGlobals.Bodies != null) {
+                try {
+                    var cb = FlightGlobals.Bodies.Find(b => b != null && (
+                        b.name.Equals(centralBody, StringComparison.OrdinalIgnoreCase) ||
+                        (centralBody.Equals("Luna", StringComparison.OrdinalIgnoreCase) && b.name.Equals("Moon", StringComparison.OrdinalIgnoreCase)) ||
+                        (centralBody.Equals("Moon", StringComparison.OrdinalIgnoreCase) && b.name.Equals("Luna", StringComparison.OrdinalIgnoreCase))
+                    ));
+                    if (cb != null && cb.Radius > 0) return cb.Radius * 0.001;
+                } catch { /* 避免游戏暂停或场景切换异常 */ }
+            }
+
+            const double defaultRadiusKm = 6378.14;
+            if (string.IsNullOrEmpty(centralBody)) return defaultRadiusKm;
             try {
                 string lookup = centralBody;
                 if (lookup.Equals("Luna", StringComparison.OrdinalIgnoreCase)) lookup = "Moon";
                 else if (lookup.Equals("Moon", StringComparison.OrdinalIgnoreCase)) lookup = "Luna";
                 var bodyInfo = KSPGMAT.MGA.SolarSystemCatalog.GetPlanet(lookup);
                 if (bodyInfo != null && bodyInfo.RadiusKm > 0) return bodyInfo.RadiusKm;
-            } catch { /* 保持默认地球半径 */ }
-            return earthRadiusKm;
+            } catch { /* 保持离线默认半径 */ }
+            return defaultRadiusKm;
         }
     }
 }

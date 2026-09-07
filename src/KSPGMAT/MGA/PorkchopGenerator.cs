@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using UnityEngine;
+using KSPGMAT.Model;
 
 namespace KSPGMAT.MGA {
     /// <summary>
@@ -9,16 +10,16 @@ namespace KSPGMAT.MGA {
     /// (High-Precision Official PyKEP Interplanetary Porkchop Plot Engine)
     /// </summary>
     public class PorkchopGrid {
-        public int Width { get; set; } = 100;
-        public int Height { get; set; } = 75;
+        public int Width { get; set; } = MGADefaults.PorkchopDefaultWidth;
+        public int Height { get; set; } = MGADefaults.PorkchopDefaultHeight;
         public string FromBody { get; set; }
         public string ToBody { get; set; }
         public double DepStartUT { get; set; }
         public double DepSpanDays { get; set; }
         public double ToFMinDays { get; set; }
         public double ToFMaxDays { get; set; }
-        public double DepAltKm { get; set; } = 200.0;
-        public double ArrAltKm { get; set; } = 200.0;
+        public double DepAltKm { get; set; } = MGADefaults.DepartureAltitudeKm;
+        public double ArrAltKm { get; set; } = MGADefaults.DestinationAltitudeKm;
         public bool FlybyOnly { get; set; } = false;
 
         public double[,] DeltaVGrid { get; set; }
@@ -55,9 +56,9 @@ namespace KSPGMAT.MGA {
             int gx = Mathf.Clamp((int)(normX * (Width - 1)), 0, Width - 1);
             int gy = Mathf.Clamp((int)(normY * (Height - 1)), 0, Height - 1);
 
-            double depUT = DepStartUT + (gx / (double)(Width - 1)) * (DepSpanDays * 86400.0);
+            double depUT = DepStartUT + (gx / (double)(Width - 1)) * (DepSpanDays * MGADefaults.SecondsPerDay);
             double tofDays = ToFMinDays + (gy / (double)(Height - 1)) * (ToFMaxDays - ToFMinDays);
-            double arrUT = depUT + tofDays * 86400.0;
+            double arrUT = depUT + tofDays * MGADefaults.SecondsPerDay;
 
             if (DeltaVGrid == null) return new CellInfo { IsValid = false };
 
@@ -74,7 +75,7 @@ namespace KSPGMAT.MGA {
                 EjectDV = ejDV,
                 InsertDV = inDV,
                 C3 = c3,
-                IsValid = !double.IsNaN(totDV) && totDV < 1e5
+                IsValid = !double.IsNaN(totDV) && totDV < MGADefaults.PorkchopMaxValidDv
             };
         }
     }
@@ -84,9 +85,9 @@ namespace KSPGMAT.MGA {
             string fromBody, string toBody, 
             double depStartUT, double depSpanDays, 
             double tofMinDays, double tofMaxDays,
-            double depAltKm = 200.0, double arrAltKm = 200.0,
+            double depAltKm = MGADefaults.DepartureAltitudeKm, double arrAltKm = MGADefaults.DestinationAltitudeKm,
             bool flybyOnly = false,
-            int gridW = 100, int gridH = 75,
+            int gridW = MGADefaults.PorkchopDefaultWidth, int gridH = MGADefaults.PorkchopDefaultHeight,
             Action<float, string> onProgress = null) 
         {
             var grid = await Task.Run(() => ComputeInternal(
@@ -135,7 +136,8 @@ namespace KSPGMAT.MGA {
 
             var p1 = SolarSystemCatalog.GetPlanet(fromBody);
             var p2 = SolarSystemCatalog.GetPlanet(toBody);
-            double sunMu = SolarSystemCatalog.SunMu;
+            string central = SolarSystemCatalog.ResolveTransferCentralBody(fromBody, toBody);
+            double centralMu = SolarSystemCatalog.GetCentralMu(central);
 
             if (string.IsNullOrEmpty(fromBody) || string.IsNullOrEmpty(toBody) ||
                 fromBody.Equals(toBody, StringComparison.OrdinalIgnoreCase)) {
@@ -160,11 +162,11 @@ namespace KSPGMAT.MGA {
                     double totDV = 1e6;
                     double c3 = 1e6;
 
-                    // 官方 PyKEP Izzo 兰伯特求解器高精网格计算 (纯正 JPL/VSOP2013 历表，零畸变)
-                    p1.GetHeliocentricState(depUT, out Vector3d r1, out Vector3d vP1);
-                    p2.GetHeliocentricState(arrUT, out Vector3d r2, out Vector3d vP2);
+                    // 官方 PyKEP Izzo 兰伯特求解器高精网格计算 (自适应中心天体历表, 纯正 JPL/VSOP2013 历表，零畸变)
+                    p1.GetRelativeState(central, depUT, out Vector3d r1, out Vector3d vP1);
+                    p2.GetRelativeState(central, arrUT, out Vector3d r2, out Vector3d vP2);
 
-                    if (PykepNative.SolveLambert(r1, r2, tofSec, sunMu, false, out Vector3d v1, out Vector3d v2)) {
+                    if (PykepNative.SolveLambert(r1, r2, tofSec, centralMu, false, out Vector3d v1, out Vector3d v2)) {
                         Vector3d vInfDepVec = v1 - vP1;
                         Vector3d vInfArrVec = v2 - vP2;
                         double vInfDep = vInfDepVec.magnitude;

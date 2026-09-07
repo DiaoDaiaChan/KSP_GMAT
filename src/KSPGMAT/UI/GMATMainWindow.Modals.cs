@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using UnityEngine;
 using KSPGMAT.MGA;
 using KSPGMAT.Model;
+using KSPGMAT.Service;
 
 namespace KSPGMAT.UI {
     public partial class GMATMainWindow {
@@ -280,8 +282,15 @@ namespace KSPGMAT.UI {
                         if (s.stop_conditions != null && cIdx < s.stop_conditions.Count) {
                             s.stop_conditions[cIdx].parameter = psdPendingSelectedValue;
                         }
-                        s.stop_type = psdPendingSelectedValue;
                         pendingFocusControl = $"Field_PropStop_{paramPickerTargetStepIndex}_{cIdx}";
+                        GUI.FocusControl(pendingFocusControl);
+                    } else if (paramPickerMode == "minimize") {
+                        s.minimize_variable = psdPendingSelectedValue;
+                        pendingFocusControl = $"Field_MinVar_{paramPickerTargetStepIndex}";
+                        GUI.FocusControl(pendingFocusControl);
+                    } else if (paramPickerMode == "nlc") {
+                        s.constraint_lhs = psdPendingSelectedValue;
+                        pendingFocusControl = $"Field_NlcLhs_{paramPickerTargetStepIndex}";
                         GUI.FocusControl(pendingFocusControl);
                     }
                 }
@@ -300,7 +309,7 @@ namespace KSPGMAT.UI {
 
         private void DrawOldParamPickerWindow_Deprecated(int windowID) {
             bool isPropStop = (paramPickerMode == "prop_stop" || paramPickerMode == "stop");
-            string cb = FlightGlobals.ActiveVessel != null ? FlightGlobals.ActiveVessel.mainBody.bodyName : "Earth";
+            string cb = GMATStateManager.Current?.Spacecraft?.CentralBody ?? "Earth";
             if (cb == "Kerbin") cb = "Earth"; else if (cb == "Mun") cb = "Luna";
 
             GUILayout.BeginHorizontal();
@@ -788,7 +797,7 @@ namespace KSPGMAT.UI {
 
         private void RerenderSimulationImage() {
             imageStatusText = I18n.T("simimg_rerender_req");
-            string bodyName = FlightGlobals.ActiveVessel != null ? FlightGlobals.ActiveVessel.mainBody.name : "Earth";
+            string bodyName = GMATStateManager.Current?.Spacecraft?.CentralBody ?? "Earth";
             if (latestResult != null && latestResult.trajectory != null && latestResult.trajectory.Count > 0) {
                 simulationTexture = Service.GMATOrbitCanvas.RenderTrajectoryTexture(latestResult.trajectory, bodyName);
                 imageStatusText = I18n.T("simimg_status_ready");
@@ -897,13 +906,13 @@ namespace KSPGMAT.UI {
 
             GUILayout.Space(8);
 
-            // Section 2: 引力场与多体引力摄动 (Gravity Field & Point Masses)
+            // Section 2: 引力场与多体引力摄动 (Gravity Field & Dynamic Point Masses)
             GUILayout.Label(I18n.T("propcfg_s2"), subHeaderStyle);
             GUILayout.BeginHorizontal();
-            GUILayout.Label(I18n.T("propcfg_central_body"), labelValueStyle, GUILayout.Width(160));
+            GUILayout.Label(I18n.T("propcfg_central_body"), labelValueStyle, GUILayout.Width(130));
             Vessel v = FlightGlobals.ActiveVessel;
             List<string> bodies = GMATParameterRegistry.GetAllBodies(v);
-            for (int b = 0; b < bodies.Count && b < 6; b++) {
+            for (int b = 0; b < bodies.Count && b < 8; b++) {
                 string bName = bodies[b];
                 bool isCenter = (cfg.centralBody == bName);
                 if (GUILayout.Button(bName, isCenter ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
@@ -913,33 +922,79 @@ namespace KSPGMAT.UI {
             GUILayout.EndHorizontal();
 
             GUILayout.Space(4);
+            // 高阶重力场谐波势模型 (Degree x Order)
             GUILayout.BeginHorizontal();
-            GUILayout.Label(I18n.T("propcfg_point_masses"), labelValueStyle, GUILayout.Width(130));
-            cfg.gravityEarth = GUILayout.Toggle(cfg.gravityEarth, I18n.T("propcfg_toggle_earth"), GUILayout.Width(100));
-            cfg.gravityLuna = GUILayout.Toggle(cfg.gravityLuna, I18n.T("propcfg_toggle_luna"), GUILayout.Width(95));
-            cfg.gravitySun = GUILayout.Toggle(cfg.gravitySun, I18n.T("propcfg_toggle_sun"), GUILayout.Width(95));
-            cfg.gravityJupiter = GUILayout.Toggle(cfg.gravityJupiter, I18n.T("propcfg_toggle_jupiter"), GUILayout.Width(105));
-            cfg.gravityMars = GUILayout.Toggle(cfg.gravityMars, I18n.T("propcfg_toggle_mars"), GUILayout.Width(95));
-            cfg.gravityVenus = GUILayout.Toggle(cfg.gravityVenus, I18n.T("propcfg_toggle_venus"), GUILayout.Width(95));
+            GUILayout.Label("引力场谐波势:", labelValueStyle, GUILayout.Width(130));
+            var gravModels = GMATSchemaRegistry.Instance.GetGravityModelsForBody(cfg.centralBody);
+            string curGm = !string.IsNullOrEmpty(cfg.gravityModel) ? cfg.gravityModel : "PointMass";
+            for (int gm = 0; gm < gravModels.Count; gm++) {
+                string gName = gravModels[gm];
+                bool isCurG = string.Equals(curGm, gName, StringComparison.OrdinalIgnoreCase);
+                if (GUILayout.Button(gName, isCurG ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
+                    cfg.gravityModel = gName;
+                    if (gName == "PointMass") {
+                        cfg.gravityDegree = 0;
+                        cfg.gravityOrder = 0;
+                    } else if (cfg.gravityDegree == 0) {
+                        cfg.gravityDegree = 4;
+                        cfg.gravityOrder = 4;
+                    }
+                }
+            }
+            if (!string.Equals(cfg.gravityModel, "PointMass", StringComparison.OrdinalIgnoreCase)) {
+                GUILayout.Space(8);
+                GUILayout.Label("阶数:", labelValueStyle, GUILayout.Width(35));
+                cfg.gravityDegree = DrawIntField("Deg", cfg.gravityDegree, 10, 35);
+                cfg.gravityOrder = DrawIntField("Ord", cfg.gravityOrder, 10, 35);
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(4);
+            // 多体引力点质量 (PointMasses) 动态天体解耦多选
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("多体摄动天体:", labelValueStyle, GUILayout.Width(130));
+            for (int b = 0; b < bodies.Count; b++) {
+                string bName = bodies[b];
+                bool hasPm = cfg.HasPointMass(bName);
+                if (GUILayout.Button(hasPm ? $"✓ {bName}" : bName, hasPm ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
+                    cfg.SetPointMass(bName, !hasPm);
+                }
+            }
             GUILayout.EndHorizontal();
 
             GUILayout.Space(8);
 
-            // Section 3: 大气与环境扰动 (Atmosphere & SRP)
+            // Section 3: 大气与环境扰动 (Atmosphere & SRP & Relativistic Corrections)
             GUILayout.Label(I18n.T("propcfg_s3"), subHeaderStyle);
             GUILayout.BeginHorizontal();
             GUILayout.Label(I18n.T("propcfg_drag_model"), labelValueStyle, GUILayout.Width(110));
-            string[] atmos = new string[] { "None", "MSISE90", "JacchiaRoberts", "Exponential" };
-            for (int a = 0; a < atmos.Length; a++) {
-                bool isAtmo = (cfg.dragModel == atmos[a]);
+            var atmos = GMATSchemaRegistry.Instance.GetAtmosphereModelsForBody(cfg.centralBody);
+            string curAtm = !string.IsNullOrEmpty(cfg.dragAtmosphereModel) ? cfg.dragAtmosphereModel : "None";
+            for (int a = 0; a < atmos.Count; a++) {
+                bool isAtmo = string.Equals(curAtm, atmos[a], StringComparison.OrdinalIgnoreCase);
                 if (GUILayout.Button(atmos[a], isAtmo ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
                     cfg.dragModel = atmos[a];
+                    cfg.dragAtmosphereModel = atmos[a];
                 }
             }
 
             GUILayout.Space(15);
-            cfg.enableSRP = GUILayout.Toggle(cfg.enableSRP, I18n.T("propcfg_srp"), GUILayout.Width(140));
-            cfg.enableRelativity = GUILayout.Toggle(cfg.enableRelativity, I18n.T("propcfg_relativity"), GUILayout.Width(100));
+            cfg.enableSRP = GUILayout.Toggle(cfg.enableSRP, I18n.T("propcfg_srp"), GUILayout.Width(120));
+            cfg.enableRelativity = GUILayout.Toggle(cfg.enableRelativity, I18n.T("propcfg_relativity"), GUILayout.Width(120));
+
+            // 误差控制模式
+            GUILayout.Space(10);
+            GUILayout.Label("误差控制:", labelValueStyle, GUILayout.Width(65));
+            var errModes = GMATSchemaRegistry.Instance.GetErrorControlModes();
+            string curErr = !string.IsNullOrEmpty(cfg.errorControl) ? cfg.errorControl : "RSSStep";
+            for (int em = 0; em < errModes.Count; em++) {
+                string emName = errModes[em];
+                bool isCurEm = string.Equals(curErr, emName, StringComparison.OrdinalIgnoreCase);
+                if (GUILayout.Button(emName, isCurEm ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(20))) {
+                    cfg.errorControl = emName;
+                }
+            }
+
             GUILayout.EndHorizontal();
 
             GUILayout.EndScrollView();
@@ -951,6 +1006,8 @@ namespace KSPGMAT.UI {
 
             if (GUILayout.Button(I18n.T("btn_save_prop"), actionButtonStyle, GUILayout.Width(180), GUILayout.Height(28))) {
                 GMATParameterRegistry.AddOrUpdatePropagator(cfg);
+                propagatorConfigs[cfg.name] = cfg;
+                GMATStateManager.Current.Propagators[cfg.name] = cfg;
                 ScreenMessages.PostScreenMessage(I18n.Format("propcfg_saved", cfg.name), 3.0f, ScreenMessageStyle.UPPER_CENTER);
             }
 
@@ -1358,30 +1415,31 @@ namespace KSPGMAT.UI {
 
             planetPickerScrollPos = GUILayout.BeginScrollView(planetPickerScrollPos);
 
-            // 分组展示: 内行星 vs 小行星与矮行星 vs 外行星
-            var majorSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
-                "Mercury", "Venus", "Earth", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune", "Pluto"
-            };
+            // 动态分组展示：主要行星 (公转中心为恒星) vs 各母星的卫星系统 vs 次级天体/小行星 (0 硬编码，自适应所有模组)
+            string rootStar = SolarSystemCatalog.RootStarName;
+            var primaryPlanets = filtered.FindAll(p => !p.IsMoon && !p.Name.Equals(rootStar, StringComparison.OrdinalIgnoreCase));
+            var parentBodies = SolarSystemCatalog.GetBodiesWithMoons();
 
-            var innerPlanets = filtered.FindAll(p => majorSet.Contains(p.Name) && p.SMA < 2.0 * 1.496e8);
-            var asteroidPlanets = filtered.FindAll(p => !majorSet.Contains(p.Name));
-            var outerPlanets = filtered.FindAll(p => majorSet.Contains(p.Name) && p.SMA >= 2.0 * 1.496e8);
-
-            if (innerPlanets.Count > 0) {
-                GUILayout.Label(I18n.T("mga_inner_header"), labelValueStyle);
-                DrawPlanetGrid(innerPlanets);
+            if (primaryPlanets.Count > 0) {
+                GUILayout.Label($"<b>🪐 {I18n.T("mga_primary_planets_header", "主要行星 (Primary Planets)")} ({primaryPlanets.Count})</b>", labelValueStyle);
+                DrawPlanetGrid(primaryPlanets);
                 GUILayout.Space(8);
             }
 
-            if (asteroidPlanets.Count > 0) {
-                GUILayout.Label(I18n.T("mga_asteroids_header"), labelValueStyle);
-                DrawPlanetGrid(asteroidPlanets);
-                GUILayout.Space(8);
+            for (int pb = 0; pb < parentBodies.Count; pb++) {
+                var parent = parentBodies[pb];
+                var moons = filtered.FindAll(p => p.IsMoon && p.ParentName.Equals(parent.Name, StringComparison.OrdinalIgnoreCase));
+                if (moons.Count > 0) {
+                    GUILayout.Label($"<b>🌙 {parent.Icon}{parent.GetDisplayName()} 卫星系统 ({moons.Count})</b>", labelValueStyle);
+                    DrawPlanetGrid(moons);
+                    GUILayout.Space(8);
+                }
             }
 
-            if (outerPlanets.Count > 0) {
-                GUILayout.Label(I18n.T("mga_outer_header"), labelValueStyle);
-                DrawPlanetGrid(outerPlanets);
+            var otherBodies = filtered.FindAll(p => p.IsMoon && !parentBodies.Any(pb => pb.Name.Equals(p.ParentName, StringComparison.OrdinalIgnoreCase)));
+            if (otherBodies.Count > 0) {
+                GUILayout.Label($"<b>☄️ {I18n.T("mga_other_bodies_header", "小行星与次级天体")} ({otherBodies.Count})</b>", labelValueStyle);
+                DrawPlanetGrid(otherBodies);
                 GUILayout.Space(8);
             }
 
@@ -1449,6 +1507,8 @@ namespace KSPGMAT.UI {
                     return;
                 }
                 mgaConfig.DepartureBody = planetName;
+                MGAStateManager.Current.SetDepartureAndDestination(mgaConfig.DepartureBody, mgaConfig.DestinationBody);
+                mgaConfig.CentralBody = MGAStateManager.Current.Config.CentralBody;
                 if (mgaWorkflowMode == 0) {
                     mgaConfig.FlybySequence = new List<string> { mgaConfig.DestinationBody };
                 }
@@ -1465,6 +1525,8 @@ namespace KSPGMAT.UI {
                     return;
                 }
                 mgaConfig.DestinationBody = planetName;
+                MGAStateManager.Current.SetDepartureAndDestination(mgaConfig.DepartureBody, mgaConfig.DestinationBody);
+                mgaConfig.CentralBody = MGAStateManager.Current.Config.CentralBody;
                 if (mgaWorkflowMode == 0) {
                     mgaConfig.FlybySequence = new List<string> { planetName };
                 } else if (mgaConfig.FlybySequence != null && mgaConfig.FlybySequence.Count > 0) {
@@ -1505,11 +1567,410 @@ namespace KSPGMAT.UI {
                     var step = MGAStateManager.Current.MissionSequence[planetPickerFlybyIndex];
                     step.body_name = planetName;
                     step.label = $"{planetName} {step.type}";
-                    MGAStateManager.Current.NotifyStateChanged();
                     ScreenMessages.PostScreenMessage(I18n.Format("mga_step_body_set", planetPickerFlybyIndex + 1, planetName), 2.5f, ScreenMessageStyle.UPPER_CENTER);
                 }
             }
+
+            // 无论修改何种类型的天体，全量通知 MGAStateManager 保证 3 个子窗口实时同步
+            MGAStateManager.Current.NotifyStateChanged();
             showPlanetPickerModal = false;
+        }
+
+        // =========================================================================
+        // MGA 经典历史任务与统一配置库弹出选择器 (Historical Mission Picker Modal)
+        // =========================================================================
+        public void OpenHistoryMissionPicker() {
+            historyMissionSearch = "";
+            historyMissionCategory = "全部";
+            float pw = Mathf.Clamp(Screen.width * 0.55f, 600f, 820f);
+            float ph = Mathf.Clamp(Screen.height * 0.68f, 520f, 750f);
+            historyMissionPickerWindowRect = new Rect((Screen.width - pw) / 2, (Screen.height - ph) / 2, pw, ph);
+            showHistoryMissionPickerModal = true;
+            GUI.BringWindowToFront(982309);
+        }
+
+        private void DrawHistoryMissionPickerWindow(int windowID) {
+            GUILayout.BeginVertical();
+
+            // 1. 顶部标题栏
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(I18n.T("mga_hist_modal_title", "🏛️ 行星际历史任务预设与基准配置库 (MGA Mission Library)"), headerStyle);
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button("✕", deleteButtonStyle, GUILayout.Width(24), GUILayout.Height(20))) {
+                showHistoryMissionPickerModal = false;
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(4);
+
+            // 2. 搜索过滤与类别筛选栏
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(I18n.T("modal_search", "搜索:"), labelValueStyle, GUILayout.Width(40));
+            historyMissionSearch = GUILayout.TextField(historyMissionSearch, stepLabelInputStyle ?? GUI.skin.textField, GUILayout.MinWidth(140), GUILayout.ExpandWidth(true), GUILayout.Height(20));
+            if (!string.IsNullOrEmpty(historyMissionSearch) && GUILayout.Button(I18n.T("btn_clear", "✖"), secondaryButtonStyle, GUILayout.Width(22), GUILayout.Height(20))) {
+                historyMissionSearch = "";
+            }
+            GUILayout.Space(6);
+            GUILayout.Label("分类:", labelValueStyle, GUILayout.Width(35));
+            string[] cats = new string[] { "全部", "经典历史", "直达/内行星", "深空/外行星", "深空机动/低推力", "坎巴拉/原版", "用户自定义" };
+            for (int c = 0; c < cats.Length; c++) {
+                string cat = cats[c];
+                bool isSel = (historyMissionCategory == cat);
+                if (GUILayout.Button(cat, isSel ? actionButtonStyle : secondaryButtonStyle, GUILayout.Height(20))) {
+                    historyMissionCategory = cat;
+                }
+                GUILayout.Space(2);
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(6);
+
+            // 3. 历史任务卡片列表滚动视图
+            historyMissionScrollPos = GUILayout.BeginScrollView(historyMissionScrollPos, false, true, GUIStyle.none, GUI.skin.verticalScrollbar, GUILayout.ExpandWidth(true), GUILayout.ExpandHeight(true));
+
+            var allMissions = MGAMissionRepository.LoadAllMissions();
+            var filtered = allMissions.FindAll(m => {
+                if (!string.IsNullOrEmpty(historyMissionSearch)) {
+                    string q = historyMissionSearch.Trim().ToLowerInvariant();
+                    bool matchName = m.mission_name != null && m.mission_name.ToLowerInvariant().Contains(q);
+                    bool matchDesc = m.description != null && m.description.ToLowerInvariant().Contains(q);
+                    bool matchBody = (m.departure_body != null && m.departure_body.ToLowerInvariant().Contains(q)) ||
+                                     (m.destination_body != null && m.destination_body.ToLowerInvariant().Contains(q)) ||
+                                     (m.flyby_sequence != null && m.flyby_sequence.Any(b => b.ToLowerInvariant().Contains(q)));
+                    if (!matchName && !matchDesc && !matchBody) return false;
+                }
+
+                if (historyMissionCategory != "全部") {
+                    if (!string.Equals(m.category, historyMissionCategory, StringComparison.OrdinalIgnoreCase)) return false;
+                }
+                return true;
+            });
+
+            if (filtered.Count == 0) {
+                GUILayout.Space(20);
+                GUILayout.Label("<color=#94a3b8>没有匹配的任务预设，可尝试清空搜索条件或重新扫描配置文件库。</color>", labelValueStyle);
+            } else {
+                for (int mIdx = 0; mIdx < filtered.Count; mIdx++) {
+                    var mCfg = filtered[mIdx];
+                    GUILayout.BeginVertical(nestedCardBoxStyle);
+
+                    // 任务名称、分类与操作按钮
+                    GUILayout.BeginHorizontal();
+                    string icon = string.IsNullOrEmpty(mCfg.icon) ? "🪐" : mCfg.icon;
+                    GUILayout.Label($"<b>{icon} {mCfg.mission_name}</b> <color=#94a3b8>({mCfg.description})</color>", labelValueStyle);
+                    GUILayout.FlexibleSpace();
+
+                    // 一键载入到借力规划
+                    if (GUILayout.Button("🚀 载入到 MGA 借力", secondaryButtonStyle, GUILayout.Width(135), GUILayout.Height(22))) {
+                        LoadMissionConfigFile(mCfg, false);
+                        showHistoryMissionPickerModal = false;
+                        showBenchmarkModal = false;
+                        showPorkchopModal = false;
+                    }
+                    GUILayout.Space(4);
+                    // 载入并在工作台编辑
+                    if (GUILayout.Button("📋 在工作台精细编辑", actionButtonStyle, GUILayout.Width(145), GUILayout.Height(22))) {
+                        LoadMissionConfigFile(mCfg, true);
+                        showHistoryMissionPickerModal = false;
+                        showBenchmarkModal = false;
+                        showPorkchopModal = false;
+                    }
+                    GUILayout.EndHorizontal();
+
+                    GUILayout.Space(2);
+
+                    // 航线链路
+                    string seqStr = $"{mCfg.departure_body} ➔ " + string.Join(" ➔ ", mCfg.flyby_sequence ?? new List<string>());
+                    GUILayout.Label(I18n.ColorFormat("mga_lib_route", seqStr, mCfg.earliest_departure_date), labelValueStyle);
+
+                    // 历史指标性能
+                    if (mCfg.historic_total_dv_min_ms > 0 && mCfg.historic_flight_days_max > 0) {
+                        GUILayout.Label(I18n.ColorFormat("mga_lib_dv", mCfg.historic_total_dv_min_ms, mCfg.historic_total_dv_max_ms, mCfg.historic_flight_days_min, mCfg.historic_flight_days_max, mCfg.historic_flight_days_max / 365.25), labelValueStyle);
+                    }
+
+                    GUILayout.EndVertical();
+                    GUILayout.Space(4);
+                }
+            }
+
+            GUILayout.EndScrollView();
+
+            GUILayout.Space(6);
+
+            // 4. 底部通用工具箱
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("🔄 重新扫描 Missions 库", secondaryButtonStyle, GUILayout.Height(22))) {
+                MGAMissionRepository.LoadAllMissions(true);
+                ScreenMessages.PostScreenMessage("已重新扫描 Missions 配置文件目录", 2.0f, ScreenMessageStyle.UPPER_CENTER);
+            }
+            if (GUILayout.Button(I18n.T("btn_run_benchmarks", "⚡ 历史基准算法全局跑分"), secondaryButtonStyle, GUILayout.Height(22))) {
+                showBenchmarkModal = true;
+                showHistoryMissionPickerModal = false;
+                showPorkchopModal = false;
+                RunHistoricalBenchmarks();
+            }
+            if (GUILayout.Button("🛠️ 原生底层动力学自检", secondaryButtonStyle, GUILayout.Height(22))) {
+                RunNativeDiagnostics();
+            }
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button("导出当前配置", secondaryButtonStyle, GUILayout.Height(22))) {
+                ExportCurrentMissionScript();
+            }
+            if (GUILayout.Button("导入统一配置", actionButtonStyle, GUILayout.Height(22))) {
+                ImportAndSolveMissionScript();
+                showHistoryMissionPickerModal = false;
+            }
+            if (GUILayout.Button("✕ 关闭", secondaryButtonStyle, GUILayout.Width(70), GUILayout.Height(22))) {
+                showHistoryMissionPickerModal = false;
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.EndVertical();
+
+            GUI.DragWindow(new Rect(0, 0, historyMissionPickerWindowRect.width, 30));
+        }
+
+        // =========================================================================
+        // 航段动力学遥测明细弹窗 (Flight Telemetry Details Modal)
+        // =========================================================================
+        private void DrawTelemetryModalWindow(int windowID) {
+            var seq = MGAStateManager.Current.MissionSequence;
+            var sol = MGAStateManager.Current.ActiveSolution;
+
+            GUILayout.BeginVertical();
+
+            // 1. 标题栏与关闭
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(I18n.T("mga_telemetry_modal_title", "<b><color=#38bdf8>🪐 行星际航段动力学遥测看板 (Flight Telemetry Details)</color></b>"), headerStyle);
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button("✕", deleteButtonStyle, GUILayout.Width(24), GUILayout.Height(20))) {
+                showTelemetryModal = false;
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(4);
+
+            if (seq == null || seq.Count == 0) {
+                GUILayout.Space(50);
+                GUILayout.BeginHorizontal();
+                GUILayout.FlexibleSpace();
+                GUILayout.Label("<color=#94a3b8>当前任务序列为空，请先添加任务步骤或进行 MGA 求解。</color>", labelValueStyle);
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+                GUILayout.Space(50);
+            } else {
+                // 2. 航段切换选择器 (Tabs)
+                GUILayout.BeginHorizontal();
+                for (int s = 0; s < seq.Count; s++) {
+                    var step = seq[s];
+                    bool isSelected = (telemetrySelectedStepIndex == s);
+                    string tabTitle = $"#{s + 1}: {step.label}";
+                    if (tabTitle.Length > 16) tabTitle = tabTitle.Substring(0, 14) + "..";
+                    if (GUILayout.Button(tabTitle, isSelected ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Height(22))) {
+                        telemetrySelectedStepIndex = s;
+                    }
+                }
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+
+                GUILayout.Space(4);
+
+                // 3. 可滚动遥测富文本展示区
+                telemetryScrollPos = GUILayout.BeginScrollView(telemetryScrollPos, cardBoxStyle, GUILayout.ExpandHeight(true));
+                if (telemetrySelectedStepIndex >= 0 && telemetrySelectedStepIndex < seq.Count) {
+                    var targetStep = seq[telemetrySelectedStepIndex];
+                    DrawRichTextTelemetryCard(targetStep, telemetrySelectedStepIndex, sol);
+                }
+                GUILayout.EndScrollView();
+            }
+
+            GUILayout.Space(4);
+
+            // 4. 底部关闭按钮
+            GUILayout.BeginHorizontal();
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button(I18n.T("mga_telemetry_close", "关闭"), secondaryButtonStyle, GUILayout.Width(90), GUILayout.Height(24))) {
+                showTelemetryModal = false;
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.EndVertical();
+
+            GUI.DragWindow(new Rect(0, 0, telemetryWindowRect.width, 30));
+        }
+
+        // =========================================================================
+        // Sub-Window 9: 转移方案全量动力学详情独立弹窗 (Solution Astrodynamics Details Modal)
+        // =========================================================================
+        private void DrawSolutionDetailWindow(int windowID) {
+            var sol = detailModalSolution ?? selectedMgaSolution;
+            if (sol == null) {
+                showSolutionDetailModal = false;
+                return;
+            }
+
+            GUILayout.BeginVertical();
+
+            // 1. 标题栏
+            GUILayout.BeginHorizontal();
+            string chainSummary = !string.IsNullOrEmpty(sol.FlybyChainSummary) ? sol.FlybyChainSummary : $"{mgaConfig?.DepartureBody} ➔ {mgaConfig?.DestinationBody}";
+            GUILayout.Label($"<b><color=#38bdf8>🔍 转移航线全量动力学全景明细</color></b> <color=#94a3b8>({chainSummary})</color>", headerStyle);
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button("✕", deleteButtonStyle, GUILayout.Width(24), GUILayout.Height(20))) {
+                showSolutionDetailModal = false;
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(4);
+
+            // 2. 方案综合指标概览卡片
+            GUILayout.BeginVertical(nestedCardBoxStyle);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label($"<b>助推链条:</b> <color=#38bdf8><b>{chainSummary}</b></color>", labelValueStyle);
+            GUILayout.FlexibleSpace();
+            GUILayout.Label($"<b>方案总机动 (Total ΔV):</b> <color=#10b981><b>{sol.TotalDeltaVKms * 1000.0:F1} m/s</b></color>", sectionHeaderStyle);
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(2);
+            GUILayout.BeginHorizontal();
+            string depDate = GMATClient.FormatUtcGregorian(sol.DepartureUT);
+            string arrDate = GMATClient.FormatUtcGregorian(sol.ArrivalUT);
+            GUILayout.Label($"<b>发射窗口 (UTC):</b> <color=#f8fafc>{depDate}</color>", labelValueStyle, GUILayout.Width(260));
+            GUILayout.Label($"<b>到达历元 (UTC):</b> <color=#f8fafc>{arrDate}</color>", labelValueStyle, GUILayout.Width(260));
+            string flightStr = sol.TotalFlightDays >= 365.25 ? 
+                $"{sol.TotalFlightDays / 365.25:F2} 年 ({sol.TotalFlightDays:F1} 天)" : 
+                $"{sol.TotalFlightDays:F1} 天";
+            GUILayout.Label($"<b>总飞行时间:</b> <color=#f8fafc>{flightStr}</color>", labelValueStyle);
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label($"<b>出射脱离 ΔV:</b> <color=#38bdf8><b>{sol.LaunchDeltaVKms * 1000.0:F1} m/s</b></color>", labelValueStyle, GUILayout.Width(260));
+            GUILayout.Label($"<b>目标捕获 ΔV:</b> <color=#f59e0b><b>{sol.InsertionDeltaVKms * 1000.0:F1} m/s</b></color>", labelValueStyle, GUILayout.Width(260));
+            GUILayout.Label(sol.AllLegsFeasible ? "<color=#34d399><b>✅ 全部航段动力学物理闭环收敛</b></color>" : "<color=#facc15><b>⚠️ 存在边界约束超限</b></color>", labelValueStyle);
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+            GUILayout.EndVertical();
+
+            GUILayout.Space(4);
+
+            // 3. 逐航段全景遥测明细 (可滚动表格)
+            solutionDetailScrollPos = GUILayout.BeginScrollView(solutionDetailScrollPos, cardBoxStyle, GUILayout.ExpandHeight(true));
+
+            if (sol.Legs != null && sol.Legs.Count > 0) {
+                for (int k = 0; k < sol.Legs.Count; k++) {
+                    var leg = sol.Legs[k];
+                    GUILayout.BeginVertical(nestedCardBoxStyle);
+
+                    // 航段标题与类型
+                    GUILayout.BeginHorizontal();
+                    string legBadge = (k == 0) ? "<color=#38bdf8>[始发段]</color>" : ((k == sol.Legs.Count - 1) ? "<color=#34d399>[末端交会段]</color>" : "<color=#c084fc>[借力过渡段]</color>");
+                    string stratStr = leg.Strategy switch {
+                        MGALegStrategy.DeepSpaceManeuver1DSM => "MGA-1DSM (深空脉冲机动)",
+                        MGALegStrategy.ContinuousLowThrust => "连续低推力 (Sims-Flanagan)",
+                        _ => "纯弹道无动力引力助推"
+                    };
+                    GUILayout.Label($"<b>{legBadge} 第 {k + 1}/{sol.Legs.Count} 段: <color=#f8fafc>{leg.FromBody} ➔ {leg.ToBody}</color></b> <color=#94a3b8>({stratStr})</color>", sectionHeaderStyle);
+                    GUILayout.FlexibleSpace();
+                    GUILayout.Label($"<b>航段历时:</b> <color=#38bdf8>{leg.ToFDays:F1} 天</color>", labelValueStyle);
+                    GUILayout.EndHorizontal();
+
+                    GUILayout.Space(2);
+
+                    // 行 1: 始发与到达历元
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label($"  出发历元: <color=#cbd5e1>{GMATClient.FormatUtcGregorian(leg.DepartureUT)}</color>", labelValueStyle, GUILayout.Width(270));
+                    GUILayout.Label($"  到达历元: <color=#cbd5e1>{GMATClient.FormatUtcGregorian(leg.ArrivalUT)}</color>", labelValueStyle, GUILayout.Width(270));
+                    GUILayout.Label($"  始发相对双曲速度 V∞: <color=#f8fafc>{leg.VInfDepartureKms.magnitude:F3} km/s</color>", labelValueStyle);
+                    GUILayout.FlexibleSpace();
+                    GUILayout.EndHorizontal();
+
+                    // 行 2: 到达双曲速度与飞掠几何
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label($"  到达相对双曲速度 V∞: <color=#f8fafc>{leg.VInfArrivalKms.magnitude:F3} km/s</color>", labelValueStyle, GUILayout.Width(270));
+                    if (leg.FlybyPeriapsisRadiusKm > 0) {
+                        GUILayout.Label($"  飞掠近拱点高度 hp: <color=#38bdf8><b>{leg.FlybyPeriapsisAltitudeKm:F1} km</b></color>", labelValueStyle, GUILayout.Width(270));
+                        GUILayout.Label($"  飞掠转角 δ: <color=#f8fafc>{leg.FlybyTurningAngleDeg:F2}°</color>", labelValueStyle);
+                    } else {
+                        GUILayout.Label($"  终点天体状态: <color=#34d399>进入目标捕获/泊入阶段</color>", labelValueStyle);
+                    }
+                    GUILayout.FlexibleSpace();
+                    GUILayout.EndHorizontal();
+
+                    // 行 3: 若存在 DSM 深空机动
+                    if (leg.HasDSM && leg.DSM != null) {
+                        GUILayout.BeginHorizontal();
+                        double dsmUT = leg.DepartureUT + leg.DSM.EpochOffsetSec;
+                        GUILayout.Label($"  <color=#f59e0b><b>⚡ 深空机动 (DSM):</b></color> 历元 {GMATClient.FormatUtcGregorian(dsmUT)} (+{leg.DSM.EpochOffsetSec / 86400.0:F1}d)", labelValueStyle, GUILayout.Width(350));
+                        GUILayout.Label($"ΔV: <color=#f59e0b><b>{leg.DSM.DeltaVMs:F1} m/s</b></color> (顺向 {leg.DSM.ProgradeMs:F1}, 法向 {leg.DSM.NormalMs:F1}, 径向 {leg.DSM.RadialMs:F1} m/s)", labelValueStyle);
+                        GUILayout.FlexibleSpace();
+                        GUILayout.EndHorizontal();
+                    }
+
+                    // 行 4: 动力学可行性
+                    if (leg.FlybyDeltaVKms > 0.001) {
+                        GUILayout.BeginHorizontal();
+                        GUILayout.Label($"  <color=#facc15>⚠️ 有动力飞掠机动需求: {leg.FlybyDeltaVKms * 1000.0:F1} m/s</color>", labelValueStyle);
+                        GUILayout.FlexibleSpace();
+                        GUILayout.EndHorizontal();
+                    }
+
+                    GUILayout.EndVertical();
+                    GUILayout.Space(2);
+                }
+            } else {
+                GUILayout.Label("<color=#94a3b8>暂无详细航段动力学数据</color>", labelValueStyle);
+            }
+
+            // 4. 目标天体减速捕获卡片
+            GUILayout.BeginVertical(nestedCardBoxStyle);
+            var lastLeg = (sol.Legs != null && sol.Legs.Count > 0) ? sol.Legs.Last() : null;
+            string destName = lastLeg != null ? lastLeg.ToBody : (mgaConfig?.DestinationBody ?? "Target");
+            GUILayout.Label($"<b>🎯 目标天体泊入与制动机动明细 ({destName})</b>", sectionHeaderStyle);
+            GUILayout.Space(2);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label($"  目标停泊轨道: 近拱 <color=#38bdf8>{mgaConfig?.DestinationPeAKm:F0} km</color> × 远拱 <color=#38bdf8>{mgaConfig?.DestinationApAKm:F0} km</color>", labelValueStyle, GUILayout.Width(320));
+            double vArrMag = lastLeg != null ? lastLeg.VInfArrivalKms.magnitude : 0.0;
+            GUILayout.Label($"到达相对渐近速度 V∞: <color=#f8fafc><b>{vArrMag:F3} km/s</b></color>", labelValueStyle, GUILayout.Width(270));
+            GUILayout.Label($"入轨减速制动需求: <color=#f59e0b><b>{sol.InsertionDeltaVKms * 1000.0:F1} m/s</b></color>", labelValueStyle);
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+            GUILayout.EndVertical();
+
+            GUILayout.EndScrollView();
+
+            GUILayout.Space(4);
+
+            // 5. 底部操作栏
+            GUILayout.BeginHorizontal();
+            bool isCurrentActive = (sol == selectedMgaSolution);
+            if (isCurrentActive) {
+                GUILayout.Label("<color=#38bdf8><b>✓ 此方案当前正在主视图与 3D 画布中显示</b></color>", labelValueStyle);
+            } else {
+                if (GUILayout.Button("✓ 选用此方案为活动轨道", actionButtonStyle, GUILayout.Width(180), GUILayout.Height(24))) {
+                    selectedMgaSolution = sol;
+                    MGAStateManager.Current.NotifySolutionChanged(sol);
+                    RefreshMgaCanvas();
+                    showSolutionDetailModal = false;
+                }
+            }
+
+            GUILayout.Space(8);
+            if (GUILayout.Button("📋 复制此方案完整报告", secondaryButtonStyle, GUILayout.Width(160), GUILayout.Height(24))) {
+                string report = GenerateDetailedMgaReport(sol);
+                GUIUtility.systemCopyBuffer = report;
+                ScreenMessages.PostScreenMessage(I18n.T("mga_report_copied", "方案报告已复制到剪贴板"), 3.0f, ScreenMessageStyle.UPPER_CENTER);
+            }
+
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button(I18n.T("btn_close", "关闭"), secondaryButtonStyle, GUILayout.Width(80), GUILayout.Height(24))) {
+                showSolutionDetailModal = false;
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.EndVertical();
+
+            GUI.DragWindow(new Rect(0, 0, solutionDetailWindowRect.width, 30));
         }
     }
 }

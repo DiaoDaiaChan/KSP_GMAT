@@ -27,6 +27,7 @@ namespace KSPGMAT {
         private static MethodInfo mCurrentTime;
         private static MethodInfo mHasVessel;
         private static MethodInfo mVesselFromParent;
+        private static MethodInfo mCelestialFromParent;
         private static MethodInfo mFlightPlanExists;
         private static MethodInfo mFlightPlanCreate;
         private static MethodInfo mFlightPlanDelete;
@@ -57,6 +58,7 @@ namespace KSPGMAT {
         private static FieldInfo fStatus_Message;
 
         private static FieldInfo fAdapterPlugin;
+        private static FieldInfo fUnmodifiedOrbits;
 
         private static void EnsureInitialized() {
             if (initialized) return;
@@ -69,6 +71,7 @@ namespace KSPGMAT {
                 tStatus = pAsm.GetType("principia.ksp_plugin_adapter.Status");
 
                 fAdapterPlugin = typeof(PrincipiaPluginAdapter).GetField("plugin_", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance);
+                fUnmodifiedOrbits = typeof(PrincipiaPluginAdapter).GetField("unmodified_orbits_", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static);
 
                 BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
                 BindingFlags instFlags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
@@ -77,6 +80,7 @@ namespace KSPGMAT {
                     mCurrentTime = tInterface.GetMethod("CurrentTime", flags);
                     mHasVessel = tInterface.GetMethod("HasVessel", flags);
                     mVesselFromParent = tInterface.GetMethod("VesselFromParent", flags);
+                    mCelestialFromParent = tInterface.GetMethod("CelestialFromParent", flags);
                     mFlightPlanExists = tInterface.GetMethod("FlightPlanExists", flags);
                     mFlightPlanCreate = tInterface.GetMethod("FlightPlanCreate", flags);
                     mFlightPlanDelete = tInterface.GetMethod("FlightPlanDelete", flags);
@@ -220,6 +224,113 @@ namespace KSPGMAT {
             pos_km = new Vector3d(r_ksp.x / 1000.0, r_ksp.z / 1000.0, r_ksp.y / 1000.0);
             vel_kms = new Vector3d(v_ksp.x / 1000.0, v_ksp.z / 1000.0, v_ksp.y / 1000.0);
             KSPGMATLog.Warn($"[PrincipiaInterop] Query ICRF: source=StockFallback, r=[{pos_km.x:F2}, {pos_km.y:F2}, {pos_km.z:F2}]km, v=[{vel_kms.x:F3}, {vel_kms.y:F3}, {vel_kms.z:F3}]km/s");
+            return true;
+        }
+
+        /// <summary>
+        /// 获取 Principia 内部缓存的天体原始未篡改轨道 (Unmodified Orbit)。
+        /// Principia 每帧会用当前时刻瞬时密切根数覆写 body.orbit，
+        /// 若要在跨历元时间外推，必须使用 unmodified_orbits_ 才能避免二体开普勒外推发散导致的数十万至十数亿公里偏差。
+        /// </summary>
+        public static Orbit GetUnmodifiedOrbit(CelestialBody body) {
+            if (body == null) return null;
+            EnsureInitialized();
+            if (fUnmodifiedOrbits != null) {
+                try {
+                    var dict = fUnmodifiedOrbits.GetValue(null) as Dictionary<CelestialBody, Orbit>;
+                    if (dict != null && dict.TryGetValue(body, out Orbit unmod)) {
+                        return unmod;
+                    }
+                } catch { }
+            }
+            return body.orbit;
+        }
+
+        /// <summary>
+        /// 查询 Principia 原生 N 体高精度接口在当前帧相对父天体的状态矢量 (仅限当前时刻附近)。
+        /// </summary>
+        public static bool TryGetCelestialFromParent(CelestialBody body, out Vector3d pos_km, out Vector3d vel_kms) {
+            pos_km = Vector3d.zero;
+            vel_kms = Vector3d.zero;
+            if (body == null || body.referenceBody == null || body.referenceBody == body) return false;
+            EnsureInitialized();
+            IntPtr plugin = GetPlugin();
+            if (plugin == IntPtr.Zero || mCelestialFromParent == null || fQP_Q == null || fQP_P == null) return false;
+            try {
+                object qpObj = mCelestialFromParent.Invoke(null, new object[] { plugin, body.flightGlobalsIndex });
+                if (qpObj != null) {
+                    XYZ q = (XYZ)fQP_Q.GetValue(qpObj);
+                    XYZ p = (XYZ)fQP_P.GetValue(qpObj);
+                    // 标准天体力学惯性坐标 (X=East, Y=North/90deg, Z=Normal/Up)
+                    pos_km = new Vector3d(q.x / 1000.0, q.y / 1000.0, q.z / 1000.0);
+                    vel_kms = new Vector3d(p.x / 1000.0, p.y / 1000.0, p.z / 1000.0);
+                    return true;
+                }
+            } catch (Exception ex) {
+                KSPGMATLog.Warn("[PrincipiaInterop] Error querying CelestialFromParent: " + ex.Message);
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 方案 B: 获得天体相对日心的高精度 ICRF 空间状态 (位置 km, 速度 km/s)。
+        /// - 若 ut 处于当前时刻附近 (|ut - CurrentTime| < 1.0)，调用 Principia C++ 原生 CelestialFromParent 级联求和；
+        /// - 若 ut 处于任意历史/未来时间，调用 Principia 保存的真初始未篡改轨道 (unmodified_orbits_) 级联外推，
+        ///   彻底根除每帧 osculating 密切根数外推产生的 12.8 亿公里虚假偏差！
+        /// </summary>
+        public static bool TryGetHeliocentricState(CelestialBody body, double ut, out Vector3d pos_km, out Vector3d vel_kms) {
+            pos_km = Vector3d.zero;
+            vel_kms = Vector3d.zero;
+            if (body == null) return false;
+
+            // 太阳自身或根参考系
+            if (body.referenceBody == null || body.referenceBody == body || (body.orbit == null && GetUnmodifiedOrbit(body) == null)) {
+                return true;
+            }
+
+            double curTime = GetCurrentPrincipiaTime();
+            bool isCurrentInstant = Math.Abs(ut - curTime) < 1.0;
+
+            Vector3d r_sum = Vector3d.zero;
+            Vector3d v_sum = Vector3d.zero;
+            CelestialBody curr = body;
+
+            while (curr != null && curr.referenceBody != null && curr.referenceBody != curr) {
+                Vector3d r_rel = Vector3d.zero;
+                Vector3d v_rel = Vector3d.zero;
+                bool gotRel = false;
+
+                // 1. 若为当前帧，优先尝试直读 Principia 原生 N 体真实相对状态
+                if (isCurrentInstant && IsPrincipiaAvailable()) {
+                    if (TryGetCelestialFromParent(curr, out r_rel, out v_rel)) {
+                        gotRel = true;
+                    }
+                }
+
+                // 2. 否则或原生失败，读取未篡改轨道 (unmodified_orbits_) 沿真实根数与历元稳定外推
+                if (!gotRel) {
+                    Orbit unmod = GetUnmodifiedOrbit(curr) ?? curr.orbit;
+                    if (unmod != null) {
+                        Vector3d r_m = unmod.getRelativePositionAtUT(ut);
+                        Vector3d v_ms = unmod.getOrbitalVelocityAtUT(ut);
+                        // KSP Orbit 输出已处于标准 Z-Up 惯性系 (X=春分点, Y=黄道90°, Z=法向)，严禁交换 Y 与 Z
+                        r_rel = new Vector3d(r_m.x / 1000.0, r_m.y / 1000.0, r_m.z / 1000.0);
+                        v_rel = new Vector3d(v_ms.x / 1000.0, v_ms.y / 1000.0, v_ms.z / 1000.0);
+                        gotRel = true;
+                    }
+                }
+
+                if (!gotRel) {
+                    return false;
+                }
+
+                r_sum += r_rel;
+                v_sum += v_rel;
+                curr = curr.referenceBody;
+            }
+
+            pos_km = r_sum;
+            vel_kms = v_sum;
             return true;
         }
 

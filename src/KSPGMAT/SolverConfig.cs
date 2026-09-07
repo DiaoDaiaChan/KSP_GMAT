@@ -5,7 +5,8 @@ namespace KSPGMAT {
     [Serializable]
     public class SolverConfig {
         public string name = "DefaultDC";
-        public string algorithm = "NewtonRaphson"; // NewtonRaphson, Broyden, ModifiedBroyden
+        public string type = "DifferentialCorrector"; // DifferentialCorrector, Yukon, Optimizer, SQP
+        public string algorithm = "NewtonRaphson"; // NewtonRaphson, Broyden, ModifiedBroyden, SQP
         public string derivativeMethod = "ForwardDifference"; // ForwardDifference, CentralDifference, BackwardDifference
         public int maxIterations = 50;
         public string solveMode = "Solve"; // Solve, Calculate, RunInitialGuess
@@ -21,7 +22,7 @@ namespace KSPGMAT {
 
         /// <summary>
         /// 生成默认求解器预设。
-        /// 基线 7 说明: 此处为引导期兜底预设 (NewtonRaphson/Broyden 均为 GMAT 原生算法)，
+        /// 基线 7 说明: 此处为引导期兜底预设 (NewtonRaphson/Broyden/Yukon 均为 GMAT 原生算法)，
         /// 权威清单以 gmat_capabilities.json 动态加载为准 (见 GMATParameterRegistry.AvailableSolvers)。
         /// </summary>
         public static Dictionary<string, SolverConfig> CreateDefaultPresets() {
@@ -30,6 +31,7 @@ namespace KSPGMAT {
             // 1. DefaultDC: Industrial standard NewtonRaphson Differential Corrector
             var def = new SolverConfig {
                 name = "DefaultDC",
+                type = "DifferentialCorrector",
                 algorithm = "NewtonRaphson",
                 derivativeMethod = "ForwardDifference",
                 maxIterations = 50,
@@ -44,6 +46,7 @@ namespace KSPGMAT {
             // 2. PrecisionDC: CentralDifference High-Accuracy Differential Corrector
             var prec = new SolverConfig {
                 name = "PrecisionDC",
+                type = "DifferentialCorrector",
                 algorithm = "NewtonRaphson",
                 derivativeMethod = "CentralDifference",
                 maxIterations = 100,
@@ -58,6 +61,7 @@ namespace KSPGMAT {
             // 3. BroydenDC: Quasi-Newton Broyden Secant Method Corrector
             var broy = new SolverConfig {
                 name = "BroydenDC",
+                type = "DifferentialCorrector",
                 algorithm = "Broyden",
                 derivativeMethod = "ForwardDifference",
                 maxIterations = 75,
@@ -69,6 +73,21 @@ namespace KSPGMAT {
             };
             dict["BroydenDC"] = broy;
 
+            // 4. Yukon1: Industrial Native Sequential Quadratic Programming (SQP) Optimizer
+            var yukon = new SolverConfig {
+                name = "Yukon1",
+                type = "Yukon",
+                algorithm = "SQP",
+                derivativeMethod = "ForwardDifference",
+                maxIterations = 200,
+                solveMode = "Solve",
+                exitMode = "SaveAndContinue",
+                reportStyle = "Normal",
+                showProgress = true,
+                isDefault = true
+            };
+            dict["Yukon1"] = yukon;
+
             return dict;
         }
 
@@ -76,6 +95,7 @@ namespace KSPGMAT {
             System.Text.StringBuilder sb = new System.Text.StringBuilder();
             sb.Append("{");
             sb.Append($"\"name\": \"{name}\",");
+            sb.Append($"\"type\": \"{type}\",");
             sb.Append($"\"algorithm\": \"{algorithm}\",");
             sb.Append($"\"derivative_method\": \"{derivativeMethod}\",");
             sb.Append($"\"max_iterations\": {maxIterations},");

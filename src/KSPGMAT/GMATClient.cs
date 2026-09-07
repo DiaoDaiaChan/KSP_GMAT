@@ -35,6 +35,21 @@ namespace KSPGMAT {
     }
 
     [Serializable]
+    public class ForceModelDef {
+        public string name = "DefaultForceModel";
+        public string centralBody = "Earth";
+        public List<string> pointMasses = new List<string>();
+        public string drag = "None";
+        public string srp = "Off";
+        public string errorControl = "RSSStep";
+        public string gravityModel = "";
+        public int gravityDegree = 0;
+        public int gravityOrder = 0;
+        public bool enableRelativity = false;
+        public List<string> rawLines = new List<string>();
+    }
+
+    [Serializable]
     public class GMATImportResult {
         public bool success;
         public string message;
@@ -48,6 +63,13 @@ namespace KSPGMAT {
         public List<Model.GMATSolverModel> solver_models = new List<Model.GMATSolverModel>();
         public List<Model.GMATTankModel> tanks = new List<Model.GMATTankModel>();
         public List<Model.GMATThrusterModel> thrusters = new List<Model.GMATThrusterModel>();
+        public List<Model.GMATBurnModel> burns = new List<Model.GMATBurnModel>();
+        public List<CustomCoordSystemDef> coordinate_systems = new List<CustomCoordSystemDef>();
+        public Dictionary<string, PropagatorConfig> propagators = new Dictionary<string, PropagatorConfig>(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, ForceModelDef> force_models = new Dictionary<string, ForceModelDef>(StringComparer.OrdinalIgnoreCase);
+        public List<Model.GMATReportFileModel> report_files = new List<Model.GMATReportFileModel>();
+        public List<Model.GMATOrbitViewModel> orbit_views = new List<Model.GMATOrbitViewModel>();
+        public List<string> custom_header_blocks = new List<string>();
         public List<MissionStep> sequence = new List<MissionStep>();
         public double craft_dry_mass = 1000.0;
         public double craft_fuel_mass = 0.0;
@@ -71,6 +93,7 @@ namespace KSPGMAT {
         public double craft_raan = 0.0;
         public double craft_aop = 0.0;
         public double craft_ta = 0.0;
+        public Dictionary<string, string> craft_extended_properties = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         public string raw_script_content = "";
     }
 
@@ -203,10 +226,15 @@ namespace KSPGMAT {
         public string set_expr = "'01 Jan 2026 12:00:00.000'";
         public string global_objects = "Sat PropTank";
 
-        // 5. Function Calls (CallGmatFunction / CallBuiltinGmatFunction)
+        // 5. Function Calls (CallGmatFunction / CallBuiltinGmatFunction / CallPython)
         public string function_name = "MyCustomFunc";
         public string func_inputs = "Sat.X, Sat.Y";
         public string func_outputs = "out_x, out_y";
+        public string python_module = "orbit_calculator";
+        public string python_function = "compute_delta_v";
+        public string python_inputs = "Sat.A1ModJulian, Sat.Earth.SMA, Sat.Earth.ECC";
+        public string python_outputs = "dv_v, dv_n, dv_b";
+        public string call_syntax_mode = "Assignment"; // Assignment: [outputs] = Python.Module.Func(inputs), Explicit: CallPythonFunction 'Label' Python...
 
         // 6. Output, Visualization & Draw Control (Write / Toggle / ClearPlot / PenUp / PenDown / UpdateDynamicData)
         public string subscriber_name = "EarthInertialView";
@@ -555,6 +583,11 @@ namespace KSPGMAT {
         }
 
         public static string JdToUtcGregorian(double jd) {
+            JdToDateComponents(jd, out int day, out string monStr, out int year, out int hours, out int minutes, out double seconds);
+            return string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0:D2} {1} {2:D4} {3:D2}:{4:D2}:{5:00.000}", day, monStr, year, hours, minutes, seconds);
+        }
+
+        public static void JdToDateComponents(double jd, out int day, out string monStr, out int year, out int hours, out int minutes, out double seconds) {
             double jdAdj = jd + 0.5;
             long Z = (long)Math.Floor(jdAdj);
             double F = jdAdj - Z;
@@ -569,20 +602,47 @@ namespace KSPGMAT {
             long E = (long)Math.Floor((B - D) / 30.6001);
 
             double dayWithFrac = B - D - (long)Math.Floor(30.6001 * E) + F;
-            int day = (int)Math.Floor(dayWithFrac);
+            day = (int)Math.Floor(dayWithFrac);
             int month = (int)(E < 14 ? E - 1 : E - 13);
-            int year = (int)(month > 2 ? C - 4716 : C - 4715);
+            year = (int)(month > 2 ? C - 4716 : C - 4715);
 
             double dayFrac = dayWithFrac - day;
             double totalSeconds = dayFrac * 86400.0;
-            int hours = (int)(totalSeconds / 3600.0);
+            hours = (int)(totalSeconds / 3600.0);
             double rem = totalSeconds - hours * 3600.0;
-            int minutes = (int)(rem / 60.0);
-            double seconds = rem - minutes * 60.0;
+            minutes = (int)(rem / 60.0);
+            seconds = rem - minutes * 60.0;
 
             string[] months = new string[] { "", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
-            string monStr = (month >= 1 && month <= 12) ? months[month] : "Jan";
-            return string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0:D2} {1} {2:D4} {3:D2}:{4:D2}:{5:00.000}", day, monStr, year, hours, minutes, seconds);
+            monStr = (month >= 1 && month <= 12) ? months[month] : "Jan";
+        }
+
+        public static void UtToDateComponents(double ut, out int year, out int month, out int day, out int hours, out int minutes, out double seconds) {
+            double jd = EphemerisTimeSystem.UtToJd(ut);
+            JdToDateComponents(jd, out day, out string monStr, out year, out hours, out minutes, out seconds);
+            string[] months = new string[] { "", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+            month = 1;
+            for (int m = 1; m <= 12; m++) {
+                if (months[m].Equals(monStr, StringComparison.OrdinalIgnoreCase)) {
+                    month = m;
+                    break;
+                }
+            }
+        }
+
+        public static double DateComponentsToUt(int year, int month, int day, int hours, int minutes, double seconds) {
+            month = Math.Max(1, Math.Min(12, month));
+            day = Math.Max(1, Math.Min(31, day));
+            hours = Math.Max(0, Math.Min(23, hours));
+            minutes = Math.Max(0, Math.Min(59, minutes));
+            seconds = Math.Max(0.0, Math.Min(59.999, seconds));
+
+            int a = (14 - month) / 12;
+            int y = year + 4800 - a;
+            int m_adj = month + 12 * a - 3;
+            double jdn = day + (153 * m_adj + 2) / 5 + 365 * y + y / 4 - y / 100 + y / 400 - 32045;
+            double jd = jdn + (hours - 12) / 24.0 + minutes / 1440.0 + seconds / EphemerisTimeSystem.SECONDS_PER_DAY;
+            return EphemerisTimeSystem.JdToUt(jd);
         }
 
         public static void CheckConnection(Action<bool, string> callback) {

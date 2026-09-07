@@ -67,6 +67,7 @@ namespace KSPGMAT.Model {
         public Vector3d PosKm { get; set; } = Vector3d.zero;
         public Vector3d VelKms { get; set; } = Vector3d.zero;
         public string CentralBody { get; set; } = "Earth";
+        public Dictionary<string, string> ExtendedProperties { get; set; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     }
 
     [Serializable]
@@ -94,6 +95,7 @@ namespace KSPGMAT.Model {
     [Serializable]
     public class GMATSolverModel {
         public string Name { get; set; } = "DefaultDC";
+        public string Type { get; set; } = "DifferentialCorrector";
         public string Algorithm { get; set; } = "NewtonRaphson";
         public string DerivativeMethod { get; set; } = "ForwardDifference";
         public int MaxIterations { get; set; } = 50;
@@ -106,6 +108,7 @@ namespace KSPGMAT.Model {
     public class GMATBurnModel {
         public string Name { get; set; } = "Impulsive1";
         public string Type { get; set; } = "ImpulsiveBurn";
+        public string CoordinateSystem { get; set; } = "Local";
         public string Origin { get; set; } = "Earth";
         public string Axes { get; set; } = "VNB";
         public string BoundThruster { get; set; } = "MainEngine";
@@ -121,6 +124,19 @@ namespace KSPGMAT.Model {
         public string Name { get; set; } = "TrajReport";
         public string Filename { get; set; } = "TrajReport.txt";
         public bool WriteHeaders { get; set; } = false;
+    }
+
+    [Serializable]
+    public class GMATOrbitViewModel {
+        public string Name { get; set; } = "DefaultOrbitView";
+        public string CoordinateSystem { get; set; } = "EarthMJ2000Eq";
+        public string ViewPointReference { get; set; } = "Earth";
+        public List<string> AddObjects { get; set; } = new List<string>();
+        public string SolverIterations { get; set; } = "Current";
+        public double[] ViewPointVector { get; set; } = new double[] { 0, 0, 40000 };
+        public bool ShowPlot { get; set; } = true;
+        public int UpdatePlotFrequency { get; set; } = 50;
+        public int MaxPlotPoints { get; set; } = 30000;
     }
 
     /// <summary>
@@ -207,6 +223,8 @@ namespace KSPGMAT.Model {
         public static GMATStateManager Current => _instance ?? (_instance = new GMATStateManager());
 
         public MGAStateManager MGA => MGAStateManager.Current;
+        public GMATSchemaRegistry Schema => GMATSchemaRegistry.Instance;
+        public GMATDynamicOverrides Overrides { get; } = new GMATDynamicOverrides();
 
         public GMATSpacecraftModel Spacecraft { get; set; } = new GMATSpacecraftModel();
         public List<GMATTankModel> Tanks { get; set; } = new List<GMATTankModel>();
@@ -217,6 +235,11 @@ namespace KSPGMAT.Model {
         public List<GMATSolverModel> Solvers { get; set; } = new List<GMATSolverModel>();
         public List<GMATBurnModel> Burns { get; set; } = new List<GMATBurnModel>();
         public List<GMATReportFileModel> ReportFiles { get; set; } = new List<GMATReportFileModel>();
+        public List<GMATOrbitViewModel> OrbitViews { get; set; } = new List<GMATOrbitViewModel>();
+        public List<CustomCoordSystemDef> CoordinateSystems { get; set; } = new List<CustomCoordSystemDef>();
+        public Dictionary<string, PropagatorConfig> Propagators { get; set; } = new Dictionary<string, PropagatorConfig>(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, ForceModelDef> ForceModels { get; set; } = new Dictionary<string, ForceModelDef>(StringComparer.OrdinalIgnoreCase);
+        public List<string> CustomHeaderBlocks { get; set; } = new List<string>();
         public List<StageData> Stages { get; private set; } = new List<StageData>();
         public int SelectedEngineIndex { get; set; } = 0;
         public List<int> SelectedStageIndices { get; set; } = new List<int>();
@@ -362,12 +385,14 @@ namespace KSPGMAT.Model {
         public void SyncFromVessel(Vessel v) {
             if (v == null) return;
 
+            // 0. 更新动态覆盖管理器快照
+            Overrides.UpdateFromVessel(v);
+
             // 1. 同步航天器动力学状态 (统一约定变量名 Sat)
             Spacecraft.Name = "Sat";
-            string cbName = v.mainBody != null ? v.mainBody.bodyName : "Earth";
-            if (cbName == "Kerbin") cbName = "Earth";
-            else if (cbName == "Mun") cbName = "Luna";
-            else if (cbName == "Minmus") cbName = "Minmus";
+            string rawCbName = v.mainBody != null ? v.mainBody.bodyName : "Earth";
+            string cbName = SolarSystemCatalog.CanonicalizeName(rawCbName);
+            if (string.IsNullOrEmpty(cbName)) cbName = "Earth";
             Spacecraft.CentralBody = cbName;
             Spacecraft.CoordinateSystem = $"{cbName}MJ2000Eq";
             Spacecraft.UniversalTime = Planetarium.GetUniversalTime();
@@ -489,6 +514,13 @@ namespace KSPGMAT.Model {
 
             // 5. 扫描分级
             Stages = MechJebInterop.GetStages(v);
+        }
+
+        /// <summary>
+        /// 获取以当前飞船动力学状态为单一真值来源 (SSOT) 的停泊轨道适配器
+        /// </summary>
+        public IParkingOrbit GetParkingOrbit() {
+            return new StateManagedParkingOrbit(Spacecraft);
         }
 
         /// <summary>

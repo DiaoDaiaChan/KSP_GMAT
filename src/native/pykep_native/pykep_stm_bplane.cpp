@@ -1,5 +1,5 @@
 // ============================================================================
-// ESA PyKEP / keplerian_toolbox Official Native C-API Bridge
+// ESA PyKEP v3 (kep3) Official Native C-API Bridge
 // Module 3: Keplerian STM & B-Plane TCM Midcourse Targeting Solver
 // Copyright (c) 2004-2026 Dario Izzo, Advanced Concepts Team (ESA ACT)
 // Integrated for KSP_GMAT Interplanetary Trajectory & MGA Engine
@@ -7,21 +7,72 @@
 
 #include "pykep_common.h"
 
+EXPORT_API int kep3_calc_reynolds_stm(
+    const double* r0_km, const double* v0_kms, double dt_sec, double mu,
+    double* out_stm_6x6)
+{
+    if (!r0_km || !v0_kms || !out_stm_6x6 || mu <= 0.0) return -1;
+
+    // 1. 优先使用 kep3 官方解析拉格朗日微商 STM (Analytical Lagrangian STM, JGCD 2022)
+    try {
+        std::array<std::array<double, 3>, 2> pos_vel0 = {{
+            {r0_km[0], r0_km[1], r0_km[2]},
+            {v0_kms[0], v0_kms[1], v0_kms[2]}
+        }};
+
+        auto [rf_vf, stm_opt] = kep3::propagate_lagrangian(pos_vel0, dt_sec, mu, true);
+        if (stm_opt.has_value()) {
+            const auto& stm = stm_opt.value();
+            for (int i = 0; i < 36; ++i) {
+                out_stm_6x6[i] = stm[i];
+            }
+            return 0;
+        }
+    } catch (...) {
+    }
+
+    // 2. 备选 kep3 Reynolds 解析 STM
+    try {
+        std::array<std::array<double, 3>, 2> pos_vel0 = {{
+            {r0_km[0], r0_km[1], r0_km[2]},
+            {v0_kms[0], v0_kms[1], v0_kms[2]}
+        }};
+
+        auto [rf_vf, stm_opt] = kep3::propagate_stm_reynolds(pos_vel0, dt_sec, mu, true);
+        if (stm_opt.has_value()) {
+            const auto& stm = stm_opt.value();
+            for (int i = 0; i < 36; ++i) {
+                out_stm_6x6[i] = stm[i];
+            }
+            return 0;
+        }
+    } catch (...) {
+    }
+
+    return -2;
+}
+
 EXPORT_API int pykep_calc_kepler_stm(
     const double* r0_km, const double* v0_kms, double dt_sec, double mu,
     double* out_stm_6x6)
 {
     if (!r0_km || !v0_kms || !out_stm_6x6 || mu <= 0.0) return -1;
 
+    // 优先使用 kep3 官方解析 STM (机器精度)
+    if (kep3_calc_reynolds_stm(r0_km, v0_kms, dt_sec, mu, out_stm_6x6) == 0) {
+        return 0;
+    }
+
+    // 后备：高精拉格朗日有限中心差分
     try {
         double eps_r = 1e-4; // 10 cm
         double eps_v = 1e-7; // 0.1 mm/s
 
         for (int j = 0; j < 6; ++j) {
-            kep_toolbox::array3D r_p = {r0_km[0], r0_km[1], r0_km[2]};
-            kep_toolbox::array3D v_p = {v0_kms[0], v0_kms[1], v0_kms[2]};
-            kep_toolbox::array3D r_m = {r0_km[0], r0_km[1], r0_km[2]};
-            kep_toolbox::array3D v_m = {v0_kms[0], v0_kms[1], v0_kms[2]};
+            std::array<double, 3> r_p = {r0_km[0], r0_km[1], r0_km[2]};
+            std::array<double, 3> v_p = {v0_kms[0], v0_kms[1], v0_kms[2]};
+            std::array<double, 3> r_m = {r0_km[0], r0_km[1], r0_km[2]};
+            std::array<double, 3> v_m = {v0_kms[0], v0_kms[1], v0_kms[2]};
 
             double eps = (j < 3) ? eps_r : eps_v;
             if (j < 3) {
@@ -32,8 +83,8 @@ EXPORT_API int pykep_calc_kepler_stm(
                 v_m[j - 3] -= eps;
             }
 
-            kep_toolbox::propagate_lagrangian(r_p, v_p, dt_sec, mu);
-            kep_toolbox::propagate_lagrangian(r_m, v_m, dt_sec, mu);
+            pykep_propagate_lagrangian(r_p, v_p, dt_sec, mu);
+            pykep_propagate_lagrangian(r_m, v_m, dt_sec, mu);
 
             double denom = 2.0 * eps;
             out_stm_6x6[0 * 6 + j] = (r_p[0] - r_m[0]) / denom;

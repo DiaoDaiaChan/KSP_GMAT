@@ -20,21 +20,23 @@
 3. Vary：`Upper<=Lower` 或 `Upper==0` 自动修正安全上界；`Perturbation<=0`→0.0001。Achieve：`Tolerance<=0` 按物理量赋容差（距离 0.5~1 km / 速度 0.01 km/s / 角度 0.01°）；
 4. `X.Y.Node|AscendingNode|DescendingNode` → `X.Y.Latitude = 0.0`。
 
-## 3. 参数与能力 (ParamCapability)
-- 极值事件（`Apoapsis/Periapsis/Node/...`）**仅用于 Propagate**，严禁用于 Achieve。
-- 参数名/单位用 GMAT 官方（`C1` 单位是 **N** 非 kN）；**禁止新增假参数**（如 `GravitationalAccel`）。
-- 动态参数目录必须带 `Capability` 能力位；停止条件用官方 `ElapsedSecs/ElapsedDays`。
+## 3. 参数与能力注册表 (GMATSchemaRegistry & ParamCapability)
+- 官方 310 个参数、323 个类（6355 个原生方法）全量通过 `GMATSchemaRegistry.Instance` 单一真值源动态读取与检索，**严禁本地硬编码静态参数字典**。
+- 极值事件（`Apoapsis/Periapsis/Node/...`）判定**必须调用** `GMATSchemaRegistry.Instance.IsExtremumParameter(...)`，**仅用于 Propagate 停机条件，严禁用于 Achieve 连续求解**。
+- Achieve 容差赋权**必须调用** `GMATSchemaRegistry.Instance.GetAuthoritativeTolerance(param, 0.1)` 动态获取官方权威推荐值。
+- 航天器参数直属判定**必须调用** `GMATSchemaRegistry.Instance.IsSpacecraftDirectProperty(param)`，严禁本地写死 `craftDirect` 数组。
+- 官方 API/类/函数查询与弹窗字典统一走 `GMATDynamicInspectorModal` 与 `SearchCapabilities`。
 
 ## 4. UI 国际化 (i18n)
 - UI 文本**严禁硬编码**：静态 `I18n.T("key")`，动态 `I18n.Format("key",{0})`。
 - 严禁 `中文 (English)` 括号混搭、严禁泄漏开发备注（如 `(Exact f6273ae)`）。
-- key 用 snake_case + 规范前缀（`tab_/btn_/add_/type_/craft_/seq_/burn_/vector_/target_/ide_/res_/settings_/tip_`）；词条为 `{ZH, EN, RU}` 三语言数组。
+- key 用 snake_case + 规范前缀（`tab_/btn_/add_/type_/craft_/seq_/burn_/vector_/target_/ide_/res_/settings_/tip_/inspector_`）；词条为 `{ZH, EN, RU, JP}` 四语言对称数组。
 
 ## 5. UI 设计系统
 - 暗黑令牌（`DarkBg #0a0c12` 等）；**禁止** `Color.white` 背景 / 蓝色聚焦亮斑。
 - 胶囊徽章配色固定：Propagate 深红、FiniteBurn 与 ThrustVector 琥珀、Impulsive 紫、Vary 青、Achieve 绿、Stage 金、Target 蓝、EndTarget 玄灰。
 - 模板折叠托盘：>6 个时最大高度 130px 平滑滚动。
-- 统一使用GMATMainWindow.Styles.cs GMATMainWindow.Widgets.cs 里面的模板
+- 统一使用 `GMATMainWindow.Styles.cs` 与 `GMATMainWindow.Widgets.cs` 里面的模板与高精度代码块渲染。
 
 ## 6. 物理时序 (simClock / 5.3)
 - 滑行 `simClock += duration`；特征点过境 `trajectory.Find(p => p.t > simClock + 0.1)`；点火锁定当前 `simClock`。
@@ -47,15 +49,30 @@
 ## 8. 天体系统通用直读原则 (Planet Pack Universal In-Game Discovery)
 - 严禁硬编码白名单过滤星球包。直接从 `FlightGlobals.Bodies` 动态读取游戏内物理天体参数与开普勒轨道根数，全量支持 RSS / OPM / JNSQ / Stock 及任意第三方星球包。离线独立测试环境自动回退标准太阳系离线字典。
 
-## 9. 动力学清单
-- 积分器/求解器/大气模型清单以 `gmat_capabilities.json` 注册表为真值源，**严禁在 C# 写死清单**（如 `LEOProp`/`RungeKutta89` 兜底要经注册表）。
+## 9. 动力学力模型与天体通用解耦 (ForceModel Universal Decoupling)
+- 积分器/求解器/大气模型清单以 `gmat_capabilities.json` 注册表为真值源，**严禁在 C# 写死清单**。
+- 力模型天体**严禁写死 6 天体分支**，生成 ForceModel 时**必须**调用 `pCfg.GetActivePointMasses()` 动态格式化输出全量天体（支持 Saturn, Titan, Europa, Kerbin 等）。
+- 脚本读取解析 ForceModel 时，**必须**将 PointMasses 全量保留至 `pCfg.customPointMasses`，天体名称统一经 `GMATSchemaRegistry.Instance.NormalizeCelestialName` 洗练。
 
-## 10. 维护守则
-- 改完必须 `dotnet build` 且 **0 警告 0 错误**；新增字段/控件/词条同步登记基线文档。
+## 10. 脚本生命周期与单步双向绑定 (Round-Trip & Two-Way Binding)
+- 脚本生成或导出后**必须**通过 `GMATScriptLinter.FixScript` 进行门禁自愈（含纯 ASCII、机动前缀剥离、缺失容差自动补齐）。
+- 单步代码透视与就地编辑（`ParseSingleStepScript`）必须接入 `GMATSchemaRegistry` 进行反解自愈与参数校验。
+- MGA 脚本生成必须通过 `GetStandardSpicePlanets()` 动态输出 NAIFId，力模型必须动态聚合助推链全天体。
 
-## 11. 审计红线（禁止再犯）
+## 11. Python 任务步骤与统一补全系统 (CallPython & Unified IntelliSense)
+- **统一真值源接入**：智能补全系统 (`QueryIntelliSense` / `GMATNamespaceResolver`) 必须全量打通 `GMATSchemaRegistry` 的 323 个官方 API 类与 222 个 Python 函数，严禁写死补全候选项。
+- **Python 语法双向保真**：任务序列生成与反解必须无损支持赋值模式 (`[out] = Python.Mod.Func(in);`) 与显式命令模式 (`CallPythonFunction 'Lbl' Python.Mod.Func(in);`)。
+- **门禁校验**：`GMATScriptLinter` 必须校验 Python 调用的括号闭合与语法结构；UI 卡片提供一键调阅原生源码实现与 4 大工程预设。
+
+## 12. 维护守则
+- 改完必须 `pwsh -File deploy.ps1` 且 **0 警告 0 错误**；每次编译部署自动触发 `tools/ComplianceChecker` (Roslyn AST) 编译器级合规自查，确保 **0 阻断性违规 (0 Critical Errors)**；新增字段/控件/词条同步登记基线文档。
+
+## 13. 审计红线（禁止再犯）
 - 严禁 C# 自算 ΔV/质量流/开普勒推导并冒充 GMAT 原生。
-- 严禁绕过 `SanitizeGmatScript` 推送脚本到后台求解。
+- 严禁绕过 `SanitizeGmatScript` / `FixScript` 推送脚本到后台求解。
 - 严禁绕过 `GMATStateManager` 直读活动飞船（`FlightGlobals.ActiveVessel.GetTotalMass()` / `FindPartModulesImplementing<ModuleEngines>()`）。
 - 严禁硬编码 `"Sat"` / `"LEOProp"` / `"RungeKutta89"` 等名称清单。
+- 严禁在 C# 中硬编码极值事件列表（如 `ExtremaKeywords`）或航天器直属属性列表（如 `craftDirect`）。
+- 严禁在 ForceModel 导出时写死仅判断 6 天体布尔变量。
 - 严禁删除/禁用 PyKEP 原生路径后静默回退托管公式；原生不可用应明确报错。
+

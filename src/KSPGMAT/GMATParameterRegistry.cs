@@ -133,7 +133,9 @@ namespace KSPGMAT {
         Variable,
         Propagator,
         Solver,
-        DirectCoord
+        DirectCoord,
+        Function,
+        PythonModule
     }
 
     [Serializable]
@@ -1153,8 +1155,69 @@ namespace KSPGMAT {
             ParamCapability filterFlags = ParamCapability.Reportable;
             if (!string.IsNullOrEmpty(contextMode)) {
                 string cm = contextMode.ToLowerInvariant();
-                if (cm == "achieve") {
-                    filterFlags = ParamCapability.ContinuouslyDifferentiable;
+                if (cm == "python_module" || cm == "pymodule") {
+                    var list = new List<IntelliSenseItem>();
+                    string safeText = (text ?? "").Trim();
+                    var mods = new (string mod, string desc)[] {
+                        ("orbit_calculator", "轨道摄动与转移机动计算模块"),
+                        ("gmatpy", "GMAT 官方 Python C++ 绑定核心库"),
+                        ("guidance_control", "姿态与闭环动力学制导模块"),
+                        ("optimal_transfers", "多脉冲霍曼与双椭圆寻优库"),
+                        ("aerobrake_control", "高精度大气减速与气动控制"),
+                        ("spice_interop", "NAIF SPICE 星历与引力场数据接口"),
+                        ("custom_script", "用户自编写科学算法脚本")
+                    };
+                    foreach (var m in mods) {
+                        if (string.IsNullOrEmpty(safeText) || m.mod.IndexOf(safeText, StringComparison.OrdinalIgnoreCase) >= 0) {
+                            list.Add(new IntelliSenseItem(m.mod, m.mod, "Module", m.desc, IntelliSenseKind.PythonModule));
+                        }
+                    }
+                    return list;
+                } else if (cm == "python_func" || cm == "pyfunc" || cm == "python_api") {
+                    var list = new List<IntelliSenseItem>();
+                    string safeText = (text ?? "").Trim();
+                    var searchRes = GMATSchemaRegistry.Instance.SearchCapabilities(safeText, "funcs", 25);
+                    foreach (var f in searchRes) {
+                        string sig = !string.IsNullOrEmpty(f.signature) ? f.signature : "()";
+                        string doc = !string.IsNullOrEmpty(f.doc) ? f.doc : f.subtitle;
+                        list.Add(new IntelliSenseItem(f.title, f.title, f.categoryOrFamily ?? "Python", $"{sig}\n{doc}", IntelliSenseKind.Function));
+                    }
+                    if (list.Count < 10) {
+                        var clsRes = GMATSchemaRegistry.Instance.SearchCapabilities(safeText, "classes", 10);
+                        foreach (var c in clsRes) {
+                            list.Add(new IntelliSenseItem(c.title, c.title, "API Class", c.doc ?? c.subtitle, IntelliSenseKind.Function));
+                        }
+                    }
+                    return list;
+                } else if (cm == "optimizer" || cm == "opt") {
+                    var list = new List<IntelliSenseItem>();
+                    var allSolvers = GetAllSolverConfigs();
+                    string safeText = text != null ? text.Trim() : "";
+                    foreach (var kvp in allSolvers) {
+                        if (kvp.Value.type == "Yukon" || kvp.Value.type == "Optimizer" || kvp.Value.algorithm == "SQP" || kvp.Key.StartsWith("Yukon", StringComparison.OrdinalIgnoreCase)) {
+                            if (string.IsNullOrEmpty(safeText) || kvp.Key.IndexOf(safeText, StringComparison.OrdinalIgnoreCase) >= 0) {
+                                list.Add(new IntelliSenseItem(
+                                    kvp.Key,
+                                    kvp.Key,
+                                    "Optimizer",
+                                    $"{kvp.Key} ({kvp.Value.algorithm} {kvp.Value.type})",
+                                    IntelliSenseKind.Solver
+                                ));
+                            }
+                        }
+                    }
+                    if (list.Count == 0) {
+                        list.Add(new IntelliSenseItem(
+                            "Yukon1",
+                            "Yukon1",
+                            "Optimizer",
+                            "Yukon1 (SQP Optimizer)",
+                            IntelliSenseKind.Solver
+                        ));
+                    }
+                    return list;
+                } else if (cm == "achieve" || cm == "nlc" || cm == "nonlinearconstraint" || cm == "minimize") {
+                    filterFlags = ParamCapability.ContinuouslyDifferentiable | ParamCapability.Reportable;
                 } else if (cm == "vary") {
                     filterFlags = ParamCapability.ControlVariable;
                 } else if (cm == "stop" || cm == "prop_stop") {
@@ -1192,18 +1255,10 @@ namespace KSPGMAT {
             }
 
             if (registeredSolvers.Count == 0) {
-                registeredSolvers["DefaultDC"] = new SolverConfig {
-                    name = "DefaultDC", algorithm = "NewtonRaphson", derivativeMethod = "ForwardDifference",
-                    maxIterations = 50, solveMode = "Solve", exitMode = "SaveAndContinue", reportStyle = "Normal", isDefault = true
-                };
-                registeredSolvers["PrecisionDC"] = new SolverConfig {
-                    name = "PrecisionDC", algorithm = "NewtonRaphson", derivativeMethod = "CentralDifference",
-                    maxIterations = 100, solveMode = "Solve", exitMode = "SaveAndContinue", reportStyle = "Normal", isDefault = true
-                };
-                registeredSolvers["BroydenDC"] = new SolverConfig {
-                    name = "BroydenDC", algorithm = "Broyden", derivativeMethod = "ForwardDifference",
-                    maxIterations = 75, solveMode = "Solve", exitMode = "SaveAndContinue", reportStyle = "Normal", isDefault = true
-                };
+                var presets = SolverConfig.CreateDefaultPresets();
+                foreach (var kvp in presets) {
+                    registeredSolvers[kvp.Key] = kvp.Value;
+                }
             }
         }
 
@@ -1293,6 +1348,8 @@ namespace KSPGMAT {
             registeredCommands.Add(new GMATCommandDef("Global", "cat_math", "", "cmd_Global_label", "cmd_Global_tooltip"));
 
             // 6. Functions
+            registeredCommands.Add(new GMATCommandDef("CallPython", "cat_func", "", "cmd_CallPython_label", "cmd_CallPython_tooltip"));
+            registeredCommands.Add(new GMATCommandDef("CallPythonFunction", "cat_func", "", "cmd_CallPython_label", "cmd_CallPython_tooltip"));
             registeredCommands.Add(new GMATCommandDef("CallGmatFunction", "cat_func", "", "cmd_CallGmatFunction_label", "cmd_CallGmatFunction_tooltip"));
             registeredCommands.Add(new GMATCommandDef("CallBuiltinGmatFunction", "cat_func", "", "cmd_CallBuiltinGmatFunction_label", "cmd_CallBuiltinGmatFunction_tooltip"));
 

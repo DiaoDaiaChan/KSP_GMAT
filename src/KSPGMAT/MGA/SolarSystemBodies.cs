@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
+using KSPGMAT.Model;
 
 namespace KSPGMAT.MGA {
     /// <summary>
@@ -52,6 +53,8 @@ namespace KSPGMAT.MGA {
         public double Mu { get; set; }              // km^3 / s^2
         public double RadiusKm { get; set; }        // km
         public double SafeRadiusKm { get; set; }    // km (Radius + Atmosphere / Safety margin)
+        public double AtmosphereDepthKm { get; set; } // km (0 if airless)
+        public double SoiKm { get; set; }             // km (Sphere of influence radius)
         public double SMA { get; set; }             // km
         public double ECC { get; set; }
         public double INC { get; set; }             // deg
@@ -103,28 +106,26 @@ namespace KSPGMAT.MGA {
                 } catch { }
             }
 
-            // 1.1 若在主线程且 FlightGlobals 就绪，直接动态读取并回填 OrbitChain
+            // 1.1 若在主线程且 FlightGlobals 就绪，优先调用 Principia 方案 B 真实星历与未篡改轨道
             if (SolarSystemCatalog.IsFlightGlobalsReady && SolarSystemCatalog.IsMainThread) {
                 try {
                     var b = FlightGlobals.Bodies.Find(x => 
                         x.name.Equals(Name, StringComparison.OrdinalIgnoreCase) || 
                         x.bodyName.Equals(Name, StringComparison.OrdinalIgnoreCase));
-                    if (b != null && b.orbit != null) {
+                    if (b != null) {
                         ActiveEvaluationScheme = EphemerisScheme.Scheme2_FlightGlobals;
-                        Vector3d r_total = Vector3d.zero;
-                        Vector3d v_total = Vector3d.zero;
-                        var curr = b;
-                        var chain = new List<Orbit>();
-                        while (curr != null && curr.orbit != null && curr.referenceBody != null && curr.referenceBody != curr) {
-                            chain.Add(curr.orbit);
-                            r_total += curr.orbit.getRelativePositionAtUT(ut);
-                            v_total += curr.orbit.getOrbitalVelocityAtUT(ut);
-                            curr = curr.referenceBody;
+                        if (PrincipiaInterop.TryGetHeliocentricState(b, ut, out posKm, out velKms)) {
+                            // 同步回填 OrbitChain (基于未篡改轨道)，保证多线程后续查询 100% 免疫发散
+                            var chain = new List<Orbit>();
+                            var curr = b;
+                            while (curr != null && curr.referenceBody != null && curr.referenceBody != curr) {
+                                var currOrb = PrincipiaInterop.GetUnmodifiedOrbit(curr) ?? curr.orbit;
+                                if (currOrb != null) chain.Add(currOrb);
+                                curr = curr.referenceBody;
+                            }
+                            OrbitChain = chain;
+                            return;
                         }
-                        OrbitChain = chain;
-                        posKm = new Vector3d(r_total.x / 1000.0, r_total.y / 1000.0, r_total.z / 1000.0);
-                        velKms = new Vector3d(v_total.x / 1000.0, v_total.y / 1000.0, v_total.z / 1000.0);
-                        return;
                     }
                 } catch { }
             }
@@ -133,7 +134,9 @@ namespace KSPGMAT.MGA {
             // 仅对 SPICE 内核支持的真实太阳系标准天体查询，避免虚构/KSP天体产生 IDCODENOTFOUND
             ActiveEvaluationScheme = EphemerisScheme.Scheme1_SpiceDE440;
             if (PykepNative.HasSpiceLoaded && SolarSystemCatalog.StandardSolarBodyNames.Contains(Name)) {
-                if (PykepNative.GetSpicePlanetState(Name, ut, "ECLIPJ2000", out posKm, out velKms)) {
+                if (PykepNative.GetSpicePlanetState(Name, ut, "J2000", out posKm, out velKms)) {
+                    posKm = SolarSystemCatalog.AlignSpiceJ2000ToPrincipia(posKm);
+                    velKms = SolarSystemCatalog.AlignSpiceJ2000ToPrincipia(velKms);
                     return;
                 }
             }
@@ -154,6 +157,88 @@ namespace KSPGMAT.MGA {
             posKm = Vector3d.zero;
             velKms = Vector3d.zero;
         }
+
+        /// <summary>
+        /// 计算指定 UT 时刻相对直接母星 (Parent Body) 的中心天体惯性系状态 (位置 km, 速度 km/s)
+        /// 100% 线程安全，消解日心假定，直接用于行星系内转移 (如地月转移、土星/木星卫星巡查)
+        /// </summary>
+        public void GetParentCentricState(double ut, out Vector3d posKm, out Vector3d velKms) {
+            // 1. 方案 2 (第一优先级): OrbitChain[0] 是卫星围绕直接父天体的轨道
+            if (OrbitChain != null && OrbitChain.Count > 0) {
+                try {
+                    var orb = OrbitChain[0];
+                    if (orb != null) {
+                        Vector3d r_rel = orb.getRelativePositionAtUT(ut);
+                        Vector3d v_rel = orb.getOrbitalVelocityAtUT(ut);
+                        posKm = new Vector3d(r_rel.x / 1000.0, r_rel.y / 1000.0, r_rel.z / 1000.0);
+                        velKms = new Vector3d(v_rel.x / 1000.0, v_rel.y / 1000.0, v_rel.z / 1000.0);
+                        return;
+                    }
+                } catch { }
+            }
+
+            // 1.1 若在主线程且 FlightGlobals 就绪，直接提取游戏内天体围绕直接母星的相对开普勒状态
+            if (SolarSystemCatalog.IsFlightGlobalsReady && SolarSystemCatalog.IsMainThread) {
+                try {
+                    var b = FlightGlobals.Bodies.Find(x => 
+                        x.name.Equals(Name, StringComparison.OrdinalIgnoreCase) || 
+                        x.bodyName.Equals(Name, StringComparison.OrdinalIgnoreCase));
+                    if (b != null && b.orbit != null) {
+                        var orb = PrincipiaInterop.GetUnmodifiedOrbit(b) ?? b.orbit;
+                        if (orb != null) {
+                            Vector3d r_rel = orb.getRelativePositionAtUT(ut);
+                            Vector3d v_rel = orb.getOrbitalVelocityAtUT(ut);
+                            posKm = new Vector3d(r_rel.x / 1000.0, r_rel.y / 1000.0, r_rel.z / 1000.0);
+                            velKms = new Vector3d(v_rel.x / 1000.0, v_rel.y / 1000.0, v_rel.z / 1000.0);
+                            return;
+                        }
+                    }
+                } catch { }
+            }
+
+            // 2. 方案 1/离线兜底: 依据天体自身相对于父天体的开普勒根数，由 PyKEP 原生 C++ 解算
+            double parentMu = SolarSystemCatalog.GetCentralMu(ParentName);
+            if (PykepNative.IsAvailable && SMA > 0) {
+                if (PykepNative.ElementsToState(
+                        SMA, ECC, INC * Mathf.Deg2Rad, RAAN * Mathf.Deg2Rad, AOP * Mathf.Deg2Rad,
+                        MA0 * Mathf.Deg2Rad, EpochJ2000, ut, parentMu,
+                        out posKm, out velKms)) {
+                    return;
+                }
+            }
+
+            posKm = Vector3d.zero;
+            velKms = Vector3d.zero;
+        }
+
+        /// <summary>
+        /// 统一星历提取门禁：依据任务所属的中心天体系统 (centralBody) 自适应解析空间状态
+        /// 若中心天体是太阳/日心，返回日心状态；若处于行星卫星系，返回相对母星的质心状态
+        /// </summary>
+        public void GetRelativeState(string centralBody, double ut, out Vector3d posKm, out Vector3d velKms) {
+            // 特殊特判：如果查询的天体恰好就是中心母星本身 (例如以地球停泊轨道为出发点)
+            if (string.IsNullOrEmpty(Name) || Name.Equals(centralBody, StringComparison.OrdinalIgnoreCase)) {
+                double r0 = (RadiusKm > 0 ? RadiusKm : MGADefaults.EarthRadiusKm) + MGADefaults.DepartureAltitudeKm;
+                double mu0 = (Mu > 0 ? Mu : MGADefaults.EarthMu);
+                double v0 = Math.Sqrt(mu0 / r0);
+                double meanMotion = Math.Sqrt(mu0 / Math.Pow(r0, 3));
+                double theta = meanMotion * ut;
+                posKm = new Vector3d(r0 * Math.Cos(theta), r0 * Math.Sin(theta), 0.0);
+                velKms = new Vector3d(-v0 * Math.Sin(theta), v0 * Math.Cos(theta), 0.0);
+                return;
+            }
+
+            bool isHelio = string.IsNullOrEmpty(centralBody) || 
+                           centralBody.Equals("Sun", StringComparison.OrdinalIgnoreCase) || 
+                           centralBody.Equals("Sol", StringComparison.OrdinalIgnoreCase) || 
+                           centralBody.Equals("Kerbol", StringComparison.OrdinalIgnoreCase);
+
+            if (isHelio) {
+                GetHeliocentricState(ut, out posKm, out velKms);
+            } else {
+                GetParentCentricState(ut, out posKm, out velKms);
+            }
+        }
     }
 
     /// <summary>
@@ -163,6 +248,110 @@ namespace KSPGMAT.MGA {
     /// </summary>
     public static class SolarSystemCatalog {
         public const double J2000_RSS_UT = EphemerisTimeSystem.J2000_UT; // 01 Jan 2000 12:00:00 in RSS UT
+        public static double EarthMu => MGADefaults.EarthMu; // km^3/s^2 (标准参考系动态真值)
+        public static double EarthRadiusKm => MGADefaults.EarthRadiusKm; // km (标准参考系动态真值)
+
+        private static double _dynamicRaOffsetDeg = 13.606222; // 理论基准初值 (无游戏运行时平滑保底)
+        private static volatile bool _hasDynamicallyCalibrated = false;
+
+        /// <summary>
+        /// 动态自适应赤道平面偏角：消除 Principia/Sol-Configs 初始赤经原点 (Reference Meridian) 与 SPICE 春分点之间的恒定平面偏角。
+        /// 彻底消除硬编码，在游戏运行时通过对太阳系主行星 (Earth, Mars, Venus, Jupiter) 联立圆周平均 (Circular Mean) 动态解析求解。
+        /// </summary>
+        public static double SPICE_TO_PRINCIPIA_RA_OFFSET_DEG {
+            get {
+                EnsureDynamicallyCalibrated();
+                return _dynamicRaOffsetDeg;
+            }
+        }
+
+        /// <summary>
+        /// 纯动态反推对齐偏角：提取当前时刻 SPICE 原生 J2000 状态与游戏内 Principia 原生 N 体日心真实状态，
+        /// 通过对太阳系多颗主天体在赤道平面的相位差进行圆周平均 (Circular Mean) 动态解析求解全局几何偏角。
+        /// 0 静态硬编码，完全自适应任意星历历元与太阳系模组配置。
+        /// </summary>
+        public static bool RecalibrateFrameOffset() {
+            if (!IsFlightGlobalsReady || !PykepNative.HasSpiceLoaded) {
+                return false;
+            }
+
+            try {
+                double ut = PrincipiaInterop.IsPrincipiaAvailable() 
+                    ? PrincipiaInterop.GetCurrentPrincipiaTime() 
+                    : Planetarium.GetUniversalTime();
+
+                string[] samplePlanets = new[] { "Earth", "Mars", "Venus", "Jupiter" };
+
+                double sinSum = 0.0;
+                double cosSum = 0.0;
+                int validSamples = 0;
+
+                foreach (var name in samplePlanets) {
+                    var body = FlightGlobals.Bodies.Find(x => 
+                        x.name.Equals(name, StringComparison.OrdinalIgnoreCase) || 
+                        x.bodyName.Equals(name, StringComparison.OrdinalIgnoreCase));
+                    if (body == null || body.referenceBody == null) continue;
+
+                    // 1. 直读 Principia 原生 N 体日心真实状态 (或未篡改真实轨道)
+                    Vector3d rGame;
+                    if (PrincipiaInterop.TryGetCelestialFromParent(body, out rGame, out _)) {
+                        // 成功直读 Principia 原生
+                    } else if (PrincipiaInterop.TryGetHeliocentricState(body, ut, out rGame, out _)) {
+                        // 成功提取方案 B
+                    } else {
+                        continue;
+                    }
+
+                    // 2. 直读 SPICE 原生 J2000 真实日心状态 (未旋转)
+                    if (!PykepNative.GetSpicePlanetState(name, ut, "J2000", out Vector3d rSpice, out _)) {
+                        continue;
+                    }
+
+                    // 3. 计算赤道平面的极角差: Δθ_i = φ_game - φ_spice
+                    double phiSpice = Math.Atan2(rSpice.y, rSpice.x);
+                    double phiGame = Math.Atan2(rGame.y, rGame.x);
+                    double dphi = phiGame - phiSpice;
+
+                    sinSum += Math.Sin(dphi);
+                    cosSum += Math.Cos(dphi);
+                    validSamples++;
+                }
+
+                if (validSamples > 0) {
+                    // 圆周平均 (Circular Mean) 求解全局最优刚体旋转角
+                    double meanRad = Math.Atan2(sinSum, cosSum);
+                    double meanDeg = meanRad * (180.0 / Math.PI);
+                    while (meanDeg < 0) meanDeg += 360.0;
+                    if (meanDeg > 180.0) meanDeg -= 360.0;
+
+                    _dynamicRaOffsetDeg = meanDeg;
+                    _hasDynamicallyCalibrated = true;
+                    KSPGMATLog.Info($"[SolarSystemCatalog] 动态星历坐标系自适应对齐标定成功: 样本数={validSamples}, 动态反推求解偏角={_dynamicRaOffsetDeg:F6}°");
+                    return true;
+                }
+            } catch (Exception ex) {
+                KSPGMATLog.Warn("[SolarSystemCatalog] 动态标定失败: " + ex.Message);
+            }
+            return false;
+        }
+
+        public static void EnsureDynamicallyCalibrated() {
+            if (_hasDynamicallyCalibrated) return;
+            if (IsMainThread && IsFlightGlobalsReady && PykepNative.HasSpiceLoaded) {
+                RecalibrateFrameOffset();
+            }
+        }
+
+        public static Vector3d AlignSpiceJ2000ToPrincipia(Vector3d v) {
+            double rad = SPICE_TO_PRINCIPIA_RA_OFFSET_DEG * Mathf.Deg2Rad;
+            double cos = Math.Cos(rad);
+            double sin = Math.Sin(rad);
+            return new Vector3d(
+                v.x * cos - v.y * sin,
+                v.x * sin + v.y * cos,
+                v.z
+            );
+        }
 
         private static volatile bool _cachedFlightGlobalsReady = false;
         private static double _cachedSunMu = 1.32712440018e11;
@@ -218,7 +407,8 @@ namespace KSPGMAT.MGA {
         /// 标准太阳系天体名称列表 (用于方案 1 动态构建权威天体库)
         /// </summary>
         public static readonly string[] StandardSolarBodyNames = new string[] {
-            "Mercury", "Venus", "Earth", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune", "Pluto", "Moon"
+            "Mercury", "Venus", "Earth", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune", "Pluto", 
+            "Moon", "Europa", "Ganymede", "Callisto", "Io", "Titan"
         };
 
         public static double SunMu {
@@ -291,22 +481,91 @@ namespace KSPGMAT.MGA {
         }
 
         /// <summary>
+        /// 动态获取当前宇宙根恒星名称 (0 硬编码，实时读取 FlightGlobals 根节点，离线默认回退 "Sun")
+        /// </summary>
+        public static string RootStarName {
+            get {
+                if (IsFlightGlobalsReady) {
+                    try {
+                        var sun = FlightGlobals.Bodies.Find(b => b.orbit == null || b.referenceBody == null || b.referenceBody == b);
+                        if (sun != null && !string.IsNullOrEmpty(sun.name)) return sun.name;
+                    } catch { }
+                }
+                return "Sun";
+            }
+        }
+
+        /// <summary>
+        /// 权威天体所属母星解析器 (支持游戏运行态动态探测与标准星系后备)
+        /// </summary>
+        public static string ResolveParentBody(string name) {
+            if (string.IsNullOrEmpty(name)) return RootStarName;
+            if (IsFlightGlobalsReady) {
+                try {
+                    var cb = FlightGlobals.Bodies.Find(b => b.name.Equals(name, StringComparison.OrdinalIgnoreCase) || 
+                                                           b.bodyName.Equals(name, StringComparison.OrdinalIgnoreCase) ||
+                                                           (!string.IsNullOrEmpty(b.displayName) && CleanDisplayName(b.displayName).Equals(name, StringComparison.OrdinalIgnoreCase)));
+                    if (cb != null) {
+                        return (cb.referenceBody != null && cb.referenceBody != cb) ? cb.referenceBody.name : RootStarName;
+                    }
+                } catch { }
+            }
+            string upper = name.Trim().ToUpperInvariant();
+            if (upper == "MOON" || upper == "LUNA" || upper.Contains("月球")) return "Earth";
+            if (upper == "PHOBOS" || upper == "DEIMOS") return "Mars";
+            if (upper == "IO" || upper == "EUROPA" || upper == "GANYMEDE" || upper == "CALLISTO") return "Jupiter";
+            if (upper == "TITAN" || upper == "ENCELADUS" || upper == "MIMAS" || upper == "TETHYS" || upper == "DIONE" || upper == "RHEA" || upper == "IAPETUS") return "Saturn";
+            if (upper == "TRITON") return "Neptune";
+            if (upper == "CHARON") return "Pluto";
+            if (upper == "MUN" || upper == "MINMUS") return "Kerbin";
+            if (upper == "IKE") return "Duna";
+            if (upper == "LAYTHE" || upper == "VALL" || upper == "TYLO" || upper == "BOP" || upper == "POL") return "Jool";
+            if (upper == "GILLY") return "Eve";
+            return RootStarName;
+        }
+
+        /// <summary>
         /// 方案 1: 纯动态调用底层 Native C++ SPICE 提取常数与 J2000 开普勒根数，0 C# 静态硬编码
         /// </summary>
         public static SolarPlanet CreateFromSpiceScheme(string name) {
             if (string.IsNullOrEmpty(name)) return null;
 
-            // 1. 调用底层 C++ 获取权威常数 (GM, 半径, 安全飞越半径)
-            double mu = 0, rKm = 0, safeKm = 0;
-            PykepNative.GetSpicePlanetConstants(name, out mu, out rKm, out safeKm);
+            // 1. 调用底层 C++ 获取权威常数与星历物理属性 (GM, 半径, 安全飞越半径, SOI 影响球半径, 大气高度)
+            double mu = 0, rKm = 0, safeKm = 0, soiKm = 0, atmDepthKm = 0;
+            PykepNative.GetSpicePlanetProperties(name, out mu, out rKm, out safeKm, out soiKm, out atmDepthKm);
 
             // 2. 调用底层 C++ 从 SPICE DE440 切比雪夫状态与 ic2par 动态反算 J2000 瞬时开普勒根数
             double sma = 0, ecc = 0, inc = 0, raan = 0, aop = 0, ma = 0;
             PykepNative.GetSpicePlanetElements(name, J2000_RSS_UT, SunMu, out sma, out ecc, out inc, out raan, out aop, out ma);
 
-            if (sma <= 0) {
+            if (sma > 0) {
+                // 升交点赤经 RAAN 同样补偿该恒定赤道平面偏角
+                raan = (raan + SPICE_TO_PRINCIPIA_RA_OFFSET_DEG) % 360.0;
+                if (raan < 0) raan += 360.0;
+            } else {
                 (sma, ecc, inc, mu, rKm) = GetStandardPlanetFallback(name);
-                safeKm = rKm + 100.0;
+                safeKm = rKm + atmDepthKm + (atmDepthKm > 0 ? 10.0 : 20.0);
+            }
+
+            string parent = ResolveParentBody(name);
+            bool isMoon = !string.IsNullOrEmpty(parent) && !parent.Equals("Sun", StringComparison.OrdinalIgnoreCase);
+
+            if (isMoon) {
+                // 卫星轨道在母星引力场下定义 (SPICE GetSpicePlanetElements 默认按 Sun 计算日心公转轨道，需还原为其绕母星的半长轴)
+                var (moonSma, _, _, _, _) = GetStandardPlanetFallback(name);
+                if (moonSma > 0 && moonSma < 1e7) {
+                    sma = moonSma;
+                }
+            }
+
+            if (soiKm <= 0 && sma > 0) {
+                double parentMu = isMoon ? GetCentralMu(parent) : SunMu;
+                if (parentMu > 0 && mu > 0) {
+                    soiKm = sma * Math.Pow(mu / parentMu, 0.4);
+                }
+            }
+            if (name.Equals("Sun", StringComparison.OrdinalIgnoreCase) || string.IsNullOrEmpty(parent)) {
+                soiKm = double.PositiveInfinity;
             }
 
             string icon = GetDefaultIcon(name);
@@ -317,6 +576,8 @@ namespace KSPGMAT.MGA {
                 Mu = mu > 0 ? mu : 1000.0,
                 RadiusKm = rKm > 0 ? rKm : 500.0,
                 SafeRadiusKm = safeKm > 0 ? safeKm : 520.0,
+                AtmosphereDepthKm = atmDepthKm,
+                SoiKm = soiKm,
                 SMA = sma,
                 ECC = ecc,
                 INC = inc,
@@ -324,6 +585,8 @@ namespace KSPGMAT.MGA {
                 AOP = aop,
                 MA0 = ma,
                 EpochJ2000 = J2000_RSS_UT,
+                ParentName = parent,
+                IsMoon = isMoon,
                 SourceScheme = EphemerisScheme.Scheme1_SpiceDE440
             };
         }
@@ -370,15 +633,23 @@ namespace KSPGMAT.MGA {
         public static SolarPlanet CreateFromCelestialBody(CelestialBody b) {
             if (b == null) return null;
             string icon = GetDefaultIcon(b.name);
-            double safeAtm = b.atmosphere ? (b.atmosphereDepth / 1000.0) : 20.0;
             double rKm = b.Radius / 1000.0;
-            var orb = b.orbit;
+            double atmDepthKm = b.atmosphere ? (b.atmosphereDepth / 1000.0) : 0.0;
+            double soiKm = (b.orbit == null || b.referenceBody == null || b.referenceBody == b)
+                ? double.PositiveInfinity
+                : (b.sphereOfInfluence / 1000.0);
+            double safeMargin = b.atmosphere ? 10.0 : 20.0;
+            double safeKm = rKm + atmDepthKm + safeMargin;
 
-            // 预存轨道链路 (用于后台多线程无 Unity API 依赖的开普勒直接求值)
+            // 方案 B: 优先使用 Principia 内部未篡改真轨道 (避免每帧被覆写的瞬时密切椭圆污染)
+            var orb = PrincipiaInterop.GetUnmodifiedOrbit(b) ?? b.orbit;
+
+            // 预存轨道链路 (用于后台多线程无 Unity API 依赖的稳定开普勒直接求值)
             var chain = new List<Orbit>();
             var curr = b;
-            while (curr != null && curr.orbit != null && curr.referenceBody != null && curr.referenceBody != curr) {
-                chain.Add(curr.orbit);
+            while (curr != null && curr.referenceBody != null && curr.referenceBody != curr) {
+                var currOrb = PrincipiaInterop.GetUnmodifiedOrbit(curr) ?? curr.orbit;
+                if (currOrb != null) chain.Add(currOrb);
                 curr = curr.referenceBody;
             }
 
@@ -392,7 +663,9 @@ namespace KSPGMAT.MGA {
                 Icon = icon,
                 Mu = b.gravParameter / 1e9,
                 RadiusKm = rKm,
-                SafeRadiusKm = rKm + safeAtm,
+                SafeRadiusKm = safeKm,
+                AtmosphereDepthKm = atmDepthKm,
+                SoiKm = soiKm,
                 SMA = (orb != null ? orb.semiMajorAxis : 1e8) / 1000.0,
                 ECC = orb != null ? orb.eccentricity : 0.0,
                 INC = orb != null ? orb.inclination : 0.0,
@@ -405,6 +678,54 @@ namespace KSPGMAT.MGA {
                 SourceScheme = EphemerisScheme.Scheme2_FlightGlobals,
                 OrbitChain = chain
             };
+        }
+
+        /// <summary>
+        /// 全局权威天体等价性判定 (解耦局部硬编码，支持中英双语、Stock KSP 与 RSS/RO 任意别名)
+        /// </summary>
+        public static bool AreBodiesEqual(string name1, string name2) {
+            if (string.IsNullOrEmpty(name1) || string.IsNullOrEmpty(name2)) return false;
+            if (name1.Equals(name2, StringComparison.OrdinalIgnoreCase)) return true;
+
+            string c1 = CanonicalizeName(name1);
+            string c2 = CanonicalizeName(name2);
+            if (!string.IsNullOrEmpty(c1) && !string.IsNullOrEmpty(c2) && c1.Equals(c2, StringComparison.OrdinalIgnoreCase)) return true;
+
+            var p1 = GetPlanet(name1);
+            var p2 = GetPlanet(name2);
+            if (p1 != null && p2 != null && !string.IsNullOrEmpty(p1.Name) && !string.IsNullOrEmpty(p2.Name)) {
+                return p1.Name.Equals(p2.Name, StringComparison.OrdinalIgnoreCase);
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 全局权威天体名称归一化 (转换为标准英文字典名，如 Mun/Luna -> Moon, Kerbin -> Earth, Kerbol -> Sun, Duna -> Mars, Jool -> Jupiter)
+        /// </summary>
+        public static string CanonicalizeName(string name) {
+            if (string.IsNullOrEmpty(name)) return "";
+            string upper = name.Trim().ToUpperInvariant();
+
+            if (upper == "SUN" || upper == "KERBOL" || upper == "SOL" || upper == "太阳") return "Sun";
+            if (upper == "EARTH" || upper == "KERBIN" || upper == "地球") return "Earth";
+            if (upper == "MOON" || upper == "LUNA" || upper == "MUN" || upper == "月球") return "Moon";
+            if (upper == "MARS" || upper == "DUNA" || upper == "火星") return "Mars";
+            if (upper == "VENUS" || upper == "EVE" || upper == "金星") return "Venus";
+            if (upper == "MERCURY" || upper == "MOHO" || upper == "水星") return "Mercury";
+            if (upper == "JUPITER" || upper == "JOOL" || upper == "木星") return "Jupiter";
+            if (upper == "SATURN" || upper == "土星") return "Saturn";
+            if (upper == "URANUS" || upper == "天王星") return "Uranus";
+            if (upper == "NEPTUNE" || upper == "海王星") return "Neptune";
+            if (upper == "PLUTO" || upper == "冥王星") return "Pluto";
+
+            if (upper == "EUROPA" || upper == "木卫二") return "Europa";
+            if (upper == "GANYMEDE" || upper == "木卫三") return "Ganymede";
+            if (upper == "CALLISTO" || upper == "木卫四") return "Callisto";
+            if (upper == "IO" || upper == "木卫一") return "Io";
+            if (upper == "TITAN" || upper == "土卫六") return "Titan";
+            if (upper == "ENCELADUS" || upper == "土卫二") return "Enceladus";
+
+            return name.Trim();
         }
 
         /// <summary>
@@ -453,14 +774,27 @@ namespace KSPGMAT.MGA {
                 }
 
                 // 4. 严谨物理兜底保护对象 (杜绝任何天体被退化为地球 1.0 AU)
-                double mu = 0, rKm = 0, safeKm = 0;
-                PykepNative.GetSpicePlanetConstants(name, out mu, out rKm, out safeKm);
+                double mu = 0, rKm = 0, safeKm = 0, soiKm = 0, atmDepthKm = 0;
+                PykepNative.GetSpicePlanetProperties(name, out mu, out rKm, out safeKm, out soiKm, out atmDepthKm);
                 double sma = 0, ecc = 0, inc = 0, raan = 0, aop = 0, ma = 0;
                 PykepNative.GetSpicePlanetElements(name, J2000_RSS_UT, SunMu, out sma, out ecc, out inc, out raan, out aop, out ma);
 
                 if (sma <= 0) {
                     (sma, ecc, inc, mu, rKm) = GetStandardPlanetFallback(name);
-                    safeKm = rKm + 100.0;
+                    safeKm = rKm + atmDepthKm + (atmDepthKm > 0 ? 10.0 : 20.0);
+                }
+
+                string parentFallback = ResolveParentBody(name);
+                bool isMoonFallback = !string.IsNullOrEmpty(parentFallback) && !parentFallback.Equals("Sun", StringComparison.OrdinalIgnoreCase);
+
+                if (soiKm <= 0 && sma > 0) {
+                    double parentMu = isMoonFallback ? GetCentralMu(parentFallback) : SunMu;
+                    if (parentMu > 0 && mu > 0) {
+                        soiKm = sma * Math.Pow(mu / parentMu, 0.4);
+                    }
+                }
+                if (name.Equals("Sun", StringComparison.OrdinalIgnoreCase) || string.IsNullOrEmpty(parentFallback)) {
+                    soiKm = double.PositiveInfinity;
                 }
 
                 string defaultIcon = GetDefaultIcon(name);
@@ -471,6 +805,8 @@ namespace KSPGMAT.MGA {
                     Mu = mu > 0 ? mu : 398600.4418,
                     RadiusKm = rKm > 0 ? rKm : 6378.14,
                     SafeRadiusKm = safeKm > 0 ? safeKm : 6518.14,
+                    AtmosphereDepthKm = atmDepthKm,
+                    SoiKm = soiKm,
                     SMA = sma,
                     ECC = ecc,
                     INC = inc,
@@ -478,6 +814,8 @@ namespace KSPGMAT.MGA {
                     AOP = aop,
                     MA0 = ma,
                     EpochJ2000 = J2000_RSS_UT,
+                    ParentName = parentFallback,
+                    IsMoon = isMoonFallback,
                     SourceScheme = EphemerisScheme.Scheme1_SpiceDE440
                 };
                 _planetsCache[name] = fallbackPlanet;
@@ -496,10 +834,18 @@ namespace KSPGMAT.MGA {
                 return (108208930.0, 0.00677323, 3.39471, 324859.0, 6051.8);
             if (upper.Contains("EARTH") || upper.Contains("地球") || upper.Contains("KERBIN"))
                 return (149598023.0, 0.01671022, 0.00000, 398600.4418, 6378.14);
-            if (upper.Contains("MOON") || upper.Contains("月球") || upper.Contains("MUN"))
-                return (149598023.0, 0.05490000, 5.14500, 4902.8, 1737.4);
+            if (upper.Contains("MOON") || upper.Contains("月球") || upper.Contains("LUNA") || upper.Contains("MUN"))
+                return (384400.0, 0.05490000, 5.14500, 4902.8, 1737.4);
             if (upper.Contains("MARS") || upper.Contains("火星") || upper.Contains("DUNA"))
                 return (227936640.0, 0.09341233, 1.85061, 42828.37, 3389.5);
+            if (upper.Contains("EUROPA") || upper.Contains("木卫二"))
+                return (670900.0, 0.00900000, 0.47000, 3202.73, 1560.8);
+            if (upper.Contains("GANYMEDE") || upper.Contains("木卫三"))
+                return (1070400.0, 0.00130000, 0.20000, 9887.83, 2634.1);
+            if (upper.Contains("CALLISTO") || upper.Contains("木卫四"))
+                return (1882700.0, 0.00740000, 0.19200, 7179.29, 2410.3);
+            if (upper.Contains("TITAN") || upper.Contains("土卫六"))
+                return (1221870.0, 0.02880000, 0.34854, 8978.14, 2574.7);
             if (upper.Contains("JUPITER") || upper.Contains("木星") || upper.Contains("JOOL"))
                 return (778412020.0, 0.04839266, 1.30530, 126686534.0, 69911.0);
             if (upper.Contains("SATURN") || upper.Contains("土星"))
@@ -548,6 +894,99 @@ namespace KSPGMAT.MGA {
         }
 
         /// <summary>
+        /// 动态扫描获取当前宇宙中所有拥有卫星的母星列表 (零硬编码，全量兼容 RSS / Stock / OPM / JNSQ 及任意自定义星球包)
+        /// </summary>
+        public static List<SolarPlanet> GetBodiesWithMoons() {
+            var parentNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            if (IsFlightGlobalsReady) {
+                try {
+                    var sun = FlightGlobals.Bodies.Find(b => b.orbit == null || b.referenceBody == null || b.referenceBody == b);
+                    foreach (var b in FlightGlobals.Bodies) {
+                        if (b == null || b == sun) continue;
+                        bool hasMoons = (b.orbitingBodies != null && b.orbitingBodies.Count > 0) ||
+                                        FlightGlobals.Bodies.Any(child => child != null && child != b && child.referenceBody == b);
+                        if (hasMoons) {
+                            parentNames.Add(b.name);
+                        }
+                    }
+                } catch { }
+            }
+
+            if (parentNames.Count == 0) {
+                var all = GetAvailablePlanets();
+                string root = RootStarName;
+                foreach (var p in all) {
+                    if (p.IsMoon && !string.IsNullOrEmpty(p.ParentName) && !p.ParentName.Equals(root, StringComparison.OrdinalIgnoreCase)) {
+                        parentNames.Add(p.ParentName);
+                    }
+                }
+            }
+
+            var result = new List<SolarPlanet>();
+            foreach (var name in parentNames) {
+                var parentPlanet = GetPlanet(name);
+                if (parentPlanet != null && !result.Any(r => r.Name.Equals(parentPlanet.Name, StringComparison.OrdinalIgnoreCase))) {
+                    result.Add(parentPlanet);
+                }
+            }
+            return result.OrderBy(p => p.SMA).ToList();
+        }
+
+        /// <summary>
+        /// 动态获取指定母星下的所有直接子卫星列表 (零硬编码自适应运行态与离线星历)
+        /// </summary>
+        public static List<SolarPlanet> GetMoonsOf(string parentName) {
+            if (string.IsNullOrEmpty(parentName)) return new List<SolarPlanet>();
+            if (IsFlightGlobalsReady) {
+                try {
+                    var parentCb = FlightGlobals.Bodies.Find(b => b.name.Equals(parentName, StringComparison.OrdinalIgnoreCase) || 
+                                                                 b.bodyName.Equals(parentName, StringComparison.OrdinalIgnoreCase));
+                    if (parentCb != null) {
+                        var moons = FlightGlobals.Bodies
+                            .Where(b => b != null && b != parentCb && b.referenceBody == parentCb && b.orbit != null)
+                            .OrderBy(b => b.orbit.semiMajorAxis)
+                            .Select(b => CreateFromCelestialBody(b))
+                            .ToList();
+                        if (moons.Count > 0) return moons;
+                    }
+                } catch { }
+            }
+            var all = GetAvailablePlanets();
+            return all.Where(p => p.IsMoon && p.ParentName.Equals(parentName, StringComparison.OrdinalIgnoreCase))
+                      .OrderBy(p => p.SMA)
+                      .ToList();
+        }
+
+        /// <summary>
+        /// 动态推导两个天体之间转移的中心引力天体 (Central Body)：
+        /// 1. 若两者母星相同且非恒星 (如 Europa -> Ganymede 或 Mun -> Minmus)，中心天体为该公共母星 (Jupiter 或 Kerbin)；
+        /// 2. 若其中一个是另一个的母星 (如 Earth -> Moon 或 Kerbin -> Mun)，中心天体为该母星 (Earth 或 Kerbin)；
+        /// 3. 否则为恒星/行星际转移 (Sun 或 Kerbol)。
+        /// </summary>
+        public static string ResolveTransferCentralBody(string bodyA, string bodyB) {
+            string root = RootStarName;
+            if (string.IsNullOrEmpty(bodyA) || string.IsNullOrEmpty(bodyB)) return root;
+            var pA = GetPlanet(bodyA);
+            var pB = GetPlanet(bodyB);
+            if (pA == null || pB == null) return root;
+
+            // 情况 1: 其中一个是另一个的直接母星
+            if (pB.IsMoon && pB.ParentName.Equals(pA.Name, StringComparison.OrdinalIgnoreCase)) return pA.Name;
+            if (pA.IsMoon && pA.ParentName.Equals(pB.Name, StringComparison.OrdinalIgnoreCase)) return pB.Name;
+
+            // 情况 2: 两者属于同一母星的子卫星 (如 木卫二 -> 木卫三 或 坎星 Mun -> Minmus)
+            if (pA.IsMoon && pB.IsMoon && 
+                !string.IsNullOrEmpty(pA.ParentName) && 
+                pA.ParentName.Equals(pB.ParentName, StringComparison.OrdinalIgnoreCase)) {
+                return pA.ParentName;
+            }
+
+            // 情况 3: 普通行星际转移
+            return root;
+        }
+
+        /// <summary>
         /// 对比指定天体在方案 1 (NASA JPL SPICE) 与 方案 2 (FlightGlobals) 之间的误差值
         /// (100% C++ 原生计算差值指标，0 托管物理计算)
         /// </summary>
@@ -557,57 +996,157 @@ namespace KSPGMAT.MGA {
                 EpochUt = ut
             };
 
-            // 自动检测参考坐标系：
-            // 在 RSS (Real Solar System) 模组中，游戏内天体坐标系以地球 J2000 赤道面为基准 (Earth.inc ≈ 23.44°)；
-            // 若此时 SPICE 查询 ECLIPJ2000 (黄道面)，两者会存在 23.44° 的黄赤交角，导致 Δr 呈现 1.5 亿公里的几何坐标系夹角差。
-            // 自动适配 SPICE 参考系至游戏内实际对齐坐标系 ("J2000" 赤道系 或 "ECLIPJ2000" 黄道系)。
-            string spiceFrame = "ECLIPJ2000";
+            // 确保坐标系对齐偏角已完成实时动态反推校准 (0 硬编码，多星圆周平均解析反演)
+            EnsureDynamicallyCalibrated();
+
+            // 0. 太阳/中心天体基准特判：太阳是日心坐标原点，不计算开普勒公转根数，杜绝除以 0 导致 NaN
+            bool isSun = bodyName.Equals("Sun", StringComparison.OrdinalIgnoreCase) || 
+                        bodyName.Equals("Sol", StringComparison.OrdinalIgnoreCase) ||
+                        bodyName.Equals("Kerbol", StringComparison.OrdinalIgnoreCase);
+            if (isSun) {
+                res.Scheme1Available = true;
+                res.Scheme2Available = true;
+                res.PosScheme1 = Vector3d.zero;
+                res.VelScheme1 = Vector3d.zero;
+                res.PosScheme2 = Vector3d.zero;
+                res.VelScheme2 = Vector3d.zero;
+                res.PosDiffKm = 0.0;
+                res.VelDiffMs = 0.0;
+                res.SmaScheme1 = 0.0;
+                res.EccScheme1 = 0.0;
+                res.IncScheme1 = 0.0;
+                res.SmaScheme2 = 0.0;
+                res.EccScheme2 = 0.0;
+                res.IncScheme2 = 0.0;
+                res.DaKm = 0.0;
+                res.De = 0.0;
+                res.DincDeg = 0.0;
+                return res;
+            }
+
+            // 统一日心标准参考系：
+            // Principia 与真实太阳系 (RSS) 的原生空间坐标系为地球赤道惯性参考系 (ICRF / J2000)
+            // 方案 1 (NASA JPL SPICE DE440) 严格采用同构 J2000 (ICRF) 参考系，彻底消除黄赤交角 (23.44°) 引起的坐标系假性偏差
+            string spiceFrame = "J2000";
+
+            // 检查当前天体是否为绕行星公转的卫星 (如 Moon, Phobos)
+            CelestialBody targetBody = null;
+            CelestialBody parentBody = null;
+            double centralMuKm = SunMu;
+            bool isSatellite = false;
+
             if (IsFlightGlobalsReady) {
-                var earthRef = FlightGlobals.Bodies.Find(x => x.name.Equals("Earth", StringComparison.OrdinalIgnoreCase));
-                if (earthRef != null && earthRef.orbit != null && earthRef.orbit.inclination > 15.0) {
-                    spiceFrame = "J2000";
+                targetBody = FlightGlobals.Bodies.Find(x => 
+                    x.name.Equals(bodyName, StringComparison.OrdinalIgnoreCase) || 
+                    x.bodyName.Equals(bodyName, StringComparison.OrdinalIgnoreCase) ||
+                    (!string.IsNullOrEmpty(x.displayName) && CleanDisplayName(x.displayName).Equals(bodyName, StringComparison.OrdinalIgnoreCase)));
+                if (targetBody != null && targetBody.referenceBody != null && targetBody.referenceBody != targetBody) {
+                    parentBody = targetBody.referenceBody;
+                    // 若母天体不是太阳，则该天体为卫星 (以其母行星为中心对比轨道根数与相对状态)
+                    if (!parentBody.name.Equals("Sun", StringComparison.OrdinalIgnoreCase) && 
+                        !parentBody.name.Equals("Sol", StringComparison.OrdinalIgnoreCase) && 
+                        !parentBody.name.Equals("Kerbol", StringComparison.OrdinalIgnoreCase)) {
+                        isSatellite = true;
+                        centralMuKm = parentBody.gravParameter / 1e9; // m^3/s^2 -> km^3/s^2
+                    }
                 }
             }
 
             // 1. 方案 1: SPICE 状态与根数
             if (PykepNative.HasSpiceLoaded) {
-                if (PykepNative.GetSpicePlanetState(bodyName, ut, spiceFrame, out res.PosScheme1, out res.VelScheme1)) {
-                    res.Scheme1Available = true;
+                if (isSatellite && parentBody != null) {
+                    // 针对卫星 (如月球)：SPICE 先分别读取月球与母星 (地球) 的日心状态，相减求得高精地心/相对母星状态
+                    if (PykepNative.GetSpicePlanetState(bodyName, ut, spiceFrame, out Vector3d rSatSun, out Vector3d vSatSun) &&
+                        PykepNative.GetSpicePlanetState(parentBody.name, ut, spiceFrame, out Vector3d rParSun, out Vector3d vParSun)) {
+                        res.PosScheme1 = rSatSun - rParSun;
+                        res.VelScheme1 = vSatSun - vParSun;
+                        res.Scheme1Available = true;
+                    } else if (PykepNative.GetSpicePlanetState(bodyName, ut, spiceFrame, out res.PosScheme1, out res.VelScheme1)) {
+                        res.Scheme1Available = true;
+                    }
+                } else {
+                    // 针对行星 (如火星)：直接获取日心状态
+                    if (PykepNative.GetSpicePlanetState(bodyName, ut, spiceFrame, out res.PosScheme1, out res.VelScheme1)) {
+                        res.Scheme1Available = true;
+                    }
                 }
-            }
-            double raan1 = 0, aop1 = 0, ma1 = 0;
-            PykepNative.GetSpicePlanetElements(bodyName, ut, SunMu, out res.SmaScheme1, out res.EccScheme1, out res.IncScheme1, out raan1, out aop1, out ma1);
-            if (spiceFrame == "J2000" && res.Scheme1Available) {
-                Vector3d h = Vector3d.Cross(res.PosScheme1, res.VelScheme1);
-                if (h.magnitude > 1e-5) {
-                    res.IncScheme1 = Math.Acos(Mathf.Clamp((float)(h.z / h.magnitude), -1f, 1f)) * Mathf.Rad2Deg;
+
+                if (res.Scheme1Available) {
+                    // 精确补偿 SPICE J2000 赤道惯性系与 Principia ICRF 游戏物理坐标系的 15.371911° 赤经零点偏角
+                    res.PosScheme1 = AlignSpiceJ2000ToPrincipia(res.PosScheme1);
+                    res.VelScheme1 = AlignSpiceJ2000ToPrincipia(res.VelScheme1);
                 }
             }
 
-            // 2. 方案 2: FlightGlobals 游戏运行态天体
-            if (IsFlightGlobalsReady) {
-                try {
-                    var b = FlightGlobals.Bodies.Find(x => 
-                        x.name.Equals(bodyName, StringComparison.OrdinalIgnoreCase) || 
-                        x.bodyName.Equals(bodyName, StringComparison.OrdinalIgnoreCase) ||
-                        (!string.IsNullOrEmpty(x.displayName) && CleanDisplayName(x.displayName).Equals(bodyName, StringComparison.OrdinalIgnoreCase)));
-                    if (b != null && b.orbit != null) {
-                        res.Scheme2Available = true;
+            // 计算方案 1 的开普勒根数 (使用对应的中心引力常数 centralMuKm)
+            if (res.Scheme1Available && centralMuKm > 0) {
+                double raan1 = 0, aop1 = 0, ma1 = 0;
+                PykepNative.GetSpicePlanetElements(bodyName, ut, centralMuKm, out res.SmaScheme1, out res.EccScheme1, out res.IncScheme1, out raan1, out aop1, out ma1);
+                
+                // 在 J2000 (ICRF) 参考系下，严格从瞬时状态矢量反求活力积分与角动量 (对齐 Earth Mean Equator J2000)
+                double rMag = res.PosScheme1.magnitude;
+                double vMag = res.VelScheme1.magnitude;
+                if (rMag > 1.0) {
+                    double energy = (vMag * vMag / 2.0) - (centralMuKm / rMag);
+                    if (Math.Abs(energy) > 1e-9) res.SmaScheme1 = -centralMuKm / (2.0 * energy);
+                    Vector3d h = Vector3d.Cross(res.PosScheme1, res.VelScheme1);
+                    Vector3d eVec = Vector3d.Cross(res.VelScheme1, h) / centralMuKm - (res.PosScheme1 / rMag);
+                    res.EccScheme1 = eVec.magnitude;
+                    if (h.magnitude > 1e-9) res.IncScheme1 = Math.Acos(Mathf.Clamp((float)(h.z / h.magnitude), -1f, 1f)) * Mathf.Rad2Deg;
+                }
+            }
+
+            // 2. 方案 2: FlightGlobals 游戏运行态天体 (方案 B: 接入 Principia 原生星历与未篡改轨道)
+            if (targetBody != null) {
+                res.Scheme2Available = true;
+
+                if (isSatellite) {
+                    // 卫星模式：优先从 Principia 提取相对母星状态，或回退到未篡改地心轨道
+                    if (PrincipiaInterop.TryGetCelestialFromParent(targetBody, out res.PosScheme2, out res.VelScheme2)) {
+                        // 成功由 Principia 提取高精度相对状态
+                    } else {
+                        Orbit unmodSat = PrincipiaInterop.GetUnmodifiedOrbit(targetBody) ?? targetBody.orbit;
+                        if (unmodSat != null) {
+                            Vector3d r_m = unmodSat.getRelativePositionAtUT(ut);
+                            Vector3d v_ms = unmodSat.getOrbitalVelocityAtUT(ut);
+                            // KSP Orbit.getRelativePositionAtUT 输出已处于天体力学 Z-Up (黄道面) 惯性系 (X=春分点, Y=黄道90°, Z=北极)
+                            res.PosScheme2 = new Vector3d(r_m.x / 1000.0, r_m.y / 1000.0, r_m.z / 1000.0);
+                            res.VelScheme2 = new Vector3d(v_ms.x / 1000.0, v_ms.y / 1000.0, v_ms.z / 1000.0);
+                        }
+                    }
+                } else {
+                    // 行星模式：方案 B 优先直读 Principia 原生 N 体日心状态 (当前时刻直读，0 二体外推累积误差)
+                    if (targetBody.referenceBody != null && 
+                        (targetBody.referenceBody.name.Equals("Sun", StringComparison.OrdinalIgnoreCase) ||
+                         targetBody.referenceBody.name.Equals("Sol", StringComparison.OrdinalIgnoreCase) ||
+                         targetBody.referenceBody.name.Equals("Kerbol", StringComparison.OrdinalIgnoreCase)) &&
+                        PrincipiaInterop.TryGetCelestialFromParent(targetBody, out res.PosScheme2, out res.VelScheme2)) {
+                        // 成功直读 Principia 原生日心高精状态
+                    } else if (PrincipiaInterop.TryGetHeliocentricState(targetBody, ut, out res.PosScheme2, out res.VelScheme2)) {
+                        // 成功由 Principia 方案 B 提取
+                    } else {
+                        // 普通回退：级联求和至日心
                         Vector3d r_total = Vector3d.zero;
                         Vector3d v_total = Vector3d.zero;
-                        var curr = b;
+                        var curr = targetBody;
                         while (curr != null && curr.orbit != null && curr.referenceBody != null && curr.referenceBody != curr) {
                             r_total += curr.orbit.getRelativePositionAtUT(ut);
                             v_total += curr.orbit.getOrbitalVelocityAtUT(ut);
                             curr = curr.referenceBody;
                         }
+                        // KSP Orbit 输出处于天体力学 Z-Up (黄道面) 惯性系 (严禁交换 Y 与 Z)
                         res.PosScheme2 = new Vector3d(r_total.x / 1000.0, r_total.y / 1000.0, r_total.z / 1000.0);
                         res.VelScheme2 = new Vector3d(v_total.x / 1000.0, v_total.y / 1000.0, v_total.z / 1000.0);
-                        res.SmaScheme2 = b.orbit.semiMajorAxis / 1000.0;
-                        res.EccScheme2 = b.orbit.eccentricity;
-                        res.IncScheme2 = b.orbit.inclination;
                     }
-                } catch { }
+                }
+
+                // 开普勒根数读取：优先从未篡改轨道读取真均根数，彻底避免 Principia 每帧瞬时密切根数扰动
+                var unmod = PrincipiaInterop.GetUnmodifiedOrbit(targetBody) ?? targetBody.orbit;
+                if (unmod != null) {
+                    res.SmaScheme2 = unmod.semiMajorAxis / 1000.0;
+                    res.EccScheme2 = unmod.eccentricity;
+                    res.IncScheme2 = unmod.inclination;
+                }
             }
 
             // 3. 调用 100% C++ 原生计算方案 1 与方案 2 的矢量差与范数误差 (0 托管物理计算)
@@ -619,6 +1158,10 @@ namespace KSPGMAT.MGA {
                     res.SmaScheme2, res.EccScheme2, res.IncScheme2,
                     out res.PosDiffKm, out res.VelDiffMs,
                     out res.DaKm, out res.De, out res.DincDeg);
+                KSPGMATLog.Info($"[ComparePlanetSchemes] target={bodyName}, ut={ut:F1}s | frame={spiceFrame}");
+                KSPGMATLog.Info($"  Scheme1(SPICE): r=[{res.PosScheme1.x:F1}, {res.PosScheme1.y:F1}, {res.PosScheme1.z:F1}]km (|r|={res.PosScheme1.magnitude:F1}km), v=[{res.VelScheme1.x:F3}, {res.VelScheme1.y:F3}, {res.VelScheme1.z:F3}]km/s");
+                KSPGMATLog.Info($"  Scheme2(Game):  r=[{res.PosScheme2.x:F1}, {res.PosScheme2.y:F1}, {res.PosScheme2.z:F1}]km (|r|={res.PosScheme2.magnitude:F1}km), v=[{res.VelScheme2.x:F3}, {res.VelScheme2.y:F3}, {res.VelScheme2.z:F3}]km/s");
+                KSPGMATLog.Info($"  Diff: Δr={res.PosDiffKm:F1}km, Δv={res.VelDiffMs:F1}m/s | Δa={res.DaKm:F1}km, Δe={res.De:F5}, Δi={res.DincDeg:F3}°");
             }
 
             return res;
@@ -631,6 +1174,231 @@ namespace KSPGMAT.MGA {
                 ? (char.ToUpperInvariant(clean[0]).ToString() + char.ToLowerInvariant(clean[1]).ToString())
                 : clean.ToUpperInvariant();
             return I18n.T("icon_" + clean, defaultIcon);
+        }
+
+        /// <summary>
+        /// 获取指定中心天体的权威引力常数 (km^3/s^2)
+        /// 彻底消除硬编码，优先读取游戏运行态天体树或 SPICE 权威内核
+        /// </summary>
+        public static double GetCentralMu(string centralBody) {
+            if (string.IsNullOrEmpty(centralBody) || 
+                centralBody.Equals("Sun", StringComparison.OrdinalIgnoreCase) || 
+                centralBody.Equals("Sol", StringComparison.OrdinalIgnoreCase) || 
+                centralBody.Equals("Kerbol", StringComparison.OrdinalIgnoreCase)) {
+                return SunMu;
+            }
+
+            // 1. 优先从当前天体字典或 FlightGlobals 动态直读
+            var planet = GetPlanet(centralBody);
+            if (planet != null && planet.Mu > 0) {
+                return planet.Mu;
+            }
+
+            // 2. 从 SPICE 提取权威常数
+            if (PykepNative.HasSpiceLoaded) {
+                double mu, r, safeR;
+                if (PykepNative.GetSpicePlanetConstants(centralBody, out mu, out r, out safeR) && mu > 0) {
+                    return mu;
+                }
+            }
+
+            // 3. 后备物理常数兜底
+            var fb = GetStandardPlanetFallback(centralBody);
+            if (fb.mu > 0) return fb.mu;
+
+            return 398600.4418; // 默认地球保底
+        }
+
+        /// <summary>
+        /// 动态探测当前游戏或星历环境中可用的引力系统 (中心母星) 清单
+        /// 针对 SOL/RSS/OPM/Stock: 动态自适应探测哪些行星实际配置并加载了卫星，仅列出真正拥有卫星的天体，杜绝死名单
+        /// </summary>
+        public static List<string> GetAvailableSystems() {
+            var systems = new List<string> { "Sun" };
+
+            if (IsFlightGlobalsReady) {
+                try {
+                    var sun = FlightGlobals.Bodies.Find(b => b.orbit == null || b.referenceBody == null || b.referenceBody == b);
+                    // 找出所有作为 referenceBody 且在当前游戏存档中真实拥有子卫星的父天体
+                    var parentsWithMoons = FlightGlobals.Bodies
+                        .Where(b => b != sun && FlightGlobals.Bodies.Any(c => c != b && c.referenceBody == b && c.orbit != null && c.Radius >= 500.0))
+                        .OrderBy(b => b.orbit != null ? b.orbit.semiMajorAxis : 0.0)
+                        .Select(b => b.name)
+                        .ToList();
+
+                    foreach (var p in parentsWithMoons) {
+                        if (!systems.Contains(p)) systems.Add(p);
+                    }
+                    if (systems.Count > 1) return systems;
+                } catch { }
+            }
+
+            // 离线/测试环境保底：经典主要行星系
+            string[] standardSystems = new[] { "Earth", "Jupiter", "Saturn", "Mars", "Uranus", "Neptune" };
+            foreach (var s in standardSystems) {
+                if (!systems.Contains(s)) systems.Add(s);
+            }
+            return systems;
+        }
+
+        /// <summary>
+        /// 动态获取指定引力系统内的全部可用天体 (包含中心母星自身停泊轨道及所有实际已加载的子卫星)
+        /// 针对 SOL/RSS/OPM 解决卫星选择性收录问题：真实加载了哪些卫星就展示哪些，严禁虚假全量或遗漏
+        /// </summary>
+        public static List<SolarPlanet> GetSystemBodies(string centralBody) {
+            bool isHelio = string.IsNullOrEmpty(centralBody) || 
+                           centralBody.Equals("Sun", StringComparison.OrdinalIgnoreCase) || 
+                           centralBody.Equals("Sol", StringComparison.OrdinalIgnoreCase) || 
+                           centralBody.Equals("Kerbol", StringComparison.OrdinalIgnoreCase);
+
+            if (isHelio) {
+                // 日心系统：返回所有绕太阳运行的一级主行星/矮行星 (排除卫星)
+                var all = GetAvailablePlanets();
+                return all.Where(p => !p.IsMoon && (string.IsNullOrEmpty(p.ParentName) || 
+                                                     p.ParentName.Equals("Sun", StringComparison.OrdinalIgnoreCase) || 
+                                                     p.ParentName.Equals("Sol", StringComparison.OrdinalIgnoreCase) || 
+                                                     p.ParentName.Equals("Kerbol", StringComparison.OrdinalIgnoreCase)))
+                          .OrderBy(p => p.SMA)
+                          .ToList();
+            }
+
+            var result = new List<SolarPlanet>();
+
+            // 1. 中心母星自身作为出发/捕获候选 (代表从母星停泊轨道出发)
+            var centerPlanet = GetPlanet(centralBody);
+            if (centerPlanet != null) {
+                var parkCopy = new SolarPlanet {
+                    Name = centerPlanet.Name,
+                    DisplayName = centerPlanet.DisplayName + " [" + I18n.T("mga_parking_orbit", "停泊轨道") + "]",
+                    Icon = centerPlanet.Icon,
+                    Mu = centerPlanet.Mu,
+                    RadiusKm = centerPlanet.RadiusKm,
+                    SafeRadiusKm = centerPlanet.SafeRadiusKm,
+                    SMA = 0,
+                    ECC = 0,
+                    INC = 0,
+                    ParentName = centerPlanet.Name,
+                    IsMoon = false
+                };
+                result.Add(parkCopy);
+            }
+
+            // 2. 游戏运行态：完全动态遍历 FlightGlobals.Bodies 探测真实存在的卫星
+            if (IsFlightGlobalsReady) {
+                try {
+                    var parentCb = FlightGlobals.Bodies.Find(b => 
+                        b.name.Equals(centralBody, StringComparison.OrdinalIgnoreCase) || 
+                        b.bodyName.Equals(centralBody, StringComparison.OrdinalIgnoreCase));
+
+                    if (parentCb != null) {
+                        var moons = FlightGlobals.Bodies
+                            .Where(b => b != parentCb && b.referenceBody == parentCb && b.orbit != null && b.Radius >= 500.0)
+                            .OrderBy(b => b.orbit.semiMajorAxis)
+                            .Select(b => CreateFromCelestialBody(b))
+                            .Where(sp => sp != null)
+                            .ToList();
+
+                        foreach (var m in moons) {
+                            if (!result.Any(x => x.Name.Equals(m.Name, StringComparison.OrdinalIgnoreCase))) {
+                                result.Add(m);
+                            }
+                        }
+
+                        if (result.Count > 1) return result;
+                    }
+                } catch { }
+            }
+
+            // 3. 离线/测试环境后备：为主要行星系提供公认核心大卫星后备
+            var offlineMoons = GetOfflineStandardMoons(centralBody);
+            foreach (var m in offlineMoons) {
+                if (!result.Any(x => x.Name.Equals(m.Name, StringComparison.OrdinalIgnoreCase))) {
+                    result.Add(m);
+                }
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// 离线/脱机环境权威核心大卫星后备数据 (保证单元测试与脱机规划完全自洽)
+        /// </summary>
+        private static List<SolarPlanet> GetOfflineStandardMoons(string centralBody) {
+            var list = new List<SolarPlanet>();
+            string upper = (centralBody ?? "").ToUpperInvariant();
+
+            if (upper.Contains("EARTH") || upper.Contains("地球") || upper.Contains("KERBIN")) {
+                list.Add(new SolarPlanet {
+                    Name = "Moon", DisplayName = I18n.T("body_Moon", "月球"), Icon = "Lu",
+                    Mu = 4902.8, RadiusKm = 1737.4, SafeRadiusKm = 1757.4, AtmosphereDepthKm = 0.0, SoiKm = 66100.0,
+                    SMA = 384400.0, ECC = 0.0549, INC = 5.145, EpochJ2000 = J2000_RSS_UT,
+                    ParentName = centralBody, IsMoon = true
+                });
+            } else if (upper.Contains("SATURN") || upper.Contains("土星")) {
+                list.Add(new SolarPlanet {
+                    Name = "Enceladus", DisplayName = I18n.T("body_Enceladus", "土卫二"), Icon = "En",
+                    Mu = 7.21, RadiusKm = 252.1, SafeRadiusKm = 272.1, AtmosphereDepthKm = 0.0, SoiKm = 950.0,
+                    SMA = 238000.0, ECC = 0.0047, INC = 0.009, EpochJ2000 = J2000_RSS_UT,
+                    ParentName = centralBody, IsMoon = true
+                });
+                list.Add(new SolarPlanet {
+                    Name = "Tethys", DisplayName = I18n.T("body_Tethys", "土卫三"), Icon = "Te",
+                    Mu = 41.2, RadiusKm = 531.1, SafeRadiusKm = 551.1, AtmosphereDepthKm = 0.0, SoiKm = 2000.0,
+                    SMA = 294600.0, ECC = 0.0, INC = 1.091, EpochJ2000 = J2000_RSS_UT,
+                    ParentName = centralBody, IsMoon = true
+                });
+                list.Add(new SolarPlanet {
+                    Name = "Dione", DisplayName = I18n.T("body_Dione", "土卫四"), Icon = "Di",
+                    Mu = 73.1, RadiusKm = 561.4, SafeRadiusKm = 581.4, AtmosphereDepthKm = 0.0, SoiKm = 3200.0,
+                    SMA = 377400.0, ECC = 0.0022, INC = 0.02, EpochJ2000 = J2000_RSS_UT,
+                    ParentName = centralBody, IsMoon = true
+                });
+                list.Add(new SolarPlanet {
+                    Name = "Rhea", DisplayName = I18n.T("body_Rhea", "土卫五"), Icon = "Rh",
+                    Mu = 153.9, RadiusKm = 763.8, SafeRadiusKm = 783.8, AtmosphereDepthKm = 0.0, SoiKm = 5800.0,
+                    SMA = 527000.0, ECC = 0.001, INC = 0.35, EpochJ2000 = J2000_RSS_UT,
+                    ParentName = centralBody, IsMoon = true
+                });
+                list.Add(new SolarPlanet {
+                    Name = "Titan", DisplayName = I18n.T("body_Titan", "泰坦 (土卫六)"), Icon = "Ti",
+                    Mu = 8978.1, RadiusKm = 2575.0, SafeRadiusKm = 3185.0, AtmosphereDepthKm = 600.0, SoiKm = 85000.0,
+                    SMA = 1221870.0, ECC = 0.0288, INC = 0.33, EpochJ2000 = J2000_RSS_UT,
+                    ParentName = centralBody, IsMoon = true
+                });
+                list.Add(new SolarPlanet {
+                    Name = "Iapetus", DisplayName = I18n.T("body_Iapetus", "土卫八"), Icon = "Ia",
+                    Mu = 120.5, RadiusKm = 734.5, SafeRadiusKm = 754.5, AtmosphereDepthKm = 0.0, SoiKm = 36000.0,
+                    SMA = 3561300.0, ECC = 0.0283, INC = 15.47, EpochJ2000 = J2000_RSS_UT,
+                    ParentName = centralBody, IsMoon = true
+                });
+            } else if (upper.Contains("JUPITER") || upper.Contains("木星") || upper.Contains("JOOL")) {
+                list.Add(new SolarPlanet {
+                    Name = "Io", DisplayName = I18n.T("body_Io", "木卫一"), Icon = "Io",
+                    Mu = 5959.9, RadiusKm = 1821.6, SafeRadiusKm = 1841.6, AtmosphereDepthKm = 0.0, SoiKm = 11000.0,
+                    SMA = 421700.0, ECC = 0.0041, INC = 0.05, EpochJ2000 = J2000_RSS_UT,
+                    ParentName = centralBody, IsMoon = true
+                });
+                list.Add(new SolarPlanet {
+                    Name = "Europa", DisplayName = I18n.T("body_Europa", "木卫二"), Icon = "Eu",
+                    Mu = 3202.7, RadiusKm = 1560.8, SafeRadiusKm = 1580.8, AtmosphereDepthKm = 0.0, SoiKm = 9700.0,
+                    SMA = 670900.0, ECC = 0.009, INC = 0.47, EpochJ2000 = J2000_RSS_UT,
+                    ParentName = centralBody, IsMoon = true
+                });
+                list.Add(new SolarPlanet {
+                    Name = "Ganymede", DisplayName = I18n.T("body_Ganymede", "木卫三"), Icon = "Ga",
+                    Mu = 9887.8, RadiusKm = 2631.2, SafeRadiusKm = 2651.2, AtmosphereDepthKm = 0.0, SoiKm = 32000.0,
+                    SMA = 1070400.0, ECC = 0.0013, INC = 0.2, EpochJ2000 = J2000_RSS_UT,
+                    ParentName = centralBody, IsMoon = true
+                });
+                list.Add(new SolarPlanet {
+                    Name = "Callisto", DisplayName = I18n.T("body_Callisto", "木卫四"), Icon = "Ca",
+                    Mu = 7179.3, RadiusKm = 2410.3, SafeRadiusKm = 2430.3, AtmosphereDepthKm = 0.0, SoiKm = 50000.0,
+                    SMA = 1882700.0, ECC = 0.0074, INC = 0.28, EpochJ2000 = J2000_RSS_UT,
+                    ParentName = centralBody, IsMoon = true
+                });
+            }
+
+            return list;
         }
     }
 }

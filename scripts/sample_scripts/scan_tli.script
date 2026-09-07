@@ -1,0 +1,37 @@
+Create Spacecraft Sat;
+Sat.DateFormat       = UTCGregorian;
+Sat.Epoch            = '09 Mar 1960 03:27:47.591';
+Sat.CoordinateSystem = EarthMJ2000Eq;
+Sat.DisplayStateType = Cartesian;
+Sat.X                = -5337.197780;
+Sat.Y                = -3080.395825;
+Sat.Z                = 2280.468724;
+Sat.VX               = 2.828285;
+Sat.VY               = -6.791792;
+Sat.VZ               = -2.559760;
+
+Create ForceModel EarthForceModel;
+EarthForceModel.CentralBody   = Earth;
+EarthForceModel.PointMasses   = {Earth, Luna, Sun};
+
+Create Propagator EarthProp;
+EarthProp.FM                  = EarthForceModel;
+EarthProp.Type                = RungeKutta89;
+
+Create ImpulsiveBurn TLI_Burn;
+TLI_Burn.CoordinateSystem = Local;
+TLI_Burn.Origin           = Earth;
+TLI_Burn.Axes             = VNB;
+TLI_Burn.Element1         = 3.14;
+
+Create Variable t_coast dv_tli min_dist;
+Create ReportFile Rep;
+Rep.Filename = 'scan_tli.txt';
+
+BeginMissionSequence;
+
+% Check Moon position in EarthMJ2000Eq
+Report Rep Luna.EarthMJ2000Eq.X Luna.EarthMJ2000Eq.Y Luna.EarthMJ2000Eq.Z;
+
+Propagate EarthProp(Sat) {Sat.ElapsedSecs = 3600};
+Report Rep Sat.EarthMJ2000Eq.X Sat.EarthMJ2000Eq.Y Sat.EarthMJ2000Eq.Z Sat.EarthMJ2000Eq.VX Sat.EarthMJ2000Eq.VY Sat.EarthMJ2000Eq.VZ;

@@ -86,6 +86,15 @@ namespace KSPGMAT.MGA {
             out double outSafeRadiusKm);
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int PykepSpicePlanetPropertiesDelegate(
+            [MarshalAs(UnmanagedType.LPStr)] string bodyName,
+            out double outMu,
+            out double outRadiusKm,
+            out double outSafeRadiusKm,
+            out double outSoiRadiusKm,
+            out double outAtmDepthKm);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate int PykepCompareBodyStatesDelegate(
             double r1x, double r1y, double r1z,
             double v1x, double v1y, double v1z,
@@ -98,6 +107,57 @@ namespace KSPGMAT.MGA {
             out double outDaKm,
             out double outDe,
             out double outDincDeg);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int PykepAlignInjectionDelegate(
+            [In] double[] rPark0,
+            [In] double[] vPark0,
+            double tEpoch,
+            double muCentral,
+            int alignMode,
+            [In] double[] targetArg,
+            double targetScalar,
+            double tStart,
+            double tSpan,
+            int sampleCount,
+            int goldenIterations,
+            out double outAlignedUt,
+            [Out] double[] outAlignedDvFrenet,
+            [Out] double[] outAlignedDvCart);
+        private delegate int Kep3HohmannTransferDelegate(
+            double r1_km, double r2_km, double mu,
+            out double outTotalDv, out double outTofSec, out double outDv1, out double outDv2);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int Kep3BiellipticTransferDelegate(
+            double r1_km, double r2_km, double rb_km, double mu,
+            out double outTotalDv, out double outTofSec);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int Kep3CalcReynoldsStmDelegate(
+            [In] double[] r0_km, [In] double[] v0_kms, double dt_sec, double mu,
+            [Out] double[] out_stm_6x6);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int Kep3FlybyVoutDelegate(
+            [In] double[] v_in, [In] double[] v_pla, double rp_km, double beta_rad, double mu,
+            [Out] double[] out_v_out);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int Kep3Vsop2013PlanetStateDelegate(
+            [MarshalAs(UnmanagedType.LPStr)] string planetName, double epochJd,
+            out double outRx, out double outRy, out double outRz,
+            out double outVx, out double outVy, out double outVz);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int Kep3CalcCoplanarAngleDelegate(
+            double inc_deg, double lan_deg,
+            double rx, double ry, double rz,
+            out double out_wedge_angle_deg);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate double PykepCalcCentralDepartureDvDelegate(
+            double mu, double radius, double pe_km, double ap_km, double r_dest_km);
 
         [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Auto)]
         private static extern bool SetDllDirectory(string lpPathName);
@@ -126,7 +186,18 @@ namespace KSPGMAT.MGA {
         private static PykepSpicePlanetStateDelegate _fnSpicePlanetState;
         private static PykepSpicePlanetElementsDelegate _fnSpicePlanetElements;
         private static PykepSpicePlanetConstantsDelegate _fnSpicePlanetConstants;
+        private static PykepSpicePlanetPropertiesDelegate _fnSpicePlanetProperties;
         private static PykepCompareBodyStatesDelegate _fnCompareBodyStates;
+        private static PykepAlignInjectionDelegate _fnAlignInjection;
+
+        // kep3 new algorithm hooks
+        private static Kep3HohmannTransferDelegate _fnKep3Hohmann;
+        private static Kep3BiellipticTransferDelegate _fnKep3Bielliptic;
+        private static Kep3CalcReynoldsStmDelegate _fnKep3ReynoldsStm;
+        private static Kep3FlybyVoutDelegate _fnKep3FlybyVout;
+        private static Kep3Vsop2013PlanetStateDelegate _fnKep3Vsop2013;
+        private static Kep3CalcCoplanarAngleDelegate _fnKep3CoplanarAngle;
+        private static PykepCalcCentralDepartureDvDelegate _fnCalcCentralDepDv;
 
         private static bool _initAttempted = false;
         private static readonly object _initLock = new object();
@@ -182,11 +253,22 @@ namespace KSPGMAT.MGA {
                     }
 
                     SetDllDirectory(tempDir);
-                    LoadLibrary(Path.Combine(tempDir, "msvcp140.dll"));
-                    LoadLibrary(Path.Combine(tempDir, "vcruntime140.dll"));
-                    LoadLibrary(Path.Combine(tempDir, "vcruntime140_1.dll"));
-                    LoadLibrary(Path.Combine(tempDir, "boost_serialization.dll"));
-                    LoadLibrary(Path.Combine(tempDir, "keplerian_toolbox.dll"));
+                    string[] preloads = new[] {
+                        "msvcp140", "vcruntime140", "vcruntime140_1",
+                        "libomp", "openblas",
+                        "libiomp5md", "mkl_core.3", "mkl_def.3", "mkl_intel_thread.3", // 向后兼容回退
+                        "fmt", "boost_serialization", "kep3"
+                    };
+                    foreach (var pl in preloads) {
+                        string p = Path.Combine(tempDir, pl + ".dll");
+                        if (File.Exists(p)) {
+                            IntPtr h = LoadLibrary(p);
+                            if (h == IntPtr.Zero) {
+                                int err = Marshal.GetLastWin32Error();
+                                KSPGMATLog.Warn($"[PykepNative] Failed to preload {pl}.dll, error: {err}");
+                            }
+                        }
+                    }
 
                     string mainDllPath = Path.Combine(tempDir, "pykep_native.dll");
                     _dllHandle = LoadLibrary(mainDllPath);
@@ -205,6 +287,7 @@ namespace KSPGMAT.MGA {
                         IntPtr pSpiceState = GetProcAddress(_dllHandle, "pykep_spice_planet_state");
                         IntPtr pSpiceElem = GetProcAddress(_dllHandle, "pykep_spice_planet_elements");
                         IntPtr pSpiceConst = GetProcAddress(_dllHandle, "pykep_spice_planet_constants");
+                        IntPtr pSpiceProps = GetProcAddress(_dllHandle, "pykep_spice_planet_properties");
                         IntPtr pCompStates = GetProcAddress(_dllHandle, "pykep_compare_body_states");
 
                         if (pVer != IntPtr.Zero && pSolve != IntPtr.Zero) {
@@ -222,7 +305,26 @@ namespace KSPGMAT.MGA {
                             if (pSpiceState != IntPtr.Zero) _fnSpicePlanetState = (PykepSpicePlanetStateDelegate)Marshal.GetDelegateForFunctionPointer(pSpiceState, typeof(PykepSpicePlanetStateDelegate));
                             if (pSpiceElem != IntPtr.Zero) _fnSpicePlanetElements = (PykepSpicePlanetElementsDelegate)Marshal.GetDelegateForFunctionPointer(pSpiceElem, typeof(PykepSpicePlanetElementsDelegate));
                             if (pSpiceConst != IntPtr.Zero) _fnSpicePlanetConstants = (PykepSpicePlanetConstantsDelegate)Marshal.GetDelegateForFunctionPointer(pSpiceConst, typeof(PykepSpicePlanetConstantsDelegate));
+                            if (pSpiceProps != IntPtr.Zero) _fnSpicePlanetProperties = (PykepSpicePlanetPropertiesDelegate)Marshal.GetDelegateForFunctionPointer(pSpiceProps, typeof(PykepSpicePlanetPropertiesDelegate));
                             if (pCompStates != IntPtr.Zero) _fnCompareBodyStates = (PykepCompareBodyStatesDelegate)Marshal.GetDelegateForFunctionPointer(pCompStates, typeof(PykepCompareBodyStatesDelegate));
+
+                            IntPtr pAlign = GetProcAddress(_dllHandle, "pykep_align_injection");
+                            if (pAlign != IntPtr.Zero) _fnAlignInjection = (PykepAlignInjectionDelegate)Marshal.GetDelegateForFunctionPointer(pAlign, typeof(PykepAlignInjectionDelegate));
+
+                            IntPtr pHohmann = GetProcAddress(_dllHandle, "kep3_hohmann_transfer");
+                            if (pHohmann != IntPtr.Zero) _fnKep3Hohmann = (Kep3HohmannTransferDelegate)Marshal.GetDelegateForFunctionPointer(pHohmann, typeof(Kep3HohmannTransferDelegate));
+                            IntPtr pBielliptic = GetProcAddress(_dllHandle, "kep3_bielliptic_transfer");
+                            if (pBielliptic != IntPtr.Zero) _fnKep3Bielliptic = (Kep3BiellipticTransferDelegate)Marshal.GetDelegateForFunctionPointer(pBielliptic, typeof(Kep3BiellipticTransferDelegate));
+                            IntPtr pReynolds = GetProcAddress(_dllHandle, "kep3_calc_reynolds_stm");
+                            if (pReynolds != IntPtr.Zero) _fnKep3ReynoldsStm = (Kep3CalcReynoldsStmDelegate)Marshal.GetDelegateForFunctionPointer(pReynolds, typeof(Kep3CalcReynoldsStmDelegate));
+                            IntPtr pFlybyVout = GetProcAddress(_dllHandle, "kep3_flyby_vout");
+                            if (pFlybyVout != IntPtr.Zero) _fnKep3FlybyVout = (Kep3FlybyVoutDelegate)Marshal.GetDelegateForFunctionPointer(pFlybyVout, typeof(Kep3FlybyVoutDelegate));
+                            IntPtr pVsop = GetProcAddress(_dllHandle, "kep3_vsop2013_planet_state");
+                            if (pVsop != IntPtr.Zero) _fnKep3Vsop2013 = (Kep3Vsop2013PlanetStateDelegate)Marshal.GetDelegateForFunctionPointer(pVsop, typeof(Kep3Vsop2013PlanetStateDelegate));
+                            IntPtr pCoplanar = GetProcAddress(_dllHandle, "kep3_calc_coplanar_angle");
+                            if (pCoplanar != IntPtr.Zero) _fnKep3CoplanarAngle = (Kep3CalcCoplanarAngleDelegate)Marshal.GetDelegateForFunctionPointer(pCoplanar, typeof(Kep3CalcCoplanarAngleDelegate));
+                            IntPtr pCentralDep = GetProcAddress(_dllHandle, "pykep_calc_central_departure_dv");
+                            if (pCentralDep != IntPtr.Zero) _fnCalcCentralDepDv = (PykepCalcCentralDepartureDvDelegate)Marshal.GetDelegateForFunctionPointer(pCentralDep, typeof(PykepCalcCentralDepartureDvDelegate));
 
                             IntPtr ptr = _fnGetVersion();
                             if (ptr != IntPtr.Zero) {
@@ -386,6 +488,50 @@ namespace KSPGMAT.MGA {
         }
 
         /// <summary>
+        /// 原生 ESA PyKEP 停泊轨道注入相位与渐近线对齐引擎
+        /// </summary>
+        public static bool AlignInjection(
+            Vector3d rPark0Km,
+            Vector3d vPark0Kms,
+            double tEpoch,
+            double muCentralKms,
+            int alignMode, // 0 = 目标位置 Lambert 点火, 1 = 给定 v_inf 双曲逃逸
+            Vector3d targetArg,
+            double targetScalar, // mode 0: arrUT; mode 1: v_inf magnitude
+            double tStart,
+            double tSpan,
+            int sampleCount,
+            int goldenIterations,
+            out double alignedUt,
+            out Vector3d alignedDvFrenet)
+        {
+            alignedUt = tStart;
+            alignedDvFrenet = Vector3d.zero;
+            EnsureLoaded();
+            if (!_isAvailable || _fnAlignInjection == null) return false;
+
+            double[] r0 = new double[] { rPark0Km.x, rPark0Km.y, rPark0Km.z };
+            double[] v0 = new double[] { vPark0Kms.x, vPark0Kms.y, vPark0Kms.z };
+            double[] targ = new double[] { targetArg.x, targetArg.y, targetArg.z };
+            double[] dvFrenet = new double[3];
+
+            try {
+                int res = _fnAlignInjection(
+                    r0, v0, tEpoch, muCentralKms, alignMode, targ, targetScalar,
+                    tStart, tSpan, sampleCount, goldenIterations,
+                    out alignedUt, dvFrenet, null);
+
+                if (res == 0) {
+                    alignedDvFrenet = new Vector3d(dvFrenet[0], dvFrenet[1], dvFrenet[2]);
+                    return true;
+                }
+            } catch (Exception ex) {
+                KSPGMATLog.Warn($"[PykepNative.AlignInjection] Native exception: {ex.Message}");
+            }
+            return false;
+        }
+
+        /// <summary>
         /// 原生计算出发停泊轨脱离脉冲 ΔV (km/s)
         /// </summary>
         public static double CalculateDepartureDeltaV(double vInfDepKms, double mu, double radiusKm, double peAKm, double apAKm) {
@@ -514,11 +660,38 @@ namespace KSPGMAT.MGA {
         {
             EnsureLoaded();
             mu = 0; radiusKm = 0; safeRadiusKm = 0;
-            if (string.IsNullOrEmpty(bodyName) || !_isAvailable || _fnSpicePlanetConstants == null) return false;
-            try {
-                int res = _fnSpicePlanetConstants(bodyName, out mu, out radiusKm, out safeRadiusKm);
-                return res == 0;
-            } catch { }
+            if (string.IsNullOrEmpty(bodyName) || !_isAvailable) return false;
+            if (_fnSpicePlanetConstants != null) {
+                try {
+                    int res = _fnSpicePlanetConstants(bodyName, out mu, out radiusKm, out safeRadiusKm);
+                    return res == 0;
+                } catch { }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 原生从 SPICE / NASA 权威物理核获取天体完整物理属性 (GM, 物理半径, 安全飞越半径, SOI 影响球半径, 大气高度)
+        /// 100% 原生 C++ 动力学核输出，0 托管硬编码 (基线 8.0 & 9.0)
+        /// </summary>
+        public static bool GetSpicePlanetProperties(
+            string bodyName, out double mu, out double radiusKm, out double safeRadiusKm, out double soiRadiusKm, out double atmDepthKm)
+        {
+            EnsureLoaded();
+            mu = 0; radiusKm = 0; safeRadiusKm = 0; soiRadiusKm = 0; atmDepthKm = 0;
+            if (string.IsNullOrEmpty(bodyName) || !_isAvailable) return false;
+            if (_fnSpicePlanetProperties != null) {
+                try {
+                    int res = _fnSpicePlanetProperties(bodyName, out mu, out radiusKm, out safeRadiusKm, out soiRadiusKm, out atmDepthKm);
+                    return res == 0;
+                } catch { }
+            }
+            if (_fnSpicePlanetConstants != null) {
+                try {
+                    int res = _fnSpicePlanetConstants(bodyName, out mu, out radiusKm, out safeRadiusKm);
+                    return res == 0;
+                } catch { }
+            }
             return false;
         }
 
@@ -613,6 +786,109 @@ namespace KSPGMAT.MGA {
                 KSPGMATLog.Warn($"[PykepNative] Auto-detect SPICE ephemeris note: {ex.Message}");
             }
             return false;
+        }
+
+        /// <summary>
+        /// 原生计算双圆霍曼转移 (100% 原生 kep3::hohmann)
+        /// </summary>
+        public static bool CalcHohmannTransfer(double r1_km, double r2_km, double mu, out double totalDv, out double tofSec, out double dv1, out double dv2) {
+            EnsureLoaded();
+            totalDv = 0; tofSec = 0; dv1 = 0; dv2 = 0;
+            if (_isAvailable && _fnKep3Hohmann != null) {
+                try {
+                    return _fnKep3Hohmann(r1_km, r2_km, mu, out totalDv, out tofSec, out dv1, out dv2) == 0;
+                } catch { }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 原生计算双椭圆转移 (100% 原生 kep3::bielliptic)
+        /// </summary>
+        public static bool CalcBiellipticTransfer(double r1_km, double r2_km, double rb_km, double mu, out double totalDv, out double tofSec) {
+            EnsureLoaded();
+            totalDv = 0; tofSec = 0;
+            if (_isAvailable && _fnKep3Bielliptic != null) {
+                try {
+                    return _fnKep3Bielliptic(r1_km, r2_km, rb_km, mu, out totalDv, out tofSec) == 0;
+                } catch { }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 原生开普勒解析状态转移矩阵 (100% 原生 kep3 2022 Reynolds 解析 STM，机器精度，无有限差分误差)
+        /// </summary>
+        public static bool CalcReynoldsStm(double[] r0_km, double[] v0_kms, double dt_sec, double mu, out double[] out_stm_6x6) {
+            EnsureLoaded();
+            out_stm_6x6 = new double[36];
+            if (_isAvailable && _fnKep3ReynoldsStm != null && r0_km != null && v0_kms != null) {
+                try {
+                    return _fnKep3ReynoldsStm(r0_km, v0_kms, dt_sec, mu, out_stm_6x6) == 0;
+                } catch { }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 原生双曲飞掠出射速度闭式解析 (100% 原生 kep3::fb_vout)
+        /// </summary>
+        public static bool CalcFlybyVout(double[] v_in, double[] v_pla, double rp_km, double beta_rad, double mu, out double[] out_v_out) {
+            EnsureLoaded();
+            out_v_out = new double[3];
+            if (_isAvailable && _fnKep3FlybyVout != null && v_in != null && v_pla != null) {
+                try {
+                    return _fnKep3FlybyVout(v_in, v_pla, rp_km, beta_rad, mu, out_v_out) == 0;
+                } catch { }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 原生 VSOP2013 半解析极高精度行星历表 (100% 原生 kep3::udpla::vsop2013)
+        /// </summary>
+        public static bool GetVsop2013PlanetState(string planetName, double epochJd, out Vector3d posKm, out Vector3d velKms) {
+            EnsureLoaded();
+            posKm = Vector3d.zero;
+            velKms = Vector3d.zero;
+            if (_isAvailable && _fnKep3Vsop2013 != null && !string.IsNullOrEmpty(planetName)) {
+                try {
+                    int rc = _fnKep3Vsop2013(planetName, epochJd, out double rx, out double ry, out double rz, out double vx, out double vy, out double vz);
+                    if (rc == 0) {
+                        posKm = new Vector3d(rx, ry, rz);
+                        velKms = new Vector3d(vx, vy, vz);
+                        return true;
+                    }
+                } catch { }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 原生开普勒停泊轨道面与目标天体空间共面偏角与变面夹角计算 (100% 原生 C++ kep3_calc_coplanar_angle)
+        /// </summary>
+        public static bool CalcCoplanarAngle(double incDeg, double lanDeg, Vector3d rTargetKm, out double wedgeAngleDeg) {
+            EnsureLoaded();
+            wedgeAngleDeg = 0.0;
+            if (_isAvailable && _fnKep3CoplanarAngle != null) {
+                try {
+                    return _fnKep3CoplanarAngle(incDeg, lanDeg, rTargetKm.x, rTargetKm.y, rTargetKm.z, out wedgeAngleDeg) == 0;
+                } catch { }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 原生中心天体近地/地月/同系统转移近拱点切向注入能量差速度增量 (100% 原生 C++ pykep_calc_central_departure_dv)
+        /// </summary>
+        public static double CalcCentralDepartureDv(double mu, double radius, double peKm, double apKm, double rDestKm) {
+            EnsureLoaded();
+            if (_isAvailable && _fnCalcCentralDepDv != null) {
+                try {
+                    return _fnCalcCentralDepDv(mu, radius, peKm, apKm, rDestKm);
+                } catch { }
+            }
+            return 0.0;
         }
     }
 }

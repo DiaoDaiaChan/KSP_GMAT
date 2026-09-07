@@ -32,6 +32,14 @@
   - [5.1 前向确定性仿真物理时钟递推 (simClock)](#51-前向确定性仿真物理时钟递推-simclock)
   - [5.2 专属里程碑节点提取体系 (GMATTimelineExtractor)](#52-专属里程碑节点提取体系-gmattimelineextractor)
   - [5.3 变质量冲量质心积分与提前量模型](#53-变质量冲量质心积分与提前量模型)
+- [9. GMAT 脚本全生命周期系统开发规范 (Script Lifecycle Architecture)](#9-gmat-脚本全生命周期系统开发规范-script-lifecycle-architecture)
+  - [9.1 架构设计与数据流向闭环](#91-架构设计与数据流向闭环)
+  - [9.2 动力学力模型与天体通用解耦规范 (ForceModel Decoupling)](#92-动力学力模型与天体通用解耦规范-forcemodel-decoupling)
+  - [9.3 脚本读取与反序列化规范 (GMATScriptParser)](#93-脚本读取与反序列化规范-gmatscriptparser)
+  - [9.4 脚本导出、格式化与代码透视规范 (GMATScriptGenerator)](#94-脚本导出格式化与代码透视规范-gmatscriptgenerator)
+  - [9.5 静态分析门禁与容差自愈规范 (GMATScriptLinter)](#95-静态分析门禁与容差自愈规范-gmatscriptlinter)
+  - [9.6 深空多重引力助推导出规范 (GMATMGAScriptGenerator)](#96-深空多重引力助推导出规范-gmatmgascriptgenerator)
+  - [9.7 官方 API 与参数字典速查规范 (GMATDynamicInspectorModal)](#97-官方-api-与参数字典速查规范-gmatdynamicinspectormodal)
 
 ---
 
@@ -218,9 +226,9 @@ public enum Lang { ZH, EN, RU }
 
 ---
 
-# 3. NASA GMAT 310+ 官方参数元数据字典与能力约束架构 (GMATParamSchema)
+# 3. NASA GMAT 官方全量 310+ 参数与能力注册表体系 (GMATSchemaRegistry)
 
-核心实现文件：[`src/KSPGMAT/Model/GMATParamSchema.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/Model/GMATParamSchema.cs)
+核心实现文件：[`src/KSPGMAT/Model/GMATSchemaRegistry.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/Model/GMATSchemaRegistry.cs)
 
 ## 3.1 参数能力与上下文位掩码标签 (`ParamCapability`)
 ```csharp
@@ -581,8 +589,134 @@ flowchart TD
 - [ ] **Milestone 6**: **三核闭环钳制与残差自动校准器**：
   - 建立自动化评估管道：当 Principia 飞行计划与 GMAT 预测产生偏差时，自动提取偏差回传至 GMAT 进行二次微分修正，直至偏差 $< 0.1\text{ m/s}$。
 
+---
 
+# 9. GMAT 脚本全生命周期系统开发规范 (Script Lifecycle Architecture)
 
+核心实现文件：
+- 脚本读取与反序列化：[`src/KSPGMAT/Service/GMATScriptParser.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/Service/GMATScriptParser.cs)
+- 脚本导出、生成与代码透视：[`src/KSPGMAT/Service/GMATScriptGenerator.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/Service/GMATScriptGenerator.cs)
+- 静态分析门禁与容差自愈：[`src/KSPGMAT/Service/GMATScriptLinter.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/Service/GMATScriptLinter.cs)
+- 深空多重引力助推导出：[`src/KSPGMAT/Service/GMATMGAScriptGenerator.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/Service/GMATMGAScriptGenerator.cs)
+- 动力学传播子模型：[`src/KSPGMAT/PropagatorConfig.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/PropagatorConfig.cs)
+- 官方全量能力注册表：[`src/KSPGMAT/Model/GMATSchemaRegistry.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/Model/GMATSchemaRegistry.cs)
+- API & 参数字典全景透视模态框：[`src/KSPGMAT/UI/GMATDynamicInspectorModal.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/UI/GMATDynamicInspectorModal.cs)
 
+## 9.1 架构设计与数据流向闭环
 
+本系统构建了“文本脚本 $\leftrightarrow$ 任务状态模型 (SSOT) $\leftrightarrow$ 动态能力注册表 (Capabilities) $\leftrightarrow$ 语法门禁自愈 (Linter)”的四位一体闭环体系，杜绝任何中间态数值退化：
+
+```
+       [ GMAT 文本脚本 (.script) ] ──────────────┐
+                    │                           │
+         (1. GMATScriptParser.cs)               │ (4. GMATScriptLinter.FixScript)
+                    ▼                           ▼
+        ┌───────────────────────┐      ┌─────────────────────────┐
+        │  GMATStateManager     │ ───► │ 铁律门禁与权威容差自愈   │
+        │  (Single Source Truth)│      └─────────────────────────┘
+        └───────────┬───────────┘                   ▲
+                    │                               │
+         (2. GMATScriptGenerator.cs)                │
+                    ▼                               │
+       [ 标准 GMAT 脚本序列化 ] ─────────────────────┘
+                    │
+                    ▼ (3. GMAT CLI 执行 / 单步代码透视)
+```
+
+## 9.2 动力学力模型与天体通用解耦规范 (ForceModel Decoupling)
+
+1. **多体引力容器与通用存储**：
+   - `PropagatorConfig` 中必须包含 `public List<string> customPointMasses = new List<string>()`，用于承载超越标准 6 天体的任意天体清单（如 Saturn, Titan, Europa, Kerbin, Mun 等）；
+   - 提供单一真值源提取入口 `public List<string> GetActivePointMasses()`：
+     - 自动合并兼容布尔字段（`gravityEarth` 至 `gravityMars`）与 `customPointMasses`；
+     - 经由 `GMATSchemaRegistry.Instance.NormalizeCelestialName` 进行别名纠正（如 `Kerbin` 自动归一化为 `Earth`，`Moon` 归一化为 `Luna`）；
+     - 严格进行 `HashSet<string>` 大小写不敏感去重。
+2. **严禁硬编码分支判断**：
+   - 严禁在代码中编写 `if (gravityEarth) ... if (gravityMars) ...` 的写死判断；
+   - 力模型输出一律采用：
+     ```csharp
+     List<string> pmList = pCfg.GetActivePointMasses();
+     if (pmList != null && pmList.Count > 0) {
+         sb.AppendLine($"{fmName}.PointMasses = {{{string.Join(", ", pmList.ToArray())}}};");
+     }
+     ```
+
+## 9.3 脚本读取与反序列化规范 (`GMATScriptParser`)
+
+1. **参考系与中心天体动态解析**：
+   - 严禁写死 `"Earth"` 为缺省值；中心天体统一使用 `GMATSchemaRegistry.Instance.NormalizeCelestialName(defaultBody)`，优先取自当前活跃飞船或上下文天体；
+2. **ForceModel 点质量无损保留**：
+   - 解析 `PointMasses = { ... }` 语句时，将分割得到的所有天体逐一经 `NormalizeCelestialName` 规范化后存入 `forceModelsDict`，并在绑定至 Propagator 时全量赋予 `propConfig.customPointMasses`；
+3. **单步反向解析与权威容差赋权 (`ParseSingleStepScript`)**：
+   - 支持在 GUI 步骤卡片的代码透视框中就地编辑单步脚本文本，并实时反解回填当前 `MissionStep` 模型；
+   - 反解 `Achieve` 时，若未提供容差或容差 $\le 0$，自动调用 `GMATSchemaRegistry.Instance.GetAuthoritativeTolerance(param, 0.1)` 补齐权威容差；
+   - 反解 `Vary` 时，若上限 $\le$ 下限或扰动量 $\le 0$，自动自愈为安全范围。
+
+## 9.4 脚本导出、格式化与代码透视规范 (`GMATScriptGenerator`)
+
+1. **航天器参数直属判定接入 SSOT**：
+   - 严禁在导出层维护静态字符串数组（如 `craftDirect`）；
+   - 统一调用 `GMATSchemaRegistry.Instance.IsSpacecraftDirectProperty(goalParam)` 判定属性是否直属于 `Sat`；仅在非直属且无点号时才追加中心天体前缀（如 `${cBody}.${goalParam}`）；
+2. **停机条件极值事件动态判定**：
+   - 停机条件极值事件（Apoapsis, Periapsis, Node 等）必须调用 `GMATSchemaRegistry.Instance.IsExtremumParameter(cond)` 动态识别并转换为合法 GMAT 原生停机语法；
+3. **单步代码透视一致性 (`GenerateStepScript`)**：
+   - 单步代码透视片段与全脚本生成逻辑严格对齐，属性前缀与容差赋予完全遵循官方 Schema。
+
+## 9.5 静态分析门禁与容差自愈规范 (`GMATScriptLinter`)
+
+1. **极值关键字严禁用写死数组**：
+   - 废除本地 `ExtremaKeywords`，全面直连 `GMATSchemaRegistry.Instance.IsExtremumParameter`；
+   - 若 `Achieve` 指令误用极值事件，触发 `LINT_ACHIEVE_EXTREMA` 致命错误拦截；
+2. **权威容差诊断提示**：
+   - 当 `Achieve` 指令缺少容差或容差 $\le 0$ 时，诊断建议中直接展示官方元数据定义的权威推荐容差；
+3. **`FixScript` 一键自愈铁律**：
+   - 针对无 `{Tolerance = ...}` 的 `Achieve` 指令，通过正向模式匹配自动补齐 `{Tolerance = <authTol>}`；
+   - 剥离机动矢量属性上错误附加的航天器前缀（如 `Sat.TLI_Burn.Element1` $\to$ `TLI_Burn.Element1`）；
+   - 保证输出脚本 100% 通过 GMAT CLI 解释器词法与语法校验。
+
+## 9.6 深空多重引力助推导出规范 (`GMATMGAScriptGenerator`)
+
+1. **SPICE 行星 NAIFId 动态输出**：
+   - 严禁在 C# 写死行星 NAIFId（如 `Mars.NAIFId = 4;`）；统一遍历 `GMATSchemaRegistry.Instance.GetStandardSpicePlanets()` 动态生成；
+2. **助推链全天体摄动源动态合成**：
+   - 自动扫描当前 `MGASolution.Legs` 中涉及的全部出发星、飞掠星、目标星及太阳系主摄动体（Sun, Earth, Jupiter），动态注入 `DeepSpace_ForceModel.PointMasses`；
+3. **门禁自愈输出**：
+   - 脚本最终导出前，必须经过 `GMATScriptLinter.FixScript` 进行门禁自愈。
+
+## 9.7 官方 API 与参数字典速查规范 (`GMATDynamicInspectorModal`)
+
+1. **单一真值源支撑**：
+   - 基于 `GMATSchemaRegistry` 实现 310 个物理参数、323 个官方 API 类（6,355 个原生源码方法实现）及 222 个顶层/扩展函数的毫秒级分类模糊检索；
+2. **工业级 UI 呈现**：
+   - 采用左侧分类与列表、右侧结构化详情与原生代码实现的双栏暗黑布局；
+   - 内置代码高亮卡片与一键剪贴板复制功能；
+## 9.8 任务序列 Python 节点与统一智能补全规范 (`CallPython` & `IntelliSense`)
+
+1. **上万行原生 Python API 与智能补全统一接入 (`SSOT`)**：
+   - 全局补全系统 (`GMATParameterRegistry.QueryIntelliSense` 与 `GMATNamespaceResolver`) 统一由 `GMATSchemaRegistry` 驱动；
+   - 补全上下文不仅覆盖物理量与决策变量，新增 `python_module` 与 `python_func` 模式，支持实时模糊检索 323 个官方 API 类与 222 个原生 Python 函数/顶层实现；
+   - 输入 `Python.` 命名空间时自动触发官方原生函数与模块联想，实现脚本代码编辑与卡片配置的一致体验；
+2. **双向往返序列化与反解一致性 (`Round-Trip Fidelity`)**：
+   - 导出层支持赋值风格 (`[outputs] = Python.Module.Function(inputs);`) 与显式命令风格 (`CallPythonFunction 'Label' Python.Module.Function(inputs);`)；
+   - 解析层 (`GMATScriptParser`) 自动精准识别两种模式并结构化回填 `MissionStep`，无损还原入参、出参及模块函数名；
+3. **高质感卡片与工程算法预设**：
+   - 步骤卡片内嵌模块与函数输入框、入参快捷徽标、出参接收回填；
+   - 联动 `GMATDynamicInspectorModal`，支持一键“查看原生实现”穿梭查阅上万行源码；
+   - 提供 4 大工程场景经典预设（最优双脉冲、气动制导自适应、笛卡尔/开普勒互转、非球形受摄力）；
+4. **四语言对称国际化与静态分析门禁**：
+   - `zh`, `en`, `ru`, `jp` 语言包完全对称；`GMATScriptLinter` 严格校验 Python 调用语法完整性与括号闭合。
+
+## 10. 自动化代码合规与健康自查规范 (`tools/ComplianceChecker`)
+
+1. **编译器级 Roslyn AST 抽象语法树内核**：
+   - 彻底废除脆弱且易受注释/多行字符串干扰的纯正则文本扫描，建立基于 `Microsoft.CodeAnalysis.CSharp` 的控制台分析工具 `tools/ComplianceChecker`；
+   - 每次运行 `pwsh -File deploy.ps1` 编译部署时，在 Step 4 自动毫秒级触发 Roslyn 深度语法分析；
+   - 严格把控退出码（Strict 模式下阻断性违规自动中断部署流程），确保架构规范零人工审查负担；
+2. **四大编译级审计维度**：
+   - **SSOT 状态一致性**：遍历 `MemberAccessExpressionSyntax` 与 `FieldDeclarationSyntax`，自动拦截跳过 `GMATStateManager` / `MGAStateManager` 读写飞船物理量（如 `FlightGlobals.ActiveVessel.mainBody`）或在 Tab 中私设非常量 `public static` 状态的行为；
+   - **UI 控件与样式规范**：遍历 `ObjectCreationExpressionSyntax` 拦截渲染方法内局部动态 `new GUIStyle`（彻底清零每帧 GC 内存抖动），遍历 `InvocationExpression` 引导使用 `GMATMainWindow.Widgets` 统一标准控件库（如 `DelayedFloatField`）；
+   - **多语言与游离文本**：遍历 `LiteralExpressionSyntax` 字符串字面量，结合父节点语法判定（自动剥离注释与日志），零误报识别未包裹 `I18n.T()` 的硬编码中文，并使用 `System.Text.Json` 100% 比对 4 国语言字典键对称性；
+   - **天体动力学解耦**：审计二元等值条件，严禁天体白名单硬编码或在 Achieve 中误用极值事件；
+3. **结构化分级报告**：
+   - 自动生成太空暗黑科技风格 ANSI 彩色报表，精确展示文件、行号、语法节点摘录与规范整改指引。
 

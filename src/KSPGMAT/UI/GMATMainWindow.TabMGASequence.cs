@@ -15,22 +15,22 @@ namespace KSPGMAT.UI {
         // MGA 任务控制序列工作台交互状态 (Single Source of Truth)
         // 设计语言与 Tab 2 (TabSequence.cs) 100% 深度统一，避免学习成本
         // =========================================================================
-        private Vector2 mgaSeqScrollPos = Vector2.zero;
-        private Vector2 mgaSeqRightScrollPos = Vector2.zero;
+        private Vector2 mgaSeqScrollPos { get => MGAStateManager.Current.SeqScrollPos; set => MGAStateManager.Current.SeqScrollPos = value; }
+        private Vector2 mgaSeqRightScrollPos { get => MGAStateManager.Current.SeqRightScrollPos; set => MGAStateManager.Current.SeqRightScrollPos = value; }
         private int mgaSeqDraggedIndex = -1;
         private int mgaSeqStepToMoveUp = -1;
         private int mgaSeqStepToMoveDown = -1;
         private int mgaSeqStepToDelete = -1;
         private int mgaSeqHoveredIndex = -1;
         private int mgaSeqNextHoveredIndex = -1;
-        private bool mgaSeqTemplatesFoldout = false;
-        private string mgaSeqSearchQuery = "";
-        private string mgaSeqSelectedCategory = "全部";
-        private bool isMgaSeqSolving = false;
-        private string mgaSeqSolveStatus = "";
+        private bool mgaSeqTemplatesFoldout { get => MGAStateManager.Current.SeqTemplatesFoldout; set => MGAStateManager.Current.SeqTemplatesFoldout = value; }
+        private string mgaSeqSearchQuery { get => MGAStateManager.Current.SeqSearchQuery; set => MGAStateManager.Current.SeqSearchQuery = value; }
+        private string mgaSeqSelectedCategory { get => MGAStateManager.Current.SeqSelectedCategory; set => MGAStateManager.Current.SeqSelectedCategory = value; }
+        private bool isMgaSeqSolving { get => MGAStateManager.Current.IsSeqSolving; set => MGAStateManager.Current.IsSeqSolving = value; }
+        private string mgaSeqSolveStatus { get => MGAStateManager.Current.SeqSolveStatus; set => MGAStateManager.Current.SeqSolveStatus = value; }
 
-        // 顶层全局序列模式切换器: 0 = NearBody 经典序列, 1 = MGA 行星际引力助推序列
-        private int activeSequenceMode = 0;
+        // 顶层全局序列模式切换器: 0 = NearBody 经典序列, 1 = MGA 行星际引力助推序列 (SSOT 托管在 MGAStateManager)
+        private int activeSequenceMode { get => MGAStateManager.Current.ActiveSequenceMode; set => MGAStateManager.Current.ActiveSequenceMode = value; }
 
         /// <summary>
         /// MGA 经典行星际转移构型模版库定义
@@ -340,6 +340,7 @@ namespace KSPGMAT.UI {
         /// MGA 任务序列编辑工作台主渲染入口 (统一设计语言)
         /// </summary>
         public void DrawTabMGASequence(Vessel vessel) {
+            UpdateMgaAnimationTick();
             mgaSeqHoveredIndex = mgaSeqNextHoveredIndex;
             mgaSeqNextHoveredIndex = -1;
 
@@ -355,17 +356,26 @@ namespace KSPGMAT.UI {
                 seq = MGAStateManager.Current.MissionSequence;
             }
 
-            // Top Header: 模式与工作流导航切换条
+            // Top Header: 顶层子窗口统一导航条 (规划器 0 / 任务序列工作台 2)
+            GUIStyle plannerStyle = (mgaWorkflowMode != 2) ? actionButtonStyle : secondaryButtonStyle;
+            GUIStyle seqStyle = (mgaWorkflowMode == 2) ? actionButtonStyle : secondaryButtonStyle;
+
             GUILayout.BeginHorizontal();
-            bool isSeqMode = (mgaWorkflowMode == 3 || activeSequenceMode == 1);
-            if (GUILayout.Button(I18n.T("mga_seq_mode_planner", "🗺️ 星际轨道规划器 (MGA Planner)"), secondaryButtonStyle, GUILayout.Height(24))) {
-                mgaWorkflowMode = 1;
+            if (GUILayout.Button(I18n.T("mga_mode_planner", "🚀 轨道转移与借力寻优 (Trajectory Planner)"), plannerStyle, GUILayout.Height(26), GUILayout.ExpandWidth(true))) {
+                MGAStateManager.Current.SwitchWorkflowMode(0);
                 activeSequenceMode = 0;
             }
-            if (GUILayout.Button(I18n.T("mga_seq_mode_editor", "📋 任务序列编辑工作台 (MGA Sequence Editor)"), actionButtonStyle, GUILayout.Height(24))) {
-                mgaWorkflowMode = 3;
+            if (GUILayout.Button(I18n.T("mga_seq_mode_editor", "📋 任务序列工作台 (Sequence Workbench)"), seqStyle, GUILayout.Height(26), GUILayout.ExpandWidth(true))) {
+                MGAStateManager.Current.SwitchWorkflowMode(2);
                 activeSequenceMode = 1;
             }
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(2);
+
+            // 工作台专属操作条
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(I18n.T("mga_seq_subtitle", "<b>📋 任务序列工作台</b> <color=#94a3b8>(精细微调各阶段节点动力学约束)</color>"), labelValueStyle);
             GUILayout.FlexibleSpace();
 
             if (GUILayout.Button("➕ 从规划器最优解重构序列", secondaryButtonStyle, GUILayout.Height(22))) {
@@ -373,17 +383,20 @@ namespace KSPGMAT.UI {
                     MGAStateManager.Current.SyncSequenceFromSolution(selectedMgaSolution, mgaConfig);
                     ScreenMessages.PostScreenMessage("已成功将当前最优解重构映射为任务序列步骤", 2.5f, ScreenMessageStyle.UPPER_CENTER);
                 } else {
-                    ScreenMessages.PostScreenMessage("暂无最优解，请先在规划器中解算或从上方模版构建！", 2.5f, ScreenMessageStyle.UPPER_CENTER);
+                    ScreenMessages.PostScreenMessage("暂无最优解，请先在规划器中解算或从下方模版构建！", 2.5f, ScreenMessageStyle.UPPER_CENTER);
                 }
             }
             GUILayout.EndHorizontal();
 
             GUILayout.Space(4);
 
-            // 双栏响应式布局: 左侧序列卡片列表 (62%) + 右侧实时3D视口与5大高级动力学抽屉 (38%)
+            // 双栏响应式平衡布局: 
+            // 左侧步骤工作台保持舒展精致 (占约 42%~46%，限制在 520~720px，杜绝左侧过度挤占)
+            // 右侧 3D 太阳系轨道视口享受开阔沉浸视野 (占约 54%~58%，彻底解除 520px 狭窄上限)
             float totalW = windowRect.width - 36f;
-            float rightColW = Mathf.Clamp(totalW * 0.40f, 380f, 520f);
-            float leftColW = totalW - rightColW - 12f;
+            float leftColW = Mathf.Clamp(totalW * 0.45f, 520f, 720f);
+            if (totalW < 1150f) leftColW = Mathf.Clamp(totalW * 0.50f, 480f, 600f);
+            float rightColW = totalW - leftColW - 12f;
 
             GUILayout.BeginHorizontal();
 
@@ -461,14 +474,18 @@ namespace KSPGMAT.UI {
 
             GUILayout.Space(4);
 
-            // 2. 序列队列控制条 (批量展开/收起 + 步骤计数)
+            // 2. 序列队列控制条 (批量展开/收起 + 步骤计数 + 详细遥测看板)
             GUILayout.BeginHorizontal();
             GUILayout.Label($"<color=#38bdf8><b>🪐 行星际任务序列控制链</b></color> <color=#64748b>({seq.Count} 步骤)</color>", labelValueStyle);
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button("展开全部", secondaryButtonStyle, GUILayout.Height(20))) {
+            if (GUILayout.Button(I18n.T("btn_view_telemetry", "🔍 航段动力学遥测"), actionButtonStyle, GUILayout.Height(20))) {
+                showTelemetryModal = true;
+                telemetrySelectedStepIndex = 0;
+            }
+            if (GUILayout.Button(I18n.T("btn_expand_all", "展开全部"), secondaryButtonStyle, GUILayout.Height(20))) {
                 for (int s = 0; s < seq.Count; s++) seq[s].is_collapsed = false;
             }
-            if (GUILayout.Button("收起全部", secondaryButtonStyle, GUILayout.Height(20))) {
+            if (GUILayout.Button(I18n.T("btn_collapse_all", "收起全部"), secondaryButtonStyle, GUILayout.Height(20))) {
                 for (int s = 0; s < seq.Count; s++) seq[s].is_collapsed = true;
             }
             GUILayout.EndHorizontal();
@@ -510,39 +527,70 @@ namespace KSPGMAT.UI {
                 GUILayout.BeginHorizontal(nestedCardBoxStyle);
                 GUILayout.Label("⏱️ 流程推进:", labelValueStyle, GUILayout.Width(70));
 
-                bool isAll = (mgaFlowScrubberStep <= 0 || mgaFlowScrubberStep > seq.Count);
+                bool isAll = (mgaTargetProgress <= 0.001f && mgaFlowProgress <= 0.001f);
                 if (GUILayout.Button(isAll ? "全部" : "单步", isAll ? actionButtonStyle : secondaryButtonStyle, GUILayout.Width(44), GUILayout.Height(20))) {
-                    mgaFlowScrubberStep = isAll ? 1 : 0;
+                    mgaIsPlaying = false;
+                    if (isAll) {
+                        mgaFlowProgress = 0.001f;
+                        mgaTargetProgress = 1.0f;
+                    } else {
+                        mgaTargetProgress = 0.0f;
+                    }
                     RefreshMgaCanvas();
                 }
 
-                GUI.enabled = (!isAll && mgaFlowScrubberStep > 1);
+                // ◀ 按钮：始终可用，点击平滑飞向上一任务步骤
                 if (GUILayout.Button("◀", secondaryButtonStyle, GUILayout.Width(22), GUILayout.Height(20))) {
-                    mgaFlowScrubberStep--;
+                    mgaIsPlaying = false;
+                    if (mgaTargetProgress <= 0.05f) {
+                        mgaTargetProgress = (float)seq.Count;
+                    } else {
+                        float curInt = Mathf.Ceil(mgaTargetProgress - 0.05f);
+                        float prevTarget = curInt - 1.0f;
+                        if (prevTarget <= 0.05f) prevTarget = 0.0f;
+                        mgaTargetProgress = prevTarget;
+                    }
+                    if (mgaFlowProgress <= 0.001f && mgaTargetProgress > 0f) {
+                        mgaFlowProgress = 0.001f;
+                    }
                     RefreshMgaCanvas();
                 }
-                GUI.enabled = true;
 
-                int curVal = isAll ? 0 : mgaFlowScrubberStep;
-                int newVal = (int)GUILayout.HorizontalSlider(curVal, 0f, seq.Count, GUILayout.Width(110));
-                if (newVal != curVal) {
-                    mgaFlowScrubberStep = newVal;
+                float curVal = isAll ? 0f : mgaFlowProgress;
+                float newVal = GUILayout.HorizontalSlider(curVal, 0f, (float)seq.Count, GUILayout.Width(110));
+                if (Math.Abs(newVal - curVal) > 0.001f) {
+                    mgaIsPlaying = false;
+                    if (newVal < 0.03f) newVal = 0f;
+                    mgaFlowProgress = newVal;
+                    mgaTargetProgress = newVal;
                     RefreshMgaCanvas();
                 }
 
-                GUI.enabled = (!isAll && mgaFlowScrubberStep < seq.Count);
+                // ▶ 按钮：始终可用，点击平滑飞向下一任务步骤
                 if (GUILayout.Button("▶", secondaryButtonStyle, GUILayout.Width(22), GUILayout.Height(20))) {
-                    mgaFlowScrubberStep++;
+                    mgaIsPlaying = false;
+                    if (mgaTargetProgress <= 0.05f) {
+                        if (mgaFlowProgress <= 0.05f) mgaFlowProgress = 0.001f;
+                        mgaTargetProgress = 1.0f;
+                    } else {
+                        float curInt = Mathf.Floor(mgaTargetProgress + 0.05f);
+                        float nextTarget = curInt + 1.0f;
+                        if (nextTarget > (float)seq.Count + 0.05f) nextTarget = 0.0f;
+                        mgaTargetProgress = nextTarget;
+                    }
+                    if (mgaFlowProgress <= 0.001f && mgaTargetProgress > 0f) {
+                        mgaFlowProgress = 0.001f;
+                    }
                     RefreshMgaCanvas();
                 }
-                GUI.enabled = true;
 
                 GUILayout.Space(4);
                 if (isAll) {
                     GUILayout.Label($"<color=#38bdf8><b>全部步骤 (共 {seq.Count} 步)</b></color>", labelValueStyle);
                 } else {
-                    var s = seq[mgaFlowScrubberStep - 1];
-                    GUILayout.Label($"<color=#34d399><b>聚焦第 {mgaFlowScrubberStep}/{seq.Count} 步: {s.label}</b></color>", labelValueStyle);
+                    int stepIdx = Mathf.Clamp((int)Math.Round(mgaFlowProgress), 1, seq.Count);
+                    var s = seq[stepIdx - 1];
+                    GUILayout.Label($"<color=#34d399><b>聚焦第 {stepIdx}/{seq.Count} 步: {s.label}</b></color>", labelValueStyle);
                 }
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
@@ -551,19 +599,20 @@ namespace KSPGMAT.UI {
 
             for (int i = 0; i < seq.Count; i++) {
                 // 逐步查看模式下：隐藏后续步骤，前置步骤精简显示
-                if (mgaFlowScrubberStep > 0 && mgaFlowScrubberStep <= seq.Count) {
-                    if (i > mgaFlowScrubberStep - 1) {
+                int curStep = (int)Math.Round(mgaFlowProgress);
+                if (curStep > 0 && curStep <= seq.Count) {
+                    if (i > curStep - 1) {
                         GUILayout.BeginHorizontal(nestedCardBoxStyle);
-                        GUILayout.Label($"<color=#64748b>... 后续还有 {seq.Count - mgaFlowScrubberStep} 个任务步骤已隐藏 (拖动滑块推进查看)</color>", labelValueStyle);
+                        GUILayout.Label($"<color=#64748b>... 后续还有 {seq.Count - curStep} 个任务步骤已隐藏 (拖动滑块推进查看)</color>", labelValueStyle);
                         GUILayout.EndHorizontal();
                         break;
-                    } else if (i < mgaFlowScrubberStep - 1) {
+                    } else if (i < curStep - 1) {
                         GUILayout.BeginHorizontal(nestedCardBoxStyle);
                         GUILayout.Label($"<color=#64748b>✓ 步骤 #{i + 1}: {seq[i].label}</color>", labelValueStyle);
                         GUILayout.FlexibleSpace();
                         if (GUILayout.Button("展开查看", secondaryButtonStyle, GUILayout.Width(70), GUILayout.Height(18))) {
-                            mgaFlowScrubberStep = i + 1;
-                            RefreshMgaCanvas();
+                            mgaIsPlaying = false;
+                            mgaTargetProgress = (float)(i + 1);
                         }
                         GUILayout.EndHorizontal();
                         GUILayout.Space(1);
@@ -638,6 +687,11 @@ namespace KSPGMAT.UI {
                 }
                 if (step.is_solved && step.solved_c3_kms2 > 0.01) {
                     GUILayout.Label($"<color=#38bdf8>C3: {step.solved_c3_kms2:F1}</color>", labelValueStyle);
+                }
+
+                if (GUILayout.Button(I18n.T("btn_step_telemetry", "🔍 遥测"), secondaryButtonStyle, GUILayout.Width(52), GUILayout.Height(20))) {
+                    showTelemetryModal = true;
+                    telemetrySelectedStepIndex = i;
                 }
 
                 if (GUILayout.Button("✕", deleteButtonStyle, GUILayout.Width(22), GUILayout.Height(18))) {
@@ -933,6 +987,21 @@ namespace KSPGMAT.UI {
             }
             GUILayout.FlexibleSpace();
             GUILayout.EndHorizontal();
+
+            GUILayout.Space(3);
+            GUILayout.BeginHorizontal();
+            step.show_inline_telemetry = GUILayout.Toggle(step.show_inline_telemetry, I18n.T("btn_toggle_inline_telemetry", "📊 航段动力学遥测明细"), secondaryButtonStyle, GUILayout.Height(18));
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button(I18n.T("btn_popout_telemetry", "↗ 弹出大视窗"), secondaryButtonStyle, GUILayout.Width(82), GUILayout.Height(18))) {
+                showTelemetryModal = true;
+                telemetrySelectedStepIndex = index;
+            }
+            GUILayout.EndHorizontal();
+
+            if (step.show_inline_telemetry) {
+                GUILayout.Space(3);
+                DrawRichTextTelemetryCard(step, index, selectedMgaSolution);
+            }
 
             GUILayout.EndVertical();
         }

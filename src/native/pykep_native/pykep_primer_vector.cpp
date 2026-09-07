@@ -70,9 +70,9 @@ EXPORT_API int pykep_calc_primer_vector(
                 continue;
             }
 
-            kep_toolbox::array3D r_k = {r1_km[0], r1_km[1], r1_km[2]};
-            kep_toolbox::array3D v_k = {v1_kms[0], v1_kms[1], v1_kms[2]};
-            kep_toolbox::propagate_lagrangian(r_k, v_k, t_k, mu);
+            std::array<double, 3> r_k = {r1_km[0], r1_km[1], r1_km[2]};
+            std::array<double, 3> v_k = {v1_kms[0], v1_kms[1], v1_kms[2]};
+            pykep_propagate_lagrangian(r_k, v_k, t_k, mu);
 
             double dt_rem = tof_sec - t_k;
             double M_jk[36];

@@ -56,10 +56,19 @@ namespace KSPGMAT.UI {
                 }
             }
 
+            // 3. From GMATParameterRegistry (including Yukon1 and custom solvers)
+            var regSolvers = GMATParameterRegistry.GetAllSolverConfigs();
+            if (regSolvers != null) {
+                foreach (var kv in regSolvers) {
+                    if (!list.Contains(kv.Key)) list.Add(kv.Key);
+                }
+            }
+
             // Fallback defaults
             if (list.Count == 0) {
                 list.Add("DC_GTO");
                 list.Add("DC_GEO");
+                list.Add("Yukon1");
             }
             if (!list.Contains("DefaultDC")) list.Insert(0, "DefaultDC");
             return list;
@@ -144,22 +153,38 @@ namespace KSPGMAT.UI {
             GUI.enabled = true;
 
             // Reorder / Drag Action Button
-            string dragBtnText = isBeingDragged ? I18n.T("seq_reorder_dragging") : (draggedStepIndex >= 0 ? I18n.T("seq_reorder_drop") : I18n.T("seq_reorder_sort"));
+            string dragBtnText = isBeingDragged ? I18n.T("seq_reorder_dragging") : (draggedStepIndex >= 0 ? I18n.T("seq_reorder_drop") : "⠿ " + I18n.T("seq_reorder_sort"));
             GUIStyle dragBtnStyle = isBeingDragged ? successButtonStyle : (draggedStepIndex >= 0 ? tabButtonActiveStyle : secondaryButtonStyle);
-            float dragBtnW = (draggedStepIndex >= 0 && !isBeingDragged) ? 82f : 50f;
+            float dragBtnW = (draggedStepIndex >= 0 && !isBeingDragged) ? 82f : 56f;
 
             if (GUILayout.Button(dragBtnText, dragBtnStyle, GUILayout.Width(dragBtnW), GUILayout.Height(20))) {
                 if (draggedStepIndex == i) {
                     draggedStepIndex = -1; // Cancel
+                    isMouseDraggingStep = false;
                 } else if (draggedStepIndex >= 0) {
-                    var moveItem = missionSequence[draggedStepIndex];
-                    missionSequence.RemoveAt(draggedStepIndex);
-                    missionSequence.Insert(i, moveItem);
-                    ScreenMessages.PostScreenMessage(I18n.Format("seq_moved_to", i + 1), 2.0f, ScreenMessageStyle.UPPER_CENTER);
+                    int newIdx = MoveAtomicBlockTo(missionSequence, draggedStepIndex, i);
+                    string title = !string.IsNullOrEmpty(draggedItemTitle) ? draggedItemTitle : "Module";
+                    ScreenMessages.PostScreenMessage(I18n.Format("seq_moved_atomic_success", title, draggedGroupItemCount, newIdx + 1), 2.0f, ScreenMessageStyle.UPPER_CENTER);
                     draggedStepIndex = -1;
+                    isMouseDraggingStep = false;
                 } else {
                     draggedStepIndex = i;
-                    ScreenMessages.PostScreenMessage(I18n.Format("seq_selected_move", i + 1), 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                    GetAtomicStepBlockRange(missionSequence, i, out _, out draggedGroupItemCount);
+                    draggedItemTitle = string.IsNullOrEmpty(missionSequence[i].label) ? missionSequence[i].type : missionSequence[i].label;
+                    ScreenMessages.PostScreenMessage(I18n.Format("seq_selected_move", i + 1), 2.0f, ScreenMessageStyle.UPPER_CENTER);
+                }
+            }
+
+            if (Event.current.type == EventType.MouseDown && Event.current.button == 0) {
+                Rect handleRect = GUILayoutUtility.GetLastRect();
+                if (handleRect.Contains(Event.current.mousePosition)) {
+                    isMouseDraggingStep = true;
+                    draggedStepIndex = i;
+                    GetAtomicStepBlockRange(missionSequence, i, out _, out draggedGroupItemCount);
+                    draggedItemTitle = string.IsNullOrEmpty(missionSequence[i].label) ? missionSequence[i].type : missionSequence[i].label;
+                    dragStartMousePos = Event.current.mousePosition;
+                    dragCurrentMousePos = Event.current.mousePosition;
+                    Event.current.Use();
                 }
             }
         }
@@ -372,16 +397,17 @@ namespace KSPGMAT.UI {
                 for (int s = 0; s < missionSequence.Count; s++) missionSequence[s].is_collapsed = true;
             }
             if (GUILayout.Button(I18n.T("seq_expand_targets"), secondaryButtonStyle, GUILayout.Height(20))) {
-                bool inTarget = false;
+                int groupDepth = 0;
                 for (int s = 0; s < missionSequence.Count; s++) {
-                    if (missionSequence[s].type == "Target") {
-                        inTarget = true;
+                    string st = missionSequence[s].type;
+                    if (st == "Target" || st == "Optimize") {
+                        groupDepth++;
                         missionSequence[s].is_collapsed = false;
-                    } else if (missionSequence[s].type == "EndTarget") {
-                        inTarget = false;
+                    } else if (st == "EndTarget" || st == "EndOptimize") {
+                        if (groupDepth > 0) groupDepth--;
                         missionSequence[s].is_collapsed = true;
                     } else {
-                        missionSequence[s].is_collapsed = !inTarget;
+                        missionSequence[s].is_collapsed = (groupDepth == 0);
                     }
                 }
             }
@@ -417,6 +443,24 @@ namespace KSPGMAT.UI {
                 GUILayout.Space(40);
             }
 
+            // Modern Drag & Drop Global Mouse Handling
+            Event curEvt = Event.current;
+            Vector2 curMouse = (curEvt != null) ? curEvt.mousePosition : Vector2.zero;
+            if (isMouseDraggingStep) {
+                dragCurrentMousePos = curMouse;
+                if (curEvt != null && curEvt.type == EventType.MouseUp) {
+                    if (dragHoverDropIndex >= 0 && draggedStepIndex >= 0 && dragHoverDropIndex != draggedStepIndex) {
+                        int newIdx = MoveAtomicBlockTo(missionSequence, draggedStepIndex, dragHoverDropIndex);
+                        string title = !string.IsNullOrEmpty(draggedItemTitle) ? draggedItemTitle : "Module";
+                        ScreenMessages.PostScreenMessage(I18n.Format("seq_moved_atomic_success", title, draggedGroupItemCount, newIdx + 1), 2.0f, ScreenMessageStyle.UPPER_CENTER);
+                    }
+                    isMouseDraggingStep = false;
+                    draggedStepIndex = -1;
+                    dragHoverDropIndex = -1;
+                    curEvt.Use();
+                }
+            }
+
             // stepToMoveUp field used
             // stepToMoveDown field used
             int stepToDelete = -1;
@@ -426,23 +470,30 @@ namespace KSPGMAT.UI {
             int stepToInsertImpulsive = -1;
             int stepToInsertProp = -1;
             int stepToInsertThrustVector = -1;
+            int stepToInsertMinimize = -1;
+            int stepToInsertNlc = -1;
 
-            bool insideTargetGroup = false;
-            bool targetGroupCollapsed = false;
+            var activeGroupStack = new List<SolverGroupFrame>();
+            int layoutOpenCount = 0; // Robust sentinel for IMGUI Begin/End vertical balance
 
+            try {
             for (int i = 0; i < missionSequence.Count; i++) {
                 var step = missionSequence[i];
                 bool isBeingDragged = (draggedStepIndex == i);
 
-                // Animated insertion divider bar when in Reorder Mode
-                if (draggedStepIndex >= 0 && draggedStepIndex != i) {
+                // Modern Dynamic Drop Indicator & Insertion Bar
+                if (isMouseDraggingStep && draggedStepIndex != i) {
+                    if (dragHoverDropIndex == i) {
+                        DrawModernDropIndicator(i, (step.type == "Target" || step.type == "Optimize") ? "#c084fc" : "#38bdf8", draggedGroupItemCount > 1);
+                    }
+                } else if (draggedStepIndex >= 0 && draggedStepIndex != i) {
                     if (GUILayout.Button(I18n.Format("seq_insert_before", draggedStepIndex + 1, i + 1), tabButtonActiveStyle, GUILayout.Height(22))) {
-                        var moveItem = missionSequence[draggedStepIndex];
-                        missionSequence.RemoveAt(draggedStepIndex);
                         int targetIdx = (draggedStepIndex < i) ? i - 1 : i;
-                        missionSequence.Insert(targetIdx, moveItem);
-                        ScreenMessages.PostScreenMessage(I18n.Format("seq_moved_before", draggedStepIndex + 1, i + 1), 2.0f, ScreenMessageStyle.UPPER_CENTER);
+                        int newIdx = MoveAtomicBlockTo(missionSequence, draggedStepIndex, targetIdx);
+                        string title = !string.IsNullOrEmpty(draggedItemTitle) ? draggedItemTitle : "Step";
+                        ScreenMessages.PostScreenMessage(I18n.Format("seq_moved_atomic_success", title, draggedGroupItemCount, newIdx + 1), 2.0f, ScreenMessageStyle.UPPER_CENTER);
                         draggedStepIndex = -1;
+                        isMouseDraggingStep = false;
                     }
                 }
 
@@ -450,18 +501,21 @@ namespace KSPGMAT.UI {
                 // CASE 1: TARGET GROUP ROOT CONTAINER
                 // ==========================================
                 if (step.type == "Target") {
-                    // If a previous group was open, close it safely
-                    if (insideTargetGroup) {
-                        GUILayout.EndVertical();
-                        GUILayout.Space(6);
+                    bool parentFolded = activeGroupStack.Any(g => g.IsCollapsed);
+                    if (parentFolded) {
+                        activeGroupStack.Add(new SolverGroupFrame { StepIndex = i, GroupType = "Target", SolverName = step.dc_name, IsCollapsed = true });
+                        continue;
                     }
 
-                    insideTargetGroup = true;
-                    targetGroupCollapsed = step.is_collapsed;
+                    if (activeGroupStack.Count > 0) {
+                        GUILayout.Space(activeGroupStack.Count * 6);
+                    }
+
                     bool isTargetHovered = (hoveredStepIndex == i);
 
                     // BEGIN PROMINENT OUTER GROUP BOUNDING BOX (Enclosing entire Target group with dynamic hover glow)
                     GUILayout.BeginVertical(GetTargetGroupBoxStyle(i, isTargetHovered));
+                    layoutOpenCount++;
 
                     int varyCount = 0;
                     int achieveCount = 0;
@@ -507,8 +561,26 @@ namespace KSPGMAT.UI {
                     }
                     GUI.enabled = true;
 
-                    if (GUILayout.Button(isBeingDragged ? I18n.T("seq_dragging_cancel") : I18n.T("btn_drag"), isBeingDragged ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Width(isBeingDragged ? 120 : 54), GUILayout.Height(20))) {
+                    string dragBtnText = isBeingDragged ? I18n.T("seq_dragging_cancel") : "⠿ " + I18n.T("btn_drag");
+                    if (GUILayout.Button(dragBtnText, isBeingDragged ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Width(isBeingDragged ? 110 : 64), GUILayout.Height(20))) {
                         draggedStepIndex = isBeingDragged ? -1 : i;
+                        isMouseDraggingStep = false;
+                        if (draggedStepIndex >= 0) {
+                            GetAtomicStepBlockRange(missionSequence, i, out _, out draggedGroupItemCount);
+                            draggedItemTitle = string.IsNullOrEmpty(step.label) ? step.type : step.label;
+                        }
+                    }
+                    if (Event.current.type == EventType.MouseDown && Event.current.button == 0) {
+                        Rect handleRect = GUILayoutUtility.GetLastRect();
+                        if (handleRect.Contains(Event.current.mousePosition)) {
+                            isMouseDraggingStep = true;
+                            draggedStepIndex = i;
+                            GetAtomicStepBlockRange(missionSequence, i, out _, out draggedGroupItemCount);
+                            draggedItemTitle = string.IsNullOrEmpty(step.label) ? step.type : step.label;
+                            dragStartMousePos = Event.current.mousePosition;
+                            dragCurrentMousePos = Event.current.mousePosition;
+                            Event.current.Use();
+                        }
                     }
 
                     GUILayout.Label(I18n.Format("seq_target_label", i + 1), headerStyle, GUILayout.Width(130));
@@ -536,7 +608,6 @@ namespace KSPGMAT.UI {
                         GUILayout.Label(I18n.ColorFormat("seq_dof_warning", achieveCount, varyCount), labelValueStyle);
                         if (GUILayout.Button(I18n.T("btn_autofix_vary"), tabButtonActiveStyle, GUILayout.Height(20))) {
                             string dc = string.IsNullOrEmpty(step.dc_name) ? $"DC_{i + 1}" : step.dc_name;
-                            // Dynamically find active thruster name from vessel or sequence
                             string activeThruster = "MainEngine";
                             for (int ch = i + 1; ch < missionSequence.Count; ch++) {
                                 if (missionSequence[ch].type == "EndTarget") break;
@@ -634,7 +705,7 @@ namespace KSPGMAT.UI {
                             GUILayout.FlexibleSpace();
                             GUILayout.EndHorizontal();
 
-                            // Row 2: Algorithm, Derivative Method, Maximum Iterations (Bidirectional sync with GMATStateManager)
+                            // Row 2: Algorithm, Derivative Method, Maximum Iterations
                             GUILayout.Space(3);
                             GUILayout.BeginHorizontal();
                             GUILayout.Label(I18n.T("seq_algo_label"), gridLabelStyle, GUILayout.Width(65));
@@ -705,9 +776,33 @@ namespace KSPGMAT.UI {
                         GUILayout.Space(6);
                     }
 
+                    activeGroupStack.Add(new SolverGroupFrame { StepIndex = i, GroupType = "Target", SolverName = step.dc_name, IsCollapsed = step.is_collapsed });
+                    continue;
+                }
 
+                // ==========================================
+                // CASE 1B: OPTIMIZE GROUP ROOT CONTAINER
+                // ==========================================
+                if (step.type == "Optimize") {
+                    bool parentFolded = activeGroupStack.Any(g => g.IsCollapsed);
+                    if (parentFolded) {
+                        activeGroupStack.Add(new SolverGroupFrame { StepIndex = i, GroupType = "Optimize", SolverName = step.optimizer_name, IsCollapsed = true });
+                        continue;
+                    }
 
-                    // DO NOT call GUILayout.EndVertical() here: keep the prominent group container OPEN for child steps!
+                    if (activeGroupStack.Count > 0) {
+                        GUILayout.Space(activeGroupStack.Count * 6);
+                    }
+
+                    bool isOptHovered = (hoveredStepIndex == i);
+
+                    // BEGIN PROMINENT OUTER GROUP BOUNDING BOX (Enclosing entire Optimize group with violet glow)
+                    GUILayout.BeginVertical(GetOptimizeGroupBoxStyle(i, isOptHovered));
+                    layoutOpenCount++;
+
+                    DrawOptimizeGroupHeader(i, step, ref stepToMoveUp, ref stepToMoveDown, ref draggedStepIndex, ref stepToDelete, ref stepToInsertVary, ref stepToInsertMinimize, ref stepToInsertNlc, ref stepToInsertBurn, ref stepToInsertProp, ref stepToInsertThrustVector);
+
+                    activeGroupStack.Add(new SolverGroupFrame { StepIndex = i, GroupType = "Optimize", SolverName = step.optimizer_name, IsCollapsed = step.is_collapsed });
                     continue;
                 }
 
@@ -715,96 +810,243 @@ namespace KSPGMAT.UI {
                 // CASE 2: END TARGET CLOSURE
                 // ==========================================
                 if (step.type == "EndTarget") {
-                    if (!targetGroupCollapsed) {
-                        bool isEndHovered = (hoveredStepIndex == i);
-                        // Render EndTarget footer inside the group container with visual hierarchy guide
-                        GUILayout.BeginHorizontal();
-                        GUILayout.Space(6);
-                        string endTreeColor = isEndHovered ? "#38bdf8" : "#64748b";
-                        GUILayout.Label($"<color={endTreeColor}><b>│ └─</b></color>", labelValueStyle, GUILayout.Width(24));
-                        GUILayout.BeginVertical(GetStepBoxStyle("EndTarget", isEndHovered, false, isBeingDragged));
-                        GUILayout.BeginHorizontal();
-
-                        string foldIcon = step.is_collapsed ? "⊞" : "⊟";
-                        if (GUILayout.Button(foldIcon, secondaryButtonStyle, GUILayout.Width(22), GUILayout.Height(20))) {
-                            step.is_collapsed = !step.is_collapsed;
+                    int matchedIdx = -1;
+                    for (int f = activeGroupStack.Count - 1; f >= 0; f--) {
+                        if (activeGroupStack[f].GroupType == "Target") {
+                            matchedIdx = f;
+                            break;
                         }
-
-                        GUI.enabled = (i > 0);
-                        if (GUILayout.Button("↑", secondaryButtonStyle, GUILayout.Width(20), GUILayout.Height(20))) {
-                            stepToMoveUp = i;
-                        }
-                        GUI.enabled = (i < missionSequence.Count - 1);
-                        if (GUILayout.Button("↓", secondaryButtonStyle, GUILayout.Width(20), GUILayout.Height(20))) {
-                            stepToMoveDown = i;
-                        }
-                        GUI.enabled = true;
-
-                        if (GUILayout.Button(isBeingDragged ? I18n.T("seq_dragging") : "☰", isBeingDragged ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Width(isBeingDragged ? 65 : 26), GUILayout.Height(20))) {
-                            draggedStepIndex = isBeingDragged ? -1 : i;
-                        }
-
-                        GUILayout.Box(I18n.T("seq_end_badge"), pillEndTargetStyle, GUILayout.Width(80), GUILayout.Height(20));
-                        GUILayout.Label(I18n.ColorFormat("seq_end_label", string.IsNullOrEmpty(step.label) ? I18n.T("seq_end_default") : step.label), labelValueStyle);
-                        GUILayout.FlexibleSpace();
-
-                        if (GUILayout.Button("✕", deleteButtonStyle, GUILayout.Width(22), GUILayout.Height(18))) {
-                            stepToDelete = i;
-                        }
-                        GUILayout.EndHorizontal();
-                        GUILayout.EndVertical();
-
-                        if (Event.current.type == EventType.Repaint) {
-                            Rect cardRect = GUILayoutUtility.GetLastRect();
-                            bool isHoveredNow = cardRect.Contains(Event.current.mousePosition);
-                            if (isHoveredNow) {
-                                nextHoveredStepIndex = i;
-                            }
-                            Color themeColor = GetStepThemeColor("EndTarget");
-                            float stripW = isHoveredNow ? 3.5f : 2.0f;
-                            Color stripCol = isHoveredNow ? themeColor : new Color(themeColor.r, themeColor.g, themeColor.b, 0.70f);
-                            GUI.DrawTexture(new Rect(cardRect.x + 1, cardRect.y + 2, stripW, cardRect.height - 4), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, stripCol, 0, 0);
-
-                            if (isHoveredNow) {
-                                Color glowBorder = new Color(themeColor.r, themeColor.g, themeColor.b, 0.85f);
-                                GUI.DrawTexture(new Rect(cardRect.x, cardRect.y, cardRect.width, 1), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, glowBorder, 0, 0);
-                                GUI.DrawTexture(new Rect(cardRect.x, cardRect.y + cardRect.height - 1, cardRect.width, 1), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, glowBorder, 0, 0);
-                                GUI.DrawTexture(new Rect(cardRect.x + cardRect.width - 1, cardRect.y, 1, cardRect.height), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, glowBorder, 0, 0);
-                            }
-                        }
-                        GUILayout.EndHorizontal();
                     }
 
-                    // CLOSE THE PROMINENT OUTER GROUP BOUNDING BOX
-                    if (insideTargetGroup) {
-                        GUILayout.EndVertical();
-                        if (Event.current.type == EventType.Repaint) {
-                            Rect groupRect = GUILayoutUtility.GetLastRect();
-                            if (groupRect.Contains(Event.current.mousePosition) && nextHoveredStepIndex == -1) {
-                                nextHoveredStepIndex = i;
+                    if (matchedIdx >= 0) {
+                        bool isFrameFolded = activeGroupStack.Take(matchedIdx + 1).Any(g => g.IsCollapsed);
+                        if (!isFrameFolded) {
+                            bool isEndHovered = (hoveredStepIndex == i);
+                            GUILayout.BeginHorizontal();
+                            GUILayout.Space(6 + (matchedIdx * 6));
+                            string endTreeColor = isEndHovered ? "#38bdf8" : "#64748b";
+                            GUILayout.Label($"<color={endTreeColor}><b>│ └─</b></color>", labelValueStyle, GUILayout.Width(24));
+                            GUILayout.BeginVertical(GetStepBoxStyle("EndTarget", isEndHovered, false, isBeingDragged));
+                            GUILayout.BeginHorizontal();
+
+                            string foldIcon = step.is_collapsed ? "⊞" : "⊟";
+                            if (GUILayout.Button(foldIcon, secondaryButtonStyle, GUILayout.Width(22), GUILayout.Height(20))) {
+                                step.is_collapsed = !step.is_collapsed;
                             }
+
+                            GUI.enabled = (i > 0);
+                            if (GUILayout.Button("↑", secondaryButtonStyle, GUILayout.Width(20), GUILayout.Height(20))) {
+                                stepToMoveUp = i;
+                            }
+                            GUI.enabled = (i < missionSequence.Count - 1);
+                            if (GUILayout.Button("↓", secondaryButtonStyle, GUILayout.Width(20), GUILayout.Height(20))) {
+                                stepToMoveDown = i;
+                            }
+                            GUI.enabled = true;
+
+                            string dragBtnTextEnd = isBeingDragged ? I18n.T("seq_dragging_cancel") : "⠿";
+                            if (GUILayout.Button(dragBtnTextEnd, isBeingDragged ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Width(isBeingDragged ? 70 : 28), GUILayout.Height(20))) {
+                                draggedStepIndex = isBeingDragged ? -1 : i;
+                                isMouseDraggingStep = false;
+                                if (draggedStepIndex >= 0) {
+                                    GetAtomicStepBlockRange(missionSequence, i, out _, out draggedGroupItemCount);
+                                    draggedItemTitle = string.IsNullOrEmpty(step.label) ? step.type : step.label;
+                                }
+                            }
+                            if (Event.current.type == EventType.MouseDown && Event.current.button == 0) {
+                                Rect handleRect = GUILayoutUtility.GetLastRect();
+                                if (handleRect.Contains(Event.current.mousePosition)) {
+                                    isMouseDraggingStep = true;
+                                    draggedStepIndex = i;
+                                    GetAtomicStepBlockRange(missionSequence, i, out _, out draggedGroupItemCount);
+                                    draggedItemTitle = string.IsNullOrEmpty(step.label) ? step.type : step.label;
+                                    dragStartMousePos = Event.current.mousePosition;
+                                    dragCurrentMousePos = Event.current.mousePosition;
+                                    Event.current.Use();
+                                }
+                            }
+
+                            GUILayout.Box(I18n.T("seq_end_badge"), pillEndTargetStyle, GUILayout.Width(80), GUILayout.Height(20));
+                            GUILayout.Label(I18n.ColorFormat("seq_end_label", string.IsNullOrEmpty(step.label) ? I18n.T("seq_end_default") : step.label), labelValueStyle);
+                            GUILayout.FlexibleSpace();
+
+                            if (GUILayout.Button("✕", deleteButtonStyle, GUILayout.Width(22), GUILayout.Height(18))) {
+                                stepToDelete = i;
+                            }
+                            GUILayout.EndHorizontal();
+                            GUILayout.EndVertical();
+
+                            if (Event.current.type == EventType.Repaint) {
+                                Rect cardRect = GUILayoutUtility.GetLastRect();
+                                bool isHoveredNow = cardRect.Contains(Event.current.mousePosition);
+                                if (isHoveredNow) {
+                                    nextHoveredStepIndex = i;
+                                }
+                                Color themeColor = GetStepThemeColor("EndTarget");
+                                float stripW = isHoveredNow ? 3.5f : 2.0f;
+                                Color stripCol = isHoveredNow ? themeColor : new Color(themeColor.r, themeColor.g, themeColor.b, 0.70f);
+                                GUI.DrawTexture(new Rect(cardRect.x + 1, cardRect.y + 2, stripW, cardRect.height - 4), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, stripCol, 0, 0);
+
+                                if (isHoveredNow) {
+                                    Color glowBorder = new Color(themeColor.r, themeColor.g, themeColor.b, 0.85f);
+                                    GUI.DrawTexture(new Rect(cardRect.x, cardRect.y, cardRect.width, 1), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, glowBorder, 0, 0);
+                                    GUI.DrawTexture(new Rect(cardRect.x, cardRect.y + cardRect.height - 1, cardRect.width, 1), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, glowBorder, 0, 0);
+                                    GUI.DrawTexture(new Rect(cardRect.x + cardRect.width - 1, cardRect.y, 1, cardRect.height), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, glowBorder, 0, 0);
+                                }
+                            }
+                            GUILayout.EndHorizontal();
                         }
-                        GUILayout.Space(8);
-                        insideTargetGroup = false;
-                        targetGroupCollapsed = false;
+
+                        // Close outer Target group container if was opened
+                        bool wasOpened = !activeGroupStack.Take(matchedIdx).Any(g => g.IsCollapsed);
+                        if (wasOpened && layoutOpenCount > 0) {
+                            GUILayout.EndVertical();
+                            layoutOpenCount--;
+                            if (Event.current.type == EventType.Repaint) {
+                                Rect groupRect = GUILayoutUtility.GetLastRect();
+                                if (groupRect.Contains(Event.current.mousePosition) && nextHoveredStepIndex == -1) {
+                                    nextHoveredStepIndex = i;
+                                }
+                            }
+                            GUILayout.Space(8);
+                        }
+
+                        while (activeGroupStack.Count > matchedIdx) {
+                            activeGroupStack.RemoveAt(activeGroupStack.Count - 1);
+                        }
+                        continue;
                     }
-                    continue;
                 }
 
                 // ==========================================
-                // CASE 3: INNER CHILD STEPS INSIDE TARGET GROUP
+                // CASE 2B: END OPTIMIZE CLOSURE
                 // ==========================================
-                if (insideTargetGroup) {
-                    if (targetGroupCollapsed) {
-                        continue; // Skip rendering children when Target group is folded
+                if (step.type == "EndOptimize") {
+                    int matchedIdx = -1;
+                    for (int f = activeGroupStack.Count - 1; f >= 0; f--) {
+                        if (activeGroupStack[f].GroupType == "Optimize") {
+                            matchedIdx = f;
+                            break;
+                        }
+                    }
+
+                    if (matchedIdx >= 0) {
+                        bool isFrameFolded = activeGroupStack.Take(matchedIdx + 1).Any(g => g.IsCollapsed);
+                        if (!isFrameFolded) {
+                            bool isEndHovered = (hoveredStepIndex == i);
+                            GUILayout.BeginHorizontal();
+                            GUILayout.Space(6 + (matchedIdx * 6));
+                            string endTreeColor = isEndHovered ? "#e879f9" : "#a855f7";
+                            GUILayout.Label($"<color={endTreeColor}><b>│ └─</b></color>", labelValueStyle, GUILayout.Width(24));
+                            GUILayout.BeginVertical(GetStepBoxStyle("EndOptimize", isEndHovered, false, isBeingDragged));
+                            GUILayout.BeginHorizontal();
+
+                            string foldIcon = step.is_collapsed ? "⊞" : "⊟";
+                            if (GUILayout.Button(foldIcon, secondaryButtonStyle, GUILayout.Width(22), GUILayout.Height(20))) {
+                                step.is_collapsed = !step.is_collapsed;
+                            }
+
+                            GUI.enabled = (i > 0);
+                            if (GUILayout.Button("↑", secondaryButtonStyle, GUILayout.Width(20), GUILayout.Height(20))) {
+                                stepToMoveUp = i;
+                            }
+                            GUI.enabled = (i < missionSequence.Count - 1);
+                            if (GUILayout.Button("↓", secondaryButtonStyle, GUILayout.Width(20), GUILayout.Height(20))) {
+                                stepToMoveDown = i;
+                            }
+                            GUI.enabled = true;
+
+                            string dragBtnTextEndOpt = isBeingDragged ? I18n.T("seq_dragging_cancel") : "⠿";
+                            if (GUILayout.Button(dragBtnTextEndOpt, isBeingDragged ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Width(isBeingDragged ? 70 : 28), GUILayout.Height(20))) {
+                                draggedStepIndex = isBeingDragged ? -1 : i;
+                                isMouseDraggingStep = false;
+                                if (draggedStepIndex >= 0) {
+                                    GetAtomicStepBlockRange(missionSequence, i, out _, out draggedGroupItemCount);
+                                    draggedItemTitle = string.IsNullOrEmpty(step.label) ? step.type : step.label;
+                                }
+                            }
+                            if (Event.current.type == EventType.MouseDown && Event.current.button == 0) {
+                                Rect handleRect = GUILayoutUtility.GetLastRect();
+                                if (handleRect.Contains(Event.current.mousePosition)) {
+                                    isMouseDraggingStep = true;
+                                    draggedStepIndex = i;
+                                    GetAtomicStepBlockRange(missionSequence, i, out _, out draggedGroupItemCount);
+                                    draggedItemTitle = string.IsNullOrEmpty(step.label) ? step.type : step.label;
+                                    dragStartMousePos = Event.current.mousePosition;
+                                    dragCurrentMousePos = Event.current.mousePosition;
+                                    Event.current.Use();
+                                }
+                            }
+
+                            GUILayout.Box(I18n.T("seq_opt_end_badge"), pillEndOptStyle, GUILayout.Width(88), GUILayout.Height(20));
+                            string optNameDisp = string.IsNullOrEmpty(step.optimizer_name) ? (activeGroupStack[matchedIdx].SolverName ?? "Yukon1") : step.optimizer_name;
+                            GUILayout.Label(I18n.Format("seq_opt_end_label", optNameDisp), labelValueStyle);
+                            GUILayout.FlexibleSpace();
+
+                            if (GUILayout.Button("✕", deleteButtonStyle, GUILayout.Width(22), GUILayout.Height(18))) {
+                                stepToDelete = i;
+                            }
+                            GUILayout.EndHorizontal();
+                            GUILayout.EndVertical();
+
+                            if (Event.current.type == EventType.Repaint) {
+                                Rect cardRect = GUILayoutUtility.GetLastRect();
+                                bool isHoveredNow = cardRect.Contains(Event.current.mousePosition);
+                                if (isHoveredNow) {
+                                    nextHoveredStepIndex = i;
+                                }
+                                Color themeColor = GetStepThemeColor("EndOptimize");
+                                float stripW = isHoveredNow ? 3.5f : 2.0f;
+                                Color stripCol = isHoveredNow ? themeColor : new Color(themeColor.r, themeColor.g, themeColor.b, 0.70f);
+                                GUI.DrawTexture(new Rect(cardRect.x + 1, cardRect.y + 2, stripW, cardRect.height - 4), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, stripCol, 0, 0);
+
+                                if (isHoveredNow) {
+                                    Color glowBorder = new Color(themeColor.r, themeColor.g, themeColor.b, 0.85f);
+                                    GUI.DrawTexture(new Rect(cardRect.x, cardRect.y, cardRect.width, 1), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, glowBorder, 0, 0);
+                                    GUI.DrawTexture(new Rect(cardRect.x, cardRect.y + cardRect.height - 1, cardRect.width, 1), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, glowBorder, 0, 0);
+                                    GUI.DrawTexture(new Rect(cardRect.x + cardRect.width - 1, cardRect.y, 1, cardRect.height), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0, glowBorder, 0, 0);
+                                }
+                            }
+                            GUILayout.EndHorizontal();
+                        }
+
+                        // Close outer Optimize group container if was opened
+                        bool wasOpened = !activeGroupStack.Take(matchedIdx).Any(g => g.IsCollapsed);
+                        if (wasOpened && layoutOpenCount > 0) {
+                            GUILayout.EndVertical();
+                            layoutOpenCount--;
+                            if (Event.current.type == EventType.Repaint) {
+                                Rect groupRect = GUILayoutUtility.GetLastRect();
+                                if (groupRect.Contains(Event.current.mousePosition) && nextHoveredStepIndex == -1) {
+                                    nextHoveredStepIndex = i;
+                                }
+                            }
+                            GUILayout.Space(8);
+                        }
+
+                        while (activeGroupStack.Count > matchedIdx) {
+                            activeGroupStack.RemoveAt(activeGroupStack.Count - 1);
+                        }
+                        continue;
+                    }
+                }
+
+                // ==========================================
+                // CASE 3: INNER CHILD STEPS INSIDE ANY SOLVER GROUP
+                // ==========================================
+                if (activeGroupStack.Count > 0) {
+                    if (activeGroupStack.Any(g => g.IsCollapsed)) {
+                        continue; // Skip rendering children when any parent group is folded
                     }
 
                     bool isChildHovered = (hoveredStepIndex == i);
 
                     // Render inner step nested neatly inside the prominent group box with typed colored border
                     GUILayout.BeginHorizontal();
-                    GUILayout.Space(6); // Inner margin from outer group
-                    string treeBranchColor = isChildHovered ? "#38bdf8" : "#64748b";
+                    int indentSpace = 6 + (activeGroupStack.Count - 1) * 8;
+                    GUILayout.Space(indentSpace); // Inner margin from outer group
+                    string topGroupType = activeGroupStack[activeGroupStack.Count - 1].GroupType;
+                    string treeBranchColor = isChildHovered ? "#f43f5e" : (topGroupType == "Optimize" ? "#c084fc" : "#38bdf8");
                     GUILayout.Label($"<color={treeBranchColor}><b>│ ├─</b></color>", labelValueStyle, GUILayout.Width(24));
                     GUILayout.BeginVertical(GetStepBoxStyle(step.type, isChildHovered, false, isBeingDragged));
 
@@ -825,8 +1067,26 @@ namespace KSPGMAT.UI {
                     }
                     GUI.enabled = true;
 
-                    if (GUILayout.Button(isBeingDragged ? I18n.T("seq_dragging") : "☰", isBeingDragged ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Width(isBeingDragged ? 65 : 26), GUILayout.Height(20))) {
+                    string dragChildText = isBeingDragged ? I18n.T("seq_dragging_cancel") : "⠿";
+                    if (GUILayout.Button(dragChildText, isBeingDragged ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Width(isBeingDragged ? 70 : 28), GUILayout.Height(20))) {
                         draggedStepIndex = isBeingDragged ? -1 : i;
+                        isMouseDraggingStep = false;
+                        if (draggedStepIndex >= 0) {
+                            GetAtomicStepBlockRange(missionSequence, i, out _, out draggedGroupItemCount);
+                            draggedItemTitle = string.IsNullOrEmpty(step.label) ? step.type : step.label;
+                        }
+                    }
+                    if (Event.current.type == EventType.MouseDown && Event.current.button == 0) {
+                        Rect handleRect = GUILayoutUtility.GetLastRect();
+                        if (handleRect.Contains(Event.current.mousePosition)) {
+                            isMouseDraggingStep = true;
+                            draggedStepIndex = i;
+                            GetAtomicStepBlockRange(missionSequence, i, out _, out draggedGroupItemCount);
+                            draggedItemTitle = string.IsNullOrEmpty(step.label) ? step.type : step.label;
+                            dragStartMousePos = Event.current.mousePosition;
+                            dragCurrentMousePos = Event.current.mousePosition;
+                            Event.current.Use();
+                        }
                     }
 
                     // Modern Pill Badge by Type with Auto Width & Overflow Prevention
@@ -844,6 +1104,8 @@ namespace KSPGMAT.UI {
                         else if (step.type == "ImpulsiveBurn") summaryBadge = I18n.Format("seq_sum_impulse", step.dv_v, step.dv_n, step.dv_b);
                         else if (step.type == "Equation") summaryBadge = I18n.Format("seq_sum_equation", step.variable, step.expression);
                         else if (step.type == "StageSeparation") summaryBadge = I18n.Format("seq_sum_stage", step.separated_mass, step.remaining_dry_mass);
+                        else if (step.type == "Minimize") summaryBadge = I18n.Format("seq_sum_min", step.minimize_variable);
+                        else if (step.type == "NonlinearConstraint") summaryBadge = I18n.Format("seq_sum_nlc", step.constraint_lhs, step.constraint_op, step.constraint_val.ToString("G"));
                         else summaryBadge = string.IsNullOrEmpty(step.label) ? "" : step.label;
                         GUILayout.Label(summaryBadge, labelValueStyle);
                         DrawStepCollapsedResultBadge(step);
@@ -923,8 +1185,26 @@ namespace KSPGMAT.UI {
                 }
                 GUI.enabled = true;
 
-                if (GUILayout.Button(isBeingDragged ? I18n.T("seq_dragging") : "☰", isBeingDragged ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Width(isBeingDragged ? 65 : 26), GUILayout.Height(20))) {
+                string dragRegText = isBeingDragged ? I18n.T("seq_dragging_cancel") : "⠿";
+                if (GUILayout.Button(dragRegText, isBeingDragged ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Width(isBeingDragged ? 70 : 28), GUILayout.Height(20))) {
                     draggedStepIndex = isBeingDragged ? -1 : i;
+                    isMouseDraggingStep = false;
+                    if (draggedStepIndex >= 0) {
+                        GetAtomicStepBlockRange(missionSequence, i, out _, out draggedGroupItemCount);
+                        draggedItemTitle = string.IsNullOrEmpty(step.label) ? step.type : step.label;
+                    }
+                }
+                if (Event.current.type == EventType.MouseDown && Event.current.button == 0) {
+                    Rect handleRect = GUILayoutUtility.GetLastRect();
+                    if (handleRect.Contains(Event.current.mousePosition)) {
+                        isMouseDraggingStep = true;
+                        draggedStepIndex = i;
+                        GetAtomicStepBlockRange(missionSequence, i, out _, out draggedGroupItemCount);
+                        draggedItemTitle = string.IsNullOrEmpty(step.label) ? step.type : step.label;
+                        dragStartMousePos = Event.current.mousePosition;
+                        dragCurrentMousePos = Event.current.mousePosition;
+                        Event.current.Use();
+                    }
                 }
 
                 // Modern Pill Badge by Type with Auto Width & Overflow Prevention
@@ -940,6 +1220,8 @@ namespace KSPGMAT.UI {
                     else if (step.type == "FiniteBurn") summaryBadge = I18n.Format("seq_sum_burn", (step.burn_use_vary_var ? step.burn_vary_var_name : step.duration.ToString("F1") + "s"));
                     else if (step.type == "ThrustVectorControl" || step.type == "VaryThrustDirection") summaryBadge = I18n.Format("seq_sum_tvc", step.thrust_dir1, step.thrust_dir2, step.thrust_dir3);
                     else if (step.type == "ImpulsiveBurn") summaryBadge = I18n.Format("seq_sum_impulse", step.dv_v, step.dv_n, step.dv_b);
+                    else if (step.type == "Minimize") summaryBadge = I18n.Format("seq_sum_min", step.minimize_variable);
+                    else if (step.type == "NonlinearConstraint") summaryBadge = I18n.Format("seq_sum_nlc", step.constraint_lhs, step.constraint_op, step.constraint_val.ToString("G"));
                     else summaryBadge = string.IsNullOrEmpty(step.label) ? "" : step.label;
                     GUILayout.Label(summaryBadge, labelValueStyle);
                     DrawStepCollapsedResultBadge(step);
@@ -994,28 +1276,42 @@ namespace KSPGMAT.UI {
 
                 GUILayout.Space(4);
             }
-
-            // Safety check: close unclosed Target group if sequence ends inside group
-            if (insideTargetGroup) {
+            } catch (Exception ex) {
+                while (layoutOpenCount > 0) {
+                    GUILayout.EndVertical();
+                    layoutOpenCount--;
+                }
+                KSPGMATLog.Error($"[TabSequence] UI auto-repaired layout exception: {ex}");
+                RepairSequenceGroupIntegrity(missionSequence);
+                GUILayout.BeginVertical(nestedCardBoxStyle);
+                GUILayout.Label($"<color=#facc15><b>⚠️ {I18n.T("seq_integrity_repaired")}</b></color>", labelValueStyle);
                 GUILayout.EndVertical();
-                insideTargetGroup = false;
             }
+
+            // Safety check: close unclosed groups if sequence ends inside group
+            while (layoutOpenCount > 0) {
+                GUILayout.EndVertical();
+                layoutOpenCount--;
+            }
+            activeGroupStack.Clear();
 
             // Drag mode bottom drop bar
             if (draggedStepIndex >= 0 && draggedStepIndex < missionSequence.Count) {
                 var draggedItem = missionSequence[draggedStepIndex];
                 GUILayout.Space(6);
                 GUILayout.BeginVertical(cardBoxStyle);
-                GUILayout.Label(I18n.ColorFormat("seq_drag_bar", draggedStepIndex + 1, draggedItem.type, draggedItem.label), labelValueStyle);
+                string groupNote = (draggedGroupItemCount > 1) ? I18n.Format("seq_drag_group_items", draggedGroupItemCount) : "";
+                GUILayout.Label(I18n.ColorFormat("seq_drag_bar", draggedStepIndex + 1, draggedItem.type, (draggedItem.label ?? "") + " " + groupNote), labelValueStyle);
                 GUILayout.BeginHorizontal();
                 if (GUILayout.Button(I18n.Format("btn_move_end", missionSequence.Count), tabButtonActiveStyle, GUILayout.Height(24))) {
-                    missionSequence.RemoveAt(draggedStepIndex);
-                    missionSequence.Add(draggedItem);
+                    MoveAtomicBlockTo(missionSequence, draggedStepIndex, missionSequence.Count);
                     ScreenMessages.PostScreenMessage(I18n.T("seq_moved_end"), 2.0f, ScreenMessageStyle.UPPER_CENTER);
                     draggedStepIndex = -1;
+                    isMouseDraggingStep = false;
                 }
                 if (GUILayout.Button(I18n.T("btn_cancel_drag"), secondaryButtonStyle, GUILayout.Width(110), GUILayout.Height(24))) {
                     draggedStepIndex = -1;
+                    isMouseDraggingStep = false;
                 }
                 GUILayout.EndHorizontal();
                 GUILayout.EndVertical();
@@ -1117,24 +1413,48 @@ namespace KSPGMAT.UI {
                     label = I18n.Format("seq_tvc_label2", engName)
                 });
             }
+            if (stepToInsertMinimize >= 0) {
+                string parentOpt = GetParentTargetDcName(stepToInsertMinimize);
+                missionSequence.Insert(stepToInsertMinimize, new MissionStep {
+                    type = "Minimize",
+                    optimizer_name = parentOpt,
+                    minimize_variable = "Sat.FuelMassBurned",
+                    label = I18n.T("seq_min_label")
+                });
+            }
+            if (stepToInsertNlc >= 0) {
+                string parentOpt = GetParentTargetDcName(stepToInsertNlc);
+                string cb = GetContextCentralBody();
+                double defaultVal = (cb == "Earth") ? 42164.14 : ((cb == "Luna" || cb == "Moon") ? 1837.4 : 7000.0);
+                missionSequence.Insert(stepToInsertNlc, new MissionStep {
+                    type = "NonlinearConstraint",
+                    optimizer_name = parentOpt,
+                    constraint_lhs = $"Sat.{cb}.SMA",
+                    constraint_op = "==",
+                    constraint_val = defaultVal,
+                    label = I18n.Format("seq_achieve_label3", cb + ".SMA")
+                });
+            }
 
             if (stepToMoveUp > 0 && stepToMoveUp < missionSequence.Count) {
-                var temp = missionSequence[stepToMoveUp];
-                missionSequence[stepToMoveUp] = missionSequence[stepToMoveUp - 1];
-                missionSequence[stepToMoveUp - 1] = temp;
+                MoveAtomicBlockUp(missionSequence, stepToMoveUp);
                 stepToMoveUp = -1;
             }
             if (stepToMoveDown >= 0 && stepToMoveDown < missionSequence.Count - 1) {
-                var temp = missionSequence[stepToMoveDown];
-                missionSequence[stepToMoveDown] = missionSequence[stepToMoveDown + 1];
-                missionSequence[stepToMoveDown + 1] = temp;
+                MoveAtomicBlockDown(missionSequence, stepToMoveDown);
                 stepToMoveDown = -1;
             } else if (stepToDelete >= 0 && stepToDelete < missionSequence.Count) {
-                missionSequence.RemoveAt(stepToDelete);
+                DeleteAtomicBlock(missionSequence, stepToDelete);
                 if (draggedStepIndex == stepToDelete) draggedStepIndex = -1;
+                stepToDelete = -1;
             }
 
             GUILayout.EndScrollView();
+
+            // Floating drag preview pill
+            if (isMouseDraggingStep) {
+                DrawFloatingDragPill(dragCurrentMousePos, draggedItemTitle, draggedGroupItemCount, dragHoverDropIndex);
+            }
 
             GUILayout.Space(4);
 
@@ -1202,6 +1522,17 @@ namespace KSPGMAT.UI {
                     label = I18n.T("seq_custom_script_label")
                 });
             }
+            if (GUILayout.Button($"<color=#38bdf8>🐍 {I18n.T("cmd_CallPython_label")}</color>", secondaryButtonStyle, GUILayout.Height(24))) {
+                missionSequence.Add(new MissionStep {
+                    type = "CallPython",
+                    python_module = "orbit_calculator",
+                    python_function = "compute_delta_v",
+                    python_inputs = "Sat.A1ModJulian, Sat.Earth.SMA, Sat.Earth.ECC",
+                    python_outputs = "dv_v, dv_n, dv_b",
+                    call_syntax_mode = "Assignment",
+                    label = "orbit_calculator.compute_delta_v"
+                });
+            }
             GUILayout.EndHorizontal();
 
             // Expanded 27 GMAT Command Library Rows
@@ -1258,10 +1589,21 @@ namespace KSPGMAT.UI {
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
 
-                // Row 4: Math, Variables & IO
+                // Row 4: Math, Variables & IO & Python
                 GUILayout.Space(2);
                 GUILayout.BeginHorizontal();
                 GUILayout.Label(I18n.T("seq_palette_math"), labelValueStyle, GUILayout.Width(80));
+                if (GUILayout.Button("Python", secondaryButtonStyle, GUILayout.Height(20))) {
+                    missionSequence.Add(new MissionStep {
+                        type = "CallPython",
+                        python_module = "orbit_calculator",
+                        python_function = "compute_delta_v",
+                        python_inputs = "Sat.A1ModJulian, Sat.Earth.SMA, Sat.Earth.ECC",
+                        python_outputs = "dv_v, dv_n, dv_b",
+                        call_syntax_mode = "Assignment",
+                        label = "orbit_calculator.compute_delta_v"
+                    });
+                }
                 if (GUILayout.Button(I18n.T("btn_equation"), secondaryButtonStyle, GUILayout.Height(20))) missionSequence.Add(new MissionStep { type = "Equation", variable = "burntime", expression = "120.0", label = I18n.T("seq_equation_label") });
                 if (GUILayout.Button(I18n.T("btn_scriptevent"), secondaryButtonStyle, GUILayout.Height(20))) missionSequence.Add(new MissionStep { type = "ScriptEvent", script_content = "GMAT burntime = 150.0;", label = I18n.T("seq_scriptevent_label") });
                 if (GUILayout.Button(I18n.T("btn_write"), secondaryButtonStyle, GUILayout.Height(20))) missionSequence.Add(new MissionStep { type = "Write", write_fields = "Sat.UTCGregorian Sat.RMAG", label = I18n.T("seq_write_label") });
@@ -1829,36 +2171,28 @@ namespace KSPGMAT.UI {
                 // Row 2: Search Bounds, Perturbation & Inline Solved Value Result
                 GUILayout.Space(3);
                 GUILayout.BeginHorizontal();
-                GUILayout.Label(I18n.T("seq_init_label"), gridLabelStyle, GUILayout.Width(35));
-                step.vary_initial_str = DrawDelayedSmartField($"Field_VaryInit_{i}", step.vary_initial_str, step.vary_initial, numericInputStyle, GUILayout.Width(75), "vary_init", i);
+                
+                step.vary_initial_str = DrawCompactLabeledSmartField(I18n.T("seq_init_label"), $"Field_VaryInit_{i}", step.vary_initial_str, step.vary_initial, 70f, "vary_init", i);
                 if (double.TryParse(step.vary_initial_str, NumberStyles.Any, CultureInfo.InvariantCulture, out double parsedVaryInit)) {
                     step.vary_initial = parsedVaryInit;
                 }
 
-                GUILayout.Space(6);
-                GUILayout.Label(I18n.T("seq_lower_label"), gridLabelStyle, GUILayout.Width(35));
-                step.vary_lower_str = DrawDelayedSmartField($"vary_low_{i}", step.vary_lower_str, step.vary_lower, numericInputStyle, GUILayout.Width(60), null, i);
+                step.vary_lower_str = DrawCompactLabeledSmartField(I18n.T("seq_lower_label"), $"vary_low_{i}", step.vary_lower_str, step.vary_lower, 65f, null, i);
                 if (double.TryParse(step.vary_lower_str, NumberStyles.Any, CultureInfo.InvariantCulture, out double parsedVaryLow)) {
                     step.vary_lower = parsedVaryLow;
                 }
 
-                GUILayout.Space(6);
-                GUILayout.Label(I18n.T("seq_upper_label"), gridLabelStyle, GUILayout.Width(35));
-                step.vary_upper_str = DrawDelayedSmartField($"vary_up_{i}", step.vary_upper_str, step.vary_upper, numericInputStyle, GUILayout.Width(60), null, i);
+                step.vary_upper_str = DrawCompactLabeledSmartField(I18n.T("seq_upper_label"), $"vary_up_{i}", step.vary_upper_str, step.vary_upper, 65f, null, i);
                 if (double.TryParse(step.vary_upper_str, NumberStyles.Any, CultureInfo.InvariantCulture, out double parsedVaryUp)) {
                     step.vary_upper = parsedVaryUp;
                 }
 
-                GUILayout.Space(6);
-                GUILayout.Label(I18n.T("seq_step_label"), gridLabelStyle, GUILayout.Width(35));
-                step.vary_max_step_str = DrawDelayedSmartField($"vary_step_{i}", step.vary_max_step_str, (step.vary_max_step <= 0 ? 0.1 : step.vary_max_step), numericInputStyle, GUILayout.Width(55), null, i);
+                step.vary_max_step_str = DrawCompactLabeledSmartField(I18n.T("seq_step_label"), $"vary_step_{i}", step.vary_max_step_str, (step.vary_max_step <= 0 ? 0.1 : step.vary_max_step), 65f, null, i);
                 if (double.TryParse(step.vary_max_step_str, NumberStyles.Any, CultureInfo.InvariantCulture, out double parsedVaryStep)) {
                     step.vary_max_step = parsedVaryStep;
                 }
 
-                GUILayout.Space(6);
-                GUILayout.Label(I18n.T("seq_pert_label"), gridLabelStyle, GUILayout.Width(35));
-                step.vary_perturbation_str = DrawDelayedSmartField($"vary_pert_{i}", step.vary_perturbation_str, (step.vary_perturbation <= 0.0 ? 0.0001 : step.vary_perturbation), numericInputStyle, GUILayout.Width(65), null, i);
+                step.vary_perturbation_str = DrawCompactLabeledSmartField(I18n.T("seq_pert_label"), $"vary_pert_{i}", step.vary_perturbation_str, (step.vary_perturbation <= 0.0 ? 0.0001 : step.vary_perturbation), 68f, null, i);
                 if (double.TryParse(step.vary_perturbation_str, NumberStyles.Any, CultureInfo.InvariantCulture, out double parsedVaryPert)) {
                     step.vary_perturbation = parsedVaryPert > 0.0 ? parsedVaryPert : 0.0001;
                 } else if (step.vary_perturbation <= 0.0) {
@@ -2616,8 +2950,7 @@ namespace KSPGMAT.UI {
             // =========================================================================
             else if (step.type == "Optimize") {
                 GUILayout.BeginHorizontal();
-                GUILayout.Label(I18n.T("seq_opt_name_label"), labelValueStyle, GUILayout.Width(85));
-                step.optimizer_name = GUILayout.TextField(string.IsNullOrEmpty(step.optimizer_name) ? "Yukon1" : step.optimizer_name, stepLabelInputStyle, GUILayout.Width(130), GUILayout.Height(20));
+                DrawInlineOptimizerPicker(step, i);
                 GUILayout.Space(10);
                 GUILayout.Label(I18n.T("seq_solve_mode"), gridLabelStyle, GUILayout.Width(75));
                 if (GUILayout.Button(step.solve_mode ?? "Solve", secondaryButtonStyle, GUILayout.Width(110), GUILayout.Height(20))) {
@@ -2628,22 +2961,60 @@ namespace KSPGMAT.UI {
             }
             else if (step.type == "Minimize") {
                 GUILayout.BeginHorizontal();
-                GUILayout.Label(I18n.T("seq_min_opt_label"), labelValueStyle, GUILayout.Width(85));
-                step.optimizer_name = GUILayout.TextField(string.IsNullOrEmpty(step.optimizer_name) ? "Yukon1" : step.optimizer_name, stepLabelInputStyle, GUILayout.Width(100), GUILayout.Height(20));
+                DrawInlineOptimizerPicker(step, i);
                 GUILayout.Space(8);
                 GUILayout.Label(I18n.T("seq_min_var_label"), gridLabelStyle, GUILayout.Width(75));
-                step.minimize_variable = GUILayout.TextField(string.IsNullOrEmpty(step.minimize_variable) ? "Sat.FuelMassBurned" : step.minimize_variable, stepLabelInputStyle, GUILayout.MinWidth(180), GUILayout.Height(20));
+
+                GUI.SetNextControlName($"Field_MinVar_{i}");
+                string prevMinVar = step.minimize_variable ?? "Sat.FuelMassBurned";
+                string newMinVar = GUILayout.TextField(prevMinVar, stepLabelInputStyle, GUILayout.MinWidth(180), GUILayout.Height(20));
+
+                if (Event.current.type == EventType.Repaint) {
+                    if (GUI.GetNameOfFocusedControl() == $"Field_MinVar_{i}") {
+                        Rect r = GUILayoutUtility.GetLastRect();
+                        Vector2 sp = GUIUtility.GUIToScreenPoint(new Vector2(r.x, r.y));
+                        intelliSenseAnchorRect = new Rect(sp.x, sp.y, r.width, r.height);
+                    }
+                }
+                if (newMinVar != prevMinVar || (GUI.GetNameOfFocusedControl() == $"Field_MinVar_{i}" && !intelliSenseOpen && !intelliSenseDismissed)) {
+                    step.minimize_variable = newMinVar;
+                    TriggerIntelliSense(newMinVar, "minimize", i);
+                }
+
+                if (GUILayout.Button(I18n.T("btn_edit_var"), secondaryButtonStyle, GUILayout.Width(75), GUILayout.Height(20))) {
+                    OpenGMATParameterSelectDialog(i, "minimize", step.minimize_variable);
+                }
+
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
             }
             else if (step.type == "NonlinearConstraint") {
                 GUILayout.BeginHorizontal();
-                GUILayout.Label(I18n.T("seq_nlc_opt_label"), labelValueStyle, GUILayout.Width(75));
-                step.optimizer_name = GUILayout.TextField(string.IsNullOrEmpty(step.optimizer_name) ? "Yukon1" : step.optimizer_name, stepLabelInputStyle, GUILayout.Width(85), GUILayout.Height(20));
+                DrawInlineOptimizerPicker(step, i);
                 GUILayout.Space(6);
                 GUILayout.Label(I18n.T("seq_nlc_param"), gridLabelStyle, GUILayout.Width(55));
-                step.constraint_lhs = GUILayout.TextField(string.IsNullOrEmpty(step.constraint_lhs) ? "Sat.Earth.RMAG" : step.constraint_lhs, stepLabelInputStyle, GUILayout.Width(140), GUILayout.Height(20));
-                
+
+                GUI.SetNextControlName($"Field_NlcLhs_{i}");
+                string prevLhs = step.constraint_lhs ?? "Sat.Earth.RMAG";
+                string newLhs = GUILayout.TextField(prevLhs, stepLabelInputStyle, GUILayout.Width(150), GUILayout.Height(20));
+
+                if (Event.current.type == EventType.Repaint) {
+                    if (GUI.GetNameOfFocusedControl() == $"Field_NlcLhs_{i}") {
+                        Rect r = GUILayoutUtility.GetLastRect();
+                        Vector2 sp = GUIUtility.GUIToScreenPoint(new Vector2(r.x, r.y));
+                        intelliSenseAnchorRect = new Rect(sp.x, sp.y, r.width, r.height);
+                    }
+                }
+                if (newLhs != prevLhs || (GUI.GetNameOfFocusedControl() == $"Field_NlcLhs_{i}" && !intelliSenseOpen && !intelliSenseDismissed)) {
+                    step.constraint_lhs = newLhs;
+                    TriggerIntelliSense(newLhs, "nlc", i);
+                }
+
+                if (GUILayout.Button(I18n.T("btn_edit_var"), secondaryButtonStyle, GUILayout.Width(75), GUILayout.Height(20))) {
+                    OpenGMATParameterSelectDialog(i, "nlc", step.constraint_lhs);
+                }
+
+                GUILayout.Space(6);
                 string[] ops = new string[] { ">=", "<=", "==" };
                 for (int o = 0; o < ops.Length; o++) {
                     bool isOp = (step.constraint_op == ops[o]);
@@ -2675,11 +3046,154 @@ namespace KSPGMAT.UI {
                 step.custom_verbatim_script = GUILayout.TextArea(step.custom_verbatim_script ?? "", ideEditorStyle, GUILayout.MinHeight(60), GUILayout.ExpandWidth(true));
                 GUILayout.EndVertical();
             }
+
+            // =========================================================================
+            // 10. PYTHON NODE CARD (CALL PYTHON FUNCTION / SCRIPT INTEGRATION)
+            // =========================================================================
+            else if (step.type == "CallPython" || step.type == "CallPythonFunction") {
+                GUILayout.BeginVertical(nestedCardBoxStyle);
+
+                // Row 1: Module & Function Selection + Official API / Inspect Modal Link
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("<color=#38bdf8><b>🐍 Python</b></color>", labelValueStyle, GUILayout.Width(75));
+
+                GUILayout.Label(I18n.T("seq_python_module"), labelValueStyle, GUILayout.Width(95));
+                GUI.SetNextControlName($"Field_PyMod_{i}");
+                string prevMod = step.python_module ?? "orbit_calculator";
+                string newMod = GUILayout.TextField(prevMod, GUILayout.MinWidth(110), GUILayout.Width(140), GUILayout.Height(20));
+                if (Event.current.type == EventType.Repaint && GUI.GetNameOfFocusedControl() == $"Field_PyMod_{i}") {
+                    Rect r = GUILayoutUtility.GetLastRect();
+                    Vector2 sp = GUIUtility.GUIToScreenPoint(new Vector2(r.x, r.y));
+                    intelliSenseAnchorRect = new Rect(sp.x, sp.y, r.width, r.height);
+                }
+                if (newMod != prevMod || (GUI.GetNameOfFocusedControl() == $"Field_PyMod_{i}" && !intelliSenseOpen && !intelliSenseDismissed)) {
+                    step.python_module = newMod;
+                    TriggerIntelliSense(newMod, "python_module", i);
+                }
+
+                GUILayout.Space(6);
+                GUILayout.Label(I18n.T("seq_python_func"), labelValueStyle, GUILayout.Width(95));
+                GUI.SetNextControlName($"Field_PyFunc_{i}");
+                string prevFunc = step.python_function ?? "compute_delta_v";
+                string newFunc = GUILayout.TextField(prevFunc, GUILayout.MinWidth(130), GUILayout.Width(170), GUILayout.Height(20));
+                if (Event.current.type == EventType.Repaint && GUI.GetNameOfFocusedControl() == $"Field_PyFunc_{i}") {
+                    Rect r = GUILayoutUtility.GetLastRect();
+                    Vector2 sp = GUIUtility.GUIToScreenPoint(new Vector2(r.x, r.y));
+                    intelliSenseAnchorRect = new Rect(sp.x, sp.y, r.width, r.height);
+                }
+                if (newFunc != prevFunc || (GUI.GetNameOfFocusedControl() == $"Field_PyFunc_{i}" && !intelliSenseOpen && !intelliSenseDismissed)) {
+                    step.python_function = newFunc;
+                    TriggerIntelliSense(newFunc, "python_func", i);
+                }
+
+                GUILayout.Space(6);
+                // 按钮 1: 选用官方 API / 函数 (快速唤起智能补全)
+                if (GUILayout.Button($"📚 {I18n.T("seq_python_btn_select_api")}", secondaryButtonStyle, GUILayout.Height(20))) {
+                    TriggerIntelliSense("", "python_func", i);
+                }
+
+                // 按钮 2: 查看原生实现 (直通 GMATDynamicInspectorModal 查阅上万行源码实现！)
+                if (GUILayout.Button($"🔍 {I18n.T("seq_python_btn_inspect")}", secondaryButtonStyle, GUILayout.Height(20))) {
+                    OpenApiInspector(step.python_function, "FUNCTIONS");
+                }
+
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+
+                GUILayout.Space(4);
+
+                // Row 2: Inputs & Outputs with Smart Variable Insertion
+                GUILayout.BeginHorizontal();
+                GUILayout.Label(I18n.T("seq_python_inputs"), labelValueStyle, GUILayout.Width(120));
+                GUI.SetNextControlName($"Field_PyInputs_{i}");
+                string prevIn = step.python_inputs ?? "";
+                string newIn = GUILayout.TextField(prevIn, GUILayout.MinWidth(170), GUILayout.Width(230), GUILayout.Height(20));
+                if (Event.current.type == EventType.Repaint && GUI.GetNameOfFocusedControl() == $"Field_PyInputs_{i}") {
+                    Rect r = GUILayoutUtility.GetLastRect();
+                    Vector2 sp = GUIUtility.GUIToScreenPoint(new Vector2(r.x, r.y));
+                    intelliSenseAnchorRect = new Rect(sp.x, sp.y, r.width, r.height);
+                }
+                if (newIn != prevIn) {
+                    step.python_inputs = newIn;
+                }
+
+                // Quick Input Variable Shortcuts
+                if (GUILayout.Button("+ SMA", secondaryButtonStyle, GUILayout.Height(20))) {
+                    step.python_inputs = string.IsNullOrEmpty(step.python_inputs) ? "Sat.SMA" : $"{step.python_inputs.TrimEnd(',', ' ')}, Sat.SMA";
+                }
+                if (GUILayout.Button("+ ECC", secondaryButtonStyle, GUILayout.Height(20))) {
+                    step.python_inputs = string.IsNullOrEmpty(step.python_inputs) ? "Sat.ECC" : $"{step.python_inputs.TrimEnd(',', ' ')}, Sat.ECC";
+                }
+                if (GUILayout.Button("+ Epoch", secondaryButtonStyle, GUILayout.Height(20))) {
+                    step.python_inputs = string.IsNullOrEmpty(step.python_inputs) ? "Sat.A1ModJulian" : $"{step.python_inputs.TrimEnd(',', ' ')}, Sat.A1ModJulian";
+                }
+
+                GUILayout.Space(10);
+                GUILayout.Label(I18n.T("seq_python_outputs"), labelValueStyle, GUILayout.Width(115));
+                GUI.SetNextControlName($"Field_PyOutputs_{i}");
+                string prevOut = step.python_outputs ?? "";
+                string newOut = GUILayout.TextField(prevOut, GUILayout.MinWidth(110), GUILayout.Width(150), GUILayout.Height(20));
+                if (newOut != prevOut) {
+                    step.python_outputs = newOut;
+                }
+
+                GUILayout.Space(6);
+                GUILayout.Label(I18n.T("seq_python_syntax"), gridLabelStyle, GUILayout.Width(60));
+                bool isExplicit = (step.call_syntax_mode == "Explicit");
+                if (GUILayout.Button(isExplicit ? "CallPythonFunction" : "[outputs] =", tabButtonActiveStyle, GUILayout.Height(20))) {
+                    step.call_syntax_mode = isExplicit ? "Assignment" : "Explicit";
+                }
+
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+
+                GUILayout.Space(4);
+
+                // Row 3: Engineering Algorithm Quick Presets
+                GUILayout.BeginHorizontal();
+                GUILayout.Label($"<color=#facc15><b>{I18n.T("seq_python_presets_title")}</b></color>", labelValueStyle, GUILayout.Width(120));
+
+                if (GUILayout.Button(I18n.T("seq_python_preset_two_impulse"), secondaryButtonStyle, GUILayout.Height(20))) {
+                    step.python_module = "orbit_calculator";
+                    step.python_function = "compute_delta_v";
+                    step.python_inputs = "Sat.A1ModJulian, Sat.Earth.SMA, Sat.Earth.ECC";
+                    step.python_outputs = "dv_v, dv_n, dv_b";
+                    step.label = "orbit_calculator.compute_delta_v";
+                }
+                if (GUILayout.Button(I18n.T("seq_python_preset_aerobrake"), secondaryButtonStyle, GUILayout.Height(20))) {
+                    step.python_module = "guidance_control";
+                    step.python_function = "aerobrake_control";
+                    step.python_inputs = "Sat.Earth.Altitude, Sat.Earth.FPA, Sat.TotalMass";
+                    step.python_outputs = "bank_angle, throttle";
+                    step.label = "guidance_control.aerobrake_control";
+                }
+                if (GUILayout.Button(I18n.T("seq_python_preset_cart_to_kep"), secondaryButtonStyle, GUILayout.Height(20))) {
+                    step.python_module = "orbit_calculator";
+                    step.python_function = "convert_state_cartesian_to_keplerian";
+                    step.python_inputs = "Sat.X, Sat.Y, Sat.Z, Sat.VX, Sat.VY, Sat.VZ";
+                    step.python_outputs = "sma, ecc, inc, raan, aop, ta";
+                    step.label = "orbit_calculator.cart_to_kep";
+                }
+                if (GUILayout.Button(I18n.T("seq_python_preset_pert"), secondaryButtonStyle, GUILayout.Height(20))) {
+                    step.python_module = "custom_script";
+                    step.python_function = "calc_nonspherical_gravity";
+                    step.python_inputs = "Sat.X, Sat.Y, Sat.Z";
+                    step.python_outputs = "acc_x, acc_y, acc_z";
+                    step.label = "custom_script.nonspherical_gravity";
+                }
+
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+
+                GUILayout.EndVertical();
+            }
         }
 
         private string GetStepTypeBadgeText(string type) {
             switch (type) {
                 case "Propagate": return I18n.T("type_propagate");
+                case "CallPython":
+                case "CallPythonFunction": return I18n.T("type_callpython");
                 case "Vary": return I18n.T("type_vary");
                 case "Achieve": return I18n.T("type_achieve");
                 case "FiniteBurn": return I18n.T("type_finiteburn");
@@ -2857,6 +3371,11 @@ namespace KSPGMAT.UI {
             } else if (step.type == "StageSeparation") {
                 GUILayout.Space(8);
                 GUILayout.Label(I18n.ColorFormat("seq_collapsed_stage", step.separated_mass), labelValueStyle);
+            } else if (step.type == "CallPython" || step.type == "CallPythonFunction") {
+                GUILayout.Space(8);
+                string outStr = !string.IsNullOrEmpty(step.python_outputs) ? $" -> [{step.python_outputs}]" : "";
+                string modFunc = $"{step.python_module ?? "module"}.{step.python_function ?? "func"}";
+                GUILayout.Label($"<color=#38bdf8>🐍 <b>Python.{modFunc}(...){outStr}</b></color>", labelValueStyle);
             }
         }
     }

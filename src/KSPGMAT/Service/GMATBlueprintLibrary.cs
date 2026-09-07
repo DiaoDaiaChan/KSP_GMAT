@@ -637,6 +637,143 @@ EndOptimize;
 Propagate Prop({SAT_NAME}) {{SAT_NAME}.ElapsedSecs = 86400};
 "
             });
+
+            // -------------------------------------------------------------
+            // 范式 9：地月转移、三维中途修正与低月球轨道捕获 (Translunar Injection, 3D TCM & LLO Insertion)
+            // -------------------------------------------------------------
+            _blueprints.Add(new GMATBlueprintItem {
+                Id = "p9_lunar_tli_llo",
+                TitleKey = "bp_p9_title",
+                TitleDefault = "范式 9: 地月转移、3D TCM 与低月球轨道捕获 (Translunar & LLO Insertion)",
+                DescriptionKey = "bp_p9_desc",
+                DescriptionDefault = "在 3600 秒附近寻优 TLI 窗口与单次顺行点火；中途施加三维 TCM 矢量锁定 100km 近月点、赤道面 Z=0 及 0° 倾角；近月点逆行制动圆化，完美支持 Yukon SQP 优化器。",
+                Category = "LunarTransfer",
+                ScriptTemplate =
+@"%----------------------------------------------------------------------
+% 范式 9: 地月转移、3D TCM 与低月球轨道捕获 (Translunar & LLO Insertion)
+%----------------------------------------------------------------------
+Create Spacecraft {SAT_NAME};
+{SAT_NAME}.DateFormat = UTCGregorian;
+{SAT_NAME}.Epoch = '{EPOCH}';
+{SAT_NAME}.CoordinateSystem = {CENTRAL_BODY}MJ2000Eq;
+{SAT_NAME}.DisplayStateType = Cartesian;
+{SAT_NAME}.X = -5337.197780;
+{SAT_NAME}.Y = -3080.395825;
+{SAT_NAME}.Z = 2280.468724;
+{SAT_NAME}.VX = 2.828285;
+{SAT_NAME}.VY = -6.791792;
+{SAT_NAME}.VZ = -2.559760;
+{SAT_NAME}.DryMass = 1477.96;
+
+Create CoordinateSystem MoonMJ2000Eq;
+MoonMJ2000Eq.Origin = Luna;
+MoonMJ2000Eq.Axes = MJ2000Eq;
+
+Create ForceModel EarthForceModel;
+EarthForceModel.CentralBody = {CENTRAL_BODY};
+EarthForceModel.PointMasses = {{CENTRAL_BODY}, Luna, Sun};
+
+Create Propagator EarthProp;
+EarthProp.FM = EarthForceModel;
+EarthProp.Type = RungeKutta89;
+EarthProp.InitialStepSize = 60;
+EarthProp.Accuracy = 1e-11;
+EarthProp.MinStep = 0.001;
+EarthProp.MaxStep = 20000;
+
+Create ForceModel MoonForceModel;
+MoonForceModel.CentralBody = Luna;
+MoonForceModel.PointMasses = {Luna, {CENTRAL_BODY}, Sun};
+
+Create Propagator MoonProp;
+MoonProp.FM = MoonForceModel;
+MoonProp.Type = RungeKutta89;
+MoonProp.InitialStepSize = 60;
+MoonProp.Accuracy = 1e-11;
+MoonProp.MinStep = 0.001;
+MoonProp.MaxStep = 10000;
+
+Create ImpulsiveBurn TLI_Burn;
+TLI_Burn.CoordinateSystem = Local;
+TLI_Burn.Origin = {CENTRAL_BODY};
+TLI_Burn.Axes = VNB;
+TLI_Burn.Element1 = 3.138;
+
+Create ImpulsiveBurn TCM_Burn;
+TCM_Burn.CoordinateSystem = Local;
+TCM_Burn.Origin = Luna;
+TCM_Burn.Axes = VNB;
+TCM_Burn.Element1 = 0.001;
+TCM_Burn.Element2 = 0.001;
+TCM_Burn.Element3 = 0.001;
+
+Create ImpulsiveBurn LOI_Burn;
+LOI_Burn.CoordinateSystem = Local;
+LOI_Burn.Origin = Luna;
+LOI_Burn.Axes = VNB;
+LOI_Burn.Element1 = -0.820;
+
+Create Yukon Yukon1;
+Yukon1.ShowProgress = true;
+Yukon1.ReportStyle = Normal;
+Yukon1.MaximumIterations = 100;
+Yukon1.FeasibilityTolerance = 0.01;
+Yukon1.OptimalityTolerance = 0.001;
+
+Create Variable TLI_CoastTime TCM_CoastDays TotalDV;
+TLI_CoastTime = 3600.0;
+TCM_CoastDays = 1.8;
+TotalDV = 0.0;
+
+Create ReportFile MissionReport;
+MissionReport.Filename = 'Lunar_LLO_Mission_Report.txt';
+
+BeginMissionSequence;
+
+% (a) 阶段 1: 3600 秒附近 TLI 窗口寻优与单次顺行点火
+Optimize Yukon1 {SolveMode = Solve, ExitMode = SaveAndContinue};
+   Vary Yukon1(TLI_CoastTime = 3600.0, {Perturbation = 1.0, Lower = 3200.0, Upper = 4000.0, MaxStep = 50.0});
+   Vary Yukon1(TLI_Burn.Element1 = 3.138, {Perturbation = 0.0001, Lower = 3.0, Upper = 3.3, MaxStep = 0.02});
+   
+   Propagate EarthProp({SAT_NAME}) {{SAT_NAME}.ElapsedSecs = TLI_CoastTime};
+   Maneuver TLI_Burn({SAT_NAME});
+   
+   % (b) 阶段 2: 转移中途三维 TCM (V/N/B 3轴矢量优化)
+   Propagate EarthProp({SAT_NAME}) {{SAT_NAME}.ElapsedDays = TCM_CoastDays};
+   
+   Vary Yukon1(TCM_Burn.Element1 = 0.001, {Perturbation = 0.0001, Lower = -0.1, Upper = 0.1, MaxStep = 0.01});
+   Vary Yukon1(TCM_Burn.Element2 = 0.001, {Perturbation = 0.0001, Lower = -0.1, Upper = 0.1, MaxStep = 0.01});
+   Vary Yukon1(TCM_Burn.Element3 = 0.001, {Perturbation = 0.0001, Lower = -0.1, Upper = 0.1, MaxStep = 0.01});
+   Maneuver TCM_Burn({SAT_NAME});
+   
+   % 推进至月球近心点 (Periselene)
+   Propagate MoonProp({SAT_NAME}) {{SAT_NAME}.Luna.Periapsis};
+   
+   % 约束 1: 近月点高度 hp = 100 km
+   NonlinearConstraint Yukon1({SAT_NAME}.Luna.Altitude = 100.0);
+   % 约束 2: 赤道交点面 Z = 0 km
+   NonlinearConstraint Yukon1({SAT_NAME}.MoonMJ2000Eq.Z = 0.0);
+   % 约束 3: 赤道面轨道倾角 Inc = 0 deg
+   NonlinearConstraint Yukon1({SAT_NAME}.MoonMJ2000Eq.INC <= 0.1);
+   
+   % (c) 阶段 3: 近月点逆行制动点火进入低月球圆轨道 (LLO)
+   Vary Yukon1(LOI_Burn.Element1 = -0.82, {Perturbation = 0.001, Lower = -1.5, Upper = -0.3, MaxStep = 0.05});
+   Maneuver LOI_Burn({SAT_NAME});
+   
+   % 约束 4: 近月圆轨道偏心率 ECC = 0
+   NonlinearConstraint Yukon1({SAT_NAME}.Luna.ECC <= 0.005);
+   
+   % (d) 极小化总冲代价函数
+   TotalDV = abs(TLI_Burn.Element1) + sqrt(TCM_Burn.Element1^2 + TCM_Burn.Element2^2 + TCM_Burn.Element3^2) + abs(LOI_Burn.Element1);
+   Minimize Yukon1(TotalDV);
+EndOptimize;
+
+% (e) 环月轨道推演验证
+Report MissionReport {SAT_NAME}.UTCGregorian {SAT_NAME}.Luna.Altitude {SAT_NAME}.Luna.SMA {SAT_NAME}.Luna.ECC {SAT_NAME}.MoonMJ2000Eq.INC {SAT_NAME}.MoonMJ2000Eq.Z TotalDV;
+Propagate MoonProp({SAT_NAME}) {{SAT_NAME}.ElapsedDays = 2.0};
+Report MissionReport {SAT_NAME}.UTCGregorian {SAT_NAME}.Luna.Altitude {SAT_NAME}.Luna.SMA {SAT_NAME}.Luna.ECC {SAT_NAME}.MoonMJ2000Eq.INC {SAT_NAME}.MoonMJ2000Eq.Z TotalDV;
+"
+            });
         }
     }
 }

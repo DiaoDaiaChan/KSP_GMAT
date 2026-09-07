@@ -1,0 +1,37 @@
+{
+    "mission_name": "Mars Express (火星快车 B-Plane TCM 穿靶, 2003)",
+    "category": "经典历史",
+    "description": "利用全解析 STM 灵敏度矩阵微分修正，将火星到达 B 平面穿靶误差压至零",
+    "icon": "🪐",
+    "departure_body": "Earth",
+    "destination_body": "Mars",
+    "flyby_sequence": [
+        "Mars"
+    ],
+    "departure_pe_km": 200.0,
+    "departure_ap_km": 200.0,
+    "destination_pe_km": 200.0,
+    "destination_ap_km": 200.0,
+    "no_insertion_burn": true,
+    "engine_mode": 0,
+    "leg_strategies": [],
+    "flyby_strategies": [],
+    "earliest_departure_date": "02 Jun 2003 17:45:00",
+    "latest_departure_date": "02 Jun 2003 17:45:00",
+    "tof_days": [
+        206.0
+    ],
+    "min_tof_days": [],
+    "max_tof_days": [],
+    "dsm_eta_default": 0.5,
+    "low_thrust_max_thrust_n": 0.5,
+    "low_thrust_isp_s": 3000.0,
+    "spacecraft_wet_mass_kg": 1500.0,
+    "target_b_dot_t_km": 0.0,
+    "target_b_dot_r_km": 0.0,
+    "historic_launch_ut": 860336592.0,
+    "historic_total_dv_min_ms": 3600.0,
+    "historic_total_dv_max_ms": 4500.0,
+    "historic_flight_days_min": 190.0,
+    "historic_flight_days_max": 220.0
+}

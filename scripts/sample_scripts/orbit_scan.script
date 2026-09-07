@@ -1,0 +1,42 @@
+Create Spacecraft Sat0;
+Sat0.DateFormat       = UTCGregorian;
+Sat0.Epoch            = '09 Mar 1960 03:27:47.591';
+Sat0.CoordinateSystem = EarthMJ2000Eq;
+Sat0.DisplayStateType = Cartesian;
+Sat0.X                = -5337.197780;
+Sat0.Y                = -3080.395825;
+Sat0.Z                = 2280.468724;
+Sat0.VX               = 2.828285;
+Sat0.VY               = -6.791792;
+Sat0.VZ               = -2.559760;
+
+Create Spacecraft Sat;
+Sat = Sat0;
+
+Create ForceModel FM;
+FM.CentralBody = Earth;
+FM.PointMasses = {Earth, Luna, Sun};
+
+Create Propagator Prop;
+Prop.FM = FM;
+Prop.Type = RungeKutta89;
+
+Create ImpulsiveBurn TLI;
+TLI.CoordinateSystem = Local;
+TLI.Origin           = Earth;
+TLI.Axes             = VNB;
+TLI.Element1         = 3.14;
+
+Create Variable t_coast;
+Create ReportFile Rep;
+Rep.Filename = 'orbit_scan.txt';
+
+BeginMissionSequence;
+
+For t_coast = 0:600:5400;
+   Sat = Sat0;
+   Propagate Prop(Sat) {Sat.ElapsedSecs = t_coast};
+   Maneuver TLI(Sat);
+   Propagate Prop(Sat) {Sat.ElapsedDays = 4.0};
+   Report Rep t_coast Sat.Luna.RMAG;
+EndFor;

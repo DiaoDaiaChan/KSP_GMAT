@@ -77,4 +77,9 @@ temp_*.script
 # Allow GameData Release DLL
 !GameData/KSPGMAT/Plugins/KSPGMAT.dll
 
+# Native build outputs
+build_kep3/
+console_out.txt
+
 pykep_sourcecode/
+

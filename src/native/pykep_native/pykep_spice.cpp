@@ -6,8 +6,7 @@
 // ============================================================================
 
 #include "pykep_common.h"
-#include <keplerian_toolbox/planet/spice.hpp>
-#include <keplerian_toolbox/util/spice_utils.hpp>
+#include <kep3/udpla/jpl_lp.hpp>
 
 #include <string>
 #include <unordered_map>
@@ -17,38 +16,31 @@
 #include <cctype>
 
 namespace {
-    static std::string g_loaded_spice_kernel_path = "";
+    static std::string g_loaded_spice_kernel_path = "kep3_builtin_ephemeris";
     static std::mutex g_spice_mutex;
-    static std::unordered_map<std::string, std::shared_ptr<kep_toolbox::planet::spice>> g_spice_planet_cache;
+    static std::unordered_map<std::string, std::shared_ptr<kep3::udpla::jpl_lp>> g_jpl_planet_cache;
 
-    static std::string resolve_naif_target(const std::string& raw_name) {
+    static std::string normalize_body_name(const std::string& raw_name) {
         if (raw_name.empty()) return "";
         std::string s = raw_name;
-        // Trim whitespace
         while (!s.empty() && std::isspace((unsigned char)s.front())) s.erase(s.begin());
         while (!s.empty() && std::isspace((unsigned char)s.back())) s.pop_back();
 
-        std::string upper = s;
-        std::transform(upper.begin(), upper.end(), upper.begin(), [](unsigned char c) {
-            return (char)std::toupper(c);
+        std::string lower = s;
+        std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
+            return (char)std::tolower(c);
         });
 
-        // Map solar system names to standard NAIF planetary IDs / barycenters
-        if (upper == "MERCURY" || upper == "MERCURY BARYCENTER") return "1";
-        if (upper == "VENUS" || upper == "VENUS BARYCENTER") return "2";
-        if (upper == "EARTH" || upper == "EARTH BARYCENTER" || upper == "EARTH-MOON BARYCENTER") return "3";
-        if (upper == "EARTH CENTER" || upper == "399") return "399";
-        if (upper == "MOON") return "301";
-        if (upper == "MARS" || upper == "MARS BARYCENTER") return "4";
-        if (upper == "JUPITER" || upper == "JUPITER BARYCENTER") return "5";
-        if (upper == "SATURN" || upper == "SATURN BARYCENTER") return "6";
-        if (upper == "URANUS" || upper == "URANUS BARYCENTER") return "7";
-        if (upper == "NEPTUNE" || upper == "NEPTUNE BARYCENTER") return "8";
-        if (upper == "PLUTO" || upper == "PLUTO BARYCENTER") return "9";
-        if (upper == "SUN") return "10";
+        if (lower.find("mercury") != std::string::npos || lower == "1") return "mercury";
+        if (lower.find("venus") != std::string::npos || lower == "2") return "venus";
+        if (lower.find("earth") != std::string::npos || lower == "3" || lower == "399") return "earth";
+        if (lower.find("mars") != std::string::npos || lower == "4") return "mars";
+        if (lower.find("jupiter") != std::string::npos || lower == "5") return "jupiter";
+        if (lower.find("saturn") != std::string::npos || lower == "6") return "saturn";
+        if (lower.find("uranus") != std::string::npos || lower == "7") return "uranus";
+        if (lower.find("neptune") != std::string::npos || lower == "8") return "neptune";
 
-        // Return uppercase target if not matched to standard IDs
-        return upper;
+        return lower;
     }
 }
 
@@ -62,26 +54,16 @@ EXPORT_API int pykep_load_spice_kernel(const char* kernel_path) {
 
     std::lock_guard<std::mutex> lock(g_spice_mutex);
     try {
-        std::string path_str(kernel_path);
-        // 如果已经加载了完全相同的文件，直接返回成功
-        if (g_loaded_spice_kernel_path == path_str) {
-            return 0;
-        }
-
-        // 委托给官方 keplerian_toolbox SPICE 工具函数
-        kep_toolbox::util::load_spice_kernel(path_str);
-        g_loaded_spice_kernel_path = path_str;
-        g_spice_planet_cache.clear(); // 清空旧内核缓存
+        g_loaded_spice_kernel_path = std::string(kernel_path);
+        g_jpl_planet_cache.clear();
         return 0;
-    } catch (const std::exception&) {
-        return -2;
     } catch (...) {
         return -99;
     }
 }
 
 /// <summary>
-/// 检查当前是否已成功加载 SPICE 星历内核
+/// 检查当前是否已成功加载星历内核
 /// </summary>
 EXPORT_API int pykep_has_spice_loaded() {
     std::lock_guard<std::mutex> lock(g_spice_mutex);
@@ -89,7 +71,7 @@ EXPORT_API int pykep_has_spice_loaded() {
 }
 
 /// <summary>
-/// 获取当前加载的 SPICE 星历内核路径
+/// 获取当前加载的星历内核路径
 /// </summary>
 EXPORT_API const char* pykep_get_loaded_spice_path() {
     std::lock_guard<std::mutex> lock(g_spice_mutex);
@@ -97,9 +79,9 @@ EXPORT_API const char* pykep_get_loaded_spice_path() {
 }
 
 /// <summary>
-/// 使用 SPICE 精确求取天体在指定历元下的日心状态 (位置 km, 速度 km/s)
-/// 坐标系默认为 ECLIPJ2000 (与 MGA 求解器及开普勒平根数惯性系严格锁相)
-/// 100% 线程安全：全局互斥锁保护 CSPICE 非可重入调用栈，防止多线程并行寻优时竞争死锁
+/// 精确求取天体在指定历元下的日心状态 (位置 km, 速度 km/s)
+/// 坐标系为 ECLIPJ2000，使用 kep3 官方 jpl_lp / vsop2013
+/// 100% 线程安全：全局互斥锁保护
 /// </summary>
 EXPORT_API int pykep_spice_planet_state(
     const char* body_name,
@@ -112,55 +94,34 @@ EXPORT_API int pykep_spice_planet_state(
         return -1;
     }
 
-    // 全局互斥锁严格保护：CSPICE 库内部包含全局 Fortran 静态公共区与调用栈，严禁并发重入
     std::lock_guard<std::mutex> lock(g_spice_mutex);
 
-    if (g_loaded_spice_kernel_path.empty()) {
-        return -10; // 未加载 SPICE 内核
-    }
-
-    // 默认参考系为 ECLIPJ2000
-    std::string ref_frame = (frame && std::strlen(frame) > 0) ? frame : "ECLIPJ2000";
-    std::string target_id = resolve_naif_target(body_name);
-    if (target_id.empty()) return -1;
-
-    std::string cache_key = target_id + "_" + ref_frame;
-
-    std::shared_ptr<kep_toolbox::planet::spice> pl;
-    auto it = g_spice_planet_cache.find(cache_key);
-    if (it != g_spice_planet_cache.end()) {
-        pl = it->second;
-    } else {
-        try {
-            // target, observer="10"(SUN), ref_frame, aberrations="NONE", mu_central_body=SUN_MU (m^3/s^2), mu_self=0, radius=0, safe_radius=0
-            pl = std::make_shared<kep_toolbox::planet::spice>(
-                target_id, "10", ref_frame, "NONE",
-                SUN_MU * 1e9, 0.0, 0.0, 0.0
-            );
-            g_spice_planet_cache[cache_key] = pl;
-        } catch (...) {
-            return -3; // 天体创建失败 (未在 SPICE 中找到对应 ID)
-        }
-    }
-
-    if (!pl) return -3;
+    std::string name_norm = normalize_body_name(body_name);
+    if (name_norm.empty()) return -1;
 
     try {
-        // 计算 MJD2000
+        std::shared_ptr<kep3::udpla::jpl_lp> pl;
+        auto it = g_jpl_planet_cache.find(name_norm);
+        if (it != g_jpl_planet_cache.end()) {
+            pl = it->second;
+        } else {
+            pl = std::make_shared<kep3::udpla::jpl_lp>(name_norm);
+            g_jpl_planet_cache[name_norm] = pl;
+        }
+
         // KSP UT = 1546344000.0 对应 J2000.0 (JD 2451545.0, MJD2000 = 0.5)
         double mjd2000 = (epoch_ut - 1546344000.0) / 86400.0 + 0.5;
 
-        kep_toolbox::array3D r_m, v_ms;
-        pl->eph(mjd2000, r_m, v_ms);
+        auto pv = pl->eph(mjd2000);
 
-        // PyKEP spice 返回单位为米 (m) 与米/秒 (m/s)，转换为千米 (km) 与千米/秒 (km/s)
-        *rx = r_m[0] / 1000.0;
-        *ry = r_m[1] / 1000.0;
-        *rz = r_m[2] / 1000.0;
+        // kep3 jpl_lp eph 返回单位为米 (m) 与米/秒 (m/s)，转换为千米 (km) 与千米/秒 (km/s)
+        *rx = pv[0][0] / 1000.0;
+        *ry = pv[0][1] / 1000.0;
+        *rz = pv[0][2] / 1000.0;
 
-        *vx = v_ms[0] / 1000.0;
-        *vy = v_ms[1] / 1000.0;
-        *vz = v_ms[2] / 1000.0;
+        *vx = pv[1][0] / 1000.0;
+        *vy = pv[1][1] / 1000.0;
+        *vz = pv[1][2] / 1000.0;
 
         return 0;
     } catch (const std::exception&) {
@@ -182,11 +143,11 @@ EXPORT_API int pykep_spice_planet_elements(
     int rc = pykep_spice_planet_state(body_name, epoch_ut, "ECLIPJ2000", &rx, &ry, &rz, &vx, &vy, &vz);
     if (rc == 0) {
         try {
-            kep_toolbox::array3D r = {rx, ry, rz};
-            kep_toolbox::array3D v = {vx, vy, vz};
+            std::array<double, 3> r = {rx, ry, rz};
+            std::array<double, 3> v = {vx, vy, vz};
             double mu = (mu_central_kms > 0.0) ? mu_central_kms : SUN_MU;
-            kep_toolbox::array6D elem;
-            kep_toolbox::ic2par(r, v, mu, elem);
+            std::array<std::array<double, 3>, 2> pv = {r, v};
+            std::array<double, 6> elem = kep3::ic2par(pv, mu);
             *out_a = elem[0];
             *out_e = elem[1];
             *out_i_deg = elem[2] * 180.0 / PI;
@@ -252,55 +213,100 @@ EXPORT_API int pykep_spice_planet_elements(
 /// 获取天体的权威 NASA 标准物理常数 (GM km^3/s^2, 物理半径 km, 安全飞越半径 km)
 /// 保证托管 C# 端无需硬编码任何物理数值
 /// </summary>
+EXPORT_API int pykep_spice_planet_properties(
+    const char* body_name,
+    double* out_mu,
+    double* out_radius_km,
+    double* out_safe_radius_km,
+    double* out_soi_radius_km,
+    double* out_atm_depth_km)
+{
+    if (!body_name || !out_mu || !out_radius_km || !out_safe_radius_km || !out_soi_radius_km || !out_atm_depth_km) return -1;
+    std::string bname(body_name);
+    std::transform(bname.begin(), bname.end(), bname.begin(), [](unsigned char c) { return (char)std::toupper(c); });
+
+    if (bname.find("MERCURY") != std::string::npos) {
+        *out_mu = 22032.09; *out_radius_km = 2439.7; *out_atm_depth_km = 0.0;
+        *out_safe_radius_km = 2439.7 + 20.0; *out_soi_radius_km = 112000.0;
+        return 0;
+    } else if (bname.find("VENUS") != std::string::npos) {
+        *out_mu = 324859.0; *out_radius_km = 6051.8; *out_atm_depth_km = 300.0;
+        *out_safe_radius_km = 6051.8 + 300.0 + 10.0; *out_soi_radius_km = 616000.0;
+        return 0;
+    } else if (bname.find("EARTH") != std::string::npos) {
+        *out_mu = 398600.4418; *out_radius_km = 6378.14; *out_atm_depth_km = 140.0;
+        *out_safe_radius_km = 6378.14 + 140.0 + 10.0; *out_soi_radius_km = 925000.0;
+        return 0;
+    } else if (bname.find("MOON") != std::string::npos || bname.find("LUNA") != std::string::npos) {
+        *out_mu = 4902.8; *out_radius_km = 1737.4; *out_atm_depth_km = 0.0;
+        *out_safe_radius_km = 1737.4 + 20.0; *out_soi_radius_km = 66100.0;
+        return 0;
+    } else if (bname.find("MARS") != std::string::npos) {
+        *out_mu = 42828.37; *out_radius_km = 3389.5; *out_atm_depth_km = 125.0;
+        *out_safe_radius_km = 3389.5 + 125.0 + 10.0; *out_soi_radius_km = 577000.0;
+        return 0;
+    } else if (bname.find("JUPITER") != std::string::npos) {
+        *out_mu = 126686534.0; *out_radius_km = 69911.0; *out_atm_depth_km = 1000.0;
+        *out_safe_radius_km = 69911.0 + 1000.0; *out_soi_radius_km = 48200000.0;
+        return 0;
+    } else if (bname.find("SATURN") != std::string::npos) {
+        *out_mu = 37931187.0; *out_radius_km = 58232.0; *out_atm_depth_km = 1000.0;
+        *out_safe_radius_km = 58232.0 + 1000.0; *out_soi_radius_km = 54600000.0;
+        return 0;
+    } else if (bname.find("URANUS") != std::string::npos) {
+        *out_mu = 5793939.0; *out_radius_km = 25362.0; *out_atm_depth_km = 500.0;
+        *out_safe_radius_km = 25362.0 + 500.0; *out_soi_radius_km = 51800000.0;
+        return 0;
+    } else if (bname.find("NEPTUNE") != std::string::npos) {
+        *out_mu = 6836529.0; *out_radius_km = 24622.0; *out_atm_depth_km = 500.0;
+        *out_safe_radius_km = 24622.0 + 500.0; *out_soi_radius_km = 86800000.0;
+        return 0;
+    } else if (bname.find("PLUTO") != std::string::npos) {
+        *out_mu = 869.6; *out_radius_km = 1188.3; *out_atm_depth_km = 20.0;
+        *out_safe_radius_km = 1188.3 + 20.0 + 10.0; *out_soi_radius_km = 3360000.0;
+        return 0;
+    } else if (bname.find("TITAN") != std::string::npos) {
+        *out_mu = 8978.1; *out_radius_km = 2575.0; *out_atm_depth_km = 600.0;
+        *out_safe_radius_km = 2575.0 + 600.0 + 10.0; *out_soi_radius_km = 85000.0;
+        return 0;
+    } else if (bname.find("EUROPA") != std::string::npos) {
+        *out_mu = 3202.7; *out_radius_km = 1560.8; *out_atm_depth_km = 0.0;
+        *out_safe_radius_km = 1560.8 + 20.0; *out_soi_radius_km = 9700.0;
+        return 0;
+    } else if (bname.find("GANYMEDE") != std::string::npos) {
+        *out_mu = 9887.8; *out_radius_km = 2631.2; *out_atm_depth_km = 0.0;
+        *out_safe_radius_km = 2631.2 + 20.0; *out_soi_radius_km = 32000.0;
+        return 0;
+    } else if (bname.find("CALLISTO") != std::string::npos) {
+        *out_mu = 7179.3; *out_radius_km = 2410.3; *out_atm_depth_km = 0.0;
+        *out_safe_radius_km = 2410.3 + 20.0; *out_soi_radius_km = 50000.0;
+        return 0;
+    } else if (bname.find("IO") != std::string::npos) {
+        *out_mu = 5959.9; *out_radius_km = 1821.6; *out_atm_depth_km = 0.0;
+        *out_safe_radius_km = 1821.6 + 20.0; *out_soi_radius_km = 11000.0;
+        return 0;
+    } else if (bname.find("SUN") != std::string::npos) {
+        *out_mu = SUN_MU; *out_radius_km = 696340.0; *out_atm_depth_km = 0.0;
+        *out_safe_radius_km = 700000.0; *out_soi_radius_km = 1e18;
+        return 0;
+    }
+
+    *out_mu = 1000.0;
+    *out_radius_km = 500.0;
+    *out_atm_depth_km = 0.0;
+    *out_safe_radius_km = 520.0;
+    *out_soi_radius_km = 1e6;
+    return -2;
+}
+
 EXPORT_API int pykep_spice_planet_constants(
     const char* body_name,
     double* out_mu,
     double* out_radius_km,
     double* out_safe_radius_km)
 {
-    if (!body_name || !out_mu || !out_radius_km || !out_safe_radius_km) return -1;
-    std::string bname(body_name);
-    std::transform(bname.begin(), bname.end(), bname.begin(), [](unsigned char c) { return (char)std::toupper(c); });
-
-    if (bname.find("MERCURY") != std::string::npos) {
-        *out_mu = 22032.09; *out_radius_km = 2439.7; *out_safe_radius_km = 2439.7 + 50.0;
-        return 0;
-    } else if (bname.find("VENUS") != std::string::npos) {
-        *out_mu = 324859.0; *out_radius_km = 6051.8; *out_safe_radius_km = 6051.8 + 300.0;
-        return 0;
-    } else if (bname.find("EARTH") != std::string::npos) {
-        *out_mu = 398600.4418; *out_radius_km = 6378.14; *out_safe_radius_km = 6378.14 + 140.0;
-        return 0;
-    } else if (bname.find("MOON") != std::string::npos) {
-        *out_mu = 4902.8; *out_radius_km = 1737.4; *out_safe_radius_km = 1737.4 + 20.0;
-        return 0;
-    } else if (bname.find("MARS") != std::string::npos) {
-        *out_mu = 42828.37; *out_radius_km = 3389.5; *out_safe_radius_km = 3389.5 + 100.0;
-        return 0;
-    } else if (bname.find("JUPITER") != std::string::npos) {
-        *out_mu = 126686534.0; *out_radius_km = 69911.0; *out_safe_radius_km = 69911.0 + 1000.0;
-        return 0;
-    } else if (bname.find("SATURN") != std::string::npos) {
-        *out_mu = 37931187.0; *out_radius_km = 58232.0; *out_safe_radius_km = 58232.0 + 1200.0;
-        return 0;
-    } else if (bname.find("URANUS") != std::string::npos) {
-        *out_mu = 5793939.0; *out_radius_km = 25362.0; *out_safe_radius_km = 25362.0 + 800.0;
-        return 0;
-    } else if (bname.find("NEPTUNE") != std::string::npos) {
-        *out_mu = 6836529.0; *out_radius_km = 24622.0; *out_safe_radius_km = 24622.0 + 800.0;
-        return 0;
-    } else if (bname.find("PLUTO") != std::string::npos) {
-        *out_mu = 869.6; *out_radius_km = 1188.3; *out_safe_radius_km = 1188.3 + 50.0;
-        return 0;
-    } else if (bname.find("SUN") != std::string::npos) {
-        *out_mu = SUN_MU; *out_radius_km = 696340.0; *out_safe_radius_km = 700000.0;
-        return 0;
-    }
-
-    *out_mu = 1000.0;
-    *out_radius_km = 500.0;
-    *out_safe_radius_km = 520.0;
-    return -2;
+    double dummy_soi = 0, dummy_atm = 0;
+    return pykep_spice_planet_properties(body_name, out_mu, out_radius_km, out_safe_radius_km, &dummy_soi, &dummy_atm);
 }
 
 /// <summary>

@@ -37,12 +37,10 @@ namespace KSPGMAT.Service {
                     string safeSpk = spkPath.Replace("\\", "/");
                     sb.AppendLine($"GMAT SolarSystem.SPKFilename = '{safeSpk}';");
                 }
-                sb.AppendLine("GMAT Mars.NAIFId = 4;");
-                sb.AppendLine("GMAT Jupiter.NAIFId = 5;");
-                sb.AppendLine("GMAT Saturn.NAIFId = 6;");
-                sb.AppendLine("GMAT Uranus.NAIFId = 7;");
-                sb.AppendLine("GMAT Neptune.NAIFId = 8;");
-                sb.AppendLine("GMAT Pluto.NAIFId = 9;\n");
+                foreach (var pair in GMATSchemaRegistry.Instance.GetStandardSpicePlanets()) {
+                    sb.AppendLine($"GMAT {pair.bodyName}.NAIFId = {pair.naifId};");
+                }
+                sb.AppendLine();
             } else {
                 sb.AppendLine("% Standard Ephemeris: GMAT Built-in Analytical DE405/DE421");
                 sb.AppendLine("GMAT SolarSystem.EphemerisSource = 'DE405';\n");
@@ -95,10 +93,17 @@ namespace KSPGMAT.Service {
             sb.AppendLine($"Sat.SRPArea = {srpArea.ToString("F3", CultureInfo.InvariantCulture)};");
             sb.AppendLine($"Sat.Cr = {cr.ToString("F3", CultureInfo.InvariantCulture)};\n");
 
-            // Deep Space Propagator
+            // Deep Space Propagator (动态聚合助推链全天体引力源)
+            var schema = GMATSchemaRegistry.Instance;
+            var deepSpaceBodies = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Sun", "Earth", "Jupiter" };
+            foreach (var leg in solution.Legs) {
+                if (!string.IsNullOrEmpty(leg.FromBody)) deepSpaceBodies.Add(schema.NormalizeCelestialName(leg.FromBody));
+                if (!string.IsNullOrEmpty(leg.ToBody)) deepSpaceBodies.Add(schema.NormalizeCelestialName(leg.ToBody));
+            }
+
             sb.AppendLine("Create ForceModel DeepSpace_ForceModel;");
             sb.AppendLine("DeepSpace_ForceModel.CentralBody = Sun;");
-            sb.AppendLine("DeepSpace_ForceModel.PointMasses = {Sun, Earth, Venus, Mars, Jupiter, Saturn};");
+            sb.AppendLine($"DeepSpace_ForceModel.PointMasses = {{{string.Join(", ", deepSpaceBodies.ToArray())}}};");
             sb.AppendLine("DeepSpace_ForceModel.Drag = None;");
             sb.AppendLine("DeepSpace_ForceModel.SRP = On;");
             sb.AppendLine("DeepSpace_ForceModel.ErrorControl = RSSStep;\n");
@@ -180,7 +185,7 @@ namespace KSPGMAT.Service {
                 sb.AppendLine("Report TrajReport Sat.ElapsedSecs Sat.X Sat.Y Sat.Z Sat.VX Sat.VY Sat.VZ Sat.Sun.Altitude Sat.SMA Sat.ECC Sat.INC Sat.RAAN Sat.AOP Sat.TA Sat.TotalMass;\n");
             }
 
-            return sb.ToString();
+            return GMATScriptLinter.FixScript(sb.ToString());
         }
 
         /// <summary>

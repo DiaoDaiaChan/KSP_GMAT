@@ -173,6 +173,25 @@ namespace KSPGMAT.UI {
         private string planetPickerSearch = "";
         private bool showCsSecondaryPicker = false;
         private bool showCsHelpTooltip = false;
+
+        // Sub-Window 8: Flight Telemetry Details Modal (航段动力学遥测明细弹窗)
+        private bool showTelemetryModal = false;
+        private Rect telemetryWindowRect = new Rect(Screen.width * 0.25f, Screen.height * 0.15f, 780, 560);
+        private int telemetrySelectedStepIndex = 0;
+        private Vector2 telemetryScrollPos = Vector2.zero;
+
+        // Sub-Window 9: Solution Astrodynamics Details Modal (转移方案全量动力学明细独立弹窗)
+        private bool showSolutionDetailModal = false;
+        private MGASolution detailModalSolution = null;
+        private Rect solutionDetailWindowRect = new Rect(Screen.width * 0.18f, Screen.height * 0.12f, 880, 620);
+        private Vector2 solutionDetailScrollPos = Vector2.zero;
+
+        // Sub-Window 6: MGA 历史任务与统一配置库弹出选择器 (History Mission Picker Modal)
+        private bool showHistoryMissionPickerModal = false;
+        private Rect historyMissionPickerWindowRect = new Rect(Screen.width * 0.25f, Screen.height * 0.15f, 660, 560);
+        private string historyMissionSearch = "";
+        private string historyMissionCategory = "全部";
+        private Vector2 historyMissionScrollPos = Vector2.zero;
         private Rect targeterSetupWindowRect;
         private int editingTargetStepIndex = -1;
         private string wizardDcName = "DefaultDC";
@@ -212,6 +231,12 @@ namespace KSPGMAT.UI {
         private int draggedStepIndex = -1;
         private int stepToMoveUp = -1;
         private int stepToMoveDown = -1;
+        private bool isMouseDraggingStep = false;
+        private Vector2 dragStartMousePos = Vector2.zero;
+        private Vector2 dragCurrentMousePos = Vector2.zero;
+        private int dragHoverDropIndex = -1;
+        private int draggedGroupItemCount = 1;
+        private string draggedItemTitle = "";
 
         // Propagator names and labels
         private static readonly string[] PropagatorNames = new string[] {
@@ -236,6 +261,8 @@ namespace KSPGMAT.UI {
         private GUIStyle nestedCardBoxStyle;
         private GUIStyle targetGroupBoxStyle;
         private GUIStyle targetGroupHoverBoxStyle;
+        private GUIStyle optimizeGroupBoxStyle;
+        private GUIStyle optimizeGroupHoverBoxStyle;
         private GUIStyle stepHoverBoxStyle;
         private GUIStyle stepSolvingBoxStyle;
         private GUIStyle stepDraggingBoxStyle;
@@ -260,6 +287,7 @@ namespace KSPGMAT.UI {
         private GUIStyle pillStageStyle;
         private GUIStyle pillTargetStyle;
         private GUIStyle pillEndTargetStyle;
+        private GUIStyle pillEndOptStyle;
         private GUIStyle pillGenericStyle;
         private GUIStyle badgeDarkStyle;
         private GUIStyle numericInputStyle;
@@ -323,6 +351,11 @@ namespace KSPGMAT.UI {
                 cachedStages = MechJebInterop.GetStages(v);
             }
 
+            // MGA 60 FPS 连续星际巡航动画与平滑步进过渡 (动态时间、行星公转与航天器轨迹联动)
+            if (visible && (activeTab == 2 || activeTab == 3)) {
+                UpdateMgaAnimationTick();
+            }
+
             if (isPropagating) {
                 float elapsed = Time.realtimeSinceStartup - solveStartTime;
                 solveTotalTime = elapsed;
@@ -384,6 +417,7 @@ namespace KSPGMAT.UI {
             propagatorConfigWindowRect = new Rect(initX + 25, initY + 20, Mathf.Min(860f, screenW - 50), Mathf.Min(640f, screenH - 50));
             paramPickerWindowRect = new Rect(initX + 50, initY + 40, Mathf.Min(720f, screenW - 100), Mathf.Min(560f, screenH - 100));
             targeterSetupWindowRect = new Rect(initX + 60, initY + 50, Mathf.Min(680f, screenW - 120), Mathf.Min(540f, screenH - 120));
+            apiInspectorWindowRect = new Rect(initX + 20, initY + 20, Mathf.Min(1100f, screenW - 40), Mathf.Min(760f, screenH - 40));
 
             windowInitialized = true;
         }
@@ -677,6 +711,46 @@ namespace KSPGMAT.UI {
                     GUILayout.Width(planetPickerWindowRect.width), GUILayout.Height(planetPickerWindowRect.height));
             }
 
+            if (showHistoryMissionPickerModal) {
+                if (historyMissionPickerWindowRect.width < 500 || historyMissionPickerWindowRect.height < 450) {
+                    float mw = Mathf.Clamp(Screen.width * 0.55f, 600f, 820f);
+                    float mh = Mathf.Clamp(Screen.height * 0.68f, 520f, 750f);
+                    historyMissionPickerWindowRect = new Rect((Screen.width - mw) / 2, (Screen.height - mh) / 2, mw, mh);
+                }
+                historyMissionPickerWindowRect = GUILayout.Window(982309, historyMissionPickerWindowRect, DrawHistoryMissionPickerWindow, "", windowStyle,
+                    GUILayout.Width(historyMissionPickerWindowRect.width), GUILayout.Height(historyMissionPickerWindowRect.height));
+            }
+
+            if (showApiInspectorModal) {
+                if (apiInspectorWindowRect.width < 500 || apiInspectorWindowRect.height < 450) {
+                    float iw = Mathf.Clamp(Screen.width * 0.76f, 960f, 1280f);
+                    float ih = Mathf.Clamp(Screen.height * 0.82f, 620f, 880f);
+                    apiInspectorWindowRect = new Rect((Screen.width - iw) / 2, (Screen.height - ih) / 2, iw, ih);
+                }
+                apiInspectorWindowRect = GUILayout.Window(982310, apiInspectorWindowRect, DrawApiInspectorWindow, "", windowStyle,
+                    GUILayout.Width(apiInspectorWindowRect.width), GUILayout.Height(apiInspectorWindowRect.height));
+            }
+
+            if (showTelemetryModal) {
+                if (telemetryWindowRect.width < 500 || telemetryWindowRect.height < 400) {
+                    float tw = Mathf.Clamp(Screen.width * 0.58f, 650f, 900f);
+                    float th = Mathf.Clamp(Screen.height * 0.70f, 520f, 750f);
+                    telemetryWindowRect = new Rect((Screen.width - tw) / 2, (Screen.height - th) / 2, tw, th);
+                }
+                telemetryWindowRect = GUILayout.Window(982315, telemetryWindowRect, DrawTelemetryModalWindow, "", windowStyle,
+                    GUILayout.Width(telemetryWindowRect.width), GUILayout.Height(telemetryWindowRect.height));
+            }
+
+            if (showSolutionDetailModal && detailModalSolution != null) {
+                if (solutionDetailWindowRect.width < 500 || solutionDetailWindowRect.height < 400) {
+                    float sw = Mathf.Clamp(Screen.width * 0.65f, 750f, 1050f);
+                    float sh = Mathf.Clamp(Screen.height * 0.72f, 550f, 800f);
+                    solutionDetailWindowRect = new Rect((Screen.width - sw) / 2, (Screen.height - sh) / 2, sw, sh);
+                }
+                solutionDetailWindowRect = GUILayout.Window(982316, solutionDetailWindowRect, DrawSolutionDetailWindow, "", windowStyle,
+                    GUILayout.Width(solutionDetailWindowRect.width), GUILayout.Height(solutionDetailWindowRect.height));
+            }
+
             // Script Push Modal unified into Tab 1 Built-in IDE
 
             if (intelliSenseOpen) {
@@ -696,7 +770,17 @@ namespace KSPGMAT.UI {
             }
         }
 
+        private int _lastActiveTab = -1;
+
         private void DrawMainWindow(int windowID) {
+            // 每次进入 MGA 界面 (Tab 3 从其他页面切入，或主窗口刚刚打开进入 MGA)，自动同步当前游戏真实时刻 (如 1951 年)
+            if (activeTab != _lastActiveTab) {
+                if (activeTab == 3 && _lastActiveTab != 3) {
+                    SyncMgaWithCurrentGameTime(true);
+                }
+                _lastActiveTab = activeTab;
+            }
+
             DrawTopBar();
             DrawTabBar();
 
@@ -757,7 +841,12 @@ namespace KSPGMAT.UI {
             string statusIcon = GMATClient.IsConnected ? I18n.T("status_online") : I18n.T("status_offline");
             GUILayout.Label($"<color={statusColor}><b>{statusIcon}</b></color>", labelValueStyle);
 
-            GUILayout.Space(10);
+            GUILayout.Space(8);
+            if (GUILayout.Button(I18n.T("btn_api_inspector"), secondaryButtonStyle, GUILayout.Height(22))) {
+                OpenApiInspector();
+            }
+
+            GUILayout.Space(6);
             if (GUILayout.Button(isMaximized ? I18n.T("btn_restore") : I18n.T("btn_maximize"), secondaryButtonStyle, GUILayout.Width(58), GUILayout.Height(22))) {
                 ToggleMaximize();
             }
@@ -775,7 +864,12 @@ namespace KSPGMAT.UI {
             for (int i = 0; i < tabs.Length; i++) {
                 bool isSelected = (activeTab == i);
                 if (GUILayout.Button(tabs[i], isSelected ? tabButtonActiveStyle : tabButtonStyle, GUILayout.Height(28))) {
-                    activeTab = i;
+                    if (activeTab != i) {
+                        activeTab = i;
+                        if (activeTab == 3) {
+                            SyncMgaWithCurrentGameTime(true);
+                        }
+                    }
                 }
                 if (Event.current.type == EventType.Repaint && isSelected) {
                     Rect r = GUILayoutUtility.GetLastRect();

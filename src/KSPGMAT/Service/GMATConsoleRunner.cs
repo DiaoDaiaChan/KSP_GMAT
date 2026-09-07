@@ -80,6 +80,15 @@ namespace KSPGMAT.Service {
                     foreach (var df in Directory.GetFiles(outputDir, "DifferentialCorrector*.data")) {
                         try { File.Delete(df); } catch {}
                     }
+                    foreach (var yf in Directory.GetFiles(outputDir, "Yukon*.data")) {
+                        try { File.Delete(yf); } catch {}
+                    }
+                    foreach (var ff in Directory.GetFiles(outputDir, "fmincon*.data")) {
+                        try { File.Delete(ff); } catch {}
+                    }
+                    foreach (var rf in Directory.GetFiles(outputDir, "StepReport_*.txt")) {
+                        try { File.Delete(rf); } catch {}
+                    }
 
                     // Write UTF-8 No BOM timestamped script & latest copy
                     File.WriteAllText(scriptFile, scriptContent, new UTF8Encoding(false));
@@ -121,17 +130,18 @@ namespace KSPGMAT.Service {
 
                         // Error formatting and diagnostics extraction
                         bool hasTargetFail = stdout.Contains("Targeting failed to converge");
+                        bool hasOptFail = stdout.Contains("failed to converge");
                         bool hasScriptError = stdout.Contains("**** ERROR ****") || stdout.Contains("Could not read script") || stdout.Contains("Console Application Execution Failed");
-                        bool hasCompletedMarker = stdout.Contains("Mission run completed") || stdout.Contains("The Targeter converged!") || stdout.Contains("Targeting Completed in");
+                        bool hasCompletedMarker = stdout.Contains("Mission run completed") || stdout.Contains("The Targeter converged!") || stdout.Contains("Targeting Completed in") || stdout.Contains("Optimization terminated");
 
-                        result.success = (exitCode == 0 && !hasTargetFail && !hasScriptError && (result.trajectory.Count > 0 || hasCompletedMarker));
+                        result.success = (exitCode == 0 && !hasTargetFail && !hasOptFail && !hasScriptError && (result.trajectory.Count > 0 || hasCompletedMarker));
                         if (!result.success) {
                             var sbErr = new StringBuilder();
                             string firstShortErr = null;
                             var outLines = stdout.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
                             foreach (var l in outLines) {
                                 string tl = l.Trim();
-                                if (tl.Contains("**** ERROR ****") || tl.Contains("Exception") || tl.Contains("Targeting failed") || tl.Contains("Rvector error") || tl.Contains("Could not read script") || tl.Contains("Execution Failed")) {
+                                if (tl.Contains("**** ERROR ****") || tl.Contains("Exception") || tl.Contains("Targeting failed") || tl.Contains("failed to converge") || tl.Contains("Rvector error") || tl.Contains("Could not read script") || tl.Contains("Execution Failed")) {
                                     sbErr.AppendLine(tl);
                                     if (firstShortErr == null && (tl.Contains("ERROR") || tl.Contains("Exception") || tl.Contains("Targeting failed"))) {
                                         var m = Regex.Match(tl, @"(?:Exception:\s*|\*\*\*\*\s*)([^:]+)");

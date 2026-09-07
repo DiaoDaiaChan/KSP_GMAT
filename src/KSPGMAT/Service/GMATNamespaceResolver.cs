@@ -21,6 +21,20 @@ namespace KSPGMAT.Service {
             List<string> allCraft = GMATParameterRegistry.GetAllSpacecraft(vessel);
 
             // =========================================================================
+            // 0. PYTHON NATIVE API & FUNCTIONS NAMESPACE (e.g. "Python.orbit_calculator", "Python.gmatpy")
+            // =========================================================================
+            if (q.StartsWith("Python.", StringComparison.OrdinalIgnoreCase)) {
+                string pySub = q.Substring("Python.".Length).Trim();
+                var pyRes = GMATSchemaRegistry.Instance.SearchCapabilities(pySub, "funcs", 20);
+                for (int p = 0; p < pyRes.Count; p++) {
+                    var pf = pyRes[p];
+                    string insert = $"Python.{pf.title}";
+                    items.Add(new IntelliSenseItem(insert, pf.title, "Python", pf.doc ?? pf.subtitle, IntelliSenseKind.Function));
+                }
+                if (items.Count > 0) return items;
+            }
+
+            // =========================================================================
             // 1. MULTI-LEVEL DOT SYNTAX (e.g. "Sat.Earth.SMA", "Sat.EarthMoonRot.Z", "Sat.RL10.ThrustDirection1")
             // =========================================================================
             if (q.Contains(".")) {
@@ -129,12 +143,7 @@ namespace KSPGMAT.Service {
                         AddMatchingParams(items, GMATParamCatalog.ExtremumEvents, $"{cr}.{actBody}", rhsSingle, filterFlags, IntelliSenseKind.Parameter);
                     }
 
-                    // B5. Coordinate System Cartesian Parameters (Sat.EarthMJ2000Eq.Z, Sat.EarthMoonRot.Z)
-                    items.Add(new IntelliSenseItem($"{cr}.EarthMJ2000Eq.VZ", "EarthMJ2000Eq.VZ", "[Km/s]", I18n.T("ns_j2000_vz_doc"), IntelliSenseKind.Parameter, 0.0, 0.001));
-                    items.Add(new IntelliSenseItem($"{cr}.EarthMJ2000Eq.Z", "EarthMJ2000Eq.Z", "[Km]", I18n.T("ns_j2000_z_doc"), IntelliSenseKind.Parameter, 0.0, 0.01));
-                    items.Add(new IntelliSenseItem($"{cr}.EarthMoonRot.Z", "EarthMoonRot.Z", "[Km]", I18n.T("ns_emr_z_doc"), IntelliSenseKind.Parameter, 0.0, 0.01));
-
-                    // B6. Spacecraft Direct Physical Hardware Properties (Mass, Cd, Cr, Time)
+                    // B5. Spacecraft Direct Physical Hardware Properties (Mass, Cd, Cr, Time)
                     AddMatchingParams(items, GMATParamCatalog.SpacecraftHardware, cr, rhsSingle, filterFlags, IntelliSenseKind.Parameter);
 
                     // B7. Attitude & Orientation (Q1~Q4, Euler)
@@ -194,10 +203,26 @@ namespace KSPGMAT.Service {
 
             // 2d. Direct Keplerian Elements if partially matching (SMA, INC, ECC...) 基线1.3: 前缀经 SSOT 动态获取
             string craft = GMATStateManager.Current.GetSpacecraftName();
-            string craftEarth = GMATStateManager.Current.GetQualifiedSpacecraftProperty("Earth");
+            string actBodyRoot = (vessel != null && vessel.mainBody != null) ? GMATParameterRegistry.MapBodyName(vessel.mainBody.name) : "Earth";
+            string craftCurrentBody = GMATStateManager.Current.GetQualifiedSpacecraftProperty(actBodyRoot);
             AddMatchingParams(items, GMATParamCatalog.DirectKeplerian, craft, qLower, filterFlags, IntelliSenseKind.Parameter);
-            AddMatchingParams(items, GMATParamCatalog.SphericalAndPlanetodetic, craftEarth, qLower, filterFlags, IntelliSenseKind.Parameter);
-            AddMatchingParams(items, GMATParamCatalog.HyperbolicAndBPlane, craftEarth, qLower, filterFlags, IntelliSenseKind.Parameter);
+            AddMatchingParams(items, GMATParamCatalog.SphericalAndPlanetodetic, craftCurrentBody, qLower, filterFlags, IntelliSenseKind.Parameter);
+            AddMatchingParams(items, GMATParamCatalog.HyperbolicAndBPlane, craftCurrentBody, qLower, filterFlags, IntelliSenseKind.Parameter);
+
+            // 2e. GMAT Official API Classes & Native Solvers (for IDE/Script code completions)
+            if (!string.IsNullOrEmpty(q) && q.Length >= 2 && !q.Contains(".")) {
+                var classMatches = GMATSchemaRegistry.Instance.SearchCapabilities(q, "classes", 10);
+                for (int i = 0; i < classMatches.Count; i++) {
+                    var cm = classMatches[i];
+                    items.Add(new IntelliSenseItem(
+                        cm.insertSnippet ?? cm.title,
+                        cm.title,
+                        cm.signature ?? "API",
+                        cm.doc ?? cm.subtitle,
+                        IntelliSenseKind.Solver
+                    ));
+                }
+            }
 
             return items;
         }

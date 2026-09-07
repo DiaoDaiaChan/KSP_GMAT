@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Text;
 using KSPGMAT.Model;
 
@@ -14,7 +15,15 @@ namespace KSPGMAT.Service {
             var sc = state.Spacecraft;
             // 基线 1.3: 航天器标准名称必须经 SSOT 构造器获取，杜绝硬编码 "Sat"
             string satName = state.GetSpacecraftName();
-            string cBody = !string.IsNullOrEmpty(centralBodyOverride) ? centralBodyOverride : (!string.IsNullOrEmpty(sc.CentralBody) ? sc.CentralBody : "Earth");
+            string defaultBody = vessel?.mainBody?.name;
+            if (string.IsNullOrEmpty(defaultBody)) {
+                try {
+                    defaultBody = FlightGlobals.ActiveVessel?.mainBody?.name ?? FlightGlobals.currentMainBody?.name ?? "Earth";
+                } catch {
+                    defaultBody = "Earth";
+                }
+            }
+            string cBody = !string.IsNullOrEmpty(centralBodyOverride) ? centralBodyOverride : (!string.IsNullOrEmpty(sc.CentralBody) ? sc.CentralBody : defaultBody);
 
             // Ephemeris & Spacecraft Header
             sb.AppendLine("% -------------------------------------------------------------");
@@ -29,12 +38,10 @@ namespace KSPGMAT.Service {
                     string safeSpk = spkPath.Replace("\\", "/");
                     sb.AppendLine($"GMAT SolarSystem.SPKFilename = '{safeSpk}';");
                 }
-                sb.AppendLine("GMAT Mars.NAIFId = 4;");
-                sb.AppendLine("GMAT Jupiter.NAIFId = 5;");
-                sb.AppendLine("GMAT Saturn.NAIFId = 6;");
-                sb.AppendLine("GMAT Uranus.NAIFId = 7;");
-                sb.AppendLine("GMAT Neptune.NAIFId = 8;");
-                sb.AppendLine("GMAT Pluto.NAIFId = 9;");
+                var schemaReg = state.Schema ?? GMATSchemaRegistry.Instance;
+                foreach (var pair in schemaReg.GetStandardSpicePlanets()) {
+                    sb.AppendLine($"GMAT {pair.bodyName}.NAIFId = {pair.naifId};");
+                }
             }
             sb.AppendLine();
             sb.AppendLine($"Create Spacecraft {satName};");
@@ -53,6 +60,20 @@ namespace KSPGMAT.Service {
             sb.AppendLine($"{satName}.Cd = {sc.Cd.ToString("G", CultureInfo.InvariantCulture)};");
             sb.AppendLine($"{satName}.Cr = {sc.Cr.ToString("G", CultureInfo.InvariantCulture)};");
             sb.AppendLine($"{satName}.SRPArea = {sc.SRPArea.ToString("G", CultureInfo.InvariantCulture)};");
+
+            // 动态输出来自原生脚本的扩展属性 (如 NAIFId, OrbitColor, ModelFile 等)
+            if (sc.ExtendedProperties != null && sc.ExtendedProperties.Count > 0) {
+                var standardFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
+                    "DateFormat", "Epoch", "CoordinateSystem", "DisplayStateType",
+                    "X", "Y", "Z", "VX", "VY", "VZ", "DryMass", "DragArea", "Cd", "Cr", "SRPArea",
+                    "Tanks", "Thrusters"
+                };
+                foreach (var kvp in sc.ExtendedProperties) {
+                    if (!standardFields.Contains(kvp.Key) && !string.IsNullOrWhiteSpace(kvp.Value)) {
+                        sb.AppendLine($"{satName}.{kvp.Key} = {kvp.Value};");
+                    }
+                }
+            }
             sb.AppendLine();
 
             // Tanks
@@ -128,6 +149,110 @@ namespace KSPGMAT.Service {
             sb.AppendLine($"{satName}.Thrusters = {{{string.Join(", ", thrusterNames.ToArray())}}};");
             sb.AppendLine();
 
+            // -------------------------------------------------------------
+            // Coordinate Systems (Auto-detected & Synthesized for GMAT)
+            // -------------------------------------------------------------
+            HashSet<string> declaredCoords = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var schema = state.Schema ?? GMATSchemaRegistry.Instance;
+            declaredCoords.Add("Local");
+
+            HashSet<string> requiredCoords = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (!string.IsNullOrEmpty(sc.CoordinateSystem)) requiredCoords.Add(sc.CoordinateSystem);
+
+            // 自动推断或提取需要输出的 OrbitView，并将其所需坐标系预先登记到 requiredCoords
+            var targetOrbitViews = ResolveOrSynthesizeOrbitViews(satName, cBody, steps, state);
+            foreach (var ov in targetOrbitViews) {
+                if (!string.IsNullOrEmpty(ov.CoordinateSystem)) requiredCoords.Add(ov.CoordinateSystem);
+            }
+            if (steps != null) {
+                foreach (var st in steps) {
+                    if (!string.IsNullOrEmpty(st.burn_coordinate_system)) requiredCoords.Add(st.burn_coordinate_system);
+                    string combined = $"{st.expression} {st.constraint_lhs} {st.achieve_param} {st.stop_type} {st.subscriber_name}";
+                    if (st.stop_conditions != null) {
+                        foreach (var scnd in st.stop_conditions) combined += " " + scnd.parameter;
+                    }
+                    var csMatches = System.Text.RegularExpressions.Regex.Matches(combined, @"\b([A-Za-z0-9_]+(?:MJ2000Eq|MJ2000Ec|Rot))\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                    foreach (System.Text.RegularExpressions.Match cm in csMatches) {
+                        requiredCoords.Add(cm.Groups[1].Value);
+                    }
+                }
+            }
+            if (state.CoordinateSystems != null) {
+                foreach (var cs in state.CoordinateSystems) {
+                    if (!string.IsNullOrEmpty(cs.name)) requiredCoords.Add(cs.name);
+                }
+            }
+            if (GMATParameterRegistry.UserCoordinateSystems != null) {
+                foreach (var ucs in GMATParameterRegistry.UserCoordinateSystems) {
+                    if (!string.IsNullOrEmpty(ucs.name)) requiredCoords.Add(ucs.name);
+                }
+            }
+
+            foreach (var csName in requiredCoords) {
+                if (declaredCoords.Contains(csName)) continue;
+                if (schema.IsDefaultBuiltinCoordSystem(csName)) {
+                    declaredCoords.Add(csName);
+                    continue;
+                }
+                declaredCoords.Add(csName);
+
+                var stateCs = state.CoordinateSystems?.Find(c => c.name.Equals(csName, StringComparison.OrdinalIgnoreCase));
+                var ucs = stateCs ?? GMATParameterRegistry.UserCoordinateSystems?.Find(c => c.name.Equals(csName, StringComparison.OrdinalIgnoreCase));
+                if (ucs != null && ucs.axes == "ObjectReferenced") {
+                    sb.AppendLine($"Create CoordinateSystem {csName};");
+                    sb.AppendLine($"{csName}.Origin = {ucs.origin};");
+                    sb.AppendLine($"{csName}.Axes = ObjectReferenced;");
+                    sb.AppendLine($"{csName}.XAxis = {ucs.xAxis};");
+                    sb.AppendLine($"{csName}.ZAxis = {ucs.zAxis};");
+                    sb.AppendLine($"{csName}.Primary = {ucs.primary};");
+                    sb.AppendLine($"{csName}.Secondary = {ucs.secondary};");
+                    sb.AppendLine();
+                } else if (ucs != null && !string.IsNullOrEmpty(ucs.axes)) {
+                    sb.AppendLine($"Create CoordinateSystem {csName};");
+                    sb.AppendLine($"{csName}.Origin = {ucs.origin};");
+                    sb.AppendLine($"{csName}.Axes = {ucs.axes};");
+                    sb.AppendLine();
+                } else {
+                    // 动态派生坐标系：剥离已知轴系后缀（MJ2000Eq, MJ2000Ec, Fixed, ICRF 等）或 Rot
+                    bool synthesized = false;
+                    string[] standardAxes = new[] { "MJ2000Eq", "MJ2000Ec", "Fixed", "ICRF", "Topocentric" };
+                    foreach (var axis in standardAxes) {
+                        if (csName.EndsWith(axis, StringComparison.OrdinalIgnoreCase)) {
+                            string bName = csName.Substring(0, csName.Length - axis.Length);
+                            string orig = schema.NormalizeCelestialName(bName);
+                            sb.AppendLine($"Create CoordinateSystem {csName};");
+                            sb.AppendLine($"{csName}.Origin = {orig};");
+                            sb.AppendLine($"{csName}.Axes = {axis};");
+                            sb.AppendLine();
+                            synthesized = true;
+                            break;
+                        }
+                    }
+
+                    if (!synthesized && csName.EndsWith("Rot", StringComparison.OrdinalIgnoreCase)) {
+                        // 动态解析两体旋转坐标系，例如 EarthMoonRot -> Primary=Earth, Secondary=Luna
+                        ParseObjectReferencedBodies(csName, cBody, out string primary, out string secondary);
+                        sb.AppendLine($"Create CoordinateSystem {csName};");
+                        sb.AppendLine($"{csName}.Origin = {secondary};");
+                        sb.AppendLine($"{csName}.Axes = ObjectReferenced;");
+                        sb.AppendLine($"{csName}.XAxis = R;");
+                        sb.AppendLine($"{csName}.ZAxis = N;");
+                        sb.AppendLine($"{csName}.Primary = {primary};");
+                        sb.AppendLine($"{csName}.Secondary = {secondary};");
+                        sb.AppendLine();
+                    }
+                }
+            }
+
+            // 输出脚本中未被标准模型识别的原生头部块 (SPICE 配置、特殊系统选项等)
+            if (state.CustomHeaderBlocks != null && state.CustomHeaderBlocks.Count > 0) {
+                sb.AppendLine("% Custom Header Declarations from Native Script");
+                foreach (var ch in state.CustomHeaderBlocks) {
+                    if (!string.IsNullOrWhiteSpace(ch)) sb.AppendLine(ch);
+                }
+                sb.AppendLine();
+            }
+
             // Finite Burns
             HashSet<string> declaredFiniteBurns = new HashSet<string>();
             if (steps != null) {
@@ -147,52 +272,179 @@ namespace KSPGMAT.Service {
                 }
             }
 
-            // Impulsive Burns
+            // Impulsive Burns (SSOT + Step Scan & Auto-Synthesis)
+            HashSet<string> declaredBurns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             if (state.Burns != null && state.Burns.Count > 0) {
                 for (int ib = 0; ib < state.Burns.Count; ib++) {
                     var imp = state.Burns[ib];
                     if (imp.Type == "ImpulsiveBurn" || !string.IsNullOrEmpty(imp.Name)) {
                         string ibName = GMATParameterRegistry.SanitizeGmatIdentifier(imp.Name, $"Impulsive{ib + 1}");
-                        sb.AppendLine($"Create ImpulsiveBurn {ibName};");
-                        sb.AppendLine($"{ibName}.CoordinateSystem = Local;");
-                        sb.AppendLine($"{ibName}.Origin = {imp.Origin ?? cBody};");
-                        sb.AppendLine($"{ibName}.Axes = {imp.Axes ?? "VNB"};");
-                        sb.AppendLine($"{ibName}.Element1 = {imp.Element1.ToString("F4", CultureInfo.InvariantCulture)};");
-                        sb.AppendLine($"{ibName}.Element2 = {imp.Element2.ToString("F4", CultureInfo.InvariantCulture)};");
-                        sb.AppendLine($"{ibName}.Element3 = {imp.Element3.ToString("F4", CultureInfo.InvariantCulture)};");
-                        sb.AppendLine($"{ibName}.Isp = {imp.Isp.ToString("F1", CultureInfo.InvariantCulture)};");
+                        if (!declaredBurns.Contains(ibName)) {
+                            declaredBurns.Add(ibName);
+                            sb.AppendLine($"Create ImpulsiveBurn {ibName};");
+                            sb.AppendLine($"{ibName}.CoordinateSystem = Local;");
+                            sb.AppendLine($"{ibName}.Origin = {imp.Origin ?? cBody};");
+                            sb.AppendLine($"{ibName}.Axes = {imp.Axes ?? "VNB"};");
+                            sb.AppendLine($"{ibName}.Element1 = {imp.Element1.ToString("F4", CultureInfo.InvariantCulture)};");
+                            sb.AppendLine($"{ibName}.Element2 = {imp.Element2.ToString("F4", CultureInfo.InvariantCulture)};");
+                            sb.AppendLine($"{ibName}.Element3 = {imp.Element3.ToString("F4", CultureInfo.InvariantCulture)};");
+                            sb.AppendLine($"{ibName}.Isp = {imp.Isp.ToString("F1", CultureInfo.InvariantCulture)};");
+                            sb.AppendLine($"{ibName}.DecrementMass = false;");
+                            sb.AppendLine();
+                        }
+                    }
+                }
+            }
+
+            // Scan steps for additional Maneuvers / ImpulsiveBurns that need declaration
+            if (steps != null) {
+                for (int i = 0; i < steps.Count; i++) {
+                    var st = steps[i];
+                    string bName = null;
+                    if (st.type == "ImpulsiveBurn" || st.type == "Maneuver") {
+                        bName = GMATParameterRegistry.SanitizeGmatIdentifier(st.burn_name ?? st.label, null);
+                    } else if (st.type == "Vary" && !string.IsNullOrEmpty(st.vary_variable) && st.vary_variable.Contains(".Element")) {
+                        bName = st.vary_variable.Split('.')[0].Trim();
+                        if (bName.Equals(satName, StringComparison.OrdinalIgnoreCase) && st.vary_variable.Split('.').Length > 2) {
+                            bName = st.vary_variable.Split('.')[1].Trim();
+                        }
+                    }
+                    if (string.IsNullOrEmpty(bName) && !string.IsNullOrEmpty(st.expression)) {
+                        var eMatch = System.Text.RegularExpressions.Regex.Match(st.expression, @"\b([A-Za-z0-9_]+)\.Element[123]\b");
+                        if (eMatch.Success) bName = eMatch.Groups[1].Value;
+                    }
+
+                    if (!string.IsNullOrEmpty(bName) && !declaredBurns.Contains(bName) && !declaredFiniteBurns.Contains(bName)) {
+                        declaredBurns.Add(bName);
+                        // Infer initial element values from Vary steps if available
+                        double initE1 = 0.0, initE2 = 0.0, initE3 = 0.0;
+                        string burnOrigin = cBody;
+                        for (int k = 0; k < steps.Count; k++) {
+                            var vSt = steps[k];
+                            if (vSt.type == "Vary" && !string.IsNullOrEmpty(vSt.vary_variable) && vSt.vary_variable.StartsWith(bName + ".")) {
+                                if (vSt.vary_variable.EndsWith(".Element1")) initE1 = vSt.vary_initial;
+                                else if (vSt.vary_variable.EndsWith(".Element2")) initE2 = vSt.vary_initial;
+                                else if (vSt.vary_variable.EndsWith(".Element3")) initE3 = vSt.vary_initial;
+                            }
+                        }
+                        // 动态推断机动中心天体 (优先查 state.Burns, 其次查临近传播子的 ForceModel/CentralBody)
+                        var matchedBurn = state.Burns?.Find(b => b.Name.Equals(bName, StringComparison.OrdinalIgnoreCase));
+                        if (matchedBurn != null && !string.IsNullOrEmpty(matchedBurn.Origin)) {
+                            burnOrigin = schema.NormalizeCelestialName(matchedBurn.Origin);
+                        } else {
+                            for (int k = Math.Max(0, i - 2); k <= Math.Min(steps.Count - 1, i + 2); k++) {
+                                string p = steps[k].propagator ?? "";
+                                if (!string.IsNullOrEmpty(p)) {
+                                    string inferred = ResolveCentralBodyFromPropagator(p, state, propConfigsOverride, cBody);
+                                    if (!string.IsNullOrEmpty(inferred) && !inferred.Equals(cBody, StringComparison.OrdinalIgnoreCase)) {
+                                        burnOrigin = inferred;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        sb.AppendLine($"Create ImpulsiveBurn {bName};");
+                        sb.AppendLine($"{bName}.CoordinateSystem = Local;");
+                        sb.AppendLine($"{bName}.Origin = {burnOrigin};");
+                        sb.AppendLine($"{bName}.Axes = VNB;");
+                        sb.AppendLine($"{bName}.Element1 = {initE1.ToString("F4", CultureInfo.InvariantCulture)};");
+                        sb.AppendLine($"{bName}.Element2 = {initE2.ToString("F4", CultureInfo.InvariantCulture)};");
+                        sb.AppendLine($"{bName}.Element3 = {initE3.ToString("F4", CultureInfo.InvariantCulture)};");
+                        sb.AppendLine($"{bName}.Isp = 300.0;");
+                        sb.AppendLine($"{bName}.DecrementMass = false;");
                         sb.AppendLine();
                     }
                 }
             }
 
-            // Propagators & ForceModels
+            // Propagators & ForceModels (SSOT + Step Scan & Auto-Synthesis)
             var pConfigs = (propConfigsOverride != null && propConfigsOverride.Count > 0) ? propConfigsOverride : GMATParameterRegistry.GetAllPropagatorConfigs();
+            HashSet<string> declaredProps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            HashSet<string> declaredForceModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            // 1. 优先输出解析自原生脚本的全量 ForceModel 定义
+            if (state.ForceModels != null && state.ForceModels.Count > 0) {
+                foreach (var kvp in state.ForceModels) {
+                    var fm = kvp.Value;
+                    if (declaredForceModels.Contains(fm.name)) continue;
+                    declaredForceModels.Add(fm.name);
+                    sb.AppendLine($"Create ForceModel {fm.name};");
+                    sb.AppendLine($"{fm.name}.CentralBody = {fm.centralBody};");
+                    if (fm.pointMasses != null && fm.pointMasses.Count > 0) {
+                        sb.AppendLine($"{fm.name}.PointMasses = {{{string.Join(", ", fm.pointMasses.ToArray())}}};");
+                    }
+                    sb.AppendLine($"{fm.name}.Drag = {fm.drag ?? "None"};");
+                    sb.AppendLine($"{fm.name}.SRP = {fm.srp ?? "Off"};");
+                    sb.AppendLine($"{fm.name}.ErrorControl = {fm.errorControl ?? "RSSStep"};");
+                    sb.AppendLine();
+                }
+            }
+
+            // 2. 输出 Propagators (匹配关联的 ForceModel)
             if (pConfigs != null && pConfigs.Count > 0) {
                 foreach (var kvp in pConfigs) {
                     string pName = kvp.Key;
                     var pCfg = kvp.Value;
+                    declaredProps.Add(pName);
+
                     string fmName = $"{pName}ForceModel";
-                    sb.AppendLine($"Create ForceModel {fmName};");
-                    sb.AppendLine($"{fmName}.CentralBody = {pCfg.centralBody ?? cBody};");
-
-                    List<string> pmList = new List<string>();
-                    if (pCfg.gravityEarth) pmList.Add("Earth");
-                    if (pCfg.gravityLuna) pmList.Add("Luna");
-                    if (pCfg.gravitySun) pmList.Add("Sun");
-                    if (pCfg.gravityJupiter) pmList.Add("Jupiter");
-                    if (pCfg.gravityVenus) pmList.Add("Venus");
-                    if (pCfg.gravityMars) pmList.Add("Mars");
-                    if (pmList.Count > 0) {
-                        sb.AppendLine($"{fmName}.PointMasses = {{{string.Join(", ", pmList.ToArray())}}};");
+                    if (declaredForceModels.Contains(fmName)) {
+                        // 精确匹配
+                    } else {
+                        // 尝试从已声明的力模型中模糊匹配 (如 EarthProp 匹配 EarthForceModel)
+                        foreach (var dfm in declaredForceModels) {
+                            string strippedProp = pName.Replace("Prop", "").Replace("Setup", "");
+                            if (!string.IsNullOrEmpty(strippedProp) && dfm.IndexOf(strippedProp, StringComparison.OrdinalIgnoreCase) >= 0) {
+                                fmName = dfm;
+                                break;
+                            }
+                        }
                     }
 
-                    if (pCfg.dragModel != "None" && !string.IsNullOrEmpty(pCfg.dragAtmosphereModel)) {
-                        sb.AppendLine($"{fmName}.Drag.AtmosphereModel = '{pCfg.dragAtmosphereModel}';");
+                    if (!declaredForceModels.Contains(fmName)) {
+                        declaredForceModels.Add(fmName);
+                        string fmCenter = pCfg.centralBody ?? cBody;
+                        sb.AppendLine($"Create ForceModel {fmName};");
+                        sb.AppendLine($"{fmName}.CentralBody = {fmCenter};");
+
+                        List<string> pmList = pCfg.GetActivePointMasses();
+                        if (pmList != null && pmList.Count > 0) {
+                            sb.AppendLine($"{fmName}.PointMasses = {{{string.Join(", ", pmList.ToArray())}}};");
+                        }
+
+                        // 高阶引力场模型 (Degree x Order)
+                        if (!string.IsNullOrEmpty(pCfg.gravityModel) && !pCfg.gravityModel.Equals("PointMass", StringComparison.OrdinalIgnoreCase)) {
+                            sb.AppendLine($"{fmName}.GravityField.{fmCenter}.PotentialFile = '{pCfg.gravityModel}';");
+                            if (pCfg.gravityDegree > 0) sb.AppendLine($"{fmName}.GravityField.{fmCenter}.Degree = {pCfg.gravityDegree};");
+                            if (pCfg.gravityOrder > 0) sb.AppendLine($"{fmName}.GravityField.{fmCenter}.Order = {pCfg.gravityOrder};");
+                        }
+
+                        // 大气模型
+                        if (pCfg.dragModel != "None" && !string.IsNullOrEmpty(pCfg.dragAtmosphereModel)) {
+                            sb.AppendLine($"{fmName}.Drag.AtmosphereModel = '{pCfg.dragAtmosphereModel}';");
+                        } else {
+                            sb.AppendLine($"{fmName}.Drag = None;");
+                        }
+
+                        // 太阳光压
+                        if (pCfg.enableSRP) {
+                            sb.AppendLine($"{fmName}.SRP = On;");
+                        } else {
+                            sb.AppendLine($"{fmName}.SRP = Off;");
+                        }
+
+                        // 爱因斯坦广义相对论修正
+                        if (pCfg.enableRelativity) {
+                            sb.AppendLine($"{fmName}.RelativisticCorrection = On;");
+                        }
+
+                        // 积分误差控制
+                        string errCtrl = !string.IsNullOrEmpty(pCfg.errorControl) ? pCfg.errorControl : "RSSStep";
+                        sb.AppendLine($"{fmName}.ErrorControl = {errCtrl};");
+                        sb.AppendLine();
                     }
-                    if (pCfg.enableSRP) {
-                        sb.AppendLine($"{fmName}.SRP = On;");
-                    }
+
                     sb.AppendLine($"Create Propagator {pName};");
                     sb.AppendLine($"{pName}.FM = {fmName};");
                     sb.AppendLine($"{pName}.Type = {pCfg.integratorType ?? "RungeKutta89"};");
@@ -202,10 +454,41 @@ namespace KSPGMAT.Service {
                     sb.AppendLine($"{pName}.MaxStep = {pCfg.maxStep.ToString("F1", CultureInfo.InvariantCulture)};");
                     sb.AppendLine();
                 }
-            } else {
+            }
+
+            // Scan steps for any Propagator missing in pConfigs and synthesize on the fly
+            if (steps != null) {
+                for (int i = 0; i < steps.Count; i++) {
+                    string p = steps[i].propagator;
+                    if (!string.IsNullOrEmpty(p) && !declaredProps.Contains(p)) {
+                        declaredProps.Add(p);
+                        string fmName = $"{p}ForceModel";
+                        var (propCentral, pointMasses, maxStep) = DeriveForceModelParameters(p, cBody);
+
+                        sb.AppendLine($"Create ForceModel {fmName};");
+                        sb.AppendLine($"{fmName}.CentralBody = {propCentral};");
+                        sb.AppendLine($"{fmName}.PointMasses = {{{string.Join(", ", pointMasses.ToArray())}}};");
+                        sb.AppendLine($"{fmName}.Drag = None;");
+                        sb.AppendLine($"{fmName}.SRP = Off;");
+                        sb.AppendLine($"{fmName}.ErrorControl = RSSStep;");
+
+                        sb.AppendLine($"Create Propagator {p};");
+                        sb.AppendLine($"{p}.FM = {fmName};");
+                        sb.AppendLine($"{p}.Type = RungeKutta89;");
+                        sb.AppendLine($"{p}.InitialStepSize = 60;");
+                        sb.AppendLine($"{p}.Accuracy = 1e-11;");
+                        sb.AppendLine($"{p}.MinStep = 0.001;");
+                        sb.AppendLine($"{p}.MaxStep = {maxStep.ToString("G", CultureInfo.InvariantCulture)};");
+                        sb.AppendLine();
+                    }
+                }
+            }
+
+            if (declaredProps.Count == 0) {
+                var (propCentral, pointMasses, _) = DeriveForceModelParameters("LEOProp", cBody);
                 sb.AppendLine("Create ForceModel LEOPropForceModel;");
-                sb.AppendLine($"LEOPropForceModel.CentralBody = {cBody};");
-                sb.AppendLine($"LEOPropForceModel.PointMasses = {{{cBody}, Luna, Sun}};");
+                sb.AppendLine($"LEOPropForceModel.CentralBody = {propCentral};");
+                sb.AppendLine($"LEOPropForceModel.PointMasses = {{{string.Join(", ", pointMasses.ToArray())}}};");
                 sb.AppendLine("Create Propagator LEOProp;");
                 sb.AppendLine("LEOProp.FM = LEOPropForceModel;");
                 sb.AppendLine("LEOProp.Type = RungeKutta89;");
@@ -217,27 +500,72 @@ namespace KSPGMAT.Service {
             HashSet<string> declaredSolvers = new HashSet<string>();
             HashSet<string> declaredOptimizers = new HashSet<string>();
 
+            // 1. 预先提取所有涉及的优化器对象名称，确保与 DifferentialCorrector 严格互斥隔离
+            HashSet<string> optimizerNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            bool hasOptimizeSteps = false;
+            if (steps != null) {
+                for (int i = 0; i < steps.Count; i++) {
+                    var st = steps[i];
+                    if (st.type == "Optimize" || st.type == "Minimize" || st.type == "NonlinearConstraint") {
+                        hasOptimizeSteps = true;
+                        if (!string.IsNullOrEmpty(st.optimizer_name)) optimizerNames.Add(st.optimizer_name);
+                    }
+                }
+            }
+            if (state.Solvers != null) {
+                for (int s = 0; s < state.Solvers.Count; s++) {
+                    var slv = state.Solvers[s];
+                    if (slv.Type == "Yukon" || slv.Type == "SQP" || slv.Type == "Optimizer") {
+                        if (!string.IsNullOrEmpty(slv.Name)) optimizerNames.Add(slv.Name);
+                    }
+                }
+            }
+            if (hasOptimizeSteps && optimizerNames.Count == 0) {
+                optimizerNames.Add("Yukon1");
+            }
+
+            // 2. 声明 state.Solvers
             if (state.Solvers != null && state.Solvers.Count > 0) {
                 for (int s = 0; s < state.Solvers.Count; s++) {
                     var slv = state.Solvers[s];
                     string sName = GMATParameterRegistry.SanitizeGmatIdentifier(slv.Name, $"DC_{s + 1}");
-                    if (!declaredSolvers.Contains(sName)) {
-                        declaredSolvers.Add(sName);
-                        sb.AppendLine($"Create DifferentialCorrector {sName};");
-                        sb.AppendLine($"{sName}.ShowProgress = true;");
-                        sb.AppendLine($"{sName}.DerivativeMethod = {slv.DerivativeMethod ?? "ForwardDifference"};");
-                        sb.AppendLine($"{sName}.Algorithm = {slv.Algorithm ?? "NewtonRaphson"};");
-                        sb.AppendLine($"{sName}.MaximumIterations = {slv.MaxIterations};");
-                        sb.AppendLine();
+                    bool isOpt = slv.Type == "Yukon" || slv.Type == "SQP" || slv.Type == "Optimizer" || optimizerNames.Contains(sName);
+
+                    if (isOpt) {
+                        if (!declaredOptimizers.Contains(sName)) {
+                            declaredOptimizers.Add(sName);
+                            sb.AppendLine($"Create Yukon {sName};");
+                            sb.AppendLine($"{sName}.ShowProgress = true;");
+                            sb.AppendLine($"{sName}.ReportStyle = Normal;");
+                            sb.AppendLine($"{sName}.ReportFile = '{sName}.data';");
+                            sb.AppendLine($"{sName}.MaximumIterations = {(slv.MaxIterations > 0 ? slv.MaxIterations : 200)};");
+                            sb.AppendLine($"{sName}.UseCentralDifferences = false;");
+                            sb.AppendLine($"{sName}.FeasibilityTolerance = 0.0001;");
+                            sb.AppendLine($"{sName}.OptimalityTolerance = 0.0001;");
+                            sb.AppendLine();
+                        }
+                    } else {
+                        if (!declaredSolvers.Contains(sName) && !declaredOptimizers.Contains(sName)) {
+                            declaredSolvers.Add(sName);
+                            sb.AppendLine($"Create DifferentialCorrector {sName};");
+                            sb.AppendLine($"{sName}.ShowProgress = true;");
+                            sb.AppendLine($"{sName}.DerivativeMethod = {slv.DerivativeMethod ?? "ForwardDifference"};");
+                            sb.AppendLine($"{sName}.Algorithm = {slv.Algorithm ?? "NewtonRaphson"};");
+                            sb.AppendLine($"{sName}.MaximumIterations = {slv.MaxIterations};");
+                            sb.AppendLine();
+                        }
                     }
                 }
             }
+
+            // 3. 扫描 steps 补充兜底声明
             if (steps != null) {
                 for (int i = 0; i < steps.Count; i++) {
                     var st = steps[i];
-                    if (!string.IsNullOrEmpty(st.dc_name)) {
+                    // 只有当不是优化器时才声明为 DifferentialCorrector
+                    if (!string.IsNullOrEmpty(st.dc_name) && !optimizerNames.Contains(st.dc_name)) {
                         string sName = GMATParameterRegistry.SanitizeGmatIdentifier(st.dc_name, "DC");
-                        if (!declaredSolvers.Contains(sName)) {
+                        if (!declaredSolvers.Contains(sName) && !declaredOptimizers.Contains(sName)) {
                             declaredSolvers.Add(sName);
                             sb.AppendLine($"Create DifferentialCorrector {sName};");
                             sb.AppendLine($"{sName}.ShowProgress = true;");
@@ -248,13 +576,16 @@ namespace KSPGMAT.Service {
                         }
                     }
                     if (st.type == "Optimize" || st.type == "Minimize" || st.type == "NonlinearConstraint") {
-                        string optName = GMATParameterRegistry.SanitizeGmatIdentifier(!string.IsNullOrEmpty(st.optimizer_name) ? st.optimizer_name : "Yukon1", "Yukon1");
+                        string defaultOptName = state.Solvers?.Find(s => s.Type == "Yukon" || s.Type == "SQP")?.Name ?? "Yukon1";
+                        string optName = GMATParameterRegistry.SanitizeGmatIdentifier(!string.IsNullOrEmpty(st.optimizer_name) ? st.optimizer_name : defaultOptName, defaultOptName);
                         if (!declaredOptimizers.Contains(optName)) {
                             declaredOptimizers.Add(optName);
                             sb.AppendLine($"Create Yukon {optName};");
                             sb.AppendLine($"{optName}.ShowProgress = true;");
                             sb.AppendLine($"{optName}.ReportStyle = Normal;");
+                            sb.AppendLine($"{optName}.ReportFile = '{optName}.data';");
                             sb.AppendLine($"{optName}.MaximumIterations = 200;");
+                            sb.AppendLine($"{optName}.UseCentralDifferences = false;");
                             sb.AppendLine($"{optName}.FeasibilityTolerance = 0.0001;");
                             sb.AppendLine($"{optName}.OptimalityTolerance = 0.0001;");
                             sb.AppendLine();
@@ -263,58 +594,127 @@ namespace KSPGMAT.Service {
                 }
             }
 
-            // Variables, Arrays, Strings
-            List<string> varNames = new List<string>();
+            // Variables, Arrays, Strings (SSOT + Step Scan & Auto-Synthesis)
+            Dictionary<string, double> varDict = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
             if (state.Variables != null) {
                 foreach (var v in state.Variables) {
-                    if (!varNames.Contains(v.Name)) {
-                        varNames.Add(v.Name);
-                        sb.AppendLine($"Create Variable {v.Name};");
-                        sb.AppendLine($"{v.Name} = {v.InitialValue.ToString("G", CultureInfo.InvariantCulture)};");
-                    }
+                    varDict[v.Name] = v.InitialValue;
                 }
             }
             if (steps != null) {
                 foreach (var st in steps) {
                     if (st.type == "Vary" && !string.IsNullOrEmpty(st.vary_variable) && !st.vary_variable.Contains(".")) {
-                        if (!varNames.Contains(st.vary_variable)) {
-                            varNames.Add(st.vary_variable);
-                            sb.AppendLine($"Create Variable {st.vary_variable};");
-                        }
+                        varDict[st.vary_variable] = st.vary_initial;
                     }
                     if (st.type == "FiniteBurn" && st.burn_use_vary_var && !string.IsNullOrEmpty(st.burn_vary_var_name) && !st.burn_vary_var_name.Contains(".")) {
-                        if (!varNames.Contains(st.burn_vary_var_name)) {
-                            varNames.Add(st.burn_vary_var_name);
-                            sb.AppendLine($"Create Variable {st.burn_vary_var_name};");
+                        if (!varDict.ContainsKey(st.burn_vary_var_name)) varDict[st.burn_vary_var_name] = 120.0;
+                    }
+                    if ((st.type == "Equation" || st.type == "Set") && !string.IsNullOrEmpty(st.variable) && !st.variable.Contains(".")) {
+                        if (!varDict.ContainsKey(st.variable)) varDict[st.variable] = 0.0;
+                    }
+                    if (st.type == "Minimize" && !string.IsNullOrEmpty(st.minimize_variable) && !st.minimize_variable.Contains(".")) {
+                        if (!varDict.ContainsKey(st.minimize_variable)) varDict[st.minimize_variable] = 0.0;
+                    }
+                    // Extract variable from propagation stopping conditions
+                    if (st.type == "Propagate") {
+                        if (!string.IsNullOrEmpty(st.duration_str) && !st.duration_str.Contains(".") && !double.TryParse(st.duration_str, out _)) {
+                            if (!varDict.ContainsKey(st.duration_str)) {
+                                double dVal = st.duration;
+                                if (st.stop_type != null && st.stop_type.Contains("ElapsedDays")) dVal /= 86400.0;
+                                varDict[st.duration_str] = (dVal > 0 ? dVal : 3600.0);
+                            }
+                        }
+                        if (st.stop_conditions != null) {
+                            foreach (var cond in st.stop_conditions) {
+                                if (!string.IsNullOrEmpty(cond.target_val_str) && !cond.target_val_str.Contains(".") && !double.TryParse(cond.target_val_str, out _)) {
+                                    if (!varDict.ContainsKey(cond.target_val_str)) {
+                                        varDict[cond.target_val_str] = (cond.target_val > 0 ? cond.target_val : 1.0);
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
+
+            foreach (var kvp in varDict) {
+                sb.AppendLine($"Create Variable {kvp.Key};");
+                sb.AppendLine($"{kvp.Key} = {kvp.Value.ToString("G", CultureInfo.InvariantCulture)};");
+            }
             sb.AppendLine();
 
-            // Trajectory Report File
-            sb.AppendLine("Create ReportFile TrajReport;");
-            sb.AppendLine("TrajReport.Filename = 'TrajReport.txt';");
-            sb.AppendLine("TrajReport.WriteHeaders = false;");
+            // Report Files (SSOT + Step Scan)
+            HashSet<string> declaredReportFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (state.ReportFiles != null && state.ReportFiles.Count > 0) {
+                foreach (var rf in state.ReportFiles) {
+                    if (string.IsNullOrEmpty(rf.Name) || declaredReportFiles.Contains(rf.Name)) continue;
+                    declaredReportFiles.Add(rf.Name);
+                    sb.AppendLine($"Create ReportFile {rf.Name};");
+                    sb.AppendLine($"{rf.Name}.Filename = '{rf.Filename ?? (rf.Name + ".txt")}';");
+                    sb.AppendLine($"{rf.Name}.WriteHeaders = {rf.WriteHeaders.ToString().ToLower()};");
+                }
+            }
+            if (!declaredReportFiles.Contains("TrajReport")) {
+                declaredReportFiles.Add("TrajReport");
+                sb.AppendLine("Create ReportFile TrajReport;");
+                sb.AppendLine("TrajReport.Filename = 'TrajReport.txt';");
+                sb.AppendLine("TrajReport.WriteHeaders = false;");
+            }
 
             // Custom Step Report Files
-            List<string> createdReportFiles = new List<string>();
             if (steps != null) {
                 for (int i = 0; i < steps.Count; i++) {
                     var st = steps[i];
                     if (st.type == "Report") {
                         string sub = GMATParameterRegistry.SanitizeGmatIdentifier(!string.IsNullOrEmpty(st.subscriber_name) ? st.subscriber_name : $"StepReport_{i + 1}", $"StepReport_{i + 1}");
                         st.subscriber_name = sub;
-                        if (!createdReportFiles.Contains(sub) && !sub.Equals("TrajReport", StringComparison.OrdinalIgnoreCase)) {
-                            createdReportFiles.Add(sub);
+                        if (!declaredReportFiles.Contains(sub)) {
+                            declaredReportFiles.Add(sub);
                             sb.AppendLine($"Create ReportFile {sub};");
                             sb.AppendLine($"{sub}.Filename = '{sub}.txt';");
+                            sb.AppendLine($"{sub}.Precision = 16;");
                             sb.AppendLine($"{sub}.WriteHeaders = false;");
+                            sb.AppendLine($"{sub}.LeftJustify = On;");
+                            sb.AppendLine($"{sub}.ZeroFill = Off;");
+                            sb.AppendLine($"{sub}.ColumnWidth = 23;");
+                            sb.AppendLine($"{sub}.WriteReport = true;");
                         }
                     }
                 }
             }
             sb.AppendLine();
+
+            // -------------------------------------------------------------
+            // 3D Orbital Visualization Views (OrbitView Subscribers)
+            // 自动为没有 Output 的脚本注入当前 SOI 与目标天体的 3D 轨迹视口，便于直接在 GMAT GUI 中观看
+            // -------------------------------------------------------------
+            if (targetOrbitViews != null && targetOrbitViews.Count > 0) {
+                foreach (var ov in targetOrbitViews) {
+                    sb.AppendLine($"Create OrbitView {ov.Name};");
+                    sb.AppendLine($"{ov.Name}.SolverIterations = {ov.SolverIterations ?? "Current"};");
+                    sb.AppendLine($"{ov.Name}.UpperLeft = [ 0.002 0 ];");
+                    sb.AppendLine($"{ov.Name}.Size = [ 0.8 0.85 ];");
+                    sb.AppendLine($"{ov.Name}.RelativeZOrder = 0;");
+                    sb.AppendLine($"{ov.Name}.Maximized = false;");
+                    string addList = ov.AddObjects != null && ov.AddObjects.Count > 0 ? string.Join(", ", ov.AddObjects.ToArray()) : $"{satName}, {ov.ViewPointReference}";
+                    sb.AppendLine($"{ov.Name}.Add = {{{addList}}};");
+                    sb.AppendLine($"{ov.Name}.CoordinateSystem = {ov.CoordinateSystem};");
+                    string drawArray = string.Join(" ", Enumerable.Repeat("true", (ov.AddObjects?.Count ?? 2)));
+                    sb.AppendLine($"{ov.Name}.DrawObject = [ {drawArray} ];");
+                    sb.AppendLine($"{ov.Name}.DataCollectFrequency = 1;");
+                    sb.AppendLine($"{ov.Name}.UpdatePlotFrequency = {ov.UpdatePlotFrequency};");
+                    sb.AppendLine($"{ov.Name}.NumPointsToRedraw = 0;");
+                    sb.AppendLine($"{ov.Name}.ShowPlot = {ov.ShowPlot.ToString().ToLower()};");
+                    sb.AppendLine($"{ov.Name}.MaxPlotPoints = {ov.MaxPlotPoints};");
+                    sb.AppendLine($"{ov.Name}.ViewPointReference = {ov.ViewPointReference};");
+                    var vpv = ov.ViewPointVector != null && ov.ViewPointVector.Length == 3 ? ov.ViewPointVector : new double[] { 0, 0, 40000 };
+                    sb.AppendLine($"{ov.Name}.ViewPointVector = [ {vpv[0].ToString("G", CultureInfo.InvariantCulture)} {vpv[1].ToString("G", CultureInfo.InvariantCulture)} {vpv[2].ToString("G", CultureInfo.InvariantCulture)} ];");
+                    sb.AppendLine($"{ov.Name}.ViewDirection = {ov.ViewPointReference};");
+                    sb.AppendLine($"{ov.Name}.ViewUpCoordinateSystem = {ov.CoordinateSystem};");
+                    sb.AppendLine($"{ov.Name}.ViewUpAxis = Z;");
+                    sb.AppendLine();
+                }
+            }
 
             // Mission Sequence Execution Flow
             sb.AppendLine("% -------------------------------------------------------------");
@@ -328,11 +728,14 @@ namespace KSPGMAT.Service {
 
             if (steps != null && steps.Count > 0) {
                 string currentDC = "DC";
+                string defaultOpt = state.Solvers?.Find(s => s.Type == "Yukon" || s.Type == "SQP")?.Name ?? "Yukon1";
                 bool insideTarget = false;
+                bool insideOptimize = false;
 
                 for (int i = 0; i < steps.Count; i++) {
                     var st = steps[i];
                     string stype = st.type;
+                    bool insideSolver = insideTarget || insideOptimize;
 
                     if (stype == "Propagate") {
                         string pName = !string.IsNullOrEmpty(st.propagator) ? st.propagator : "LEOProp";
@@ -340,7 +743,7 @@ namespace KSPGMAT.Service {
                         string backMod = st.is_backwards ? " Backwards" : "";
                         sb.AppendLine($"% Propagate{backMod} ({pName})");
                         sb.AppendLine($"Propagate{backMod} {pName}({satName}) {{{stopCond}}};");
-                        if (!insideTarget) {
+                        if (!insideSolver) {
                             sb.AppendLine($"Report TrajReport {satName}.ElapsedSecs {satName}.X {satName}.Y {satName}.Z {satName}.VX {satName}.VY {satName}.VZ {satName}.{cBody}.Altitude {satName}.SMA {satName}.ECC {satName}.INC {satName}.RAAN {satName}.AOP {satName}.TA {satName}.TotalMass;");
                         }
                     }
@@ -352,11 +755,7 @@ namespace KSPGMAT.Service {
                     }
                     else if (stype == "Vary") {
                         string vDC = (insideTarget && !string.IsNullOrEmpty(currentDC)) ? currentDC : GMATParameterRegistry.SanitizeGmatIdentifier(st.dc_name ?? currentDC, "DC");
-                        string vVar = st.vary_variable ?? "";
-                        if (vVar.Contains(".")) {
-                            string stripped = GMATParameterRegistry.StripCraftPrefix(vVar);
-                            vVar = $"{satName}.{stripped}";
-                        }
+                        string vVar = FormatVaryVariable(st.vary_variable, satName, declaredBurns);
                         string initExpr = !string.IsNullOrEmpty(st.vary_initial_str) ? st.vary_initial_str : st.vary_initial.ToString("G", CultureInfo.InvariantCulture);
                         string pertExpr = !string.IsNullOrEmpty(st.vary_perturbation_str) ? st.vary_perturbation_str : (st.vary_perturbation > 0.0 ? st.vary_perturbation.ToString("G", CultureInfo.InvariantCulture) : "0.0001");
                         string lowExpr = !string.IsNullOrEmpty(st.vary_lower_str) ? st.vary_lower_str : st.vary_lower.ToString("G", CultureInfo.InvariantCulture);
@@ -372,11 +771,15 @@ namespace KSPGMAT.Service {
                             ? (st.burn_vary_var_name ?? "") 
                             : (!string.IsNullOrEmpty(st.duration_str) ? st.duration_str : st.duration.ToString("G", CultureInfo.InvariantCulture));
                         sb.AppendLine($"   % Finite Burn ({fbName})");
-                        sb.AppendLine($"   Report TrajReport {satName}.ElapsedSecs {satName}.X {satName}.Y {satName}.Z {satName}.VX {satName}.VY {satName}.VZ {satName}.{cBody}.Altitude {satName}.SMA {satName}.ECC {satName}.INC {satName}.RAAN {satName}.AOP {satName}.TA {satName}.TotalMass;");
+                        if (!insideSolver) {
+                            sb.AppendLine($"   Report TrajReport {satName}.ElapsedSecs {satName}.X {satName}.Y {satName}.Z {satName}.VX {satName}.VY {satName}.VZ {satName}.{cBody}.Altitude {satName}.SMA {satName}.ECC {satName}.INC {satName}.RAAN {satName}.AOP {satName}.TA {satName}.TotalMass;");
+                        }
                         sb.AppendLine($"   BeginFiniteBurn {fbName}({satName});");
                         sb.AppendLine($"   Propagate {pName}({satName}) {{{satName}.ElapsedSecs = {durExpr}}};");
                         sb.AppendLine($"   EndFiniteBurn {fbName}({satName});");
-                        sb.AppendLine($"   Report TrajReport {satName}.ElapsedSecs {satName}.X {satName}.Y {satName}.Z {satName}.VX {satName}.VY {satName}.VZ {satName}.{cBody}.Altitude {satName}.SMA {satName}.ECC {satName}.INC {satName}.RAAN {satName}.AOP {satName}.TA {satName}.TotalMass;");
+                        if (!insideSolver) {
+                            sb.AppendLine($"   Report TrajReport {satName}.ElapsedSecs {satName}.X {satName}.Y {satName}.Z {satName}.VX {satName}.VY {satName}.VZ {satName}.{cBody}.Altitude {satName}.SMA {satName}.ECC {satName}.INC {satName}.RAAN {satName}.AOP {satName}.TA {satName}.TotalMass;");
+                        }
                     }
                     else if (stype == "ThrustVectorControl" || stype == "VaryThrustDirection") {
                         string eng = !string.IsNullOrEmpty(st.bound_thruster) && thrusterNames.Contains(st.bound_thruster) ? st.bound_thruster : (thrusterNames.Count > 1 ? thrusterNames[1] : thrusterNames[0]);
@@ -406,17 +809,13 @@ namespace KSPGMAT.Service {
                             goalParam = GMATParameterRegistry.StripCraftPrefix(goalParam.Split('=')[0].Trim());
                         }
                         if (!goalParam.Contains(".")) {
-                            string[] craftDirect = new string[] { 
-                                "TotalMass", "DryMass", "FuelMass", "ElapsedSecs", "ElapsedDays", "A1ModJulian",
-                                "SMA", "ECC", "INC", "RAAN", "AOP", "TA", "EA", "MA", "RadPer", "RadApo"
-                            };
-                            bool isCraftDirect = Array.Exists(craftDirect, p => p.Equals(goalParam, StringComparison.OrdinalIgnoreCase));
+                            bool isCraftDirect = schema.IsSpacecraftDirectProperty(goalParam);
                             if (!isCraftDirect) {
                                 goalParam = $"{cBody}.{goalParam}";
                             }
                         }
                         string valExpr = !string.IsNullOrEmpty(st.achieve_val_str) ? st.achieve_val_str : st.achieve_val.ToString("G", CultureInfo.InvariantCulture);
-                        string tolExpr = !string.IsNullOrEmpty(st.achieve_tolerance_str) ? st.achieve_tolerance_str : (st.achieve_tolerance > 0.0 ? st.achieve_tolerance.ToString("G", CultureInfo.InvariantCulture) : "0.1");
+                        string tolExpr = !string.IsNullOrEmpty(st.achieve_tolerance_str) ? st.achieve_tolerance_str : (st.achieve_tolerance > 0.0 ? st.achieve_tolerance.ToString("G", CultureInfo.InvariantCulture) : schema.GetAuthoritativeTolerance(goalParam, 0.1).ToString("G", CultureInfo.InvariantCulture));
                         sb.AppendLine($"   % Achieve ({satName}.{goalParam})");
                         sb.AppendLine($"   Achieve {aDC}({satName}.{goalParam} = {valExpr}, {{Tolerance = {tolExpr}}});");
                     }
@@ -428,9 +827,13 @@ namespace KSPGMAT.Service {
                     else if (stype == "ImpulsiveBurn" || stype == "Maneuver") {
                         string bName = GMATParameterRegistry.SanitizeGmatIdentifier(st.burn_name ?? st.label, "Burn1");
                         sb.AppendLine($"% Impulsive Maneuver ({bName})");
-                        sb.AppendLine($"Report TrajReport {satName}.ElapsedSecs {satName}.X {satName}.Y {satName}.Z {satName}.VX {satName}.VY {satName}.VZ {satName}.{cBody}.Altitude {satName}.SMA {satName}.ECC {satName}.INC {satName}.RAAN {satName}.AOP {satName}.TA {satName}.TotalMass;");
+                        if (!insideSolver) {
+                            sb.AppendLine($"Report TrajReport {satName}.ElapsedSecs {satName}.X {satName}.Y {satName}.Z {satName}.VX {satName}.VY {satName}.VZ {satName}.{cBody}.Altitude {satName}.SMA {satName}.ECC {satName}.INC {satName}.RAAN {satName}.AOP {satName}.TA {satName}.TotalMass;");
+                        }
                         sb.AppendLine($"Maneuver {bName}({satName});");
-                        sb.AppendLine($"Report TrajReport {satName}.ElapsedSecs {satName}.X {satName}.Y {satName}.Z {satName}.VX {satName}.VY {satName}.VZ {satName}.{cBody}.Altitude {satName}.SMA {satName}.ECC {satName}.INC {satName}.RAAN {satName}.AOP {satName}.TA {satName}.TotalMass;");
+                        if (!insideSolver) {
+                            sb.AppendLine($"Report TrajReport {satName}.ElapsedSecs {satName}.X {satName}.Y {satName}.Z {satName}.VX {satName}.VY {satName}.VZ {satName}.{cBody}.Altitude {satName}.SMA {satName}.ECC {satName}.INC {satName}.RAAN {satName}.AOP {satName}.TA {satName}.TotalMass;");
+                        }
                     }
                     else if (stype == "Equation" || stype == "Set") {
                         string vName = st.variable ?? "";
@@ -450,25 +853,35 @@ namespace KSPGMAT.Service {
                         sb.AppendLine($"Report {sub} {reportExpr};");
                     }
                     else if (stype == "Optimize") {
-                        string opt = GMATParameterRegistry.SanitizeGmatIdentifier(!string.IsNullOrEmpty(st.optimizer_name) ? st.optimizer_name : "Yukon1", "Yukon1");
+                        string opt = GMATParameterRegistry.SanitizeGmatIdentifier(!string.IsNullOrEmpty(st.optimizer_name) ? st.optimizer_name : defaultOpt, defaultOpt);
+                        insideOptimize = true;
                         sb.AppendLine($"Optimize {opt} {{SolveMode = {st.solve_mode ?? "Solve"}, ExitMode = {st.exit_mode ?? "SaveAndContinue"}}};");
                     }
                     else if (stype == "Minimize") {
-                        string opt = GMATParameterRegistry.SanitizeGmatIdentifier(!string.IsNullOrEmpty(st.optimizer_name) ? st.optimizer_name : "Yukon1", "Yukon1");
-                        string minVar = !string.IsNullOrEmpty(st.minimize_variable) ? st.minimize_variable : "Sat.FuelMassBurned";
+                        string opt = GMATParameterRegistry.SanitizeGmatIdentifier(!string.IsNullOrEmpty(st.optimizer_name) ? st.optimizer_name : defaultOpt, defaultOpt);
+                        string minVar = !string.IsNullOrEmpty(st.minimize_variable) ? st.minimize_variable : $"{satName}.FuelMassBurned";
                         if (minVar.Contains(".")) minVar = $"{satName}.{GMATParameterRegistry.StripCraftPrefix(minVar)}";
                         sb.AppendLine($"   Minimize {opt}({minVar});");
                     }
                     else if (stype == "NonlinearConstraint") {
-                        string opt = GMATParameterRegistry.SanitizeGmatIdentifier(!string.IsNullOrEmpty(st.optimizer_name) ? st.optimizer_name : "Yukon1", "Yukon1");
-                        string lhs = !string.IsNullOrEmpty(st.constraint_lhs) ? st.constraint_lhs : "Sat.Earth.RMAG";
+                        string opt = GMATParameterRegistry.SanitizeGmatIdentifier(!string.IsNullOrEmpty(st.optimizer_name) ? st.optimizer_name : defaultOpt, defaultOpt);
+                        string lhs = !string.IsNullOrEmpty(st.constraint_lhs) ? st.constraint_lhs : $"{satName}.{cBody}.RMAG";
                         if (lhs.Contains(".")) lhs = $"{satName}.{GMATParameterRegistry.StripCraftPrefix(lhs)}";
                         string op = !string.IsNullOrEmpty(st.constraint_op) ? st.constraint_op : ">=";
                         string val = st.constraint_val.ToString("G", CultureInfo.InvariantCulture);
                         sb.AppendLine($"   NonlinearConstraint {opt}({lhs} {op} {val});");
                     }
                     else if (stype == "EndOptimize") {
+                        insideOptimize = false;
                         sb.AppendLine("EndOptimize;");
+                        sb.AppendLine($"Report TrajReport {satName}.ElapsedSecs {satName}.X {satName}.Y {satName}.Z {satName}.VX {satName}.VY {satName}.VZ {satName}.{cBody}.Altitude {satName}.SMA {satName}.ECC {satName}.INC {satName}.RAAN {satName}.AOP {satName}.TA {satName}.TotalMass;");
+                    }
+                    else if (stype == "CallPython" || stype == "CallPythonFunction") {
+                        string pyCmd = FormatPythonCallCommand(st, satName);
+                        string mod = !string.IsNullOrWhiteSpace(st.python_module) ? st.python_module.Trim() : "orbit_calculator";
+                        string func = !string.IsNullOrWhiteSpace(st.python_function) ? st.python_function.Trim() : "compute_delta_v";
+                        sb.AppendLine($"   % Python Script Node ({mod}.{func})");
+                        sb.AppendLine($"   {pyCmd}");
                     }
                     else if (stype == "CustomScript") {
                         if (!string.IsNullOrWhiteSpace(st.custom_verbatim_script)) {
@@ -482,7 +895,14 @@ namespace KSPGMAT.Service {
             sb.AppendLine("% Trajectory & Orbital Parameters Report");
             sb.AppendLine($"Report TrajReport {satName}.ElapsedSecs {satName}.X {satName}.Y {satName}.Z {satName}.VX {satName}.VY {satName}.VZ {satName}.{cBody}.Altitude {satName}.SMA {satName}.ECC {satName}.INC {satName}.RAAN {satName}.AOP {satName}.TA {satName}.TotalMass;");
 
-            return sb.ToString();
+            string raw = sb.ToString();
+            // 利用 GMATScriptLinter 铁律门禁做最终自愈与净化 (baseline_agent.md 铁律 0.3)
+            string sanitized = GMATScriptLinter.FixScript(raw);
+            var lintReport = GMATScriptLinter.Lint(sanitized);
+            if (lintReport.HasErrors) {
+                UnityEngine.Debug.LogWarning($"[KSP_GMAT Lint] 生成脚本包含 {lintReport.ErrorCount} 项潜在问题: {lintReport.Issues[0]}");
+            }
+            return sanitized;
         }
 
         /// <summary>
@@ -530,8 +950,7 @@ namespace KSPGMAT.Service {
             }
             if (stype == "Vary") {
                 string dc = GMATParameterRegistry.SanitizeGmatIdentifier(st.dc_name ?? "DC", "DC");
-                string vVar = st.vary_variable ?? "";
-                if (vVar.Contains(".")) vVar = $"{safeSat}.{GMATParameterRegistry.StripCraftPrefix(vVar)}";
+                string vVar = FormatVaryVariable(st.vary_variable, safeSat, null);
                 string init = !string.IsNullOrEmpty(st.vary_initial_str) ? st.vary_initial_str : st.vary_initial.ToString("G", CultureInfo.InvariantCulture);
                 string pert = !string.IsNullOrEmpty(st.vary_perturbation_str) ? st.vary_perturbation_str : "0.0001";
                 string low = !string.IsNullOrEmpty(st.vary_lower_str) ? st.vary_lower_str : st.vary_lower.ToString("G", CultureInfo.InvariantCulture);
@@ -544,9 +963,11 @@ namespace KSPGMAT.Service {
                 string rawGoal = st.achieve_param ?? "";
                 string goalParam = GMATParameterRegistry.StripCraftPrefix(rawGoal);
                 if (goalParam.Contains("=")) goalParam = GMATParameterRegistry.StripCraftPrefix(goalParam.Split('=')[0].Trim());
-                if (!goalParam.Contains(".")) goalParam = $"{safeBody}.{goalParam}";
+                if (!goalParam.Contains(".") && !GMATSchemaRegistry.Instance.IsSpacecraftDirectProperty(goalParam)) {
+                    goalParam = $"{safeBody}.{goalParam}";
+                }
                 string val = !string.IsNullOrEmpty(st.achieve_val_str) ? st.achieve_val_str : st.achieve_val.ToString("G", CultureInfo.InvariantCulture);
-                string tol = !string.IsNullOrEmpty(st.achieve_tolerance_str) ? st.achieve_tolerance_str : "0.1";
+                string tol = !string.IsNullOrEmpty(st.achieve_tolerance_str) ? st.achieve_tolerance_str : (st.achieve_tolerance > 0.0 ? st.achieve_tolerance.ToString("G", CultureInfo.InvariantCulture) : GMATSchemaRegistry.Instance.GetAuthoritativeTolerance(goalParam, 0.1).ToString("G", CultureInfo.InvariantCulture));
                 return $"Achieve {dc}({safeSat}.{goalParam} = {val}, {{Tolerance = {tol}}});";
             }
             if (stype == "FiniteBurn") {
@@ -565,10 +986,33 @@ namespace KSPGMAT.Service {
             if (stype == "Equation" || stype == "Set") {
                 return $"{st.variable} = {st.expression};";
             }
-            if (stype == "Report") {
-                return $"Report {st.subscriber_name ?? "TrajReport"} {st.expression};";
+            if (stype == "CallPython" || stype == "CallPythonFunction") {
+                return FormatPythonCallCommand(st, safeSat);
             }
             return $"% Step: {st.label}";
+        }
+
+        public static string FormatPythonCallCommand(MissionStep st, string satName) {
+            if (st == null) return "% Empty Python Step";
+            string mod = !string.IsNullOrWhiteSpace(st.python_module) ? st.python_module.Trim() : "orbit_calculator";
+            string func = !string.IsNullOrWhiteSpace(st.python_function) ? st.python_function.Trim() : "compute_delta_v";
+            string inputs = st.python_inputs ?? "";
+            string outputs = (st.python_outputs ?? "").Trim();
+            bool isExplicit = st.call_syntax_mode == "Explicit";
+
+            if (isExplicit) {
+                string lbl = !string.IsNullOrWhiteSpace(st.label) ? st.label.Replace("'", "") : "CallPy";
+                return $"CallPythonFunction '{lbl}' Python.{mod}.{func}({inputs});";
+            }
+
+            if (!string.IsNullOrEmpty(outputs)) {
+                if (!outputs.StartsWith("[") && outputs.Contains(",")) {
+                    outputs = $"[{outputs}]";
+                }
+                return $"{outputs} = Python.{mod}.{func}({inputs});";
+            } else {
+                return $"Python.{mod}.{func}({inputs});";
+            }
         }
 
         private static string FormatStopCondition(string satName, string centralBody, MissionStep st) {
@@ -606,25 +1050,21 @@ namespace KSPGMAT.Service {
                 return $"{satName}.{lhs} = {rhs}";
             }
 
-            // 2. GMAT Built-in Extrema Events
-            // Apoapsis and Periapsis in GMAT syntax can be {Sat.Earth.Apoapsis} or {Sat.Apoapsis}
-            if (cond.EndsWith(".Apoapsis", StringComparison.OrdinalIgnoreCase)) {
-                return $"{satName}.{cond}";
-            }
-            if (cond.Equals("Apoapsis", StringComparison.OrdinalIgnoreCase)) {
-                return $"{satName}.{centralBody}.Apoapsis";
-            }
-            if (cond.EndsWith(".Periapsis", StringComparison.OrdinalIgnoreCase)) {
-                return $"{satName}.{cond}";
-            }
-            if (cond.Equals("Periapsis", StringComparison.OrdinalIgnoreCase)) {
-                return $"{satName}.{centralBody}.Periapsis";
-            }
-
-            // Equatorial Nodes in GMAT syntax are strictly: {Sat.Earth.Latitude = 0.0} or {Sat.EarthMJ2000Eq.Z = 0.0}
-            if (cond.Equals("Node", StringComparison.OrdinalIgnoreCase) || cond.Equals("AN", StringComparison.OrdinalIgnoreCase) || cond.Equals("DN", StringComparison.OrdinalIgnoreCase) ||
-                cond.EndsWith(".Node", StringComparison.OrdinalIgnoreCase) || cond.EndsWith(".AN", StringComparison.OrdinalIgnoreCase) || cond.EndsWith(".DN", StringComparison.OrdinalIgnoreCase)) {
-                return $"{satName}.{centralBody}.Latitude = 0.0";
+            // 2. GMAT Built-in Extrema Events (SSOT 接入 GMATSchemaRegistry)
+            if (GMATSchemaRegistry.Instance.IsExtremumParameter(cond)) {
+                if (cond.EndsWith(".Apoapsis", StringComparison.OrdinalIgnoreCase) || cond.EndsWith(".Periapsis", StringComparison.OrdinalIgnoreCase)) {
+                    return $"{satName}.{cond}";
+                }
+                if (cond.Equals("Apoapsis", StringComparison.OrdinalIgnoreCase)) {
+                    return $"{satName}.{centralBody}.Apoapsis";
+                }
+                if (cond.Equals("Periapsis", StringComparison.OrdinalIgnoreCase)) {
+                    return $"{satName}.{centralBody}.Periapsis";
+                }
+                // Equatorial Nodes in GMAT syntax are strictly: {Sat.Earth.Latitude = 0.0}
+                if (cond.IndexOf("Node", StringComparison.OrdinalIgnoreCase) >= 0 || cond.Equals("AN", StringComparison.OrdinalIgnoreCase) || cond.Equals("DN", StringComparison.OrdinalIgnoreCase)) {
+                    return $"{satName}.{centralBody}.Latitude = 0.0";
+                }
             }
 
             // 3. Elapsed Time Stop Conditions
@@ -644,5 +1084,271 @@ namespace KSPGMAT.Service {
             }
             return $"{satName}.{cond} = {rhsVal}";
         }
+
+        public static string FormatVaryVariable(string rawVar, string satName, HashSet<string> declaredBurns = null) {
+            if (string.IsNullOrWhiteSpace(rawVar)) return "";
+            rawVar = rawVar.Trim();
+
+            // 1. 如果是 ImpulsiveBurn 的 Element1/2/3 属性，或者点前是已声明的 Burn
+            if (rawVar.EndsWith(".Element1", StringComparison.OrdinalIgnoreCase) ||
+                rawVar.EndsWith(".Element2", StringComparison.OrdinalIgnoreCase) ||
+                rawVar.EndsWith(".Element3", StringComparison.OrdinalIgnoreCase)) {
+                // 如果错误地带了 satName. 前缀，例如 Sat.TLI_Burn.Element1，剥离为 TLI_Burn.Element1
+                if (rawVar.StartsWith(satName + ".", StringComparison.OrdinalIgnoreCase)) {
+                    return rawVar.Substring(satName.Length + 1);
+                }
+                return rawVar;
+            }
+
+            int dotIdx = rawVar.IndexOf('.');
+            if (dotIdx > 0) {
+                string head = rawVar.Substring(0, dotIdx);
+                if (declaredBurns != null && declaredBurns.Contains(head)) {
+                    return rawVar;
+                }
+            }
+
+            // 2. 如果不含点，说明是纯用户变量，例如 TLI_CoastTime
+            if (!rawVar.Contains(".")) {
+                return rawVar;
+            }
+
+            // 3. 如果是推力器方向配置
+            if (rawVar.Contains("ThrustDirection")) {
+                if (!rawVar.StartsWith(satName + ".", StringComparison.OrdinalIgnoreCase)) {
+                    return $"{satName}.{rawVar}";
+                }
+                return rawVar;
+            }
+
+            // 4. 航天器参数，如 Earth.Altitude 或 SMA
+            if (rawVar.StartsWith(satName + ".", StringComparison.OrdinalIgnoreCase)) {
+                return rawVar;
+            }
+            string stripped = GMATParameterRegistry.StripCraftPrefix(rawVar);
+            return $"{satName}.{stripped}";
+        }
+
+        private static string ResolveCentralBodyFromPropagator(string propName, GMATStateManager state, Dictionary<string, PropagatorConfig> pConfigs, string defaultBody) {
+            if (string.IsNullOrEmpty(propName)) return defaultBody;
+            if (state.Propagators != null && state.Propagators.TryGetValue(propName, out var pCfg1) && !string.IsNullOrEmpty(pCfg1.centralBody)) {
+                return pCfg1.centralBody;
+            }
+            if (pConfigs != null && pConfigs.TryGetValue(propName, out var pCfg2) && !string.IsNullOrEmpty(pCfg2.centralBody)) {
+                return pCfg2.centralBody;
+            }
+            return GMATSchemaRegistry.Instance.ResolveCelestialBodyFromText(propName, defaultBody);
+        }
+
+        private static (string centralBody, List<string> pointMasses, double maxStep) DeriveForceModelParameters(string propName, string defaultBody) {
+            var schema = GMATSchemaRegistry.Instance;
+            string central = schema.ResolveCelestialBodyFromText(propName, defaultBody);
+            
+            HashSet<string> pmSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            pmSet.Add(central);
+            pmSet.Add("Sun");
+
+            // 动态利用天体引力层级树推导摄动源：
+            // 1. 若中心天体有母星且非太阳（如月球绕地球、木卫二绕木星），动态加入母星
+            try {
+                var planet = KSPGMAT.MGA.SolarSystemCatalog.GetPlanet(central);
+                if (planet != null && !string.IsNullOrEmpty(planet.ParentName) && !planet.ParentName.Equals("Sun", StringComparison.OrdinalIgnoreCase)) {
+                    pmSet.Add(schema.NormalizeCelestialName(planet.ParentName));
+                }
+            } catch { }
+
+            // 2. 动态搜索以 central 为母星的直接卫星，挑选主要卫星动态加入摄动源
+            try {
+                var allPlanets = KSPGMAT.MGA.SolarSystemCatalog.GetAvailablePlanets();
+                if (allPlanets != null) {
+                    foreach (var p in allPlanets) {
+                        if (p != null && !string.IsNullOrEmpty(p.ParentName) && p.ParentName.Equals(central, StringComparison.OrdinalIgnoreCase)) {
+                            if (p.RadiusKm > 1000 || p.Mu > 100) {
+                                pmSet.Add(schema.NormalizeCelestialName(p.Name));
+                            }
+                        }
+                    }
+                }
+            } catch { }
+
+            // 步长自适应推导：卫星或小天体环境采用较细步长
+            double maxStep = 21600;
+            try {
+                var p = KSPGMAT.MGA.SolarSystemCatalog.GetPlanet(central);
+                if (p != null && (p.RadiusKm < 2500 || (!string.IsNullOrEmpty(p.ParentName) && !p.ParentName.Equals("Sun", StringComparison.OrdinalIgnoreCase)))) {
+                    maxStep = 10800;
+                }
+            } catch { }
+
+            return (central, new List<string>(pmSet), maxStep);
+        }
+
+        private static void ParseObjectReferencedBodies(string rotCsName, string defaultBody, out string primary, out string secondary) {
+            var schema = GMATSchemaRegistry.Instance;
+            primary = schema.NormalizeCelestialName(string.IsNullOrEmpty(defaultBody) ? "Earth" : defaultBody);
+            secondary = primary.Equals("Luna", StringComparison.OrdinalIgnoreCase) ? "Earth" : "Luna";
+
+            if (string.IsNullOrEmpty(rotCsName)) return;
+            string prefix = rotCsName;
+            if (prefix.EndsWith("Rot", StringComparison.OrdinalIgnoreCase)) {
+                prefix = prefix.Substring(0, prefix.Length - 3);
+            }
+
+            // 动态获取系统内所有已知天体名并按长度降序排列（避免短名抢先匹配长名）
+            var catalogPlanets = KSPGMAT.MGA.SolarSystemCatalog.GetAvailablePlanets();
+            var candidateBodies = schema.GetKnownBodies()
+                .Concat(catalogPlanets != null ? catalogPlanets.Select(p => p.Name) : Enumerable.Empty<string>())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderByDescending(b => b.Length)
+                .ToList();
+
+            string foundP = null;
+            string foundS = null;
+
+            foreach (var b in candidateBodies) {
+                if (prefix.StartsWith(b, StringComparison.OrdinalIgnoreCase)) {
+                    foundP = schema.NormalizeCelestialName(b);
+                    string rest = prefix.Substring(b.Length);
+                    foreach (var s in candidateBodies) {
+                        if (rest.StartsWith(s, StringComparison.OrdinalIgnoreCase)) {
+                            foundS = schema.NormalizeCelestialName(s);
+                            break;
+                        }
+                    }
+                    break;
+                }
+            }
+
+            if (!string.IsNullOrEmpty(foundP)) primary = foundP;
+            if (!string.IsNullOrEmpty(foundS)) secondary = foundS;
+            else if (!string.IsNullOrEmpty(defaultBody) && !defaultBody.Equals(primary, StringComparison.OrdinalIgnoreCase)) {
+                secondary = schema.NormalizeCelestialName(defaultBody);
+            }
+        }
+
+        /// <summary>
+        /// 自动推断或合成当前 SOI 及跨体转移场景的 3D OrbitView 视图
+        /// </summary>
+        public static List<GMATOrbitViewModel> ResolveOrSynthesizeOrbitViews(string satName, string centralBody, List<MissionStep> steps, GMATStateManager state) {
+            var result = new List<GMATOrbitViewModel>();
+            var schema = state?.Schema ?? GMATSchemaRegistry.Instance;
+            string cBody = schema.NormalizeCelestialName(centralBody ?? "Earth");
+
+            // 1. 如果 state 中已有用户显式配置的 OrbitViews，直接复用
+            if (state?.OrbitViews != null && state.OrbitViews.Count > 0) {
+                foreach (var ov in state.OrbitViews) {
+                    if (!string.IsNullOrEmpty(ov.Name)) result.Add(ov);
+                }
+                if (result.Count > 0) return result;
+            }
+
+            // 2. 自动收集所有涉及的天体 (Secondary Bodies)
+            HashSet<string> bodies = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            bodies.Add(cBody);
+
+            if (state?.ForceModels != null) {
+                foreach (var fm in state.ForceModels.Values) {
+                    if (fm.pointMasses != null) {
+                        foreach (var pm in fm.pointMasses) {
+                            string n = schema.NormalizeCelestialName(pm);
+                            if (!string.IsNullOrEmpty(n)) bodies.Add(n);
+                        }
+                    }
+                }
+            }
+
+            string targetBody = null;
+            if (steps != null) {
+                foreach (var st in steps) {
+                    if (!string.IsNullOrEmpty(st.target_body)) {
+                        string tb = schema.NormalizeCelestialName(st.target_body);
+                        if (!tb.Equals(cBody, StringComparison.OrdinalIgnoreCase)) {
+                            targetBody = tb;
+                            bodies.Add(tb);
+                        }
+                    }
+                    if (!string.IsNullOrEmpty(st.burn_origin)) {
+                        string bo = schema.NormalizeCelestialName(st.burn_origin);
+                        if (!bo.Equals(cBody, StringComparison.OrdinalIgnoreCase)) {
+                            targetBody = bo;
+                            bodies.Add(bo);
+                        }
+                    }
+                }
+            }
+            if (state?.Burns != null) {
+                foreach (var b in state.Burns) {
+                    if (!string.IsNullOrEmpty(b.Origin)) {
+                        string bo = schema.NormalizeCelestialName(b.Origin);
+                        if (!bo.Equals(cBody, StringComparison.OrdinalIgnoreCase)) {
+                            targetBody = bo;
+                            bodies.Add(bo);
+                        }
+                    }
+                }
+            }
+
+            bool isEarthMoon = (cBody.Equals("Earth", StringComparison.OrdinalIgnoreCase) && (bodies.Contains("Luna") || bodies.Contains("Moon")));
+            if (isEarthMoon && string.IsNullOrEmpty(targetBody)) targetBody = "Luna";
+
+            // 3. 构建主天体 3D 视图 (Primary View: DefaultOrbitView)
+            double[] primaryVpv;
+            if (cBody.Equals("Sun", StringComparison.OrdinalIgnoreCase)) {
+                primaryVpv = new double[] { 0, 0, 500000000 };
+            } else if (cBody.Equals("Jupiter", StringComparison.OrdinalIgnoreCase) || cBody.Equals("Saturn", StringComparison.OrdinalIgnoreCase)) {
+                primaryVpv = new double[] { 0, 0, 4000000 };
+            } else if (isEarthMoon) {
+                primaryVpv = new double[] { 0, 0, 500000 };
+            } else if (cBody.Equals("Earth", StringComparison.OrdinalIgnoreCase)) {
+                primaryVpv = new double[] { 0, 0, 35000 };
+            } else if (cBody.Equals("Luna", StringComparison.OrdinalIgnoreCase) || cBody.Equals("Moon", StringComparison.OrdinalIgnoreCase)) {
+                primaryVpv = new double[] { 0, 0, 10000 };
+            } else {
+                primaryVpv = new double[] { 0, 0, 40000 };
+            }
+
+            var primaryAdd = new List<string> { satName, cBody };
+            foreach (var b in bodies) {
+                if (!b.Equals(cBody, StringComparison.OrdinalIgnoreCase) && !b.Equals("Sun", StringComparison.OrdinalIgnoreCase)) {
+                    if (!primaryAdd.Contains(b)) primaryAdd.Add(b);
+                }
+            }
+
+            string mainViewName = isEarthMoon ? "EarthView" : "DefaultOrbitView";
+            result.Add(new GMATOrbitViewModel {
+                Name = mainViewName,
+                CoordinateSystem = $"{cBody}MJ2000Eq",
+                ViewPointReference = cBody,
+                AddObjects = primaryAdd,
+                SolverIterations = "Current",
+                ViewPointVector = primaryVpv,
+                ShowPlot = true,
+                UpdatePlotFrequency = 50,
+                MaxPlotPoints = 30000
+            });
+
+            // 4. 若存在目标天体 (如地月转移中的 Luna)，生成第二特写视图
+            if (!string.IsNullOrEmpty(targetBody) && !targetBody.Equals(cBody, StringComparison.OrdinalIgnoreCase)) {
+                double[] targetVpv = targetBody.Equals("Luna", StringComparison.OrdinalIgnoreCase) || targetBody.Equals("Moon", StringComparison.OrdinalIgnoreCase)
+                    ? new double[] { 0, 0, 8000 }
+                    : new double[] { 0, 0, 20000 };
+
+                string tgtViewName = $"{targetBody}View";
+                result.Add(new GMATOrbitViewModel {
+                    Name = tgtViewName,
+                    CoordinateSystem = $"{targetBody}MJ2000Eq",
+                    ViewPointReference = targetBody,
+                    AddObjects = new List<string> { satName, targetBody },
+                    SolverIterations = "Current",
+                    ViewPointVector = targetVpv,
+                    ShowPlot = true,
+                    UpdatePlotFrequency = 50,
+                    MaxPlotPoints = 30000
+                });
+            }
+
+            return result;
+        }
+
     }
 }

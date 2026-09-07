@@ -17,6 +17,20 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
+Write-Host "`n========================================" -ForegroundColor Cyan
+Write-Host "  1.1 Compiling & Deploying Slim Native Binaries..." -ForegroundColor Cyan
+Write-Host "========================================" -ForegroundColor Cyan
+
+$BuildNativeBat = Join-Path $ScriptDir "src\native\build_native.bat"
+if (Test-Path $BuildNativeBat) {
+    & cmd.exe /c $BuildNativeBat
+}
+
+$ComplianceProj = Join-Path $ScriptDir "tools\ComplianceChecker\ComplianceChecker.csproj"
+if (Test-Path $ComplianceProj) {
+    dotnet build $ComplianceProj -c Release --nologo -v q
+}
+
 $BuildOutDll = Join-Path $SrcDir "bin\Release\net48\KSPGMAT.dll"
 $BuildOutPdb = Join-Path $SrcDir "bin\Release\net48\KSPGMAT.pdb"
 
@@ -92,8 +106,15 @@ if (Test-Path $KspRoot) {
             $dest = Join-Path $KspNative $_.Name
             Copy-Item $_.FullName $dest -Force -ErrorAction SilentlyContinue
         }
+        # Clean up legacy heavy MKL and unused files
+        @("mkl_core.3.bin", "mkl_def.3.bin", "mkl_intel_thread.3.bin", "libiomp5md.bin", "libcrypto-3-x64.bin", "libssl-3-x64.bin", "sqlite3.bin", "sleef.bin", "libmpfr-6.bin", "libgmp-10.bin", "mp++.bin", "spdlog.bin", "tbb12.bin", "zlib.bin", "zstd.bin", "boost_charconv.bin", "heyoka.bin", "keplerian_toolbox.bin") | ForEach-Object {
+            $fLocal = Join-Path $LocalNative $_
+            if (Test-Path $fLocal) { Remove-Item $fLocal -Force -ErrorAction SilentlyContinue }
+            $fKsp = Join-Path $KspNative $_
+            if (Test-Path $fKsp) { Remove-Item $fKsp -Force -ErrorAction SilentlyContinue }
+        }
         # Clean up any leftover DLLs in KspRoot to keep the game directory clean and neat
-        @("boost_serialization.dll", "keplerian_toolbox.dll", "pykep_native.dll") | ForEach-Object {
+        @("boost_serialization.dll", "keplerian_toolbox.dll", "pykep_native.dll", "openblas.dll", "libomp.dll", "kep3.dll") | ForEach-Object {
             $leftover = Join-Path $KspRoot $_
             if (Test-Path $leftover) { Remove-Item $leftover -Force -ErrorAction SilentlyContinue }
         }
@@ -117,12 +138,34 @@ if (Test-Path $KspRoot) {
     $KspMissions = Join-Path $KspGameData "Missions"
     if (Test-Path $LocalMissions) {
         New-Item -ItemType Directory -Force -Path $KspMissions | Out-Null
+        @("BepiColombo_SEP_LowThrust.json", "Cassini_1DSM_1997.json", "Cassini_Huygens_1997.json", "Galileo_VEEGA_1989.json", "Juno_EEJ_Ballistic_2011.json", "Juno_EEJ_MGA1DSM.json", "Mariner_10_1973.json", "New_Horizons_2006.json", "Rosetta_EEMEB_2004.json", "Voyager_2_GrandTour_1977.json") | ForEach-Object {
+            $oldf = Join-Path $KspMissions $_
+            if (Test-Path $oldf) { Remove-Item $oldf -Force -ErrorAction SilentlyContinue }
+        }
         Copy-Item (Join-Path $LocalMissions "*.json") $KspMissions -Force
     }
 
     Write-Host "✅ Successfully deployed to KSP Steam Installation: $KspGameData" -ForegroundColor Green
 } else {
     Write-Host "⚠️ KSP Steam directory not found, skipped external deployment." -ForegroundColor Yellow
+}
+
+Write-Host "`n========================================" -ForegroundColor Magenta
+Write-Host "  4. Running Roslyn AST Code Sanity & Compliance Check..." -ForegroundColor Magenta
+Write-Host "========================================" -ForegroundColor Magenta
+
+$ComplianceProj = Join-Path $ScriptDir "tools\ComplianceChecker\ComplianceChecker.csproj"
+if (Test-Path $ComplianceProj) {
+    dotnet run --project $ComplianceProj -c Release --no-build -- --project-root $ScriptDir --strict
+    if ($LASTEXITCODE -ne 0) {
+        # 如果未提前构建则完整运行
+        dotnet run --project $ComplianceProj -c Release -- --project-root $ScriptDir --strict
+    }
+} else {
+    $ComplianceScript = Join-Path $ScriptDir "scripts\check_code_compliance.ps1"
+    if (Test-Path $ComplianceScript) {
+        & $ComplianceScript -ProjectRoot $ScriptDir
+    }
 }
 
 Write-Host "`n🎉 BUILD & DEPLOYMENT COMPLETE 100%!" -ForegroundColor Cyan

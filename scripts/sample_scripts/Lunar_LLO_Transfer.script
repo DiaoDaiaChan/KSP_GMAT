@@ -1,0 +1,247 @@
+% -------------------------------------------------------------------------
+% Mission Analysis: Finite-Burn Translunar Injection (TLI), 3D TCM & LLO Insertion
+% Spacecraft: Sat (LEO Parking Orbit -> 100 km Circular Low Lunar Orbit)
+% Propulsion: Real Finite Thrust Architecture (ChemicalThruster & FiniteBurn)
+% Architecture: NASA Apollo Standard Sequential Targeting Architecture
+% Solver: Native Differential Corrector (DC1 & DC2) High-Precision Engine
+% -------------------------------------------------------------------------
+
+% -------------------------------------------------------------------------
+% 1. Spacecraft Configuration (Hardware Architecture & Propulsion System)
+% -------------------------------------------------------------------------
+Create Spacecraft Sat;
+Sat.DateFormat       = UTCGregorian;
+Sat.Epoch            = '09 Mar 1960 03:27:47.591';
+Sat.CoordinateSystem = EarthMJ2000Eq;
+Sat.DisplayStateType = Cartesian;
+Sat.X                = -5337.197780;
+Sat.Y                = -3080.395825;
+Sat.Z                = 2280.468724;
+Sat.VX               = 2.828285;
+Sat.VY               = -6.791792;
+Sat.VZ               = -2.559760;
+Sat.DryMass          = 1477.96;
+Sat.DragArea         = 15.0;
+Sat.Cd               = 2.20;
+Sat.Cr               = 1.80;
+Sat.SRPArea          = 1.00;
+
+Create ChemicalTank Tank1;
+Tank1.AllowNegativeFuelMass = true;
+Tank1.FuelMass              = 6282.90;
+Tank1.Volume                = 62.83;
+Tank1.PressureModel         = 'PressureRegulated';
+
+% Main Engine (108.1 kN, Isp=464.8s RL10 Class Propulsion System)
+Create ChemicalThruster MainEngine;
+MainEngine.CoordinateSystem = Local;
+MainEngine.Origin           = Earth;
+MainEngine.Axes             = VNB;
+MainEngine.ThrustDirection1 = 1;
+MainEngine.ThrustDirection2 = 0;
+MainEngine.ThrustDirection3 = 0;
+MainEngine.DecrementMass    = true;
+MainEngine.Tank             = {Tank1};
+MainEngine.C1               = 108100.00;
+MainEngine.K1               = 464.80;
+
+Sat.Tanks     = {Tank1};
+Sat.Thrusters = {MainEngine};
+
+% Finite Burn Controllers (Zero Impulsive Maneuvers)
+Create FiniteBurn TLI_FiniteBurn;
+TLI_FiniteBurn.Thrusters = {MainEngine};
+TLI_FiniteBurn.ThrottleLogicAlgorithm = 'MaxNumberOfThrusters';
+
+Create FiniteBurn TCM_FiniteBurn;
+TCM_FiniteBurn.Thrusters = {MainEngine};
+TCM_FiniteBurn.ThrottleLogicAlgorithm = 'MaxNumberOfThrusters';
+
+Create FiniteBurn LOI_FiniteBurn;
+LOI_FiniteBurn.Thrusters = {MainEngine};
+LOI_FiniteBurn.ThrottleLogicAlgorithm = 'MaxNumberOfThrusters';
+
+% -------------------------------------------------------------------------
+% 2. Celestial Coordinate Systems
+% -------------------------------------------------------------------------
+Create CoordinateSystem MoonMJ2000Eq;
+MoonMJ2000Eq.Origin = Luna;
+MoonMJ2000Eq.Axes   = MJ2000Eq;
+
+Create CoordinateSystem EarthMoonRot;
+EarthMoonRot.Origin    = Luna;
+EarthMoonRot.Axes      = ObjectReferenced;
+EarthMoonRot.XAxis     = R;
+EarthMoonRot.ZAxis     = N;
+EarthMoonRot.Primary   = Earth;
+EarthMoonRot.Secondary = Luna;
+
+% -------------------------------------------------------------------------
+% 3. Gravity Force Models and Adaptive Propagators
+% -------------------------------------------------------------------------
+Create ForceModel EarthForceModel;
+EarthForceModel.CentralBody  = Earth;
+EarthForceModel.PointMasses  = {Earth, Luna, Sun};
+EarthForceModel.Drag         = None;
+EarthForceModel.SRP          = Off;
+EarthForceModel.ErrorControl = RSSStep;
+
+Create Propagator EarthProp;
+EarthProp.FM              = EarthForceModel;
+EarthProp.Type            = RungeKutta89;
+EarthProp.InitialStepSize = 60;
+EarthProp.Accuracy        = 1e-11;
+EarthProp.MinStep         = 0.001;
+EarthProp.MaxStep         = 21600;
+
+Create ForceModel MoonForceModel;
+MoonForceModel.CentralBody  = Luna;
+MoonForceModel.PointMasses  = {Luna, Earth, Sun};
+MoonForceModel.Drag         = None;
+MoonForceModel.SRP          = Off;
+MoonForceModel.ErrorControl = RSSStep;
+
+Create Propagator MoonProp;
+MoonProp.FM              = MoonForceModel;
+MoonProp.Type            = RungeKutta89;
+MoonProp.InitialStepSize = 60;
+MoonProp.Accuracy        = 1e-11;
+MoonProp.MinStep         = 0.001;
+MoonProp.MaxStep         = 10800;
+
+% -------------------------------------------------------------------------
+% 4. Targeting Solver Configuration (Sequential Differential Correctors)
+% -------------------------------------------------------------------------
+Create DifferentialCorrector DC1;
+DC1.ShowProgress      = true;
+DC1.ReportStyle       = Normal;
+DC1.ReportFile        = 'DC1_TCM_Report.data';
+DC1.MaximumIterations = 50;
+DC1.DerivativeMethod  = ForwardDifference;
+
+Create DifferentialCorrector DC2;
+DC2.ShowProgress      = true;
+DC2.ReportStyle       = Normal;
+DC2.ReportFile        = 'DC2_LOI_Report.data';
+DC2.MaximumIterations = 50;
+DC2.DerivativeMethod  = ForwardDifference;
+
+% -------------------------------------------------------------------------
+% 5. Script Variables & Metric Telemetry
+% -------------------------------------------------------------------------
+Create Variable TLI_CoastTime TLI_Duration TCM_CoastDays TCM_Duration LOI_Duration TotalFiniteBurnTime;
+TLI_CoastTime       = 3617.4;
+TLI_Duration        = 163.60;
+TCM_CoastDays       = 1.8;
+TCM_Duration        = 1.5;
+LOI_Duration        = 32.0;
+TotalFiniteBurnTime = 0.0;
+
+Create ReportFile MissionReport;
+MissionReport.Filename     = 'Lunar_LLO_FiniteBurn_Mission_Report.txt';
+MissionReport.WriteHeaders = true;
+
+% -------------------------------------------------------------------------
+% 6. 3D Visualization OrbitViews (Interactive GMAT GUI 3D Windows)
+% -------------------------------------------------------------------------
+Create OrbitView EarthView;
+EarthView.SolverIterations        = Current;
+EarthView.UpperLeft               = [ 0.002 0 ];
+EarthView.Size                    = [ 0.5 0.85 ];
+EarthView.RelativeZOrder          = 0;
+EarthView.Maximized               = false;
+EarthView.Add                     = {Sat, Earth, Luna};
+EarthView.CoordinateSystem        = EarthMJ2000Eq;
+EarthView.DrawObject              = [ true true true ];
+EarthView.DataCollectFrequency    = 1;
+EarthView.UpdatePlotFrequency     = 50;
+EarthView.NumPointsToRedraw       = 0;
+EarthView.ShowPlot                = true;
+EarthView.MaxPlotPoints           = 30000;
+EarthView.ViewPointReference      = Earth;
+EarthView.ViewPointVector         = [ 0 0 500000 ];
+EarthView.ViewDirection           = Earth;
+EarthView.ViewUpCoordinateSystem  = EarthMJ2000Eq;
+EarthView.ViewUpAxis              = Z;
+
+Create OrbitView MoonView;
+MoonView.SolverIterations         = Current;
+MoonView.UpperLeft                = [ 0.505 0 ];
+MoonView.Size                     = [ 0.49 0.85 ];
+MoonView.RelativeZOrder           = 0;
+MoonView.Maximized                = false;
+MoonView.Add                      = {Sat, Luna};
+MoonView.CoordinateSystem         = MoonMJ2000Eq;
+MoonView.DrawObject               = [ true true ];
+MoonView.DataCollectFrequency     = 1;
+MoonView.UpdatePlotFrequency      = 50;
+MoonView.NumPointsToRedraw        = 0;
+MoonView.ShowPlot                 = true;
+MoonView.MaxPlotPoints            = 30000;
+MoonView.ViewPointReference       = Luna;
+MoonView.ViewPointVector          = [ 0 0 8000 ];
+MoonView.ViewDirection            = Luna;
+MoonView.ViewUpCoordinateSystem   = MoonMJ2000Eq;
+MoonView.ViewUpAxis               = Z;
+
+% -------------------------------------------------------------------------
+% 7. Mission Sequence Execution (Zero Impulsive Maneuvers)
+% -------------------------------------------------------------------------
+BeginMissionSequence;
+
+% =========================================================================
+% Phase 1: LEO Parking Coast & Finite Translunar Injection Burn (TLI)
+% =========================================================================
+Propagate EarthProp(Sat) {Sat.ElapsedSecs = TLI_CoastTime};
+
+Sat.MainEngine.ThrustDirection1 = 1.0;
+Sat.MainEngine.ThrustDirection2 = 0.0;
+Sat.MainEngine.ThrustDirection3 = 0.0;
+BeginFiniteBurn TLI_FiniteBurn(Sat);
+Propagate EarthProp(Sat) {Sat.ElapsedSecs = TLI_Duration};
+EndFiniteBurn TLI_FiniteBurn(Sat);
+
+% Coast 1.8 days to Translunar Midcourse Point
+Propagate EarthProp(Sat) {Sat.ElapsedDays = TCM_CoastDays};
+
+% =========================================================================
+% Phase 2: Finite 3D TCM Midcourse Correction (Targeting Lunar Altitude 100 km)
+% =========================================================================
+Target DC1 {SolveMode = Solve, ExitMode = DiscardAndContinue};
+   Vary DC1(Sat.MainEngine.ThrustDirection1 = -0.12, {Perturbation = 0.0001, Lower = -0.3, Upper = 0.0, MaxStep = 0.01});
+   Sat.MainEngine.ThrustDirection2 = -1.0;
+   Sat.MainEngine.ThrustDirection3 = 0.0;
+   BeginFiniteBurn TCM_FiniteBurn(Sat);
+   Propagate EarthProp(Sat) {Sat.ElapsedSecs = TCM_Duration};
+   EndFiniteBurn TCM_FiniteBurn(Sat);
+   
+   % Propagate into Lunar Sphere of Influence to Periapsis (Periselene)
+   Propagate MoonProp(Sat) {Sat.Luna.Periapsis};
+   
+   % Target 100 km Periapsis Altitude with 0.5 km Tolerance
+   Achieve DC1(Sat.Luna.Altitude = 100.0, {Tolerance = 0.5});
+EndTarget;
+
+% =========================================================================
+% Phase 3: Retrograde Finite Lunar Orbit Insertion (LOI) (Circularization)
+% =========================================================================
+Target DC2 {SolveMode = Solve, ExitMode = DiscardAndContinue};
+   Vary DC2(LOI_Duration = 32.0, {Perturbation = 0.001, Lower = 25.0, Upper = 40.0, MaxStep = 0.5});
+   Sat.MainEngine.ThrustDirection1 = -1.0;
+   Sat.MainEngine.ThrustDirection2 = 0.0;
+   Sat.MainEngine.ThrustDirection3 = 0.0;
+   BeginFiniteBurn LOI_FiniteBurn(Sat);
+   Propagate MoonProp(Sat) {Sat.ElapsedSecs = LOI_Duration};
+   EndFiniteBurn LOI_FiniteBurn(Sat);
+   
+   % Target Standard 100 km Low Lunar Orbit Semi-Major Axis (R_moon + 100 km = 1837.4 km)
+   Achieve DC2(Sat.Luna.SMA = 1837.4, {Tolerance = 0.5});
+EndTarget;
+
+% Telemetry Telemetry Output
+TotalFiniteBurnTime = TLI_Duration + TCM_Duration + LOI_Duration;
+Report MissionReport Sat.UTCGregorian Sat.Luna.Altitude Sat.Luna.SMA Sat.Luna.ECC Sat.MoonMJ2000Eq.INC TotalFiniteBurnTime;
+
+% Propagate in Low Lunar Orbit for 2 days to verify long-term orbital stability
+Propagate MoonProp(Sat) {Sat.ElapsedDays = 2.0};
+Report MissionReport Sat.UTCGregorian Sat.Luna.Altitude Sat.Luna.SMA Sat.Luna.ECC Sat.MoonMJ2000Eq.INC TotalFiniteBurnTime;

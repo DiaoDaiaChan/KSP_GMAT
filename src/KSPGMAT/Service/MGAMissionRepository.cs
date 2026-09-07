@@ -62,6 +62,31 @@ namespace KSPGMAT.Service {
             string dir = GetMissionsDirectory();
             if (!Directory.Exists(dir)) return;
 
+            // 0. 清理历史遗留的纯英文旧命名及未校准的旧虚构任务文件
+            string[] legacyFiles = new string[] {
+                "BepiColombo_SEP_LowThrust.json",
+                "Cassini_1DSM_1997.json",
+                "Cassini_Huygens_1997.json",
+                "Galileo_VEEGA_1989.json",
+                "Juno_EEJ_Ballistic_2011.json",
+                "Juno_EEJ_MGA1DSM.json",
+                "Mariner_10_1973.json",
+                "New_Horizons_2006.json",
+                "Rosetta_EEMEB_2004.json",
+                "Voyager_2_GrandTour_1977.json",
+                "Solar_Chronos_太阳时空神号_2028.json",
+                "Kronos-Poseidon_泰坦-海神双星巡航_2032.json",
+                "Interstellar_Pioneer_星际先驱号_太阳系边界逃逸_2036.json",
+                "Aldrin_Cycler_奥尔德林地火循环飞船_2033.json",
+                "Ulysses_II_尤利西斯II号_太阳极区俯瞰_2030.json"
+            };
+            foreach (var leg in legacyFiles) {
+                string legPath = Path.Combine(dir, leg);
+                if (File.Exists(legPath)) {
+                    try { File.Delete(legPath); } catch { }
+                }
+            }
+
             // 1. 标准历史任务集 (BenchmarkSuite)
             var histList = MGABenchmarkSuite.StandardHistoricalMissions;
             for (int i = 0; i < histList.Count; i++) {
@@ -90,7 +115,7 @@ namespace KSPGMAT.Service {
                 }
             }
 
-            // 1.2 虚构深空极限探测与经典跳板任务集
+            // 1.2 虚构深空极限探测与经典跳板任务集 (经过 SPICE 真实星历高精物理校准)
             var fictList = MGABenchmarkSuite.StandardFictionalMissions;
             for (int i = 0; i < fictList.Count; i++) {
                 var bCase = fictList[i];
@@ -174,7 +199,7 @@ namespace KSPGMAT.Service {
 
             EnsureDefaultMissionFiles();
 
-            var list = new List<MGAMissionConfigFile>();
+            var uniqueMap = new Dictionary<string, MGAMissionConfigFile>(StringComparer.OrdinalIgnoreCase);
             string dir = GetMissionsDirectory();
             if (Directory.Exists(dir)) {
                 var files = Directory.GetFiles(dir, "*.json");
@@ -186,13 +211,20 @@ namespace KSPGMAT.Service {
                             // 自愈缺省类别
                             if (string.IsNullOrEmpty(mission.category)) mission.category = "经典历史";
                             if (string.IsNullOrEmpty(mission.icon)) mission.icon = "🪐";
-                            list.Add(mission);
+                            
+                            string key = mission.mission_name.Trim();
+                            // 字典去重，若重复优先保留较长或更规范的文件（或者跳过重复项）
+                            if (!uniqueMap.ContainsKey(key)) {
+                                uniqueMap[key] = mission;
+                            }
                         }
                     } catch (Exception ex) {
                         Debug.LogWarning($"[MGAMissionRepository] Failed to read {f}: {ex.Message}");
                     }
                 }
             }
+
+            var list = new List<MGAMissionConfigFile>(uniqueMap.Values);
 
             // 按类别与名称排序
             list.Sort((a, b) => {

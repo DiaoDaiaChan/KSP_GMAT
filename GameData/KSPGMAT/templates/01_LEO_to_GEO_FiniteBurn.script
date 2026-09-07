@@ -1,88 +1,75 @@
-% -------------------------------------------------------------
-% GMAT Spacecraft & Hardware Architecture (Mod-wide Sat)
-% -------------------------------------------------------------
+%----------------------------------------------------------------------
+% GMAT Official Standard Template: LEO to GEO via Finite Burn Double-Targeting
+% 28.6 deg LEO -> GTO -> 0 deg Inclination GEO Circularization
+%----------------------------------------------------------------------
+
+%----------------------------------------------------------------------
+% Spacecraft & Hardware Resources
+%----------------------------------------------------------------------
 Create Spacecraft Sat;
 Sat.DateFormat = UTCGregorian;
-Sat.Epoch = '09 Mar 1960 03:27:47.591';
+Sat.Epoch = '15 Jul 2026 00:00:00.000';
 Sat.CoordinateSystem = EarthMJ2000Eq;
-Sat.DisplayStateType = Cartesian;
-Sat.X = -5337.197780;
-Sat.Y = -3080.395825;
-Sat.Z = 2280.468724;
-Sat.VX = 2.828285;
-Sat.VY = -6.791792;
-Sat.VZ = -2.559760;
-Sat.DryMass = 1477.96;
-Sat.DragArea = 15.00;
-Sat.Cd = 2.20;
-Sat.Cr = 1.80;
-Sat.SRPArea = 1.00;
+Sat.DisplayStateType = Keplerian;
+Sat.SMA = 6578.14;
+Sat.ECC = 0.001;
+Sat.INC = 28.6;
+Sat.RAAN = 0.0;
+Sat.AOP = 0.0;
+Sat.TA = 0.0;
+Sat.DryMass = 1000.0;
 
-Create ChemicalTank Tank0;
-Tank0.AllowNegativeFuelMass = true;
-Tank0.FuelMass = 61.32;
-Tank0.Volume = 10.00;
-Tank0.PressureModel = 'PressureRegulated';
-Create ChemicalTank Tank1;
-Tank1.AllowNegativeFuelMass = true;
-Tank1.FuelMass = 6282.90;
-Tank1.Volume = 62.83;
-Tank1.PressureModel = 'PressureRegulated';
+Create ChemicalTank MainTank;
+MainTank.AllowNegativeFuelMass = true;
+MainTank.FuelMass = 3000.0;
+MainTank.Volume = 50.0;
+MainTank.PressureModel = 'PressureRegulated';
 
-Create ChemicalThruster Engine11178kNThruster;
-Engine11178kNThruster.CoordinateSystem = Local;
-Engine11178kNThruster.Origin = Earth;
-Engine11178kNThruster.Axes = VNB;
-Engine11178kNThruster.ThrustDirection1 = 1;
-Engine11178kNThruster.ThrustDirection2 = 0;
-Engine11178kNThruster.ThrustDirection3 = 0;
-Engine11178kNThruster.DecrementMass = true;
-Engine11178kNThruster.Tank = {Tank0};
-Engine11178kNThruster.C1 = 2163.94;
-Engine11178kNThruster.K1 = 317.79;
-Create ChemicalThruster RL10SeriesNonExtendableNozzle;
-RL10SeriesNonExtendableNozzle.CoordinateSystem = Local;
-RL10SeriesNonExtendableNozzle.Origin = Earth;
-RL10SeriesNonExtendableNozzle.Axes = VNB;
-RL10SeriesNonExtendableNozzle.ThrustDirection1 = 1;
-RL10SeriesNonExtendableNozzle.ThrustDirection2 = 0;
-RL10SeriesNonExtendableNozzle.ThrustDirection3 = 0;
-RL10SeriesNonExtendableNozzle.DecrementMass = true;
-RL10SeriesNonExtendableNozzle.Tank = {Tank1};
-RL10SeriesNonExtendableNozzle.C1 = 108100.00;
-RL10SeriesNonExtendableNozzle.K1 = 464.80;
+Create ChemicalThruster MainEngine;
+MainEngine.CoordinateSystem = Local;
+MainEngine.Origin = Earth;
+MainEngine.Axes = VNB;
+MainEngine.ThrustDirection1 = 1.0;
+MainEngine.ThrustDirection2 = 0.0;
+MainEngine.ThrustDirection3 = 0.0;
+MainEngine.DutyCycle = 1.0;
+MainEngine.ThrustScaleFactor = 1.0;
+MainEngine.DecrementMass = true;
+MainEngine.Tank = {MainTank};
+MainEngine.GravitationalAccel = 9.80665;
+MainEngine.C1 = 10000.0;
+MainEngine.C2 = 0.0;
+MainEngine.K1 = 320.0;
+MainEngine.K2 = 0.0;
 
-Sat.Tanks = {Tank0, Tank1};
-Sat.Thrusters = {Engine11178kNThruster, RL10SeriesNonExtendableNozzle};
+Sat.Tanks = {MainTank};
+Sat.Thrusters = {MainEngine};
 
+%----------------------------------------------------------------------
+% Force Models & Propagators
+%----------------------------------------------------------------------
+Create ForceModel LEOProp_ForceModel;
+LEOProp_ForceModel.CentralBody = Earth;
+LEOProp_ForceModel.PointMasses = {Earth, Sun, Luna};
+LEOProp_ForceModel.Drag = None;
+LEOProp_ForceModel.SRP = Off;
+
+Create Propagator LEOProp;
+LEOProp.FM = LEOProp_ForceModel;
+LEOProp.Type = RungeKutta89;
+LEOProp.InitialStepSize = 60.0;
+LEOProp.Accuracy = 1e-11;
+LEOProp.MinStep = 0.001;
+LEOProp.MaxStep = 2700.0;
+
+%----------------------------------------------------------------------
+% Burns & Solvers
+%----------------------------------------------------------------------
 Create FiniteBurn GTO_Burn;
-GTO_Burn.Thrusters = {RL10SeriesNonExtendableNozzle};
-GTO_Burn.ThrottleLogicAlgorithm = 'MaxNumberOfThrusters';
+GTO_Burn.Thrusters = {MainEngine};
 
 Create FiniteBurn GEO_Burn;
-GEO_Burn.Thrusters = {RL10SeriesNonExtendableNozzle};
-GEO_Burn.ThrottleLogicAlgorithm = 'MaxNumberOfThrusters';
-
-Create ForceModel LEOPropForceModel;
-LEOPropForceModel.CentralBody = Earth;
-LEOPropForceModel.PointMasses = {Earth, Luna, Sun};
-Create Propagator LEOProp;
-LEOProp.FM = LEOPropForceModel;
-LEOProp.Type = RungeKutta89;
-
-Create ForceModel CislunarPropForceModel;
-CislunarPropForceModel.CentralBody = Earth;
-CislunarPropForceModel.PointMasses = {Earth, Luna, Sun};
-Create Propagator CislunarProp;
-CislunarProp.FM = CislunarPropForceModel;
-CislunarProp.Type = RungeKutta89;
-
-Create ForceModel LunarNRHOPropForceModel;
-LunarNRHOPropForceModel.CentralBody = Earth;
-LunarNRHOPropForceModel.PointMasses = {Earth, Luna, Sun};
-Create Propagator LunarNRHOProp;
-LunarNRHOProp.FM = LunarNRHOPropForceModel;
-LunarNRHOProp.Type = RungeKutta89;
+GEO_Burn.Thrusters = {MainEngine};
 
 Create DifferentialCorrector DC_GTO;
 DC_GTO.ShowProgress = true;
@@ -96,47 +83,50 @@ DC_GEO.DerivativeMethod = ForwardDifference;
 DC_GEO.Algorithm = NewtonRaphson;
 DC_GEO.MaximumIterations = 50;
 
+%----------------------------------------------------------------------
+% User Variables
+%----------------------------------------------------------------------
 Create Variable GTO_Duration GEO_Duration;
+GTO_Duration = 120.0;
+GEO_Duration = 70.0;
+
 Create ReportFile TrajReport;
-TrajReport.Filename = 'TrajReport.txt';
+TrajReport.Filename = 'LEO_to_GEO_Traj.txt';
 TrajReport.WriteHeaders = false;
 
-% -------------------------------------------------------------
-% GMAT Mission Sequence Execution Control
-% -------------------------------------------------------------
+%----------------------------------------------------------------------
+% Mission Sequence
+%----------------------------------------------------------------------
 BeginMissionSequence;
 
-% Propagate (LEOProp)
+% Step 1: Propagate to Equator Ascending Node (Latitude = 0.0 deg)
 Propagate LEOProp(Sat) {Sat.Earth.Latitude = 0.0};
-% Target Group (DC_GTO)
+
+% Step 2: Target GTO Insertion (Apoapsis Altitude = 35786 km)
 Target DC_GTO {SolveMode = Solve, ExitMode = SaveAndContinue};
-   % Vary (GTO_Duration)
-   Vary DC_GTO(GTO_Duration = 120.0, {Perturbation = 0.0001, Lower = 10, Upper = 400, MaxStep = 10});
-   % Finite Burn (GTO_Burn)
-   BeginFiniteBurn GTO_Burn(Sat);
-   Propagate LEOProp(Sat) {Sat.ElapsedSecs = GTO_Duration};
-   EndFiniteBurn GTO_Burn(Sat);
-% Propagate (LEOProp)
-Propagate LEOProp(Sat) {Sat.Earth.Apoapsis};
-   % Achieve (Sat.Earth.Altitude)
-   Achieve DC_GTO(Sat.Earth.Altitude = 35786.0, {Tolerance = 0.5});
-EndTarget;  % For DefaultDC
-% Target Group (DC_GEO)
+  Vary DC_GTO(GTO_Duration = 120.0, {Perturbation = 0.0001, Lower = 10.0, Upper = 400.0, MaxStep = 10.0});
+  BeginFiniteBurn GTO_Burn(Sat);
+  Propagate LEOProp(Sat) {Sat.ElapsedSecs = GTO_Duration};
+  EndFiniteBurn GTO_Burn(Sat);
+  Propagate LEOProp(Sat) {Sat.Earth.Apoapsis};
+  Achieve DC_GTO(Sat.Earth.Altitude = 35786.0, {Tolerance = 0.5});
+EndTarget;
+
+% Step 3: Target GEO Circularization and 0 deg Inclination Removal
 Target DC_GEO {SolveMode = Solve, ExitMode = SaveAndContinue};
-   % Vary (GEO_Duration)
-   Vary DC_GEO(GEO_Duration = 74, {Perturbation = 0.0001, Lower = 5, Upper = 500, MaxStep = 10});
-   % Thrust Vector Configuration: RL10SeriesNonExtendableNozzle (VNB Axes)
-   Sat.RL10SeriesNonExtendableNozzle.ThrustDirection1 = 1;
-   Vary DC_GEO(Sat.RL10SeriesNonExtendableNozzle.ThrustDirection2 = 1.2, {Perturbation = 0.0001, Lower = -3, Upper = 3, MaxStep = 0.5});
-   Sat.RL10SeriesNonExtendableNozzle.ThrustDirection3 = 0;
-   % Finite Burn (GEO_Burn)
-   BeginFiniteBurn GEO_Burn(Sat);
-   Propagate LEOProp(Sat) {Sat.ElapsedSecs = GEO_Duration};
-   EndFiniteBurn GEO_Burn(Sat);
-   % Achieve (Sat.Earth.SMA)
-   Achieve DC_GEO(Sat.Earth.SMA = 42164.14, {Tolerance = 100});
-   % Achieve (Sat.EarthMJ2000Eq.VZ)
-   Achieve DC_GEO(Sat.EarthMJ2000Eq.VZ = 0.0, {Tolerance = 0.1});
-EndTarget;  % For DefaultDC
-% Trajectory Report
-Report TrajReport Sat.UTCGregorian Sat.X Sat.Y Sat.Z;
+  Vary DC_GEO(GEO_Duration = 70.0, {Perturbation = 0.0001, Lower = 5.0, Upper = 500.0, MaxStep = 5.0});
+  Sat.MainEngine.ThrustDirection1 = 1.0;
+  Vary DC_GEO(Sat.MainEngine.ThrustDirection2 = 0.50, {Perturbation = 0.0001, Lower = -3.0, Upper = 3.0, MaxStep = 0.10});
+  Sat.MainEngine.ThrustDirection3 = 0.0;
+  BeginFiniteBurn GEO_Burn(Sat);
+  Propagate LEOProp(Sat) {Sat.ElapsedSecs = GEO_Duration};
+  EndFiniteBurn GEO_Burn(Sat);
+  Propagate LEOProp(Sat) {Sat.Earth.Periapsis};
+  Achieve DC_GEO(Sat.Earth.SMA = 42164.14, {Tolerance = 0.5});
+  Achieve DC_GEO(Sat.EarthMJ2000Eq.VZ = 0.0, {Tolerance = 0.001});
+EndTarget;
+
+% Step 4: 24-Hour GEO Stationkeeping Cruise & Final Report
+Propagate LEOProp(Sat) {Sat.ElapsedSecs = 86400.0};
+Report TrajReport Sat.ElapsedSecs Sat.X Sat.Y Sat.Z Sat.VX Sat.VY Sat.VZ Sat.TotalMass;
+

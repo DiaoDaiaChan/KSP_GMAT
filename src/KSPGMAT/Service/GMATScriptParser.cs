@@ -31,7 +31,19 @@ namespace KSPGMAT.Service {
                 return result;
             }
 
+            // 利用 GMATScriptLinter 铁律门禁前置自愈 (纯 ASCII、Sat. 前缀规范化、机动矢量前缀剥离、Vary/Achieve 容差自愈)
+            scriptContent = GMATScriptLinter.FixScript(scriptContent);
             result.raw_script_content = scriptContent;
+
+            string defaultBody = vessel?.mainBody?.name;
+            if (string.IsNullOrEmpty(defaultBody)) {
+                try {
+                    defaultBody = FlightGlobals.ActiveVessel?.mainBody?.name ?? FlightGlobals.currentMainBody?.name ?? GMATStateManager.Current?.Spacecraft?.CentralBody ?? "Earth";
+                } catch {
+                    defaultBody = "Earth";
+                }
+            }
+            defaultBody = GMATSchemaRegistry.Instance.NormalizeCelestialName(defaultBody);
 
             var lines = scriptContent.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
             bool inMissionSeq = false;
@@ -39,6 +51,14 @@ namespace KSPGMAT.Service {
             var thrustersDict = new Dictionary<string, GMATThrusterModel>(StringComparer.OrdinalIgnoreCase);
             var tanksDict = new Dictionary<string, GMATTankModel>(StringComparer.OrdinalIgnoreCase);
             var finiteBurnsDict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase); // BurnName -> ThrusterName
+            var burnsDict = new Dictionary<string, GMATBurnModel>(StringComparer.OrdinalIgnoreCase);
+            var coordSystemsDict = new Dictionary<string, CustomCoordSystemDef>(StringComparer.OrdinalIgnoreCase);
+            var propConfigsDict = new Dictionary<string, PropagatorConfig>(StringComparer.OrdinalIgnoreCase);
+            var forceModelsDict = new Dictionary<string, (string centralBody, List<string> pointMasses, string drag, string srp)>(StringComparer.OrdinalIgnoreCase);
+            var forceModelDefsDict = new Dictionary<string, ForceModelDef>(StringComparer.OrdinalIgnoreCase);
+            var reportFilesDict = new Dictionary<string, GMATReportFileModel>(StringComparer.OrdinalIgnoreCase);
+            var orbitViewsDict = new Dictionary<string, GMATOrbitViewModel>(StringComparer.OrdinalIgnoreCase);
+            var customHeaderBlocks = new List<string>();
 
             string currentDC = "DefaultDC";
 
@@ -103,27 +123,32 @@ namespace KSPGMAT.Service {
                         }
                     }
 
-                    // 5. Solvers / DifferentialCorrectors & Optimizers
-                    var dcMatch = Regex.Match(rawLine, @"Create\s+DifferentialCorrector\s+([^;]+);?", RegexOptions.IgnoreCase);
-                    if (dcMatch.Success) {
-                        string[] dcNames = dcMatch.Groups[1].Value.Split(new[] { ' ', ',', '\t' }, StringSplitOptions.RemoveEmptyEntries);
-                        foreach (var dcName in dcNames) {
-                            string clean = dcName.Trim();
-                            if (!string.IsNullOrEmpty(clean)) {
-                                if (!result.solvers.Contains(clean)) result.solvers.Add(clean);
-                                if (!result.solver_models.Exists(s => s.Name.Equals(clean, StringComparison.OrdinalIgnoreCase))) {
-                                    result.solver_models.Add(new GMATSolverModel { Name = clean, Algorithm = "NewtonRaphson", DerivativeMethod = "ForwardDifference", MaxIterations = 50, ShowProgress = true });
+                    // 5. Solvers / DifferentialCorrectors & Optimizers (动态元数据架构识别)
+                    var genericCreateMatch = Regex.Match(rawLine, @"Create\s+([A-Za-z0-9_]+)\s+([^;]+);?", RegexOptions.IgnoreCase);
+                    if (genericCreateMatch.Success) {
+                        string objType = genericCreateMatch.Groups[1].Value.Trim();
+                        string namesStr = genericCreateMatch.Groups[2].Value;
+                        var schema = GMATSchemaRegistry.Instance;
+
+                        if (objType.Equals("DifferentialCorrector", StringComparison.OrdinalIgnoreCase)) {
+                            foreach (var sName in namesStr.Split(new[] { ' ', ',', '\t' }, StringSplitOptions.RemoveEmptyEntries)) {
+                                string clean = sName.Trim();
+                                if (!string.IsNullOrEmpty(clean)) {
+                                    if (!result.solvers.Contains(clean)) result.solvers.Add(clean);
+                                    if (!result.solver_models.Exists(s => s.Name.Equals(clean, StringComparison.OrdinalIgnoreCase))) {
+                                        result.solver_models.Add(new GMATSolverModel { Name = clean, Type = "DifferentialCorrector", Algorithm = "NewtonRaphson", DerivativeMethod = "ForwardDifference", MaxIterations = 50, ShowProgress = true });
+                                    }
                                 }
                             }
-                        }
-                    }
-                    var optMatch = Regex.Match(rawLine, @"Create\s+(?:Yukon|VF13ad|fmincon|FminconOptimizer|SNOPT|SQP)\s+([^;]+);?", RegexOptions.IgnoreCase);
-                    if (optMatch.Success) {
-                        string[] optNames = optMatch.Groups[1].Value.Split(new[] { ' ', ',', '\t' }, StringSplitOptions.RemoveEmptyEntries);
-                        foreach (var oName in optNames) {
-                            string clean = oName.Trim();
-                            if (!string.IsNullOrEmpty(clean) && !result.solvers.Contains(clean)) {
-                                result.solvers.Add(clean);
+                        } else if (schema.IsOptimizerSolver(objType)) {
+                            foreach (var sName in namesStr.Split(new[] { ' ', ',', '\t' }, StringSplitOptions.RemoveEmptyEntries)) {
+                                string clean = sName.Trim();
+                                if (!string.IsNullOrEmpty(clean)) {
+                                    if (!result.solvers.Contains(clean)) result.solvers.Add(clean);
+                                    if (!result.solver_models.Exists(s => s.Name.Equals(clean, StringComparison.OrdinalIgnoreCase))) {
+                                        result.solver_models.Add(new GMATSolverModel { Name = clean, Type = objType, Algorithm = "SQP", MaxIterations = 200, ShowProgress = true });
+                                    }
+                                }
                             }
                         }
                     }
@@ -140,6 +165,79 @@ namespace KSPGMAT.Service {
                         }
                     }
 
+                    // 7. ImpulsiveBurn
+                    var ibMatch = Regex.Match(rawLine, @"Create\s+ImpulsiveBurn\s+([^;]+);?", RegexOptions.IgnoreCase);
+                    if (ibMatch.Success) {
+                        string[] ibNames = ibMatch.Groups[1].Value.Split(new[] { ' ', ',', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                        foreach (var ibName in ibNames) {
+                            string clean = ibName.Trim();
+                            if (!string.IsNullOrEmpty(clean) && !burnsDict.ContainsKey(clean)) {
+                                burnsDict[clean] = new GMATBurnModel { Name = clean, Type = "ImpulsiveBurn", CoordinateSystem = "Local", Axes = "VNB", Origin = defaultBody };
+                            }
+                        }
+                    }
+
+                    // 8. CoordinateSystem
+                    var csMatch = Regex.Match(rawLine, @"Create\s+CoordinateSystem\s+([^;]+);?", RegexOptions.IgnoreCase);
+                    if (csMatch.Success) {
+                        string[] csNames = csMatch.Groups[1].Value.Split(new[] { ' ', ',', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                        foreach (var csName in csNames) {
+                            string clean = csName.Trim();
+                            if (!string.IsNullOrEmpty(clean) && !coordSystemsDict.ContainsKey(clean)) {
+                                coordSystemsDict[clean] = new CustomCoordSystemDef { name = clean, origin = defaultBody, axes = "MJ2000Eq" };
+                            }
+                        }
+                    }
+
+                    // 9. ForceModel
+                    var fmMatch = Regex.Match(rawLine, @"Create\s+ForceModel\s+([^;]+);?", RegexOptions.IgnoreCase);
+                    if (fmMatch.Success) {
+                        string[] fmNames = fmMatch.Groups[1].Value.Split(new[] { ' ', ',', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                        foreach (var fmName in fmNames) {
+                            string clean = fmName.Trim();
+                            if (!string.IsNullOrEmpty(clean) && !forceModelsDict.ContainsKey(clean)) {
+                                forceModelsDict[clean] = (defaultBody, new List<string>(), "None", "Off");
+                                forceModelDefsDict[clean] = new ForceModelDef { name = clean, centralBody = defaultBody };
+                            }
+                        }
+                    }
+
+                    // 10. Propagator
+                    var propSetupMatch = Regex.Match(rawLine, @"Create\s+Propagator\s+([^;]+);?", RegexOptions.IgnoreCase);
+                    if (propSetupMatch.Success) {
+                        string[] pNames = propSetupMatch.Groups[1].Value.Split(new[] { ' ', ',', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                        foreach (var pName in pNames) {
+                            string clean = pName.Trim();
+                            if (!string.IsNullOrEmpty(clean) && !propConfigsDict.ContainsKey(clean)) {
+                                propConfigsDict[clean] = new PropagatorConfig { name = clean, integratorType = "RungeKutta89", initialStepSize = 60, accuracy = 1e-11, minStep = 0.001, maxStep = 21600 };
+                            }
+                        }
+                    }
+
+                    // 11. ReportFile
+                    var rfMatch = Regex.Match(rawLine, @"Create\s+ReportFile\s+([^;]+);?", RegexOptions.IgnoreCase);
+                    if (rfMatch.Success) {
+                        string[] rfNames = rfMatch.Groups[1].Value.Split(new[] { ' ', ',', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                        foreach (var rfName in rfNames) {
+                            string clean = rfName.Trim();
+                            if (!string.IsNullOrEmpty(clean) && !reportFilesDict.ContainsKey(clean)) {
+                                reportFilesDict[clean] = new GMATReportFileModel { Name = clean, Filename = $"{clean}.txt", WriteHeaders = true };
+                            }
+                        }
+                    }
+
+                    // 12. OrbitView
+                    var ovMatch = Regex.Match(rawLine, @"Create\s+OrbitView\s+([^;]+);?", RegexOptions.IgnoreCase);
+                    if (ovMatch.Success) {
+                        string[] ovNames = ovMatch.Groups[1].Value.Split(new[] { ' ', ',', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                        foreach (var ovName in ovNames) {
+                            string clean = ovName.Trim();
+                            if (!string.IsNullOrEmpty(clean) && !orbitViewsDict.ContainsKey(clean)) {
+                                orbitViewsDict[clean] = new GMATOrbitViewModel { Name = clean };
+                            }
+                        }
+                    }
+
                     // Assignments
                     if (rawLine.Contains("=")) {
                         var assignMatch = Regex.Match(rawLine, @"([A-Za-z0-9_.]+)\s*=\s*([^;]+);?");
@@ -150,6 +248,8 @@ namespace KSPGMAT.Service {
                             // Spacecraft properties
                             if (!string.IsNullOrEmpty(primaryCraft) && lhs.StartsWith(primaryCraft + ".")) {
                                 string prop = lhs.Substring(primaryCraft.Length + 1);
+                                result.craft_extended_properties[prop] = rhs;
+
                                 if (prop.Equals("DryMass", StringComparison.OrdinalIgnoreCase) && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double dm)) result.craft_dry_mass = dm;
                                 else if (prop.Equals("DragArea", StringComparison.OrdinalIgnoreCase) && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double da)) result.craft_drag_area = da;
                                 else if (prop.Equals("Cd", StringComparison.OrdinalIgnoreCase) && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double cd)) result.craft_cd = cd;
@@ -227,7 +327,168 @@ namespace KSPGMAT.Service {
                                     else if (prop.Equals("ReportFile", StringComparison.OrdinalIgnoreCase)) slv.ReportFile = rhs;
                                 }
                             }
+
+                            // ImpulsiveBurn properties
+                            foreach (var kvp in burnsDict) {
+                                if (lhs.StartsWith(kvp.Key + ".")) {
+                                    string prop = lhs.Substring(kvp.Key.Length + 1);
+                                    if (prop.Equals("CoordinateSystem", StringComparison.OrdinalIgnoreCase)) kvp.Value.CoordinateSystem = rhs;
+                                    else if (prop.Equals("Origin", StringComparison.OrdinalIgnoreCase)) kvp.Value.Origin = rhs;
+                                    else if (prop.Equals("Axes", StringComparison.OrdinalIgnoreCase)) kvp.Value.Axes = rhs;
+                                    else if (prop.Equals("Element1", StringComparison.OrdinalIgnoreCase) && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double e1)) kvp.Value.Element1 = e1;
+                                    else if (prop.Equals("Element2", StringComparison.OrdinalIgnoreCase) && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double e2)) kvp.Value.Element2 = e2;
+                                    else if (prop.Equals("Element3", StringComparison.OrdinalIgnoreCase) && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double e3)) kvp.Value.Element3 = e3;
+                                    else if (prop.Equals("Isp", StringComparison.OrdinalIgnoreCase) && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double isp)) kvp.Value.Isp = isp;
+                                    else if (prop.Equals("DecrementMass", StringComparison.OrdinalIgnoreCase) && bool.TryParse(rhs, out bool dm)) kvp.Value.DecrementMass = dm;
+                                }
+                            }
+
+                            // CoordinateSystem properties
+                            foreach (var kvp in coordSystemsDict) {
+                                if (lhs.StartsWith(kvp.Key + ".")) {
+                                    string prop = lhs.Substring(kvp.Key.Length + 1);
+                                    if (prop.Equals("Origin", StringComparison.OrdinalIgnoreCase)) kvp.Value.origin = rhs;
+                                    else if (prop.Equals("Axes", StringComparison.OrdinalIgnoreCase)) kvp.Value.axes = rhs;
+                                    else if (prop.Equals("Primary", StringComparison.OrdinalIgnoreCase)) kvp.Value.primary = rhs;
+                                    else if (prop.Equals("Secondary", StringComparison.OrdinalIgnoreCase)) kvp.Value.secondary = rhs;
+                                    else if (prop.Equals("XAxis", StringComparison.OrdinalIgnoreCase)) kvp.Value.xAxis = rhs;
+                                    else if (prop.Equals("YAxis", StringComparison.OrdinalIgnoreCase)) kvp.Value.yAxis = rhs;
+                                    else if (prop.Equals("ZAxis", StringComparison.OrdinalIgnoreCase)) kvp.Value.zAxis = rhs;
+                                    else if (prop.Equals("Epoch", StringComparison.OrdinalIgnoreCase)) kvp.Value.epoch = rhs;
+                                }
+                            }
+
+                            // ForceModel properties
+                            var fmKeys = new List<string>(forceModelsDict.Keys);
+                            foreach (var fmKey in fmKeys) {
+                                if (lhs.StartsWith(fmKey + ".")) {
+                                    string prop = lhs.Substring(fmKey.Length + 1);
+                                    var cur = forceModelsDict[fmKey];
+                                    if (prop.Equals("CentralBody", StringComparison.OrdinalIgnoreCase)) {
+                                        string normBody = GMATSchemaRegistry.Instance.NormalizeCelestialName(rhs);
+                                        forceModelsDict[fmKey] = (normBody, cur.pointMasses, cur.drag, cur.srp);
+                                    }
+                                    else if (prop.Equals("PointMasses", StringComparison.OrdinalIgnoreCase)) {
+                                        var masses = rhs.Trim('{', '}').Split(new[] { ',', ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                                        cur.pointMasses.Clear();
+                                        foreach (var m in masses) {
+                                            string norm = GMATSchemaRegistry.Instance.NormalizeCelestialName(m.Trim());
+                                            if (!cur.pointMasses.Contains(norm)) cur.pointMasses.Add(norm);
+                                        }
+                                    }
+                                    else if (prop.StartsWith("Drag", StringComparison.OrdinalIgnoreCase)) forceModelsDict[fmKey] = (cur.centralBody, cur.pointMasses, rhs, cur.srp);
+                                    else if (prop.Equals("SRP", StringComparison.OrdinalIgnoreCase)) forceModelsDict[fmKey] = (cur.centralBody, cur.pointMasses, cur.drag, rhs);
+
+                                    if (forceModelDefsDict.ContainsKey(fmKey)) {
+                                        var fmd = forceModelDefsDict[fmKey];
+                                        fmd.rawLines.Add(rawLine);
+                                        if (prop.Equals("CentralBody", StringComparison.OrdinalIgnoreCase)) fmd.centralBody = GMATSchemaRegistry.Instance.NormalizeCelestialName(rhs);
+                                        else if (prop.Equals("PointMasses", StringComparison.OrdinalIgnoreCase)) {
+                                            fmd.pointMasses.Clear();
+                                            foreach (var m in rhs.Trim('{', '}').Split(new[] { ',', ' ' }, StringSplitOptions.RemoveEmptyEntries)) {
+                                                string norm = GMATSchemaRegistry.Instance.NormalizeCelestialName(m.Trim());
+                                                if (!fmd.pointMasses.Contains(norm)) fmd.pointMasses.Add(norm);
+                                            }
+                                        }
+                                        else if (prop.StartsWith("Drag", StringComparison.OrdinalIgnoreCase)) fmd.drag = rhs;
+                                        else if (prop.Equals("SRP", StringComparison.OrdinalIgnoreCase)) fmd.srp = rhs;
+                                        else if (prop.Equals("ErrorControl", StringComparison.OrdinalIgnoreCase)) fmd.errorControl = rhs;
+                                        else if (prop.Equals("RelativisticCorrection", StringComparison.OrdinalIgnoreCase)) fmd.enableRelativity = rhs.Equals("On", StringComparison.OrdinalIgnoreCase);
+                                        else if (prop.Contains("GravityField") && prop.EndsWith("PotentialFile", StringComparison.OrdinalIgnoreCase)) fmd.gravityModel = rhs;
+                                        else if (prop.Contains("GravityField") && prop.EndsWith("Degree", StringComparison.OrdinalIgnoreCase) && int.TryParse(rhs, out int gDeg)) fmd.gravityDegree = gDeg;
+                                        else if (prop.Contains("GravityField") && prop.EndsWith("Order", StringComparison.OrdinalIgnoreCase) && int.TryParse(rhs, out int gOrd)) fmd.gravityOrder = gOrd;
+                                    }
+                                }
+                            }
+
+                            // ReportFile properties
+                            foreach (var kvp in reportFilesDict) {
+                                if (lhs.StartsWith(kvp.Key + ".")) {
+                                    string prop = lhs.Substring(kvp.Key.Length + 1);
+                                    if (prop.Equals("Filename", StringComparison.OrdinalIgnoreCase)) kvp.Value.Filename = rhs;
+                                    else if (prop.Equals("WriteHeaders", StringComparison.OrdinalIgnoreCase) && bool.TryParse(rhs, out bool wh)) kvp.Value.WriteHeaders = wh;
+                                }
+                            }
+
+                            // Propagator properties
+                            foreach (var kvp in propConfigsDict) {
+                                if (lhs.StartsWith(kvp.Key + ".")) {
+                                    string prop = lhs.Substring(kvp.Key.Length + 1);
+                                    if (prop.Equals("FM", StringComparison.OrdinalIgnoreCase)) {
+                                        if (forceModelDefsDict.ContainsKey(rhs)) {
+                                            var fmd = forceModelDefsDict[rhs];
+                                            kvp.Value.centralBody = fmd.centralBody;
+                                            kvp.Value.customPointMasses = new List<string>(fmd.pointMasses);
+                                            kvp.Value.gravityEarth = fmd.pointMasses.Exists(m => m.Equals("Earth", StringComparison.OrdinalIgnoreCase));
+                                            kvp.Value.gravityLuna = fmd.pointMasses.Exists(m => m.Equals("Luna", StringComparison.OrdinalIgnoreCase) || m.Equals("Moon", StringComparison.OrdinalIgnoreCase) || m.Equals("Mun", StringComparison.OrdinalIgnoreCase));
+                                            kvp.Value.gravitySun = fmd.pointMasses.Exists(m => m.Equals("Sun", StringComparison.OrdinalIgnoreCase) || m.Equals("Sol", StringComparison.OrdinalIgnoreCase));
+                                            kvp.Value.gravityJupiter = fmd.pointMasses.Exists(m => m.Equals("Jupiter", StringComparison.OrdinalIgnoreCase) || m.Equals("Jool", StringComparison.OrdinalIgnoreCase));
+                                            kvp.Value.gravityVenus = fmd.pointMasses.Exists(m => m.Equals("Venus", StringComparison.OrdinalIgnoreCase) || m.Equals("Eve", StringComparison.OrdinalIgnoreCase));
+                                            kvp.Value.gravityMars = fmd.pointMasses.Exists(m => m.Equals("Mars", StringComparison.OrdinalIgnoreCase) || m.Equals("Duna", StringComparison.OrdinalIgnoreCase));
+                                            kvp.Value.enableSRP = fmd.srp.Equals("On", StringComparison.OrdinalIgnoreCase);
+                                            kvp.Value.enableRelativity = fmd.enableRelativity;
+                                            kvp.Value.errorControl = !string.IsNullOrEmpty(fmd.errorControl) ? fmd.errorControl : "RSSStep";
+                                            kvp.Value.gravityModel = fmd.gravityModel;
+                                            kvp.Value.gravityDegree = fmd.gravityDegree;
+                                            kvp.Value.gravityOrder = fmd.gravityOrder;
+                                            if (fmd.drag.Equals("None", StringComparison.OrdinalIgnoreCase)) {
+                                                kvp.Value.dragModel = "None";
+                                                kvp.Value.dragAtmosphereModel = "None";
+                                            } else {
+                                                kvp.Value.dragModel = fmd.drag;
+                                                kvp.Value.dragAtmosphereModel = fmd.drag;
+                                            }
+                                        } else if (forceModelsDict.ContainsKey(rhs)) {
+                                            var fm = forceModelsDict[rhs];
+                                            kvp.Value.centralBody = fm.centralBody;
+                                            kvp.Value.customPointMasses = new List<string>(fm.pointMasses);
+                                            kvp.Value.gravityEarth = fm.pointMasses.Exists(m => m.Equals("Earth", StringComparison.OrdinalIgnoreCase));
+                                            kvp.Value.gravityLuna = fm.pointMasses.Exists(m => m.Equals("Luna", StringComparison.OrdinalIgnoreCase) || m.Equals("Moon", StringComparison.OrdinalIgnoreCase) || m.Equals("Mun", StringComparison.OrdinalIgnoreCase));
+                                            kvp.Value.gravitySun = fm.pointMasses.Exists(m => m.Equals("Sun", StringComparison.OrdinalIgnoreCase) || m.Equals("Sol", StringComparison.OrdinalIgnoreCase));
+                                            kvp.Value.gravityJupiter = fm.pointMasses.Exists(m => m.Equals("Jupiter", StringComparison.OrdinalIgnoreCase) || m.Equals("Jool", StringComparison.OrdinalIgnoreCase));
+                                            kvp.Value.gravityVenus = fm.pointMasses.Exists(m => m.Equals("Venus", StringComparison.OrdinalIgnoreCase) || m.Equals("Eve", StringComparison.OrdinalIgnoreCase));
+                                            kvp.Value.gravityMars = fm.pointMasses.Exists(m => m.Equals("Mars", StringComparison.OrdinalIgnoreCase) || m.Equals("Duna", StringComparison.OrdinalIgnoreCase));
+                                            kvp.Value.enableSRP = fm.srp.Equals("On", StringComparison.OrdinalIgnoreCase);
+                                        }
+                                    }
+                                    else if (prop.Equals("Type", StringComparison.OrdinalIgnoreCase)) kvp.Value.integratorType = rhs;
+                                    else if (prop.Equals("InitialStepSize", StringComparison.OrdinalIgnoreCase) && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double initStep)) kvp.Value.initialStepSize = initStep;
+                                    else if (prop.Equals("Accuracy", StringComparison.OrdinalIgnoreCase) && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double acc)) kvp.Value.accuracy = acc;
+                                    else if (prop.Equals("MinStep", StringComparison.OrdinalIgnoreCase) && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double minS)) kvp.Value.minStep = minS;
+                                    else if (prop.Equals("MaxStep", StringComparison.OrdinalIgnoreCase) && double.TryParse(rhs, NumberStyles.Any, CultureInfo.InvariantCulture, out double maxS)) kvp.Value.maxStep = maxS;
+                                }
+                            }
+
+                            // OrbitView properties
+                            foreach (var kvp in orbitViewsDict) {
+                                if (lhs.StartsWith(kvp.Key + ".")) {
+                                    string prop = lhs.Substring(kvp.Key.Length + 1);
+                                    if (prop.Equals("CoordinateSystem", StringComparison.OrdinalIgnoreCase)) kvp.Value.CoordinateSystem = rhs;
+                                    else if (prop.Equals("ViewPointReference", StringComparison.OrdinalIgnoreCase) || prop.Equals("ViewPointRef", StringComparison.OrdinalIgnoreCase)) kvp.Value.ViewPointReference = rhs;
+                                    else if (prop.Equals("SolverIterations", StringComparison.OrdinalIgnoreCase)) kvp.Value.SolverIterations = rhs;
+                                    else if (prop.Equals("ShowPlot", StringComparison.OrdinalIgnoreCase) && bool.TryParse(rhs, out bool sp)) kvp.Value.ShowPlot = sp;
+                                    else if (prop.Equals("UpdatePlotFrequency", StringComparison.OrdinalIgnoreCase) && int.TryParse(rhs, out int upf)) kvp.Value.UpdatePlotFrequency = upf;
+                                    else if (prop.Equals("MaxPlotPoints", StringComparison.OrdinalIgnoreCase) && int.TryParse(rhs, out int mpp)) kvp.Value.MaxPlotPoints = mpp;
+                                    else if (prop.Equals("Add", StringComparison.OrdinalIgnoreCase)) {
+                                        var items = rhs.Trim('{', '}').Split(new[] { ',', ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                                        kvp.Value.AddObjects.Clear();
+                                        foreach (var item in items) kvp.Value.AddObjects.Add(item.Trim());
+                                    }
+                                    else if (prop.Equals("ViewPointVector", StringComparison.OrdinalIgnoreCase)) {
+                                        var coords = rhs.Trim('[', ']').Split(new[] { ' ', ',', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                                        if (coords.Length >= 3 &&
+                                            double.TryParse(coords[0], NumberStyles.Any, CultureInfo.InvariantCulture, out double vx) &&
+                                            double.TryParse(coords[1], NumberStyles.Any, CultureInfo.InvariantCulture, out double vy) &&
+                                            double.TryParse(coords[2], NumberStyles.Any, CultureInfo.InvariantCulture, out double vz)) {
+                                            kvp.Value.ViewPointVector = new double[] { vx, vy, vz };
+                                        }
+                                    }
+                                }
+                            }
                         }
+                    } else if (!rawLine.StartsWith("Create ", StringComparison.OrdinalIgnoreCase)) {
+                        // 收集未被标准解析消费的特殊原生头部语句 (如 SPICE 配置、自定义全局设定等)
+                        customHeaderBlocks.Add(rawLine);
                     }
                 } else {
                     // --- Mission Sequence Commands Parsing ---
@@ -637,6 +898,63 @@ namespace KSPGMAT.Service {
                         continue;
                     }
 
+                    // 10B. Native Python Function Call Commands ([out1, out2] = Python.Module.Func(in) OR CallPythonFunction 'Lbl' Python...)
+                    bool isPyCall = rawLine.IndexOf("Python.", StringComparison.OrdinalIgnoreCase) >= 0 || rawLine.StartsWith("CallPythonFunction", StringComparison.OrdinalIgnoreCase);
+                    if (isPyCall) {
+                        var explicitMatch = Regex.Match(rawLine, @"CallPythonFunction\s+['""]?([^'""\s]+)['""]?\s+Python\.([A-Za-z0-9_]+)\.([A-Za-z0-9_]+)\s*\((.*?)\);?", RegexOptions.IgnoreCase);
+                        if (explicitMatch.Success) {
+                            string lbl = explicitMatch.Groups[1].Value.Trim();
+                            string mod = explicitMatch.Groups[2].Value.Trim();
+                            string func = explicitMatch.Groups[3].Value.Trim();
+                            string inputs = explicitMatch.Groups[4].Value.Trim();
+                            result.sequence.Add(new MissionStep {
+                                type = "CallPython",
+                                call_syntax_mode = "Explicit",
+                                label = lbl,
+                                python_module = mod,
+                                python_function = func,
+                                python_inputs = inputs,
+                                python_outputs = ""
+                            });
+                            continue;
+                        }
+
+                        var assignMatch = Regex.Match(rawLine, @"(?:\[([^\]]*)\]|([A-Za-z0-9_.]+))\s*=\s*Python\.([A-Za-z0-9_]+)\.([A-Za-z0-9_]+)\s*\((.*?)\);?", RegexOptions.IgnoreCase);
+                        if (assignMatch.Success) {
+                            string outputs = !string.IsNullOrEmpty(assignMatch.Groups[1].Value) ? assignMatch.Groups[1].Value.Trim() : assignMatch.Groups[2].Value.Trim();
+                            string mod = assignMatch.Groups[3].Value.Trim();
+                            string func = assignMatch.Groups[4].Value.Trim();
+                            string inputs = assignMatch.Groups[5].Value.Trim();
+                            result.sequence.Add(new MissionStep {
+                                type = "CallPython",
+                                call_syntax_mode = "Assignment",
+                                label = $"{mod}.{func}",
+                                python_module = mod,
+                                python_function = func,
+                                python_inputs = inputs,
+                                python_outputs = outputs
+                            });
+                            continue;
+                        }
+
+                        var directMatch = Regex.Match(rawLine, @"Python\.([A-Za-z0-9_]+)\.([A-Za-z0-9_]+)\s*\((.*?)\);?", RegexOptions.IgnoreCase);
+                        if (directMatch.Success) {
+                            string mod = directMatch.Groups[1].Value.Trim();
+                            string func = directMatch.Groups[2].Value.Trim();
+                            string inputs = directMatch.Groups[3].Value.Trim();
+                            result.sequence.Add(new MissionStep {
+                                type = "CallPython",
+                                call_syntax_mode = "Assignment",
+                                label = $"{mod}.{func}",
+                                python_module = mod,
+                                python_function = func,
+                                python_inputs = inputs,
+                                python_outputs = ""
+                            });
+                            continue;
+                        }
+                    }
+
                     // 11. Equation / Assignment Command (e.g. Sat.DryMass = 1200 or burntime = 150)
                     if (rawLine.Contains("=") && 
                         !rawLine.StartsWith("Propagate", StringComparison.OrdinalIgnoreCase) && 
@@ -676,6 +994,13 @@ namespace KSPGMAT.Service {
 
             result.tanks = new List<GMATTankModel>(tanksDict.Values);
             result.thrusters = new List<GMATThrusterModel>(thrustersDict.Values);
+            result.burns = new List<GMATBurnModel>(burnsDict.Values);
+            result.coordinate_systems = new List<CustomCoordSystemDef>(coordSystemsDict.Values);
+            result.propagators = propConfigsDict;
+            result.force_models = forceModelDefsDict;
+            result.report_files = new List<GMATReportFileModel>(reportFilesDict.Values);
+            result.orbit_views = new List<GMATOrbitViewModel>(orbitViewsDict.Values);
+            result.custom_header_blocks = customHeaderBlocks;
             double totalFuel = 0;
             foreach (var tk in result.tanks) totalFuel += tk.FuelMassKg;
             result.craft_fuel_mass = totalFuel;
@@ -729,9 +1054,15 @@ namespace KSPGMAT.Service {
                         if (m.Groups.Count > 4 && !string.IsNullOrEmpty(m.Groups[4].Value)) {
                             string tolStr = m.Groups[4].Value.Trim();
                             step.achieve_tolerance_str = tolStr;
-                            if (double.TryParse(tolStr, NumberStyles.Any, CultureInfo.InvariantCulture, out double parsedTol)) {
+                            if (double.TryParse(tolStr, NumberStyles.Any, CultureInfo.InvariantCulture, out double parsedTol) && parsedTol > 0.0) {
                                 step.achieve_tolerance = parsedTol;
+                            } else {
+                                step.achieve_tolerance = GMATSchemaRegistry.Instance.GetAuthoritativeTolerance(step.achieve_param, 0.1);
+                                step.achieve_tolerance_str = step.achieve_tolerance.ToString("G", CultureInfo.InvariantCulture);
                             }
+                        } else {
+                            step.achieve_tolerance = GMATSchemaRegistry.Instance.GetAuthoritativeTolerance(step.achieve_param, 0.1);
+                            step.achieve_tolerance_str = step.achieve_tolerance.ToString("G", CultureInfo.InvariantCulture);
                         }
                         step.label = $"Achieve {step.achieve_param}";
                         return true;

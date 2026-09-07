@@ -210,15 +210,23 @@ namespace KSPGMAT.Service {
             float pitchDeg = 35.0f,
             float yawDeg = 0.0f,
             int selectedEventIndex = -1,
-            int maxLegsToDraw = 0) 
+            float flowProgress = 0f) 
         {
             CanvasPixelBuffer buf = new CanvasPixelBuffer(width, height, new Color32(5, 6, 10, 255));
             buf.ClearWithCosmicBackground();
 
-            // 1. Determine strict physical maximum distance in km
-            double missionMaxDistKm = 2.2 * AU_KM; // Default to Mars/Asteroid belt view
+            // 1. 计算当前任务历元与航天器高精遥测数据 (SSOT: 全面打通 MGAStateManager)
+            CraftTelemetry telem = ComputeCraftTelemetry(solution, flowProgress, selectedEventIndex);
+            double missionUt = telem.MissionUt;
+            bool isInterplanetary = telem.IsInterplanetary;
+            string centralBody = telem.CentralBody ?? "Sun";
+            double muCentral = isInterplanetary ? SolarSystemCatalog.SunMu : SolarSystemCatalog.GetCentralMu(centralBody);
+            if (muCentral <= 0) muCentral = SolarSystemCatalog.SunMu;
+
+            // 2. 动态依据引力域确定视口物理跨度 (km)
+            double missionMaxDistKm = 0;
             if (solution != null && solution.Legs != null && solution.Legs.Count > 0) {
-                int countToCheck = (maxLegsToDraw > 0 && maxLegsToDraw <= solution.Legs.Count) ? maxLegsToDraw : solution.Legs.Count;
+                int countToCheck = (flowProgress > 0.0001f && flowProgress <= solution.Legs.Count) ? Mathf.CeilToInt(flowProgress) : solution.Legs.Count;
                 for (int k = 0; k < countToCheck; k++) {
                     var leg = solution.Legs[k];
                     double r1 = leg.DeparturePosKm.magnitude;
@@ -228,64 +236,97 @@ namespace KSPGMAT.Service {
                 }
             }
 
-            if (double.IsNaN(missionMaxDistKm) || double.IsInfinity(missionMaxDistKm) || missionMaxDistKm <= 0) {
-                missionMaxDistKm = 2.2 * AU_KM;
+            if (missionMaxDistKm <= 0) {
+                if (isInterplanetary) {
+                    missionMaxDistKm = 2.2 * AU_KM;
+                } else {
+                    var moons = SolarSystemCatalog.GetMoonsOf(centralBody);
+                    if (moons != null && moons.Count > 0) {
+                        missionMaxDistKm = moons.Max(m => m.SMA > 0 ? m.SMA : 400000.0) * 1.25;
+                    } else {
+                        var pC = SolarSystemCatalog.GetPlanet(centralBody);
+                        missionMaxDistKm = (pC != null && pC.RadiusKm > 0) ? pC.RadiusKm * 15.0 : 400000.0;
+                    }
+                }
             }
 
             // View framing
             double viewRadiusKm = (missionMaxDistKm * 1.30) / Math.Max(0.05f, zoom);
-            if (double.IsNaN(viewRadiusKm) || double.IsInfinity(viewRadiusKm) || viewRadiusKm < 1e5 || viewRadiusKm > 200.0 * AU_KM) {
-                viewRadiusKm = 2.86 * AU_KM;
+            if (isInterplanetary) {
+                if (double.IsNaN(viewRadiusKm) || double.IsInfinity(viewRadiusKm) || viewRadiusKm < 0.1 * AU_KM || viewRadiusKm > 200.0 * AU_KM) {
+                    viewRadiusKm = 2.86 * AU_KM;
+                }
+            } else {
+                if (double.IsNaN(viewRadiusKm) || double.IsInfinity(viewRadiusKm) || viewRadiusKm < 500.0) {
+                    viewRadiusKm = Math.Max(500.0, missionMaxDistKm * 1.30);
+                }
             }
 
-            // 2. Strict Isometric Scale
+            // 3. Strict Isometric Scale
             double scale = (Math.Min(width, height) * 0.44) / viewRadiusKm;
             if (double.IsNaN(scale) || double.IsInfinity(scale) || scale <= 0) {
-                scale = (Math.Min(width, height) * 0.44) / (2.86 * AU_KM);
+                scale = (Math.Min(width, height) * 0.44) / (isInterplanetary ? (2.86 * AU_KM) : 400000.0);
             }
 
             int cx = (int)(width / 2 + panOffset.x);
             int cy = (int)(height / 2 + panOffset.y);
 
-            // 3. Draw 3D Ecliptic Reference Grid & Vernal Axis
-            Draw3DEclipticGrid(buf, cx, cy, scale, viewRadiusKm, pitchDeg, yawDeg);
+            // 4. Draw 3D Ecliptic Reference Grid & Vernal/Orbital Axis
+            Draw3DEclipticGrid(buf, cx, cy, scale, viewRadiusKm, pitchDeg, yawDeg, isInterplanetary);
 
-            // 4. Draw 3D Planetary Orbit Rings & Bodies at Target Epoch (联动当前选中机动节点或滑块推进时刻)
-            double missionUt = (solution != null && solution.DepartureUT > 0) ? solution.DepartureUT : (FlightGlobals.ready ? Planetarium.GetUniversalTime() : 0);
+            // 5. 2D 屏幕空间标签避让排版与去重管理器
+            ScreenLabelManager labelMgr = new ScreenLabelManager(width, height);
+
+            // 注册 HUD 标尺与四周操作区域禁区 (严禁任何天体或节点标签遮挡仪表板)
+            labelMgr.RegisterExclusionZone(20 + 40, 20 + 8, 45, 12, priority: 0); // 左下角比例尺
+            int panelW = 236;
+            int panelH = 56;
+            labelMgr.RegisterExclusionZone(14 + panelW / 2, height - 12 - panelH / 2, panelW / 2 + 4, panelH / 2 + 4, priority: 0); // 左上角遥测 HUD
+            labelMgr.RegisterExclusionZone(width - 120, 20, 115, 12, priority: 0); // 右下角操作提示
+            labelMgr.RegisterExclusionZone(width - 60, height - 18, 55, 10, priority: 0); // 右上角 3D 视角
+
+            // 预先计算选中的机动目标框位置
+            Vector2 tgtScr = new Vector2(-1000, -1000);
             if (solution != null && solution.Events != null && selectedEventIndex >= 0 && selectedEventIndex < solution.Events.Count) {
                 var curEv = solution.Events[selectedEventIndex];
-                if (curEv.EpochUT > 0) {
-                    missionUt = curEv.EpochUT;
+                Vector3d tgtPos = GetEventPositionKm(solution, curEv);
+                if (!double.IsNaN(tgtPos.x)) {
+                    tgtScr = Project3D(tgtPos, scale, cx, cy, pitchDeg, yawDeg, out _);
+                    // 登记目标框禁区 (40x40 瞄准框)
+                    labelMgr.RegisterExclusionZone((int)tgtScr.x, (int)tgtScr.y, 22, 22, priority: 0);
                 }
-            } else if (solution != null && solution.Legs != null && maxLegsToDraw > 0 && maxLegsToDraw <= solution.Legs.Count) {
-                // 当用户拖动滑块推进到第 K 航段时，天体行星位置自动前进至该航段的到达历元！
-                missionUt = solution.Legs[maxLegsToDraw - 1].ArrivalUT;
             }
-            Draw3DPlanetarySystem(buf, cx, cy, scale, viewRadiusKm, missionUt, pitchDeg, yawDeg, solution);
 
-            // 5. Draw Sun in 3D Center
-            Vector2 sunScr = Project3D(Vector3d.zero, scale, cx, cy, pitchDeg, yawDeg, out _);
-            DrawSun(buf, (int)sunScr.x, (int)sunScr.y);
+            // 6. 绘制行星系统或卫星系统 (自动按引力域无缝切换)
+            Draw3DPlanetarySystem(buf, cx, cy, scale, viewRadiusKm, missionUt, pitchDeg, yawDeg, solution, labelMgr, isInterplanetary, centralBody, muCentral);
+
+            // 7. 绘制引力中心天体 (恒星或母行星)
+            Vector2 centerScr = Project3D(Vector3d.zero, scale, cx, cy, pitchDeg, yawDeg, out _);
+            if (isInterplanetary) {
+                DrawSun(buf, (int)centerScr.x, (int)centerScr.y);
+                labelMgr.RegisterExclusionZone((int)centerScr.x, (int)centerScr.y, 14, 14, priority: 0);
+            } else {
+                DrawCentralPlanet(buf, (int)centerScr.x, (int)centerScr.y, centralBody, labelMgr);
+                labelMgr.RegisterExclusionZone((int)centerScr.x, (int)centerScr.y, 16, 16, priority: 0);
+            }
 
             // 6. Draw 3D Transfer Trajectories & Maneuver Nodes
             if (solution != null && solution.Legs != null && solution.Legs.Count > 0) {
-                Draw3DTransferLegs(buf, solution, cx, cy, scale, showSoi, pitchDeg, yawDeg, maxLegsToDraw);
+                Draw3DTransferLegs(buf, solution, cx, cy, scale, viewRadiusKm, showSoi, pitchDeg, yawDeg, flowProgress, labelMgr, tgtScr, telem);
 
                 // 6.1 Draw Target Focus Reticle for currently selected Maneuver Event (机动节点目标锁定框)
                 if (solution.Events != null && selectedEventIndex >= 0 && selectedEventIndex < solution.Events.Count) {
                     var curEv = solution.Events[selectedEventIndex];
-                    Vector3d tgtPos = GetEventPositionKm(solution, curEv);
-                    if (!double.IsNaN(tgtPos.x)) {
-                        Vector2 tgtScr = Project3D(tgtPos, scale, cx, cy, pitchDeg, yawDeg, out _);
+                    if (tgtScr.x >= 0 && tgtScr.y >= 0) {
                         Color reticleCol = new Color(0.22f, 0.88f, 0.98f, 0.95f); // High-tech Cyan
                         string tagStr = $"[{curEv.Title}]";
-                        DrawTargetReticle(buf, (int)tgtScr.x, (int)tgtScr.y, tagStr, reticleCol);
+                        DrawTargetReticle(buf, (int)tgtScr.x, (int)tgtScr.y, tagStr, reticleCol, labelMgr);
                     }
                 }
             }
 
-            // 7. Draw HUD Overlay (Scale, Camera Info, Coordinates)
-            DrawHudOverlay(buf, viewRadiusKm, scale, pitchDeg, yawDeg);
+            // 7. Draw HUD Overlay (Scale, Camera Info, Top-Left Flight Telemetry)
+            DrawHudOverlay(buf, viewRadiusKm, scale, pitchDeg, yawDeg, telem, solution);
 
             // 8. 详细几何诊断日志输出 (当解更新或切换任务时记录)
             if (solution != null && solution.Legs != null && solution.Legs.Count > 0) {
@@ -375,9 +416,17 @@ namespace KSPGMAT.Service {
             float pitchDeg = 35.0f,
             float yawDeg = 0.0f,
             int selectedEventIndex = -1,
-            int maxLegsToDraw = 0) 
+            float flowProgress = 0f) 
         {
-            return RenderSolarSystemMGATexture(null, solution, width, height, zoom, panOffset, showSoi, pitchDeg, yawDeg, selectedEventIndex, maxLegsToDraw);
+            return RenderSolarSystemMGATexture(null, solution, width, height, zoom, panOffset, showSoi, pitchDeg, yawDeg, selectedEventIndex, flowProgress);
+        }
+
+        public static Texture2D RenderSolarSystemMGATexture(
+            Texture2D existingTex,
+            MGASolution solution, 
+            int width, int height, float zoom, Vector2 panOffset, bool showSoi, float pitchDeg, float yawDeg, int selectedEventIndex, int maxLegsToDraw) 
+        {
+            return RenderSolarSystemMGATexture(existingTex, solution, width, height, zoom, panOffset, showSoi, pitchDeg, yawDeg, selectedEventIndex, (float)maxLegsToDraw);
         }
 
         public static Vector3d GetEventPositionKm(MGASolution solution, MGAEventItem ev) {
@@ -442,9 +491,9 @@ namespace KSPGMAT.Service {
         // 3D RENDERING PASSES (Buffer Based)
         // =========================================================================
 
-        private static void Draw3DEclipticGrid(CanvasPixelBuffer buf, int cx, int cy, double scale, double viewRadiusKm, float pitch, float yaw) {
+        private static void Draw3DEclipticGrid(CanvasPixelBuffer buf, int cx, int cy, double scale, double viewRadiusKm, float pitch, float yaw, bool isInterplanetary = true) {
             Color axisColor = new Color(0.12f, 0.16f, 0.24f, 0.7f);
-            Color vernalColor = new Color(0.24f, 0.40f, 0.65f, 0.9f); // +X Vernal Equinox
+            Color vernalColor = new Color(0.24f, 0.40f, 0.65f, 0.9f); // +X Vernal Equinox / Primary Reference Axis
             Color ringColor = new Color(0.10f, 0.15f, 0.22f, 0.55f);
 
             // 1. Primary Coordinate Axes (+X Vernal Equinox, +Y 90° Ecliptic, +Z North Pole)
@@ -468,11 +517,18 @@ namespace KSPGMAT.Service {
                 DrawBitmapString(buf, (int)posZScr.x + 3, (int)posZScr.y, "+Z", zCol);
             }
 
-            // 2. Concentric AU Reference Rings in Ecliptic Plane
-            double[] auGuides = new double[] { 0.5, 1.0, 1.52, 5.2, 9.58, 19.2, 30.0 };
-            foreach (var au in auGuides) {
-                double rKm = au * AU_KM;
-                if (rKm > viewRadiusKm * 1.8) continue;
+            // 2. Concentric Reference Rings (AU in Interplanetary mode, KM in Planetary system mode)
+            List<double> ringsKm = new List<double>();
+            if (isInterplanetary) {
+                double[] auGuides = new double[] { 0.5, 1.0, 1.52, 5.2, 9.58, 19.2, 30.0 };
+                for (int a = 0; a < auGuides.Length; a++) ringsKm.Add(auGuides[a] * AU_KM);
+            } else {
+                double[] kmGuides = new double[] { 10000.0, 20000.0, 50000.0, 100000.0, 200000.0, 400000.0, 800000.0, 1500000.0, 3000000.0 };
+                for (int k = 0; k < kmGuides.Length; k++) ringsKm.Add(kmGuides[k]);
+            }
+
+            foreach (var rKm in ringsKm) {
+                if (rKm > viewRadiusKm * 1.8 || rKm < viewRadiusKm * 0.04) continue;
 
                 int segs = 140;
                 Vector2 prevP = Vector2.zero;
@@ -508,90 +564,188 @@ namespace KSPGMAT.Service {
             return false;
         }
 
-        private static void Draw3DPlanetarySystem(CanvasPixelBuffer buf, int cx, int cy, double scale, double viewRadiusKm, double ut, float pitch, float yaw, MGASolution solution) {
-            var planets = SolarSystemCatalog.GetAvailablePlanets();
+        private static void Draw3DPlanetarySystem(CanvasPixelBuffer buf, int cx, int cy, double scale, double viewRadiusKm, double ut, float pitch, float yaw, MGASolution solution, ScreenLabelManager labelMgr = null, bool isInterplanetary = true, string centralBody = "Sun", double muCentral = 0) {
             Color defaultOrbitColor = new Color(0.18f, 0.24f, 0.35f, 0.55f);
             Color activeOrbitColor = new Color(0.28f, 0.45f, 0.68f, 0.85f);
+            if (muCentral <= 0) muCentral = SolarSystemCatalog.SunMu;
 
-            foreach (var p in planets) {
-                if (p.SMA <= 0 || p.SMA > viewRadiusKm * 2.2) continue;
-                if (!IsMajorPlanetOrMissionBody(p.Name, solution)) continue;
+            if (isInterplanetary) {
+                var planets = SolarSystemCatalog.GetAvailablePlanets();
+                foreach (var p in planets) {
+                    if (p.SMA <= 0 || p.SMA > viewRadiusKm * 2.2) continue;
+                    if (!IsMajorPlanetOrMissionBody(p.Name, solution)) continue;
 
-                bool isMissionActive = solution != null && solution.Legs != null && 
-                    solution.Legs.Any(l => l.FromBody.Equals(p.Name, StringComparison.OrdinalIgnoreCase) || l.ToBody.Equals(p.Name, StringComparison.OrdinalIgnoreCase));
-
-                Color orbitColor = isMissionActive ? activeOrbitColor : defaultOrbitColor;
-
-                CelestialBody cb = null;
-                if (FlightGlobals.ready && FlightGlobals.Bodies != null) {
-                    cb = FlightGlobals.Bodies.Find(b => b.name.Equals(p.Name, StringComparison.OrdinalIgnoreCase) || b.bodyName.Equals(p.Name, StringComparison.OrdinalIgnoreCase));
-                }
-
-                // 1. 严格使用天体真实星历连续采样绘制开普勒轨道环 (提升至 160 采样点，消除多边形折线感)
-                int segs = 160;
-                Vector2 prevScr = Vector2.zero;
-                double period = (cb != null && cb.orbit != null && cb.orbit.period > 0) 
-                    ? cb.orbit.period 
-                    : (2.0 * Math.PI * Math.Sqrt(Math.Pow(p.SMA, 3) / SolarSystemCatalog.SunMu));
-
-                for (int i = 0; i <= segs; i++) {
-                    double sampleUT = ut + (i / (double)segs) * period;
-                    Vector3d pos3D;
-                    if (cb != null && cb.orbit != null) {
-                        pos3D = cb.orbit.getRelativePositionAtUT(sampleUT) / 1000.0;
-                    } else {
-                        p.GetHeliocentricState(sampleUT, out pos3D, out _);
-                    }
-
-                    Vector2 scrP = Project3D(pos3D, scale, cx, cy, pitch, yaw, out _);
-                    if (prevScr != Vector2.zero) {
-                        DrawSmoothLine(buf, (int)prevScr.x, (int)prevScr.y, (int)scrP.x, (int)scrP.y, orbitColor);
-                    }
-                    prevScr = scrP;
-                }
-
-                // 2. 绘制天体在当前任务历元下的 3D 空间球与图标标签 (包含微向日侧高光球体质感)
-                p.GetHeliocentricState(ut, out Vector3d bPosKm, out _);
-                Vector2 bScr = Project3D(bPosKm, scale, cx, cy, pitch, yaw, out _);
-
-                if (bScr.x >= -30 && bScr.x < buf.Width + 30 && bScr.y >= -30 && bScr.y < buf.Height + 30) {
-                    Color pCol = PlanetColors.ContainsKey(p.Name) ? PlanetColors[p.Name] : new Color(0.7f, 0.8f, 0.9f, 1f);
-                    
-                    int pRad = isMissionActive ? 5 : 4;
-                    if (p.Name == "Jupiter" || p.Name == "Saturn") pRad = 6;
-                    else if (p.Name == "Uranus" || p.Name == "Neptune") pRad = 5;
-                    else if (p.Name == "Mercury" || p.Name == "Pluto") pRad = 3;
-
-                    // Planet Atmosphere Halo & Core
-                    Color haloCol = new Color(pCol.r, pCol.g, pCol.b, 0.32f);
-                    DrawAACircle(buf, (int)bScr.x, (int)bScr.y, pRad + 2, haloCol);
-                    DrawFilledCircleAA(buf, (int)bScr.x, (int)bScr.y, pRad, pCol);
-
-                    // 3D Directional Specular Highlight (向日面微高光，赋予真实行星球体光影)
-                    Vector2 toSun = new Vector2(cx - bScr.x, cy - bScr.y).normalized;
-                    if (pRad >= 4) {
-                        int hx = (int)(bScr.x + toSun.x * (pRad * 0.35f));
-                        int hy = (int)(bScr.y + toSun.y * (pRad * 0.35f));
-                        DrawFilledCircleAA(buf, hx, hy, Math.Max(1, (int)(pRad * 0.42f)), new Color(1f, 1f, 1f, 0.28f));
-                    }
-
-                    // Saturn Ring in 3D
-                    if (p.Name == "Saturn") {
-                        DrawRingEllipse(buf, (int)bScr.x, (int)bScr.y, pRad + 5, pRad + 1, new Color(pCol.r, pCol.g, pCol.b, 0.75f));
-                    }
-                    // Earth Atmosphere Halo
-                    if (p.Name == "Earth") {
-                        DrawAACircle(buf, (int)bScr.x, (int)bScr.y, pRad + 3, new Color(0.35f, 0.75f, 1.0f, 0.45f));
-                    }
-
-                    // Render Planet Name Tag with Drop Shadow
-                    bool isMissionBody = solution != null && solution.Legs != null && 
+                    bool isMissionActive = solution != null && solution.Legs != null && 
                         solution.Legs.Any(l => l.FromBody.Equals(p.Name, StringComparison.OrdinalIgnoreCase) || l.ToBody.Equals(p.Name, StringComparison.OrdinalIgnoreCase));
-                    if (!isMissionBody) {
-                        Color textCol = new Color(0.85f, 0.92f, 1.0f, 0.85f);
-                        DrawBitmapStringWithShadow(buf, (int)bScr.x + pRad + 3, (int)bScr.y - 3, p.Name, textCol);
+
+                    Color orbitColor = isMissionActive ? activeOrbitColor : defaultOrbitColor;
+
+                    CelestialBody cb = null;
+                    if (FlightGlobals.ready && FlightGlobals.Bodies != null) {
+                        cb = FlightGlobals.Bodies.Find(b => b.name.Equals(p.Name, StringComparison.OrdinalIgnoreCase) || b.bodyName.Equals(p.Name, StringComparison.OrdinalIgnoreCase));
+                    }
+
+                    // 1. 严格使用天体真实星历连续采样绘制开普勒轨道环 (提升至 160 采样点，消除多边形折线感)
+                    int segs = 160;
+                    Vector2 prevScr = Vector2.zero;
+                    double period = (cb != null && cb.orbit != null && cb.orbit.period > 0) 
+                        ? cb.orbit.period 
+                        : PykepBridge.CalcOrbitPeriodSec(p.SMA, SolarSystemCatalog.SunMu);
+
+                    for (int i = 0; i <= segs; i++) {
+                        double sampleUT = ut + (i / (double)segs) * period;
+                        Vector3d pos3D;
+                        if (cb != null && cb.orbit != null) {
+                            pos3D = cb.orbit.getRelativePositionAtUT(sampleUT) / 1000.0;
+                        } else {
+                            p.GetHeliocentricState(sampleUT, out pos3D, out _);
+                        }
+
+                        Vector2 scrP = Project3D(pos3D, scale, cx, cy, pitch, yaw, out _);
+                        if (prevScr != Vector2.zero) {
+                            DrawSmoothLine(buf, (int)prevScr.x, (int)prevScr.y, (int)scrP.x, (int)scrP.y, orbitColor);
+                        }
+                        prevScr = scrP;
+                    }
+
+                    // 2. 绘制天体在当前任务历元下的 3D 空间球与图标标签 (包含微向日侧高光球体质感)
+                    p.GetHeliocentricState(ut, out Vector3d bPosKm, out _);
+                    Vector2 bScr = Project3D(bPosKm, scale, cx, cy, pitch, yaw, out _);
+
+                    if (bScr.x >= -30 && bScr.x < buf.Width + 30 && bScr.y >= -30 && bScr.y < buf.Height + 30) {
+                        Color pCol = PlanetColors.ContainsKey(p.Name) ? PlanetColors[p.Name] : new Color(0.7f, 0.8f, 0.9f, 1f);
+                        
+                        int pRad = isMissionActive ? 5 : 4;
+                        if (p.Name == "Jupiter" || p.Name == "Saturn") pRad = 6;
+                        else if (p.Name == "Uranus" || p.Name == "Neptune") pRad = 5;
+                        else if (p.Name == "Mercury" || p.Name == "Pluto") pRad = 3;
+
+                        // Planet Atmosphere Halo & Core
+                        Color haloCol = new Color(pCol.r, pCol.g, pCol.b, 0.32f);
+                        DrawAACircle(buf, (int)bScr.x, (int)bScr.y, pRad + 2, haloCol);
+                        DrawFilledCircleAA(buf, (int)bScr.x, (int)bScr.y, pRad, pCol);
+
+                        // 3D Directional Specular Highlight (向日面微高光，赋予真实行星球体光影)
+                        Vector2 toSun = new Vector2(cx - bScr.x, cy - bScr.y).normalized;
+                        if (pRad >= 4) {
+                            int hx = (int)(bScr.x + toSun.x * (pRad * 0.35f));
+                            int hy = (int)(bScr.y + toSun.y * (pRad * 0.35f));
+                            DrawFilledCircleAA(buf, hx, hy, Math.Max(1, (int)(pRad * 0.42f)), new Color(1f, 1f, 1f, 0.28f));
+                        }
+
+                        // Saturn Ring in 3D
+                        if (p.Name == "Saturn") {
+                            DrawRingEllipse(buf, (int)bScr.x, (int)bScr.y, pRad + 5, pRad + 1, new Color(pCol.r, pCol.g, pCol.b, 0.75f));
+                        }
+                        // Earth Atmosphere Halo
+                        if (p.Name == "Earth") {
+                            DrawAACircle(buf, (int)bScr.x, (int)bScr.y, pRad + 3, new Color(0.35f, 0.75f, 1.0f, 0.45f));
+                        }
+
+                        // Render Planet Name Tag with Drop Shadow & Collision Avoidance
+                        bool isMissionBody = solution != null && solution.Legs != null && 
+                            solution.Legs.Any(l => l.FromBody.Equals(p.Name, StringComparison.OrdinalIgnoreCase) || l.ToBody.Equals(p.Name, StringComparison.OrdinalIgnoreCase));
+                        if (!isMissionBody) {
+                            Color textCol = new Color(0.85f, 0.92f, 1.0f, 0.85f);
+                            if (labelMgr != null) {
+                                labelMgr.TryPlaceLabel(buf, (int)bScr.x, (int)bScr.y, p.Name, textCol, priority: 4, force: false);
+                            } else {
+                                DrawBitmapStringWithShadow(buf, (int)bScr.x + pRad + 3, (int)bScr.y - 3, p.Name, textCol);
+                            }
+                        }
                     }
                 }
+            } else {
+                // =========================================================================
+                // 行星系模式：中心为母行星 (如 Earth / Jupiter)，周围环绕绘制其所有子卫星 (Moons)
+                // =========================================================================
+                var moons = SolarSystemCatalog.GetMoonsOf(centralBody);
+                foreach (var m in moons) {
+                    if (m.SMA <= 0) continue;
+
+                    bool isMissionActive = solution != null && solution.Legs != null && 
+                        solution.Legs.Any(l => l.FromBody.Equals(m.Name, StringComparison.OrdinalIgnoreCase) || l.ToBody.Equals(m.Name, StringComparison.OrdinalIgnoreCase));
+                    Color orbitColor = isMissionActive ? activeOrbitColor : defaultOrbitColor;
+
+                    // 1. 绘制卫星绕母星相对开普勒轨道环
+                    int segs = 160;
+                    Vector2 prevScr = Vector2.zero;
+                    double period = PykepBridge.CalcOrbitPeriodSec(m.SMA, muCentral);
+
+                    for (int i = 0; i <= segs; i++) {
+                        double sampleUT = ut + (i / (double)segs) * period;
+                        m.GetParentCentricState(sampleUT, out Vector3d pos3D, out _);
+
+                        Vector2 scrP = Project3D(pos3D, scale, cx, cy, pitch, yaw, out _);
+                        if (prevScr != Vector2.zero) {
+                            DrawSmoothLine(buf, (int)prevScr.x, (int)prevScr.y, (int)scrP.x, (int)scrP.y, orbitColor);
+                        }
+                        prevScr = scrP;
+                    }
+
+                    // 2. 绘制卫星当前历元下的空间位置与本体
+                    m.GetParentCentricState(ut, out Vector3d mPosKm, out _);
+                    Vector2 mScr = Project3D(mPosKm, scale, cx, cy, pitch, yaw, out _);
+
+                    if (mScr.x >= -30 && mScr.x < buf.Width + 30 && mScr.y >= -30 && mScr.y < buf.Height + 30) {
+                        Color mCol = PlanetColors.ContainsKey(m.Name) ? PlanetColors[m.Name] : new Color(0.75f, 0.82f, 0.90f, 1f);
+                        int mRad = isMissionActive ? 5 : 4;
+
+                        Color haloCol = new Color(mCol.r, mCol.g, mCol.b, 0.35f);
+                        DrawAACircle(buf, (int)mScr.x, (int)mScr.y, mRad + 2, haloCol);
+                        DrawFilledCircleAA(buf, (int)mScr.x, (int)mScr.y, mRad, mCol);
+
+                        // 向心微高光
+                        Vector2 toCenter = new Vector2(cx - mScr.x, cy - mScr.y).normalized;
+                        if (mRad >= 4) {
+                            int hx = (int)(mScr.x + toCenter.x * (mRad * 0.3f));
+                            int hy = (int)(mScr.y + toCenter.y * (mRad * 0.3f));
+                            DrawFilledCircleAA(buf, hx, hy, Math.Max(1, (int)(mRad * 0.4f)), new Color(1f, 1f, 1f, 0.3f));
+                        }
+
+                        // 卫星标签 (防遮挡)
+                        bool isMissionBody = solution != null && solution.Legs != null && 
+                            solution.Legs.Any(l => l.FromBody.Equals(m.Name, StringComparison.OrdinalIgnoreCase) || l.ToBody.Equals(m.Name, StringComparison.OrdinalIgnoreCase));
+                        if (!isMissionBody) {
+                            Color textCol = new Color(0.85f, 0.92f, 1.0f, 0.85f);
+                            if (labelMgr != null) {
+                                labelMgr.TryPlaceLabel(buf, (int)mScr.x, (int)mScr.y, m.Name, textCol, priority: 3, force: false);
+                            } else {
+                                DrawBitmapStringWithShadow(buf, (int)mScr.x + mRad + 3, (int)mScr.y - 3, m.Name, textCol);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        private static void DrawCentralPlanet(CanvasPixelBuffer buf, int cx, int cy, string bodyName, ScreenLabelManager labelMgr = null) {
+            Color pCol = PlanetColors.ContainsKey(bodyName) ? PlanetColors[bodyName] : new Color(0.35f, 0.65f, 1.0f, 1.0f);
+            int pRad = 8;
+            if (bodyName.Equals("Jupiter", StringComparison.OrdinalIgnoreCase) || bodyName.Equals("Saturn", StringComparison.OrdinalIgnoreCase)) pRad = 11;
+            else if (bodyName.Equals("Uranus", StringComparison.OrdinalIgnoreCase) || bodyName.Equals("Neptune", StringComparison.OrdinalIgnoreCase)) pRad = 9;
+
+            // Halo & Atmospheric glow
+            Color haloCol = new Color(pCol.r, pCol.g, pCol.b, 0.28f);
+            DrawSoftGlow(buf, cx, cy, pRad + 6, haloCol);
+            DrawAACircle(buf, cx, cy, pRad + 3, new Color(pCol.r, pCol.g, pCol.b, 0.60f));
+            DrawFilledCircleAA(buf, cx, cy, pRad, pCol);
+
+            // Specular Highlight
+            DrawFilledCircleAA(buf, cx + (int)(pRad * 0.35f), cy + (int)(pRad * 0.35f), Math.Max(1, (int)(pRad * 0.4f)), new Color(1f, 1f, 1f, 0.35f));
+
+            // Saturn Ring
+            if (bodyName.Equals("Saturn", StringComparison.OrdinalIgnoreCase)) {
+                DrawRingEllipse(buf, cx, cy, pRad + 8, pRad + 2, new Color(pCol.r, pCol.g, pCol.b, 0.75f));
+            }
+
+            // Name Label
+            Color textCol = new Color(0.90f, 0.95f, 1.0f, 0.95f);
+            string dName = bodyName.ToUpperInvariant();
+            if (labelMgr != null) {
+                labelMgr.TryPlaceLabel(buf, cx, cy, dName, textCol, priority: 1, force: true);
+            } else {
+                DrawBitmapStringWithShadow(buf, cx + pRad + 4, cy - 3, dName, textCol);
             }
         }
 
@@ -603,15 +757,69 @@ namespace KSPGMAT.Service {
             DrawBitmapStringWithShadow(buf, cx + 8, cy - 3, "Sol", new Color(1.0f, 0.95f, 0.65f, 0.95f));
         }
 
-        private static void Draw3DTransferLegs(CanvasPixelBuffer buf, MGASolution solution, int cx, int cy, double scale, bool showSoi, float pitch, float yaw, int maxLegsToDraw = 0) {
-            double muSun = SolarSystemCatalog.SunMu;
-            int limit = (maxLegsToDraw > 0 && maxLegsToDraw <= solution.Legs.Count) ? maxLegsToDraw : solution.Legs.Count;
+        private static void DrawSpacecraftProbe(CanvasPixelBuffer buf, int cx, int cy, Color col, Vector2 velDir) {
+            // 1. Soft glowing aura around probe
+            DrawSoftGlow(buf, cx, cy, 9, new Color(col.r, col.g, col.b, 0.45f));
 
-            for (int k = 0; k < limit; k++) {
+            // 2. Velocity heading vector line
+            if (velDir.sqrMagnitude > 0.01f) {
+                Vector2 n = velDir.normalized;
+                int hx = cx + (int)(n.x * 16);
+                int hy = cy + (int)(n.y * 16);
+                DrawSmoothLine(buf, cx, cy, hx, hy, new Color(1.0f, 0.90f, 0.25f, 0.95f)); // Bright Amber Velocity Vector
+                DrawFilledCircleAA(buf, hx, hy, 2, new Color(1.0f, 1.0f, 1.0f, 1.0f));
+            }
+
+            // 3. Diamond satellite body
+            int rad = 5;
+            DrawSmoothLine(buf, cx - rad, cy, cx, cy + rad, col);
+            DrawSmoothLine(buf, cx, cy + rad, cx + rad, cy, col);
+            DrawSmoothLine(buf, cx + rad, cy, cx, cy - rad, col);
+            DrawSmoothLine(buf, cx, cy - rad, cx - rad, cy, col);
+
+            // 4. White probe core
+            DrawFilledCircleAA(buf, cx, cy, 2, new Color(1f, 1f, 1f, 1f));
+        }
+
+        private static void Draw3DTransferLegs(
+            CanvasPixelBuffer buf, 
+            MGASolution solution, 
+            int cx, int cy, 
+            double scale, 
+            double viewRadiusKm, 
+            bool showSoi, 
+            float pitch, float yaw, 
+            float flowProgress, 
+            ScreenLabelManager labelMgr = null, 
+            Vector2 targetReticleScr = default,
+            CraftTelemetry telem = default) {
+            double muCentral = (telem.IsInterplanetary || string.IsNullOrEmpty(telem.CentralBody)) 
+                ? SolarSystemCatalog.SunMu 
+                : SolarSystemCatalog.GetCentralMu(telem.CentralBody);
+            if (muCentral <= 0) muCentral = SolarSystemCatalog.SunMu;
+            int totalLegs = solution.Legs.Count;
+            bool isAll = (flowProgress <= 0.0001f || flowProgress > totalLegs);
+            
+            int activeLegIdx = isAll ? totalLegs - 1 : Mathf.Clamp((int)Math.Floor(flowProgress), 0, totalLegs - 1);
+            float activeFrac = isAll ? 1.0f : (flowProgress - activeLegIdx);
+            if (!isAll && flowProgress >= totalLegs) {
+                activeLegIdx = totalLegs - 1;
+                activeFrac = 1.0f;
+            }
+
+            Vector3d craftPos = telem.HasCraft ? telem.PositionKm : Vector3d.zero;
+            Vector3d craftVel = telem.HasCraft ? telem.VelocityKmS : Vector3d.zero;
+            bool hasCraft = !isAll && telem.HasCraft;
+
+            for (int k = 0; k < totalLegs; k++) {
                 var leg = solution.Legs[k];
                 if (double.IsNaN(leg.DeparturePosKm.x) || double.IsNaN(leg.ArrivalPosKm.x)) continue;
 
                 Color legCol = LegColors[k % LegColors.Length];
+
+                bool isPast = !isAll && (k < activeLegIdx);
+                bool isActive = !isAll && (k == activeLegIdx);
+                bool isFuture = !isAll && (k > activeLegIdx);
 
                 Vector3d r0 = leg.DeparturePosKm;
                 Vector3d v0 = leg.DepartureVelKms;
@@ -624,10 +832,10 @@ namespace KSPGMAT.Service {
 
                 double r0Mag = r0.magnitude;
                 double v0Mag = v0.magnitude;
-                Vector3d eVec = (Vector3d.Cross(v0, hVec) / muSun) - (r0 / r0Mag);
+                Vector3d eVec = (Vector3d.Cross(v0, hVec) / muCentral) - (r0 / r0Mag);
                 double ecc = eVec.magnitude;
-                double energy = (v0Mag * v0Mag * 0.5) - (muSun / r0Mag);
-                double a = -muSun / (2.0 * energy);
+                double energy = (v0Mag * v0Mag * 0.5) - (muCentral / r0Mag);
+                double a = -muCentral / (2.0 * energy);
 
                 Vector3d P = (ecc > 1e-6) ? (eVec / ecc) : r0.normalized;
                 Vector3d W = hVec / hMag;
@@ -638,18 +846,70 @@ namespace KSPGMAT.Service {
                 double nu0 = Math.Atan2(sinNu0, cosNu0);
                 if (nu0 < 0) nu0 += 2.0 * Math.PI;
 
-                int steps = 100;
+                int steps = 120;
                 Vector2 prevScr = Project3D(r0, scale, cx, cy, pitch, yaw, out _);
 
+                // Compute craft position and velocity if this is the active leg
+                if (isActive) {
+                    double dtActive = activeFrac * totalDt;
+                    if (ecc < 1.0 && a > 0) {
+                        double E0 = 2.0 * Math.Atan2(Math.Sqrt(1.0 - ecc) * Math.Sin(nu0 / 2.0), Math.Sqrt(1.0 + ecc) * Math.Cos(nu0 / 2.0));
+                        double M0 = E0 - ecc * Math.Sin(E0);
+                        double n = Math.Sqrt(muCentral / (a * a * a));
+                        double Mc = M0 + n * dtActive;
+                        double Ec = Mc;
+                        for (int it = 0; it < 14; it++) {
+                            double f = Ec - ecc * Math.Sin(Ec) - Mc;
+                            double fp = 1.0 - ecc * Math.Cos(Ec);
+                            double dE = -f / fp;
+                            Ec += dE;
+                            if (Math.Abs(dE) < 1e-9) break;
+                        }
+                        double nuc = 2.0 * Math.Atan2(Math.Sqrt(1.0 + ecc) * Math.Sin(Ec / 2.0), Math.Sqrt(1.0 - ecc) * Math.Cos(Ec / 2.0));
+                        double rMagC = a * (1.0 - ecc * Math.Cos(Ec));
+                        craftPos = (activeFrac >= 0.999f) ? leg.ArrivalPosKm : ((rMagC * Math.Cos(nuc)) * P + (rMagC * Math.Sin(nuc)) * Q);
+                        double vMagFactor = Math.Sqrt(muCentral * a) / Math.Max(1.0, rMagC);
+                        craftVel = vMagFactor * (-Math.Sin(Ec) * P + Math.Sqrt(Math.Max(0, 1.0 - ecc * ecc)) * Math.Cos(Ec) * Q);
+                    } else if (ecc > 1.0001 && energy > 0) {
+                        double a_h = muCentral / (2.0 * energy);
+                        double n_h = Math.Sqrt(muCentral / (a_h * a_h * a_h));
+                        double sinH0 = Math.Sqrt(ecc * ecc - 1.0) * Math.Sin(nu0) / (1.0 + ecc * Math.Cos(nu0));
+                        double H0 = Math.Log(sinH0 + Math.Sqrt(sinH0 * sinH0 + 1.0));
+                        double Mh0 = ecc * Math.Sinh(H0) - H0;
+                        double Mhc = Mh0 + n_h * dtActive;
+                        double Hc = H0;
+                        for (int it = 0; it < 16; it++) {
+                            double sH = Math.Sinh(Hc);
+                            double cH = Math.Cosh(Hc);
+                            double f = ecc * sH - Hc - Mhc;
+                            double fp = ecc * cH - 1.0;
+                            double dH = -f / fp;
+                            Hc += dH;
+                            if (Math.Abs(dH) < 1e-9) break;
+                        }
+                        double xP = a_h * (ecc - Math.Cosh(Hc));
+                        double yQ = a_h * Math.Sqrt(ecc * ecc - 1.0) * Math.Sinh(Hc);
+                        craftPos = (activeFrac >= 0.999f) ? leg.ArrivalPosKm : (xP * P + yQ * Q);
+                        double rMagC = craftPos.magnitude;
+                        double vMagSq = muCentral * (2.0 / Math.Max(1.0, rMagC) + 1.0 / a_h);
+                        craftVel = (P * (-Math.Sinh(Hc)) + Q * Math.Cosh(Hc)).normalized * Math.Sqrt(Math.Max(0, vMagSq));
+                    } else {
+                        craftPos = Vector3d.Lerp(r0, leg.ArrivalPosKm, activeFrac);
+                        craftVel = (leg.ArrivalPosKm - r0).normalized * v0.magnitude;
+                    }
+                }
+
+                // Render the Keplerian arc points
                 if (ecc < 1.0 && a > 0) {
                     double E0 = 2.0 * Math.Atan2(Math.Sqrt(1.0 - ecc) * Math.Sin(nu0 / 2.0), Math.Sqrt(1.0 + ecc) * Math.Cos(nu0 / 2.0));
                     double M0 = E0 - ecc * Math.Sin(E0);
-                    double n = Math.Sqrt(muSun / (a * a * a));
+                    double n = Math.Sqrt(muCentral / (a * a * a));
+
+                    int activeStepLimit = isActive ? Mathf.Clamp((int)Math.Round(activeFrac * steps), 0, steps) : steps;
 
                     for (int s = 1; s <= steps; s++) {
                         double dt = (s / (double)steps) * totalDt;
                         double M = M0 + n * dt;
-
                         double E = M;
                         for (int iter = 0; iter < 12; iter++) {
                             double f = E - ecc * Math.Sin(E) - M;
@@ -662,25 +922,37 @@ namespace KSPGMAT.Service {
                         double nu = 2.0 * Math.Atan2(Math.Sqrt(1.0 + ecc) * Math.Sin(E / 2.0), Math.Sqrt(1.0 - ecc) * Math.Cos(E / 2.0));
                         double rMag = a * (1.0 - ecc * Math.Cos(E));
                         Vector3d rPos = (s == steps) ? leg.ArrivalPosKm : ((rMag * Math.Cos(nu)) * P + (rMag * Math.Sin(nu)) * Q);
-
                         Vector2 nextScr = Project3D(rPos, scale, cx, cy, pitch, yaw, out _);
-                        DrawThickSmoothLine(buf, (int)prevScr.x, (int)prevScr.y, (int)nextScr.x, (int)nextScr.y, legCol, 2);
+
+                        if (isAll || isPast) {
+                            DrawThickSmoothLine(buf, (int)prevScr.x, (int)prevScr.y, (int)nextScr.x, (int)nextScr.y, legCol, 2);
+                        } else if (isActive) {
+                            if (s <= activeStepLimit) {
+                                DrawThickSmoothLine(buf, (int)prevScr.x, (int)prevScr.y, (int)nextScr.x, (int)nextScr.y, legCol, 2);
+                            } else if (s % 2 == 0) {
+                                // Faint dashed preview of remaining path in current leg
+                                DrawSmoothLine(buf, (int)prevScr.x, (int)prevScr.y, (int)nextScr.x, (int)nextScr.y, new Color(legCol.r, legCol.g, legCol.b, 0.22f));
+                            }
+                        } else if (isFuture) {
+                            // Faint dashed preview of future legs
+                            if (s % 3 == 0) {
+                                DrawSmoothLine(buf, (int)prevScr.x, (int)prevScr.y, (int)nextScr.x, (int)nextScr.y, new Color(legCol.r, legCol.g, legCol.b, 0.18f));
+                            }
+                        }
                         prevScr = nextScr;
                     }
                 } else if (ecc > 1.0001 && energy > 0) {
-                    // 双曲逃逸转移弧段 (真实开普勒双曲轨道严密递推采样，彻底消除直线下退化带来的折线假象)
-                    double a_h = muSun / (2.0 * energy);
-                    double n_h = Math.Sqrt(muSun / (a_h * a_h * a_h));
-
+                    double a_h = muCentral / (2.0 * energy);
+                    double n_h = Math.Sqrt(muCentral / (a_h * a_h * a_h));
                     double sinH0 = Math.Sqrt(ecc * ecc - 1.0) * Math.Sin(nu0) / (1.0 + ecc * Math.Cos(nu0));
-                    double H0 = Math.Log(sinH0 + Math.Sqrt(sinH0 * sinH0 + 1.0)); // asinh(sinH0)
+                    double H0 = Math.Log(sinH0 + Math.Sqrt(sinH0 * sinH0 + 1.0));
                     double Mh0 = ecc * Math.Sinh(H0) - H0;
 
+                    int activeStepLimit = isActive ? Mathf.Clamp((int)Math.Round(activeFrac * steps), 0, steps) : steps;
                     double prevH = H0;
                     for (int s = 1; s <= steps; s++) {
                         double dt = (s / (double)steps) * totalDt;
                         double Mh = Mh0 + n_h * dt;
-
                         double H = prevH;
                         for (int iter = 0; iter < 16; iter++) {
                             double sH = Math.Sinh(H);
@@ -696,56 +968,143 @@ namespace KSPGMAT.Service {
                         double xP = a_h * (ecc - Math.Cosh(H));
                         double yQ = a_h * Math.Sqrt(ecc * ecc - 1.0) * Math.Sinh(H);
                         Vector3d rPos = (s == steps) ? leg.ArrivalPosKm : (xP * P + yQ * Q);
-
                         Vector2 nextScr = Project3D(rPos, scale, cx, cy, pitch, yaw, out _);
-                        DrawThickSmoothLine(buf, (int)prevScr.x, (int)prevScr.y, (int)nextScr.x, (int)nextScr.y, legCol, 2);
+
+                        if (isAll || isPast) {
+                            DrawThickSmoothLine(buf, (int)prevScr.x, (int)prevScr.y, (int)nextScr.x, (int)nextScr.y, legCol, 2);
+                        } else if (isActive) {
+                            if (s <= activeStepLimit) {
+                                DrawThickSmoothLine(buf, (int)prevScr.x, (int)prevScr.y, (int)nextScr.x, (int)nextScr.y, legCol, 2);
+                            } else if (s % 2 == 0) {
+                                DrawSmoothLine(buf, (int)prevScr.x, (int)prevScr.y, (int)nextScr.x, (int)nextScr.y, new Color(legCol.r, legCol.g, legCol.b, 0.22f));
+                            }
+                        } else if (isFuture) {
+                            if (s % 3 == 0) {
+                                DrawSmoothLine(buf, (int)prevScr.x, (int)prevScr.y, (int)nextScr.x, (int)nextScr.y, new Color(legCol.r, legCol.g, legCol.b, 0.18f));
+                            }
+                        }
                         prevScr = nextScr;
                     }
                 } else {
+                    int activeStepLimit = isActive ? Mathf.Clamp((int)Math.Round(activeFrac * steps), 0, steps) : steps;
                     for (int s = 1; s <= steps; s++) {
                         double frac = s / (double)steps;
                         Vector3d rPos = Vector3d.Lerp(r0, leg.ArrivalPosKm, (float)frac);
                         Vector2 nextScr = Project3D(rPos, scale, cx, cy, pitch, yaw, out _);
-                        DrawThickSmoothLine(buf, (int)prevScr.x, (int)prevScr.y, (int)nextScr.x, (int)nextScr.y, legCol, 2);
+                        if (isAll || isPast || (isActive && s <= activeStepLimit)) {
+                            DrawThickSmoothLine(buf, (int)prevScr.x, (int)prevScr.y, (int)nextScr.x, (int)nextScr.y, legCol, 2);
+                        } else if (s % 2 == 0) {
+                            DrawSmoothLine(buf, (int)prevScr.x, (int)prevScr.y, (int)nextScr.x, (int)nextScr.y, new Color(legCol.r, legCol.g, legCol.b, 0.20f));
+                        }
                         prevScr = nextScr;
                     }
                 }
 
-                // Departure Node
-                Vector2 depScr = Project3D(leg.DeparturePosKm, scale, cx, cy, pitch, yaw, out _);
-                DrawGlowCircle(buf, (int)depScr.x, (int)depScr.y, 5, legCol);
-                if (leg.FromBody.Equals("Saturn", StringComparison.OrdinalIgnoreCase)) {
-                    DrawRingEllipse(buf, (int)depScr.x, (int)depScr.y, 11, 3, new Color(0.92f, 0.82f, 0.58f, 0.75f));
+                // Departure Node: draw if isAll or if leg has begun (k <= activeLegIdx)
+                if (isAll || k <= activeLegIdx) {
+                    Vector2 depScr = Project3D(leg.DeparturePosKm, scale, cx, cy, pitch, yaw, out _);
+                    DrawGlowCircle(buf, (int)depScr.x, (int)depScr.y, 5, legCol);
+                    if (leg.FromBody.Equals("Saturn", StringComparison.OrdinalIgnoreCase)) {
+                        DrawRingEllipse(buf, (int)depScr.x, (int)depScr.y, 11, 3, new Color(0.92f, 0.82f, 0.58f, 0.75f));
+                    }
+
+                    // 1. 目标框互斥去重：若该节点正处于 Target Reticle 准星范围，由 Reticle 统一高亮展示标题，绝不重复印字
+                    bool nearReticle = labelMgr != null && labelMgr.IsNearReticle((int)depScr.x, (int)depScr.y, targetReticleScr, 16f);
+
+                    // 2. 时间维度自适应隐藏 (根据时间自动隐藏不需要的标签)：
+                    // - 播放动画/拖动进度条 (!isAll):
+                    //   仅高亮当前活动机动 (k == activeLegIdx) 以及紧邻的下一个借力点 (k == activeLegIdx + 1)；
+                    //   过去已完成的陈年旧借力点 (k < activeLegIdx) 与未到达的远期借力点 (k > activeLegIdx + 1)：自动隐藏冗余文字！
+                    // - 全局概览 (isAll):
+                    //   所有节点参与智能排版避让；若缩放到内行星极度密集区域，避让器自动隐藏次要文字，只留光晕小点！
+                    bool showNodeText = !nearReticle;
+                    if (!isAll) {
+                        bool isCurrentLeg = (k == activeLegIdx);
+                        bool isNextLeg = (k == activeLegIdx + 1);
+                        bool isFreshLaunch = (k == 0 && activeLegIdx <= 1);
+                        showNodeText = showNodeText && (isCurrentLeg || isNextLeg || isFreshLaunch);
+                    }
+
+                    if (showNodeText) {
+                        string badgeLabel = (k == 0) ? $"[1] {leg.FromBody}" : $"[{k + 1}] {leg.FromBody}";
+                        if (labelMgr != null) {
+                            labelMgr.TryPlaceLabel(buf, (int)depScr.x, (int)depScr.y, badgeLabel, legCol, priority: (k == activeLegIdx ? 2 : 3), force: false);
+                        } else {
+                            DrawBitmapStringWithShadow(buf, (int)depScr.x + 7, (int)depScr.y + 2, badgeLabel, legCol);
+                        }
+                    }
+
+                    if (showSoi) {
+                        var bodyPlanet = SolarSystemCatalog.GetPlanet(leg.FromBody);
+                        double approxSoiKm = (bodyPlanet != null && bodyPlanet.SoiKm > 0 && !double.IsInfinity(bodyPlanet.SoiKm))
+                            ? bodyPlanet.SoiKm
+                            : (bodyPlanet != null ? bodyPlanet.SMA * Math.Pow(bodyPlanet.Mu / muCentral, 0.4) : 1e6);
+                        int soiPix = Math.Max(4, (int)(approxSoiKm * scale));
+                        DrawAACircle(buf, (int)depScr.x, (int)depScr.y, soiPix, new Color(legCol.r, legCol.g, legCol.b, 0.35f));
+                    }
                 }
 
-                string badgeLabel = (k == 0) ? $"[1] {leg.FromBody}" : $"[{k + 1}] {leg.FromBody}";
-                DrawBitmapStringWithShadow(buf, (int)depScr.x + 7, (int)depScr.y + 2, badgeLabel, legCol);
-
-                // Feature 1: Draw Deep Space Maneuver (DSM) node in glowing amber
+                // DSM node
                 if (leg.HasDSM && leg.DSM != null && !double.IsNaN(leg.DSMPositionKm.x)) {
-                    Vector2 dsmScr = Project3D(leg.DSMPositionKm, scale, cx, cy, pitch, yaw, out _);
-                    Color dsmCol = new Color(0.98f, 0.72f, 0.15f, 1.0f);
-                    DrawGlowCircle(buf, (int)dsmScr.x, (int)dsmScr.y, 5, dsmCol);
-                    string dsmLabel = $"[DSM] {leg.DSM.DeltaVMs:F0}m/s";
-                    DrawBitmapStringWithShadow(buf, (int)dsmScr.x + 7, (int)dsmScr.y - 4, dsmLabel, dsmCol);
+                    // In scrubber mode: show DSM if past or if on active leg and passed DSM epoch
+                    bool showDsm = isAll || isPast || (isActive && activeFrac >= (leg.DSM.EpochOffsetSec / totalDt));
+                    if (showDsm) {
+                        Vector2 dsmScr = Project3D(leg.DSMPositionKm, scale, cx, cy, pitch, yaw, out _);
+                        Color dsmCol = new Color(0.98f, 0.72f, 0.15f, 1.0f);
+                        DrawGlowCircle(buf, (int)dsmScr.x, (int)dsmScr.y, 5, dsmCol);
+                        
+                        bool nearReticle = labelMgr != null && labelMgr.IsNearReticle((int)dsmScr.x, (int)dsmScr.y, targetReticleScr, 16f);
+                        bool showDsmText = !nearReticle && (isAll || isActive);
+                        if (showDsmText) {
+                            string dsmLabel = $"[DSM] {leg.DSM.DeltaVMs:F0}M/S";
+                            if (labelMgr != null) {
+                                labelMgr.TryPlaceLabel(buf, (int)dsmScr.x, (int)dsmScr.y, dsmLabel, dsmCol, priority: 2, force: false);
+                            } else {
+                                DrawBitmapStringWithShadow(buf, (int)dsmScr.x + 7, (int)dsmScr.y - 4, dsmLabel, dsmCol);
+                            }
+                        }
+                    }
                 }
 
-                // SOI
-                if (showSoi) {
-                    var bodyPlanet = SolarSystemCatalog.GetPlanet(leg.FromBody);
-                    double approxSoiKm = bodyPlanet.SMA * Math.Pow(bodyPlanet.Mu / muSun, 0.4);
-                    int soiPix = Math.Max(4, (int)(approxSoiKm * scale));
-                    DrawAACircle(buf, (int)depScr.x, (int)depScr.y, soiPix, new Color(legCol.r, legCol.g, legCol.b, 0.35f));
-                }
-
-                // Stage or Final Arrival Node
-                if (k == limit - 1) {
+                // Arrival Node:
+                // 【彻底消除重复】：仅在整个飞行链的最终 Destination (k == totalLegs - 1) 绘制到达标记与 [END] 标签！
+                // 中间所有交接天体的借力标签已在 Departure 中唯一绘制，杜绝到达与出发在同一像素重复打印！
+                if (k == totalLegs - 1 && (isAll || isPast || (isActive && activeFrac >= 0.999f))) {
                     Vector2 arrScr = Project3D(leg.ArrivalPosKm, scale, cx, cy, pitch, yaw, out _);
-                    bool isFullEnd = (k == solution.Legs.Count - 1);
-                    Color arrCol = isFullEnd ? new Color(0.98f, 0.35f, 0.35f, 1.0f) : new Color(0.25f, 0.92f, 0.65f, 1.0f);
+                    Color arrCol = new Color(0.98f, 0.35f, 0.35f, 1.0f);
                     DrawGlowCircle(buf, (int)arrScr.x, (int)arrScr.y, 6, arrCol);
-                    string arrLabel = isFullEnd ? $"[End] {leg.ToBody}" : $"[Stage #{k + 1}] {leg.ToBody}";
-                    DrawBitmapStringWithShadow(buf, (int)arrScr.x + 8, (int)arrScr.y + 2, arrLabel, arrCol);
+                    
+                    bool nearReticle = labelMgr != null && labelMgr.IsNearReticle((int)arrScr.x, (int)arrScr.y, targetReticleScr, 16f);
+                    if (!nearReticle) {
+                        string arrLabel = $"[END] {leg.ToBody}";
+                        if (labelMgr != null) {
+                            labelMgr.TryPlaceLabel(buf, (int)arrScr.x, (int)arrScr.y, arrLabel, arrCol, priority: 2, force: true);
+                        } else {
+                            DrawBitmapStringWithShadow(buf, (int)arrScr.x + 8, (int)arrScr.y + 2, arrLabel, arrCol);
+                        }
+                    }
+                }
+            }
+
+            // Spacecraft Probe Marker (Rendered on top when scrubbing or animating)
+            if (hasCraft && !double.IsNaN(craftPos.x) && craftPos.magnitude > 100.0) {
+                Vector2 craftScr = Project3D(craftPos, scale, cx, cy, pitch, yaw, out _);
+                Vector2 craftAheadScr = Project3D(craftPos + craftVel.normalized * (viewRadiusKm * 0.08), scale, cx, cy, pitch, yaw, out _);
+                Vector2 velDir = craftAheadScr - craftScr;
+
+                DrawSpacecraftProbe(buf, (int)craftScr.x, (int)craftScr.y, new Color(0.25f, 0.92f, 1.0f, 1.0f), velDir);
+
+                // Probe Telemetry HUD Overlay (通过避让器智能排版，绝不与借力点或天体图标叠在一起)
+                string speedStr = $"V: {craftVel.magnitude:F1} KM/S";
+                string distStr = telem.IsInterplanetary ? $"R: {(craftPos.magnitude / AU_KM):F2} AU" : $"R: {craftPos.magnitude:N0} KM";
+                Color hudCol = new Color(0.35f, 0.95f, 1.0f, 0.95f);
+                Color distCol = new Color(0.85f, 0.90f, 1.0f, 0.85f);
+                if (labelMgr != null) {
+                    labelMgr.TryPlaceLabel(buf, (int)craftScr.x, (int)craftScr.y - 12, speedStr, hudCol, priority: 1, force: false);
+                    labelMgr.TryPlaceLabel(buf, (int)craftScr.x, (int)craftScr.y + 2, distStr, distCol, priority: 1, force: false);
+                } else {
+                    DrawBitmapStringWithShadow(buf, (int)craftScr.x + 10, (int)craftScr.y - 12, speedStr, hudCol);
+                    DrawBitmapStringWithShadow(buf, (int)craftScr.x + 10, (int)craftScr.y - 2, distStr, distCol);
                 }
             }
 
@@ -761,7 +1120,7 @@ namespace KSPGMAT.Service {
             }
         }
 
-        private static void DrawTargetReticle(CanvasPixelBuffer buf, int tx, int ty, string label, Color col) {
+        private static void DrawTargetReticle(CanvasPixelBuffer buf, int tx, int ty, string label, Color col, ScreenLabelManager labelMgr = null) {
             int S = 20; // Half size (40x40 frame)
             int L = 7;  // Corner segment length
 
@@ -799,37 +1158,191 @@ namespace KSPGMAT.Service {
             DrawAACircle(buf, tx, ty, 3, brightCol);
 
             if (!string.IsNullOrEmpty(label)) {
-                int labelX = tx - (label.Length * 6) / 2;
-                int labelY = ty + S + 4;
-                DrawBitmapStringWithShadow(buf, labelX, labelY, label, col);
+                if (labelMgr != null) {
+                    labelMgr.TryPlaceLabel(buf, tx, ty + S + 2, label, col, priority: 0, force: true);
+                } else {
+                    int labelX = tx - (label.Length * 6) / 2;
+                    int labelY = ty + S + 4;
+                    DrawBitmapStringWithShadow(buf, labelX, labelY, label, col);
+                }
             }
         }
 
-        private static void DrawHudOverlay(CanvasPixelBuffer buf, double viewRadiusKm, double scale, float pitch, float yaw) {
-            double auInView = viewRadiusKm / AU_KM;
-            double legendAu = 1.0;
-            if (auInView > 15.0) legendAu = 10.0;
-            else if (auInView > 6.0) legendAu = 5.0;
-            else if (auInView > 2.5) legendAu = 2.0;
-            else if (auInView < 0.8) legendAu = 0.2;
+        public static CraftTelemetry ComputeCraftTelemetry(MGASolution solution, float flowProgress, int selectedEventIndex) {
+            return MGAStateManager.Current.UpdateTelemetry(flowProgress, selectedEventIndex);
+        }
 
-            int barLenPix = (int)(legendAu * AU_KM * scale);
-            if (barLenPix > 10 && barLenPix < buf.Width - 40) {
-                int barX = 20;
-                int barY = 20;
-                Color hudCol = new Color(0.55f, 0.75f, 0.95f, 0.8f);
-                DrawSmoothLine(buf, barX, barY, barX + barLenPix, barY, hudCol);
-                DrawSmoothLine(buf, barX, barY - 3, barX, barY + 3, hudCol);
-                DrawSmoothLine(buf, barX + barLenPix, barY - 3, barX + barLenPix, barY + 3, hudCol);
+        private static void DrawFilledRect(CanvasPixelBuffer buf, int rx, int ry, int rw, int rh, Color col) {
+            int x0 = Math.Max(0, rx);
+            int x1 = Math.Min(buf.Width - 1, rx + rw);
+            int y0 = Math.Max(0, ry);
+            int y1 = Math.Min(buf.Height - 1, ry + rh);
+            byte r = (byte)(col.r * 255f);
+            byte g = (byte)(col.g * 255f);
+            byte b = (byte)(col.b * 255f);
+            float a = col.a;
+            for (int y = y0; y <= y1; y++) {
+                for (int x = x0; x <= x1; x++) {
+                    buf.BlendPixelFast(x, y, r, g, b, a);
+                }
+            }
+        }
 
-                string label = $"{legendAu:G} AU ({legendAu * 1.496e8:0.#E+0} km)";
-                DrawBitmapStringWithShadow(buf, barX, barY + 5, label, hudCol);
+        private static void DrawRectOutline(CanvasPixelBuffer buf, int rx, int ry, int rw, int rh, Color col) {
+            DrawSmoothLine(buf, rx, ry, rx + rw, ry, col);
+            DrawSmoothLine(buf, rx, ry + rh, rx + rw, ry + rh, col);
+            DrawSmoothLine(buf, rx, ry, rx, ry + rh, col);
+            DrawSmoothLine(buf, rx + rw, ry, rx + rw, ry + rh, col);
+        }
+
+        private static string FormatUtcEpochDisplay(double ut) {
+            if (ut <= 0) return "N/A";
+            string s = GMATClient.FormatUtcGregorian(ut);
+            if (string.IsNullOrEmpty(s)) return "N/A";
+            int dotIdx = s.LastIndexOf('.');
+            if (dotIdx > 0 && dotIdx >= s.Length - 4) {
+                s = s.Substring(0, dotIdx);
+            }
+            return s.ToUpperInvariant();
+        }
+
+        private static void DrawFlightTelemetryPanel(CanvasPixelBuffer buf, CraftTelemetry telem, MGASolution solution) {
+            int panelX = 14;
+            int panelW = 236;
+            int panelH = 56;
+            int panelY = buf.Height - panelH - 12;
+
+            // 1. 半透明暗色科技背景卡片 (Dark Glassmorphism Card)
+            DrawFilledRect(buf, panelX, panelY, panelW, panelH, new Color(0.04f, 0.08f, 0.13f, 0.82f));
+
+            // 2. 细线发光边框与高亮饰条 (Border & Cyberpunk Accent)
+            Color borderCol = new Color(0.18f, 0.35f, 0.52f, 0.60f);
+            DrawRectOutline(buf, panelX, panelY, panelW, panelH, borderCol);
+
+            // 左侧高亮青色能量饰条 (Vertical Cyan Status Bar)
+            Color cyanAccent = new Color(0.20f, 0.85f, 1.0f, 0.95f);
+            DrawSmoothLine(buf, panelX, panelY, panelX, panelY + panelH, cyanAccent);
+            DrawSmoothLine(buf, panelX + 1, panelY, panelX + 1, panelY + panelH, cyanAccent);
+
+            // 科技切角微修饰 (Corner Accents)
+            DrawSmoothLine(buf, panelX + panelW - 8, panelY + panelH, panelX + panelW, panelY + panelH, cyanAccent);
+            DrawSmoothLine(buf, panelX + panelW, panelY + panelH - 8, panelX + panelW, panelY + panelH, cyanAccent);
+
+            // 3. 文字内容排版
+            int line1Y = panelY + 42;
+            int line2Y = panelY + 29;
+            int line3Y = panelY + 16;
+            int line4Y = panelY + 3;
+
+            if (telem.HasCraft) {
+                // 实时绿色动态呼吸指示灯 (Active Green LED)
+                DrawGlowCircle(buf, panelX + 9, line1Y + 3, 2, new Color(0.22f, 0.96f, 0.55f, 0.95f));
+
+                string stageStr = (telem.ActiveLegIndex >= 0 && telem.TotalLegs > 0)
+                    ? $"STAGE [{telem.ActiveLegIndex + 1}/{telem.TotalLegs}] {telem.FromBody.ToUpperInvariant()} > {telem.ToBody.ToUpperInvariant()}"
+                    : "STAGE [EN-ROUTE]";
+                DrawBitmapStringWithShadow(buf, panelX + 16, line1Y, stageStr, new Color(0.35f, 0.80f, 1.0f, 0.95f));
+
+                // 行 2: 当前时刻历元 (跟随动画/滑块实时刷新)
+                string epochStr = $"EPOCH: {FormatUtcEpochDisplay(telem.MissionUt)}";
+                DrawBitmapStringWithShadow(buf, panelX + 8, line2Y, epochStr, new Color(0.92f, 0.96f, 1.0f, 0.95f));
+
+                // 行 3: 航天器瞬时速度与任务飞行天数 (VEL & MET)
+                string velStr = $"VEL: {telem.SpeedKmS:F2} KM/S";
+                string metStr = $"MET: T+{telem.MetDays:F1}D";
+                DrawBitmapStringWithShadow(buf, panelX + 8, line3Y, velStr, new Color(0.98f, 0.82f, 0.22f, 0.95f));
+                DrawBitmapStringWithShadow(buf, panelX + 130, line3Y, metStr, new Color(0.70f, 0.85f, 0.98f, 0.88f));
+
+                // 行 4: 引力中心距离与到达目标距离 (DIST: X.XX AU 或 KM)
+                string distStr = telem.IsInterplanetary 
+                    ? $"DIST: {telem.DistanceAu:F2} AU ({telem.DistanceKm:0.#E+0} KM)"
+                    : $"DIST: {telem.DistanceKm:N0} KM ({telem.CentralBody?.ToUpperInvariant()})";
+                DrawBitmapStringWithShadow(buf, panelX + 8, line4Y, distStr, new Color(0.40f, 0.90f, 0.72f, 0.92f));
+            } else {
+                // 概览总览模式 (Overview Mode / Solar System Frame)
+                DrawGlowCircle(buf, panelX + 9, line1Y + 3, 2, new Color(0.40f, 0.70f, 1.0f, 0.95f));
+                string overviewTitle = telem.IsInterplanetary ? "MISSION [SOLAR OVERVIEW]" : $"MISSION [{telem.CentralBody?.ToUpperInvariant()} SYSTEM]";
+                DrawBitmapStringWithShadow(buf, panelX + 16, line1Y, overviewTitle, new Color(0.35f, 0.80f, 1.0f, 0.95f));
+
+                string epochStr = $"EPOCH: {FormatUtcEpochDisplay(telem.MissionUt)}";
+                DrawBitmapStringWithShadow(buf, panelX + 8, line2Y, epochStr, new Color(0.92f, 0.96f, 1.0f, 0.95f));
+
+                string sysStr = (solution != null && solution.Legs != null && solution.Legs.Count > 0)
+                    ? $"LEGS: {solution.Legs.Count} STEPS | DV: {solution.TotalDeltaVKms * 1000.0:F0} M/S"
+                    : (telem.IsInterplanetary ? "FRAME: ECLIPJ2000 HELIOCENTRIC" : $"FRAME: {telem.CentralBody?.ToUpperInvariant()}-CENTRIC");
+                DrawBitmapStringWithShadow(buf, panelX + 8, line3Y, sysStr, new Color(0.85f, 0.88f, 0.95f, 0.85f));
+
+                string destStr = (solution != null && solution.Legs != null && solution.Legs.Count > 0)
+                    ? $"SPAN: {solution.TotalFlightDays:F0}D -> {solution.Legs[solution.Legs.Count - 1].ToBody.ToUpperInvariant()}"
+                    : "STATUS: READY";
+                DrawBitmapStringWithShadow(buf, panelX + 8, line4Y, destStr, new Color(0.40f, 0.85f, 0.75f, 0.85f));
+            }
+        }
+
+        private static void DrawHudOverlay(
+            CanvasPixelBuffer buf, 
+            double viewRadiusKm, 
+            double scale, 
+            float pitch, 
+            float yaw,
+            CraftTelemetry telem,
+            MGASolution solution) 
+        {
+            // 1. 左下角比例尺 (Distance Scale Bar)
+            if (telem.IsInterplanetary) {
+                double auInView = viewRadiusKm / AU_KM;
+                double legendAu = 1.0;
+                if (auInView > 15.0) legendAu = 10.0;
+                else if (auInView > 6.0) legendAu = 5.0;
+                else if (auInView > 2.5) legendAu = 2.0;
+                else if (auInView < 0.8) legendAu = 0.2;
+
+                int barLenPix = (int)(legendAu * AU_KM * scale);
+                if (barLenPix > 10 && barLenPix < buf.Width - 40) {
+                    int barX = 20;
+                    int barY = 20;
+                    Color hudCol = new Color(0.55f, 0.75f, 0.95f, 0.8f);
+                    DrawSmoothLine(buf, barX, barY, barX + barLenPix, barY, hudCol);
+                    DrawSmoothLine(buf, barX, barY - 3, barX, barY + 3, hudCol);
+                    DrawSmoothLine(buf, barX + barLenPix, barY - 3, barX + barLenPix, barY + 3, hudCol);
+
+                    string label = $"{legendAu:G} AU ({legendAu * 1.496e8:0.#E+0} km)";
+                    DrawBitmapStringWithShadow(buf, barX, barY + 5, label, hudCol);
+                }
+            } else {
+                double legendKm = 10000.0;
+                if (viewRadiusKm > 1000000.0) legendKm = 500000.0;
+                else if (viewRadiusKm > 400000.0) legendKm = 200000.0;
+                else if (viewRadiusKm > 150000.0) legendKm = 100000.0;
+                else if (viewRadiusKm > 50000.0) legendKm = 20000.0;
+                else if (viewRadiusKm < 15000.0) legendKm = 5000.0;
+
+                int barLenPix = (int)(legendKm * scale);
+                if (barLenPix > 10 && barLenPix < buf.Width - 40) {
+                    int barX = 20;
+                    int barY = 20;
+                    Color hudCol = new Color(0.55f, 0.75f, 0.95f, 0.8f);
+                    DrawSmoothLine(buf, barX, barY, barX + barLenPix, barY, hudCol);
+                    DrawSmoothLine(buf, barX, barY - 3, barX, barY + 3, hudCol);
+                    DrawSmoothLine(buf, barX + barLenPix, barY - 3, barX + barLenPix, barY + 3, hudCol);
+
+                    string label = $"{legendKm:N0} KM ({telem.CentralBody?.ToUpperInvariant()})";
+                    DrawBitmapStringWithShadow(buf, barX, barY + 5, label, hudCol);
+                }
             }
 
+            // 2. 右上角 3D 视角模式 (Camera View Mode)
             string viewMode = (pitch >= 88f) ? "2D Top-Down (+Z)" : ((pitch <= -88f) ? "2D Bottom-Up (-Z)" : ((Math.Abs(pitch) < 1.5f) ? $"Ecliptic (0° / {yaw:F0}°)" : $"3D ({pitch:F0}° / {yaw:F0}°)"));
             int textW = viewMode.Length * 6;
             DrawBitmapStringWithShadow(buf, buf.Width - textW - 15, buf.Height - 18, viewMode, new Color(0.40f, 0.65f, 0.90f, 0.85f));
-            DrawBitmapStringWithShadow(buf, 20, buf.Height - 18, "LMB: Rotate | RMB/Mid: Pan | Scroll: Zoom", new Color(0.30f, 0.42f, 0.58f, 0.75f));
+
+            // 3. 右下角操作提示 (Help Controls Hints) - 移至右下角避免与左上角遥测面板冲突
+            string helpText = "LMB: Rotate | RMB/Mid: Pan | Scroll: Zoom";
+            int helpW = helpText.Length * 6;
+            DrawBitmapStringWithShadow(buf, buf.Width - helpW - 15, 20, helpText, new Color(0.30f, 0.42f, 0.58f, 0.75f));
+
+            // 4. 左上角实时航天遥测面板 (Top-Left Dynamic Flight Telemetry HUD)
+            DrawFlightTelemetryPanel(buf, telem, solution);
         }
 
         // =========================================================================
@@ -1076,8 +1589,114 @@ namespace KSPGMAT.Service {
                 case '°': return new byte[] { 0x0C, 0x12, 0x12, 0x0C, 0x00, 0x00, 0x00 };
                 case ':': return new byte[] { 0x00, 0x0C, 0x0C, 0x00, 0x0C, 0x0C, 0x00 };
                 case '|': return new byte[] { 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04 };
+                case '>': return new byte[] { 0x10, 0x08, 0x04, 0x02, 0x04, 0x08, 0x10 };
+                case '<': return new byte[] { 0x02, 0x04, 0x08, 0x10, 0x08, 0x04, 0x02 };
+                case ',': return new byte[] { 0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x08 };
+                case '=': return new byte[] { 0x00, 0x1F, 0x00, 0x1F, 0x00, 0x00, 0x00 };
+                case '#': return new byte[] { 0x0A, 0x1F, 0x0A, 0x0A, 0x1F, 0x0A, 0x00 };
+                case '%': return new byte[] { 0x19, 0x19, 0x02, 0x04, 0x08, 0x13, 0x13 };
                 case ' ': return new byte[] { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
                 default:  return new byte[] { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+            }
+        }
+
+        /// <summary>
+        /// 2D 屏幕空间标签智能避让、排版与去重管理器 (Screen Space Anti-Cluttering & Adaptive Layout)
+        /// 解决文字叠加、多重借力重叠、飞船HUD遮挡，并支持时间驱动的自适应可见性
+        /// </summary>
+        private class ScreenLabelManager {
+            private struct LabelBox {
+                public int x;
+                public int y;
+                public int w;
+                public int h;
+                public int priority; // 0=Reticle(最高), 1=Probe HUD, 2=Active Leg, 3=Normal Leg, 4=Planet Name
+            }
+
+            private readonly List<LabelBox> _placed = new List<LabelBox>(32);
+            private readonly int _bufW;
+            private readonly int _bufH;
+
+            public ScreenLabelManager(int w, int h) {
+                _bufW = w;
+                _bufH = h;
+            }
+
+            public void RegisterExclusionZone(int cx, int cy, int halfW, int halfH, int priority = 0) {
+                _placed.Add(new LabelBox {
+                    x = cx - halfW,
+                    y = cy - halfH,
+                    w = halfW * 2,
+                    h = halfH * 2,
+                    priority = priority
+                });
+            }
+
+            public bool IsNearReticle(int anchorX, int anchorY, Vector2 reticleScr, float thresholdPix = 16f) {
+                if (reticleScr.x < 0 || reticleScr.y < 0) return false;
+                float dx = anchorX - reticleScr.x;
+                float dy = anchorY - reticleScr.y;
+                return (dx * dx + dy * dy) < (thresholdPix * thresholdPix);
+            }
+
+            /// <summary>
+            /// 尝试在指定屏幕坐标锚点附近绘制标签，自动避让重合，返回是否成功绘制
+            /// </summary>
+            public bool TryPlaceLabel(CanvasPixelBuffer buf, int anchorX, int anchorY, string text, Color col, int priority = 3, bool force = false) {
+                if (string.IsNullOrEmpty(text)) return false;
+
+                int textW = text.Length * 6;
+                int textH = 8;
+                int pad = 2;
+
+                // 优先测试的 6 个候选避让槽位 (偏右上, 偏右下, 偏左上, 偏左下, 正上方, 正下方)
+                var candidateOffsets = new (int ox, int oy)[] {
+                    (7, -3),                    // 默认偏右上
+                    (7, 4),                     // 偏右下
+                    (-textW - 7, -3),           // 偏左上
+                    (-textW - 7, 4),            // 偏左下
+                    (-textW / 2, -14),          // 正上方
+                    (-textW / 2, 9)             // 正下方
+                };
+
+                foreach (var offset in candidateOffsets) {
+                    int candX = anchorX + offset.ox;
+                    int candY = anchorY + offset.oy;
+
+                    // 边界保护 (不画出画布边缘)
+                    if (candX < 4 || candX + textW > _bufW - 4 || candY < 4 || candY + textH > _bufH - 4) {
+                        continue;
+                    }
+
+                    // AABB 碰撞检测
+                    bool collision = false;
+                    for (int i = 0; i < _placed.Count; i++) {
+                        var p = _placed[i];
+                        if (candX < p.x + p.w + pad && candX + textW + pad > p.x &&
+                            candY < p.y + p.h + pad && candY + textH + pad > p.y) {
+                            collision = true;
+                            break;
+                        }
+                    }
+
+                    if (!collision) {
+                        DrawBitmapStringWithShadow(buf, candX, candY, text, col);
+                        _placed.Add(new LabelBox { x = candX, y = candY, w = textW, h = textH, priority = priority });
+                        return true;
+                    }
+                }
+
+                if (force) {
+                    // 强制必须显示的最高优先级文本
+                    int forceX = Mathf.Clamp(anchorX - textW / 2, 4, _bufW - textW - 4);
+                    int forceY = Mathf.Clamp(anchorY + 22, 4, _bufH - textH - 4);
+                    DrawBitmapStringWithShadow(buf, forceX, forceY, text, col);
+                    _placed.Add(new LabelBox { x = forceX, y = forceY, w = textW, h = textH, priority = priority });
+                    return true;
+                }
+
+                // 空间极度拥挤且为低优先级标签时：自动优雅隐藏文字，只留发光节点，绝不叠加成乱码！
+                return false;
             }
         }
     }

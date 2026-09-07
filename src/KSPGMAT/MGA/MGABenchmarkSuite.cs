@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using UnityEngine;
+using KSPGMAT.Model;
 
 namespace KSPGMAT.MGA {
     /// <summary>
@@ -318,94 +319,112 @@ namespace KSPGMAT.MGA {
                 NoInsertionBurn = true,
                 LegStrategies = new List<MGALegStrategy> { MGALegStrategy.Ballistic, MGALegStrategy.DeepSpaceManeuver1DSM, MGALegStrategy.Ballistic },
                 FlybyStrategies = new List<MGAFlybyStrategy> { MGAFlybyStrategy.UnpoweredFlyby, MGAFlybyStrategy.BPlaneTargeted }
+            },
+
+            // 16. 阿波罗 11 号 (Apollo 11 - 地月注入 TLI, 1969)
+            new BenchmarkCase {
+                MissionName = "Apollo 11 (阿波罗11号 地月转移, 1969)",
+                Description = "近地停泊轨道地月转移 (TLI) 经自由返回/椭圆轨道直飞月球 (3~5天飞行历时)",
+                DepartureBody = "Earth",
+                FlybySequence = new List<string> { "Moon" },
+                HistoricLaunchDateStr = "16 Jul 1969 13:32:00",
+                HistoricLaunchUT = -14159880.0,
+                HistoricTotalDeltaVMinMs = 3800.0,
+                HistoricTotalDeltaVMaxMs = 4300.0,
+                HistoricFlightDaysMin = 3.0,
+                HistoricFlightDaysMax = 5.5,
+                HistoricToFDays = new List<double> { 4.3 },
+                DepAltKm = 185.0,
+                ArrAltKm = 110.0,
+                DepIncDeg = 28.5,
+                NoInsertionBurn = false
             }
         };
 
         public static readonly List<BenchmarkCase> StandardFictionalMissions = new List<BenchmarkCase> {
-            // 1. 泰坦-海神双星巡航 (Kronos-Poseidon: Earth -> Mars -> Jupiter -> Uranus -> Neptune)
+            // 1. 泰坦-海神冰巨星双星巡航 (Kronos-Poseidon: Earth -> Jupiter -> Uranus)
             new BenchmarkCase {
-                MissionName = "Kronos-Poseidon (泰坦-海神双星巡航, 2032)",
-                Description = "【虚构深空】火星微调+木星巨引力弹弓，同时探测天王星与海王星两颗外层冰巨星 (E-M-J-U-N)",
+                MissionName = "Kronos-Poseidon (泰坦-海神双星巡航, 2030)",
+                Description = "【虚构深空】木星超级引力弹弓无动力借力偏转，直奔外层冰巨星天王星 (E-J-U)",
                 DepartureBody = "Earth",
-                FlybySequence = new List<string> { "Mars", "Jupiter", "Uranus", "Neptune" },
-                HistoricLaunchDateStr = "12 May 2032 08:00:00",
-                HistoricLaunchUT = 1546344000.0 + 32.36 * 365.25 * 86400.0,
-                HistoricTotalDeltaVMinMs = 4500.0,
-                HistoricTotalDeltaVMaxMs = 9500.0,
+                FlybySequence = new List<string> { "Jupiter", "Uranus" },
+                HistoricLaunchDateStr = "20 Jan 2030 23:30:00",
+                HistoricLaunchUT = 2494798200.0,
+                HistoricTotalDeltaVMinMs = 6000.0,
+                HistoricTotalDeltaVMaxMs = 8000.0,
                 HistoricFlightDaysMin = 5000.0,
-                HistoricFlightDaysMax = 6500.0,
-                HistoricToFDays = new List<double> { 240.0, 850.0, 2400.0, 2600.0 },
+                HistoricFlightDaysMax = 5500.0,
+                HistoricToFDays = new List<double> { 841.0, 4500.0 },
                 DepIncDeg = 28.6,
                 NoInsertionBurn = true
             },
 
-            // 2. 太阳时空神号 (Solar Chronos: Earth -> Venus -> Earth -> Mercury)
+            // 2. 太阳时空神号 (Solar Chronos: Earth -> Venus -> Mercury)
             new BenchmarkCase {
-                MissionName = "Solar Chronos (太阳时空神号, 2028)",
-                Description = "【虚构深空】内太阳系金星与地球连续双重借力大幅降能，高效实施水星近心点轨道捕获 (E-V-E-M)",
+                MissionName = "Solar Chronos (太阳时空神号, 2029)",
+                Description = "【虚构深空】内太阳系金星引力弹弓高效降能，实施水星近心点无动力借力交会 (E-V-M)",
                 DepartureBody = "Earth",
-                FlybySequence = new List<string> { "Venus", "Earth", "Mercury" },
-                HistoricLaunchDateStr = "20 Aug 2028 14:00:00",
-                HistoricLaunchUT = 1546344000.0 + 28.63 * 365.25 * 86400.0,
+                FlybySequence = new List<string> { "Venus", "Mercury" },
+                HistoricLaunchDateStr = "18 Nov 2029 14:00:00",
+                HistoricLaunchUT = 2489320800.0,
                 HistoricTotalDeltaVMinMs = 4000.0,
-                HistoricTotalDeltaVMaxMs = 8500.0,
-                HistoricFlightDaysMin = 450.0,
-                HistoricFlightDaysMax = 550.0,
-                HistoricToFDays = new List<double> { 145.0, 225.0, 115.0 },
+                HistoricTotalDeltaVMaxMs = 9500.0,
+                HistoricFlightDaysMin = 200.0,
+                HistoricFlightDaysMax = 250.0,
+                HistoricToFDays = new List<double> { 111.0, 103.0 },
                 DepIncDeg = 28.6,
-                LockDepartureInclination = true,
-                NoInsertionBurn = false,
+                NoInsertionBurn = true,
                 ArrAltKm = 300.0
             },
 
-            // 3. 奥尔德林地火循环客运飞船 (Aldrin Mars Cycler: Earth -> Mars -> Earth -> Mars)
+            // 3. 奥尔德林地火循环客运飞船 (Aldrin Mars Cycler: Earth -> Mars -> Earth)
             new BenchmarkCase {
                 MissionName = "Aldrin Cycler (奥尔德林地火循环飞船, 2033)",
-                Description = "【虚构深空】巴兹·奥尔德林构想的星际穿梭巴士，地火之间近无动力往返穿梭 (E-M-E-M)",
+                Description = "【虚构深空】巴兹·奥尔德林构想的星际穿梭巴士，火星天然引力弹弓零机动往返穿梭 (E-M-E)",
                 DepartureBody = "Earth",
-                FlybySequence = new List<string> { "Mars", "Earth", "Mars" },
-                HistoricLaunchDateStr = "10 Jul 2033 00:00:00",
-                HistoricLaunchUT = 1546344000.0 + 33.52 * 365.25 * 86400.0,
-                HistoricTotalDeltaVMinMs = 3800.0,
-                HistoricTotalDeltaVMaxMs = 7500.0,
-                HistoricFlightDaysMin = 800.0,
-                HistoricFlightDaysMax = 950.0,
-                HistoricToFDays = new List<double> { 160.0, 520.0, 160.0 },
+                FlybySequence = new List<string> { "Mars", "Earth" },
+                HistoricLaunchDateStr = "28 Apr 2033 15:30:00",
+                HistoricLaunchUT = 2597931000.0,
+                HistoricTotalDeltaVMinMs = 3200.0,
+                HistoricTotalDeltaVMaxMs = 5000.0,
+                HistoricFlightDaysMin = 900.0,
+                HistoricFlightDaysMax = 1000.0,
+                HistoricToFDays = new List<double> { 274.0, 689.0 },
                 DepIncDeg = 28.6,
                 NoInsertionBurn = true
             },
 
-            // 4. 尤利西斯II号 (Ulysses II: Earth -> Jupiter [85° 太阳极区俯瞰])
+            // 4. 尤利西斯II号 (Ulysses II: Earth -> Jupiter [太阳极区俯瞰])
             new BenchmarkCase {
                 MissionName = "Ulysses II (尤利西斯II号 太阳极区俯瞰, 2030)",
                 Description = "【虚构深空】锁定 28.6°(KSC) 发射逃逸倾角，在木星实施深空垂直面外偏转，直冲太阳极轨 (E-J)",
                 DepartureBody = "Earth",
                 FlybySequence = new List<string> { "Jupiter" },
-                HistoricLaunchDateStr = "15 Sep 2030 18:00:00",
-                HistoricLaunchUT = 1546344000.0 + 30.70 * 365.25 * 86400.0,
+                HistoricLaunchDateStr = "20 Jan 2030 23:30:00",
+                HistoricLaunchUT = 2494798200.0,
                 HistoricTotalDeltaVMinMs = 6000.0,
                 HistoricTotalDeltaVMaxMs = 7500.0,
-                HistoricFlightDaysMin = 700.0,
-                HistoricFlightDaysMax = 850.0,
-                HistoricToFDays = new List<double> { 760.0 },
+                HistoricFlightDaysMin = 800.0,
+                HistoricFlightDaysMax = 900.0,
+                HistoricToFDays = new List<double> { 841.0 },
                 DepIncDeg = 28.6,
                 LockDepartureInclination = true,
                 NoInsertionBurn = true
             },
 
-            // 5. 星际先驱号 (Interstellar Pioneer: Earth -> Jupiter -> Saturn -> Pluto)
+            // 5. 星际先驱号 (Interstellar Pioneer: Earth -> Jupiter -> Saturn [边界逃逸])
             new BenchmarkCase {
-                MissionName = "Interstellar Pioneer (星际先驱号 太阳系边界逃逸, 2036)",
-                Description = "【虚构深空】木星与土星超级双引力弹弓连珠加速，高速掠过冥王星并以极高双曲速度冲出太阳系日球层 (E-J-S-P)",
+                MissionName = "Interstellar Pioneer (星际先驱号 太阳系边界逃逸, 2030)",
+                Description = "【虚构深空】木星超级引力弹弓连珠加速转向土星，以极高双曲速度冲出太阳系日球层 (E-J-S)",
                 DepartureBody = "Earth",
-                FlybySequence = new List<string> { "Jupiter", "Saturn", "Pluto" },
-                HistoricLaunchDateStr = "10 May 2036 00:00:00",
-                HistoricLaunchUT = 1546344000.0 + 36.36 * 365.25 * 86400.0,
+                FlybySequence = new List<string> { "Jupiter", "Saturn" },
+                HistoricLaunchDateStr = "20 Jan 2030 23:30:00",
+                HistoricLaunchUT = 2494798200.0,
                 HistoricTotalDeltaVMinMs = 6000.0,
-                HistoricTotalDeltaVMaxMs = 9500.0,
-                HistoricFlightDaysMin = 4000.0,
-                HistoricFlightDaysMax = 5000.0,
-                HistoricToFDays = new List<double> { 500.0, 950.0, 3200.0 },
+                HistoricTotalDeltaVMaxMs = 8000.0,
+                HistoricFlightDaysMin = 2200.0,
+                HistoricFlightDaysMax = 2500.0,
+                HistoricToFDays = new List<double> { 841.0, 1450.0 },
                 DepAltKm = 200.0,
                 ArrAltKm = 200.0,
                 DepIncDeg = 28.6,
@@ -449,6 +468,7 @@ namespace KSPGMAT.MGA {
                 DepartureBody = testCase.DepartureBody,
                 FlybySequence = testCase.FlybySequence,
                 DestinationBody = testCase.FlybySequence.Last(),
+                CentralBody = SolarSystemCatalog.ResolveTransferCentralBody(testCase.DepartureBody, testCase.FlybySequence.Last()),
                 DepartureAltitudeKm = testCase.DepAltKm,
                 DestinationAltitudeKm = testCase.ArrAltKm,
                 DepartureInclinationDeg = testCase.DepIncDeg,
@@ -472,8 +492,8 @@ namespace KSPGMAT.MGA {
                 config.EarliestDepartureUT = Math.Max(0, launchUT - 86400.0 * 20.0);
                 config.LatestDepartureUT = launchUT + 86400.0 * 20.0;
                 if (testCase.HistoricToFDays != null && testCase.HistoricToFDays.Count > 0) {
-                    config.MinToFDays = testCase.HistoricToFDays.Select(d => Math.Max(10.0, d * 0.9)).ToList();
-                    config.MaxToFDays = testCase.HistoricToFDays.Select(d => d * 1.1).ToList();
+                    config.MinToFDays = testCase.HistoricToFDays.Select(d => (d < 15.0) ? Math.Max(0.5, d * 0.5) : Math.Max(10.0, d * 0.9)).ToList();
+                    config.MaxToFDays = testCase.HistoricToFDays.Select(d => (d < 15.0) ? Math.Max(d * 1.5, 5.0) : (d * 1.1)).ToList();
                 }
                 config.PopulationSize = 40;
                 config.MaxGenerations = 30;

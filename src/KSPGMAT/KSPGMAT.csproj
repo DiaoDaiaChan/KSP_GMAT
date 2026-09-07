@@ -61,4 +61,19 @@
       <Private>false</Private>
     </Reference>
   </ItemGroup>
+
+  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ProjectDir)..\..\GameData\KSPGMAT\Plugins\" ContinueOnError="true" />
+    <ItemGroup>
+      <NativeBinFiles Include="$(ProjectDir)..\..\GameData\KSPGMAT\native\*.bin" />
+    </ItemGroup>
+    <Copy Condition="Exists('C:\Program Files (x86)\Steam\steamapps\common\Kerbal Space Program_newmod\GameData\KSPGMAT')"
+          SourceFiles="$(TargetPath)"
+          DestinationFolder="C:\Program Files (x86)\Steam\steamapps\common\Kerbal Space Program_newmod\GameData\KSPGMAT\Plugins\"
+          ContinueOnError="true" />
+    <Copy Condition="Exists('C:\Program Files (x86)\Steam\steamapps\common\Kerbal Space Program_newmod\GameData\KSPGMAT')"
+          SourceFiles="@(NativeBinFiles)"
+          DestinationFolder="C:\Program Files (x86)\Steam\steamapps\common\Kerbal Space Program_newmod\GameData\KSPGMAT\native\"
+          ContinueOnError="true" />
+  </Target>
 </Project>

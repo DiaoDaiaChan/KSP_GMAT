@@ -364,24 +364,64 @@ namespace KSPGMAT.UI {
             }
 
             // -------------------------------------------------------------
-            // 3. PROPAGATORS
+            // -------------------------------------------------------------
+            // 3. PROPAGATORS (动力学传播子与高阶引力场配置体系)
             // -------------------------------------------------------------
             else if (selectedResourceCategory == 3) {
                 GUILayout.BeginVertical(cardBoxStyle);
+                
+                // Header & Quick Presets Toolbar
                 GUILayout.BeginHorizontal();
                 GUILayout.Label(I18n.T("res_prop_header"), headerStyle);
                 GUILayout.FlexibleSpace();
+
+                // 快捷应用官方经典动力学场景预设
+                if (GUILayout.Button("+ LEO", secondaryButtonStyle, GUILayout.Height(20))) {
+                    string newKey = $"LEO_{propagatorConfigs.Count + 1}";
+                    var cfgNew = new PropagatorConfig();
+                    cfgNew.ApplyPreset("LEOProp");
+                    cfgNew.name = newKey;
+                    propagatorConfigs[newKey] = cfgNew;
+                }
+                if (GUILayout.Button("+ Cislunar", secondaryButtonStyle, GUILayout.Height(20))) {
+                    string newKey = $"Cislunar_{propagatorConfigs.Count + 1}";
+                    var cfgNew = new PropagatorConfig();
+                    cfgNew.ApplyPreset("CislunarProp");
+                    cfgNew.name = newKey;
+                    propagatorConfigs[newKey] = cfgNew;
+                }
+                if (GUILayout.Button("+ NRHO", secondaryButtonStyle, GUILayout.Height(20))) {
+                    string newKey = $"NRHO_{propagatorConfigs.Count + 1}";
+                    var cfgNew = new PropagatorConfig();
+                    cfgNew.ApplyPreset("LunarNRHOProp");
+                    cfgNew.name = newKey;
+                    propagatorConfigs[newKey] = cfgNew;
+                }
+                if (GUILayout.Button("+ DeepSpace", secondaryButtonStyle, GUILayout.Height(20))) {
+                    string newKey = $"DeepSpace_{propagatorConfigs.Count + 1}";
+                    var cfgNew = new PropagatorConfig();
+                    cfgNew.ApplyPreset("DeepSpaceProp");
+                    cfgNew.name = newKey;
+                    propagatorConfigs[newKey] = cfgNew;
+                }
+
+                GUILayout.Space(6);
                 if (GUILayout.Button(I18n.T("btn_new_prop2"), actionButtonStyle, GUILayout.Height(20))) {
                     string newKey = $"CustomProp_{propagatorConfigs.Count + 1}";
                     propagatorConfigs[newKey] = new PropagatorConfig {
+                        name = newKey,
                         integratorType = "RungeKutta89",
                         accuracy = 1e-11,
+                        initialStepSize = 60.0,
                         minStep = 0.001,
                         maxStep = 2700.0,
                         centralBody = "Earth",
-                        gravityModel = "JGM2",
+                        gravityModel = "JGM-2",
+                        gravityDegree = 4,
+                        gravityOrder = 4,
                         enableSRP = true,
-                        dragAtmosphereModel = "None"
+                        dragAtmosphereModel = "None",
+                        pointMasses = new List<string> { "Earth", "Luna", "Sun" }
                     };
                 }
                 GUILayout.EndHorizontal();
@@ -392,15 +432,42 @@ namespace KSPGMAT.UI {
                     string pKey = pKeys[pr];
                     var cfg = propagatorConfigs[pKey];
                     GUILayout.BeginVertical(nestedCardBoxStyle);
+
+                    // --- 顶栏：传播子标识与操作组 ---
                     GUILayout.BeginHorizontal();
-                    GUILayout.Label(I18n.Format("res_prop_item", pKey), labelValueStyle);
+                    GUILayout.Label($"<b><color=#38bdf8>{pKey}</color></b>", labelValueStyle, GUILayout.Width(130));
+                    
+                    // 动态状态微型胶囊指示
+                    string gravTag = !string.IsNullOrEmpty(cfg.gravityModel) && !cfg.gravityModel.Equals("PointMass", StringComparison.OrdinalIgnoreCase) 
+                        ? $"<color=#f59e0b>[{cfg.gravityModel} {cfg.gravityDegree}x{cfg.gravityOrder}]</color>" 
+                        : "<color=#94a3b8>[PointMass]</color>";
+                    string atmoTag = !string.IsNullOrEmpty(cfg.dragAtmosphereModel) && !cfg.dragAtmosphereModel.Equals("None", StringComparison.OrdinalIgnoreCase)
+                        ? $"<color=#a78bfa>[{cfg.dragAtmosphereModel}]</color>"
+                        : "";
+                    string srpTag = cfg.enableSRP ? "<color=#fbbf24>[SRP]</color>" : "";
+                    string relTag = cfg.enableRelativity ? "<color=#22d3ee>[GR]</color>" : "";
+                    GUILayout.Label($"{gravTag} {atmoTag} {srpTag} {relTag}", labelValueStyle);
+
                     GUILayout.FlexibleSpace();
+
+                    // 力模型高级详情按钮
                     if (GUILayout.Button(I18n.T("btn_force_model"), secondaryButtonStyle, GUILayout.Height(18))) {
                         selectedPropagatorKey = pKey;
                         showPropagatorConfigWindow = true;
                     }
+
+                    // 复制副本
+                    if (GUILayout.Button("克隆", secondaryButtonStyle, GUILayout.Height(18), GUILayout.Width(45))) {
+                        string cloneKey = $"{pKey}_Copy";
+                        var cloneCfg = cfg.Clone();
+                        cloneCfg.name = cloneKey;
+                        propagatorConfigs[cloneKey] = cloneCfg;
+                        break;
+                    }
+
+                    // 删除
                     if (pKeys.Count > 1) {
-                        if (GUILayout.Button(I18n.T("btn_delete_small"), deleteButtonStyle, GUILayout.Height(18), GUILayout.Width(50))) {
+                        if (GUILayout.Button(I18n.T("btn_delete_small"), deleteButtonStyle, GUILayout.Height(18), GUILayout.Width(45))) {
                             propagatorConfigs.Remove(pKey);
                             GUILayout.EndHorizontal();
                             GUILayout.EndVertical();
@@ -409,24 +476,132 @@ namespace KSPGMAT.UI {
                     }
                     GUILayout.EndHorizontal();
 
+                    GUILayout.Space(2);
+
+                    // --- 第 1 行：数值积分器与高精度步长矩阵 ---
                     GUILayout.BeginHorizontal();
-                    cfg.integratorType = DrawTextField(I18n.T("res_prop_integrator"), cfg.integratorType, 80, 130);
-                    cfg.accuracy = DrawDoubleField(I18n.T("res_prop_accuracy"), cfg.accuracy, 80, 90, "E2", $"prop_acc_{pKey}");
-                    cfg.minStep = DrawDoubleField(I18n.T("res_prop_min"), cfg.minStep, 90, 60, "F3", $"prop_min_{pKey}");
-                    cfg.maxStep = DrawDoubleField(I18n.T("res_prop_max"), cfg.maxStep, 90, 70, "F1", $"prop_max_{pKey}");
+                    GUILayout.Label("积分器:", labelValueStyle, GUILayout.Width(50));
+                    var supportedInteg = GMATSchemaRegistry.Instance.GetSupportedIntegrators();
+                    string curInteg = !string.IsNullOrEmpty(cfg.integratorType) ? cfg.integratorType : "RungeKutta89";
+                    if (GUILayout.Button($"<color=#38bdf8>{curInteg}</color>", secondaryButtonStyle, GUILayout.Width(140), GUILayout.Height(19))) {
+                        int curIdx = supportedInteg.IndexOf(curInteg);
+                        int nextIdx = (curIdx + 1) % supportedInteg.Count;
+                        cfg.integratorType = supportedInteg[nextIdx];
+                    }
+
+                    cfg.accuracy = DrawDoubleField("精度", cfg.accuracy, 40, 75, "E2", $"prop_acc_{pKey}");
+                    cfg.minStep = DrawDoubleField("最小", cfg.minStep, 40, 50, "F3", $"prop_min_{pKey}");
+                    cfg.maxStep = DrawDoubleField("最大", cfg.maxStep, 40, 60, "F1", $"prop_max_{pKey}");
                     GUILayout.FlexibleSpace();
                     GUILayout.EndHorizontal();
 
+                    GUILayout.Space(2);
+
+                    // --- 第 2 行：主天体高阶引力场模型与大气模型 ---
                     GUILayout.BeginHorizontal();
-                    cfg.centralBody = DrawTextField(I18n.T("res_prop_central"), cfg.centralBody, 80, 80);
-                    cfg.gravityModel = DrawTextField(I18n.T("res_prop_gravity"), cfg.gravityModel, 80, 80);
-                    cfg.dragAtmosphereModel = DrawTextField(I18n.T("res_prop_atmo"), cfg.dragAtmosphereModel, 70, 90);
-                    GUILayout.Label(I18n.Format("res_prop_srp", cfg.enableSRP ? I18n.T("res_prop_on") : I18n.T("res_prop_off")), labelValueStyle, GUILayout.Width(100));
+                    cfg.centralBody = DrawTextField("中心天体", cfg.centralBody, 60, 65);
+
+                    // 引力场模型选择器 (支持点击快速轮换官方模型)
+                    GUILayout.Label("引力模型:", labelValueStyle, GUILayout.Width(60));
+                    var gravModels = GMATSchemaRegistry.Instance.GetGravityModelsForBody(cfg.centralBody);
+                    string curGrav = !string.IsNullOrEmpty(cfg.gravityModel) ? cfg.gravityModel : "PointMass";
+                    if (GUILayout.Button(curGrav, secondaryButtonStyle, GUILayout.Width(80), GUILayout.Height(19))) {
+                        int gIdx = gravModels.IndexOf(curGrav);
+                        int nextG = (gIdx + 1) % gravModels.Count;
+                        cfg.gravityModel = gravModels[nextG];
+                        if (cfg.gravityModel == "PointMass") {
+                            cfg.gravityDegree = 0;
+                            cfg.gravityOrder = 0;
+                        } else if (cfg.gravityDegree == 0) {
+                            cfg.gravityDegree = 4;
+                            cfg.gravityOrder = 4;
+                        }
+                    }
+
+                    // 阶数与次阶微调
+                    if (!string.Equals(cfg.gravityModel, "PointMass", StringComparison.OrdinalIgnoreCase)) {
+                        cfg.gravityDegree = DrawIntField("阶", cfg.gravityDegree, 20, 30);
+                        cfg.gravityOrder = DrawIntField("次", cfg.gravityOrder, 20, 30);
+                    }
+
+                    // 大气模型选择器
+                    GUILayout.Label("大气:", labelValueStyle, GUILayout.Width(35));
+                    var atmoModels = GMATSchemaRegistry.Instance.GetAtmosphereModelsForBody(cfg.centralBody);
+                    string curAtmo = !string.IsNullOrEmpty(cfg.dragAtmosphereModel) ? cfg.dragAtmosphereModel : "None";
+                    if (GUILayout.Button(curAtmo, secondaryButtonStyle, GUILayout.Width(95), GUILayout.Height(19))) {
+                        int aIdx = atmoModels.IndexOf(curAtmo);
+                        int nextA = (aIdx + 1) % atmoModels.Count;
+                        cfg.dragAtmosphereModel = atmoModels[nextA];
+                        cfg.dragModel = atmoModels[nextA];
+                    }
+
+                    GUILayout.FlexibleSpace();
+                    GUILayout.EndHorizontal();
+
+                    GUILayout.Space(2);
+
+                    // --- 第 3 行：环境摄动直控胶囊组 (SRP / 相对论 / 误差控制) ---
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label("摄动物理:", labelValueStyle, GUILayout.Width(60));
+
+                    // SRP 太阳光压 Toggle 胶囊
+                    if (GUILayout.Button(cfg.enableSRP ? "<color=#fbbf24>☀ 太阳光压: 开</color>" : "<color=#64748b>☀ 太阳光压: 关</color>", cfg.enableSRP ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Width(110), GUILayout.Height(19))) {
+                        cfg.enableSRP = !cfg.enableSRP;
+                    }
+
+                    GUILayout.Space(4);
+
+                    // 广义相对论修正 Toggle 胶囊
+                    if (GUILayout.Button(cfg.enableRelativity ? "<color=#22d3ee>⚛ 相对论: 开</color>" : "<color=#64748b>⚛ 相对论: 关</color>", cfg.enableRelativity ? tabButtonActiveStyle : secondaryButtonStyle, GUILayout.Width(95), GUILayout.Height(19))) {
+                        cfg.enableRelativity = !cfg.enableRelativity;
+                    }
+
+                    GUILayout.Space(4);
+
+                    // 误差控制模式选择器
+                    string curErr = !string.IsNullOrEmpty(cfg.errorControl) ? cfg.errorControl : "RSSStep";
+                    if (GUILayout.Button($"误差: {curErr}", secondaryButtonStyle, GUILayout.Width(110), GUILayout.Height(19))) {
+                        var errModes = GMATSchemaRegistry.Instance.GetErrorControlModes();
+                        int eIdx = errModes.IndexOf(curErr);
+                        int nextE = (eIdx + 1) % errModes.Count;
+                        cfg.errorControl = errModes[nextE];
+                    }
+
+                    GUILayout.FlexibleSpace();
+                    GUILayout.EndHorizontal();
+
+                    GUILayout.Space(2);
+
+                    // --- 第 4 行：多体引力点质量 (PointMasses) 动态天体胶囊栏 ---
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label("引力摄动源:", labelValueStyle, GUILayout.Width(75));
+
+                    List<string> actMasses = cfg.GetActivePointMasses();
+                    for (int m = 0; m < actMasses.Count; m++) {
+                        string mBody = actMasses[m];
+                        if (GUILayout.Button($"{mBody} ×", secondaryButtonStyle, GUILayout.Height(18))) {
+                            cfg.SetPointMass(mBody, false);
+                            break;
+                        }
+                    }
+
+                    // 快捷添加天体候选胶囊 (从常见天体中添加未激活的)
+                    string[] quickBodies = new string[] { "Earth", "Luna", "Sun", "Jupiter", "Mars", "Venus", "Saturn" };
+                    for (int qb = 0; qb < quickBodies.Length; qb++) {
+                        string cand = quickBodies[qb];
+                        if (!cfg.HasPointMass(cand)) {
+                            if (GUILayout.Button($"+{cand}", tabButtonStyle, GUILayout.Height(18))) {
+                                cfg.SetPointMass(cand, true);
+                                break;
+                            }
+                        }
+                    }
+
                     GUILayout.FlexibleSpace();
                     GUILayout.EndHorizontal();
 
                     GUILayout.EndVertical();
-                    GUILayout.Space(2);
+                    GUILayout.Space(3);
                 }
                 GUILayout.EndVertical();
             }
@@ -1288,6 +1463,10 @@ namespace KSPGMAT.UI {
                     GMATStateManager.Current.Spacecraft.VelKms = new Vector3d(result.craft_vx, result.craft_vy, result.craft_vz);
                 }
 
+                if (result.craft_extended_properties != null && result.craft_extended_properties.Count > 0) {
+                    GMATStateManager.Current.Spacecraft.ExtendedProperties = new Dictionary<string, string>(result.craft_extended_properties, StringComparer.OrdinalIgnoreCase);
+                }
+
                 if (result.tanks != null && result.tanks.Count > 0) {
                     GMATStateManager.Current.Tanks = result.tanks;
                 } else if (FlightGlobals.ActiveVessel != null) {
@@ -1296,6 +1475,41 @@ namespace KSPGMAT.UI {
 
                 if (result.thrusters != null && result.thrusters.Count > 0) {
                     GMATStateManager.Current.Thrusters = result.thrusters;
+                }
+
+                if (result.burns != null && result.burns.Count > 0) {
+                    GMATStateManager.Current.Burns = new List<Model.GMATBurnModel>(result.burns);
+                }
+
+                if (result.report_files != null && result.report_files.Count > 0) {
+                    GMATStateManager.Current.ReportFiles = new List<Model.GMATReportFileModel>(result.report_files);
+                }
+
+                if (result.orbit_views != null && result.orbit_views.Count > 0) {
+                    GMATStateManager.Current.OrbitViews = new List<Model.GMATOrbitViewModel>(result.orbit_views);
+                }
+
+                if (result.coordinate_systems != null && result.coordinate_systems.Count > 0) {
+                    GMATStateManager.Current.CoordinateSystems = new List<CustomCoordSystemDef>(result.coordinate_systems);
+                    foreach (var cs in result.coordinate_systems) {
+                        GMATParameterRegistry.AddOrUpdateCoordinateSystem(cs);
+                    }
+                }
+
+                if (result.propagators != null && result.propagators.Count > 0) {
+                    GMATStateManager.Current.Propagators = new Dictionary<string, PropagatorConfig>(result.propagators, StringComparer.OrdinalIgnoreCase);
+                    foreach (var kvp in result.propagators) {
+                        kvp.Value.name = kvp.Key;
+                        GMATParameterRegistry.AddOrUpdatePropagator(kvp.Value);
+                    }
+                }
+
+                if (result.force_models != null && result.force_models.Count > 0) {
+                    GMATStateManager.Current.ForceModels = new Dictionary<string, ForceModelDef>(result.force_models, StringComparer.OrdinalIgnoreCase);
+                }
+
+                if (result.custom_header_blocks != null && result.custom_header_blocks.Count > 0) {
+                    GMATStateManager.Current.CustomHeaderBlocks = new List<string>(result.custom_header_blocks);
                 }
             }
         }
