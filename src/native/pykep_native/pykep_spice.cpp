@@ -263,33 +263,21 @@ EXPORT_API int pykep_spice_planet_elements(
 
     std::string name_norm = normalize_body_name(body_name);
 
-    if (name_norm == "moon") {
-        // 月球开普勒均根数按天体力学标准定义在黄道面 (Simon et al. / ELP-2000 标准解析均根数)
-        double mjd2000 = (epoch_ut - 1546344000.0) / 86400.0 + 0.5;
-        double T = (mjd2000 - 0.5) / 36525.0;
-        double node_deg = std::fmod(125.0445479 - 1934.1362891 * T, 360.0);
-        if (node_deg < 0.0) node_deg += 360.0;
-        double M_deg = std::fmod(134.9633964 + 477198.8675055 * T, 360.0);
-        if (M_deg < 0.0) M_deg += 360.0;
-        double L_deg = std::fmod(218.3164477 + 481267.88123421 * T, 360.0);
-        if (L_deg < 0.0) L_deg += 360.0;
-        double aop_deg = std::fmod(L_deg - M_deg - node_deg, 360.0);
-        if (aop_deg < 0.0) aop_deg += 360.0;
-
-        *out_a = 384400.0;
-        *out_e = 0.05490;
-        *out_i_deg = 5.145396;
-        *out_raan_deg = node_deg;
-        *out_aop_deg = aop_deg;
-        *out_ma_deg = M_deg;
-        return 0;
-    }
-
     // 方案 A 优先：直读 NASA JPL SPK (de440.bsp) 切比雪夫状态 + 原生 kep3::ic2par (0 魔法数字，100% 权威)
     if (g_spk_reader.is_loaded()) {
         double rx = 0, ry = 0, rz = 0, vx = 0, vy = 0, vz = 0;
-        bool ok = g_spk_reader.get_planet_state(body_name, epoch_ut, "J2000", &rx, &ry, &rz, &vx, &vy, &vz);
-        double mu = (mu_central_kms > 0.0) ? mu_central_kms : SUN_MU;
+        bool ok = false;
+        double mu = 0.0;
+
+        if (name_norm == "moon") {
+            // 月球在母星 (地球 399) 引力场与黄道惯性系 (ECLIPJ2000) 下直接由 DE440 真实矢量求解开普勒根数 (0 魔法数字)
+            ok = g_spk_reader.get_moon_geocentric_state(epoch_ut, "ECLIPJ2000", &rx, &ry, &rz, &vx, &vy, &vz);
+            mu = (mu_central_kms > 0.0 && mu_central_kms < 1e8) ? mu_central_kms : 398600.4418;
+        } else {
+            // 行星在日心引力场下定义开普勒公转根数 (J2000 赤道系对齐 Principia/RSS)
+            ok = g_spk_reader.get_planet_state(body_name, epoch_ut, "J2000", &rx, &ry, &rz, &vx, &vy, &vz);
+            mu = (mu_central_kms > 0.0) ? mu_central_kms : SUN_MU;
+        }
 
         if (ok) {
             try {

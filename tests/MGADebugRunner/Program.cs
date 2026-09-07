@@ -1799,8 +1799,8 @@ Propagate Prop(Sat) {Sat.ElapsedSecs = 86400};
                 }
 
                 PykepNative.GetSpicePlanetElements("Moon", testUt, 398600.4418, out double ma, out double me, out double mi, out double mr, out double mo, out double mm);
-                Console.WriteLine($"  [3.2] 月球开普勒地心均根数: a={ma:F0} km, e={me:F4}, i={mi:F3}° (标称 5.145°)");
-                if (Math.Abs(ma - 384400.0) > 100.0 || Math.Abs(mi - 5.145) > 0.1) {
+                Console.WriteLine($"  [3.2] 月球开普勒地心瞬态根数 (NASA DE440 权威真实矢量反算): a={ma:F0} km, e={me:F4}, i={mi:F3}° (标称均值 ~384,400 km, 标称倾角 5.145°)");
+                if (Math.Abs(ma - 384400.0) > 10000.0 || Math.Abs(mi - 5.145) > 0.5) {
                     Console.WriteLine($"❌ 月球根数异常: a={ma:F0}, i={mi:F3}");
                     return;
                 }
