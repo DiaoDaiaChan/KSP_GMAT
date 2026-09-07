@@ -244,12 +244,29 @@ namespace KSPGMAT.MGA {
                     string tempDir = Path.Combine(Path.GetTempPath(), "KSPGMAT_native");
                     if (!Directory.Exists(tempDir)) Directory.CreateDirectory(tempDir);
 
-                    // Copy all dependent .bin files to tempDir as .dll for Windows PE dependency resolution
+                    // Copy all dependent .bin files to tempDir as .dll for Windows PE dependency resolution.
+                    // If locked by another running process (e.g. running KSP), fallback to a process-isolated subfolder.
                     var binFiles = Directory.GetFiles(nativeDir, "*.bin");
+                    bool copySuccess = true;
                     foreach (var bf in binFiles) {
                         string baseName = Path.GetFileNameWithoutExtension(bf);
                         string dstDll = Path.Combine(tempDir, baseName + ".dll");
-                        try { File.Copy(bf, dstDll, true); } catch {}
+                        try {
+                            File.Copy(bf, dstDll, true);
+                        } catch {
+                            copySuccess = false;
+                            break;
+                        }
+                    }
+
+                    if (!copySuccess) {
+                        tempDir = Path.Combine(tempDir, "proc_" + System.Diagnostics.Process.GetCurrentProcess().Id);
+                        if (!Directory.Exists(tempDir)) Directory.CreateDirectory(tempDir);
+                        foreach (var bf in binFiles) {
+                            string baseName = Path.GetFileNameWithoutExtension(bf);
+                            string dstDll = Path.Combine(tempDir, baseName + ".dll");
+                            try { File.Copy(bf, dstDll, true); } catch { }
+                        }
                     }
 
                     SetDllDirectory(tempDir);

@@ -1,6 +1,7 @@
 # KSP_GMAT Agent 编码守则 (baseline_agent.md)
 
 > **用法**：每次对话开始时，把本文件内容附给 coding agent，要求其编写/修改代码时**始终遵守**以下铁律。完成代码时重复：我已遵守baseline
+# 每一步都应该commit介绍编写/修改了什么代码
 
 ---
 

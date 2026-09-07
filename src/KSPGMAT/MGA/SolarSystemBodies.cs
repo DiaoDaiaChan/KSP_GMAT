@@ -251,7 +251,7 @@ namespace KSPGMAT.MGA {
         public static double EarthMu => MGADefaults.EarthMu; // km^3/s^2 (标准参考系动态真值)
         public static double EarthRadiusKm => MGADefaults.EarthRadiusKm; // km (标准参考系动态真值)
 
-        private static double _dynamicRaOffsetDeg = 13.606222; // 理论基准初值 (无游戏运行时平滑保底)
+        private static double _dynamicRaOffsetDeg = 0.0; // 标准 J2000 ICRF 基准初值 (X=春分点)
         private static volatile bool _hasDynamicallyCalibrated = false;
 
         /// <summary>

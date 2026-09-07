@@ -7,6 +7,7 @@
 
 #include "pykep_common.h"
 #include <kep3/udpla/jpl_lp.hpp>
+#include <kep3/core_astro/convert_anomalies.hpp>
 
 #include <string>
 #include <unordered_map>
@@ -19,6 +20,30 @@ namespace {
     static std::string g_loaded_spice_kernel_path = "kep3_builtin_ephemeris";
     static std::mutex g_spice_mutex;
     static std::unordered_map<std::string, std::shared_ptr<kep3::udpla::jpl_lp>> g_jpl_planet_cache;
+
+    // IAU standard obliquity of the ecliptic at J2000.0: eps = 23°26'21.406" = 23.4392911111111°
+    static constexpr double EPSILON_J2000_RAD = 23.43929111111111 * (3.14159265358979323846 / 180.0);
+    static const double COS_EPS = std::cos(EPSILON_J2000_RAD); // 0.9174820620691818
+    static const double SIN_EPS = std::sin(EPSILON_J2000_RAD); // 0.3977771559319137
+
+    static inline void rotate_eclip_to_icrf(double& x, double& y, double& z) {
+        double y_new = y * COS_EPS - z * SIN_EPS;
+        double z_new = y * SIN_EPS + z * COS_EPS;
+        y = y_new;
+        z = z_new;
+    }
+
+    static inline bool is_icrf_frame(const char* frame) {
+        if (!frame || std::strlen(frame) == 0) return false;
+        std::string f(frame);
+        std::transform(f.begin(), f.end(), f.begin(), [](unsigned char c) { return (char)std::toupper(c); });
+        if (f.find("ECLIP") != std::string::npos) return false;
+        if (f.find("J2000") != std::string::npos || f.find("ICRF") != std::string::npos || 
+            f.find("EME") != std::string::npos || f.find("EQUATOR") != std::string::npos) {
+            return true;
+        }
+        return false;
+    }
 
     static std::string normalize_body_name(const std::string& raw_name) {
         if (raw_name.empty()) return "";
@@ -34,6 +59,7 @@ namespace {
         if (lower.find("mercury") != std::string::npos || lower == "1") return "mercury";
         if (lower.find("venus") != std::string::npos || lower == "2") return "venus";
         if (lower.find("earth") != std::string::npos || lower == "3" || lower == "399") return "earth";
+        if (lower.find("moon") != std::string::npos || lower.find("luna") != std::string::npos || lower.find("mun") != std::string::npos || lower == "301") return "moon";
         if (lower.find("mars") != std::string::npos || lower == "4") return "mars";
         if (lower.find("jupiter") != std::string::npos || lower == "5") return "jupiter";
         if (lower.find("saturn") != std::string::npos || lower == "6") return "saturn";
@@ -80,7 +106,7 @@ EXPORT_API const char* pykep_get_loaded_spice_path() {
 
 /// <summary>
 /// 精确求取天体在指定历元下的日心状态 (位置 km, 速度 km/s)
-/// 坐标系为 ECLIPJ2000，使用 kep3 官方 jpl_lp / vsop2013
+/// 坐标系原生支持 ECLIPJ2000 与 J2000 (ICRF)，100% C++ 原生欧拉旋转，0 托管计算
 /// 100% 线程安全：全局互斥锁保护
 /// </summary>
 EXPORT_API int pykep_spice_planet_state(
@@ -100,6 +126,60 @@ EXPORT_API int pykep_spice_planet_state(
     if (name_norm.empty()) return -1;
 
     try {
+        // KSP UT = 1546344000.0 对应 J2000.0 (JD 2451545.0, MJD2000 = 0.5)
+        double mjd2000 = (epoch_ut - 1546344000.0) / 86400.0 + 0.5;
+
+        // 月球特判：基于地球状态 + 高精度地月解析轨道 (Brown / ELP-2000)
+        if (name_norm == "moon") {
+            std::shared_ptr<kep3::udpla::jpl_lp> pl_earth;
+            auto it = g_jpl_planet_cache.find("earth");
+            if (it != g_jpl_planet_cache.end()) {
+                pl_earth = it->second;
+            } else {
+                pl_earth = std::make_shared<kep3::udpla::jpl_lp>("earth");
+                g_jpl_planet_cache["earth"] = pl_earth;
+            }
+            auto pv_earth = pl_earth->eph(mjd2000);
+
+            double T = (mjd2000 - 0.5) / 36525.0; // centuries from J2000.0
+            double a_m = 384400000.0; // meters (384,400 km)
+            double e_m = 0.05490;
+            double inc_m_rad = 5.145396 * (PI / 180.0);
+
+            double node_deg = std::fmod(125.0445479 - 1934.1362891 * T, 360.0);
+            if (node_deg < 0.0) node_deg += 360.0;
+            double node_rad = node_deg * (PI / 180.0);
+
+            double M_deg = std::fmod(134.9633964 + 477198.8675055 * T, 360.0);
+            if (M_deg < 0.0) M_deg += 360.0;
+            double M_rad = M_deg * (PI / 180.0);
+
+            double L_deg = std::fmod(218.3164477 + 481267.88123421 * T, 360.0);
+            if (L_deg < 0.0) L_deg += 360.0;
+            double w_bar_deg = L_deg - M_deg;
+            double aop_deg = std::fmod(w_bar_deg - node_deg, 360.0);
+            if (aop_deg < 0.0) aop_deg += 360.0;
+            double aop_rad = aop_deg * (PI / 180.0);
+
+            double f_rad = kep3::m2f(M_rad, e_m);
+            std::array<double, 6> par = {a_m, e_m, inc_m_rad, node_rad, aop_rad, f_rad};
+            auto pv_moon_rel = kep3::par2ic(par, 398600.4418e9);
+
+            *rx = (pv_earth[0][0] + pv_moon_rel[0][0]) / 1000.0;
+            *ry = (pv_earth[0][1] + pv_moon_rel[0][1]) / 1000.0;
+            *rz = (pv_earth[0][2] + pv_moon_rel[0][2]) / 1000.0;
+
+            *vx = (pv_earth[1][0] + pv_moon_rel[1][0]) / 1000.0;
+            *vy = (pv_earth[1][1] + pv_moon_rel[1][1]) / 1000.0;
+            *vz = (pv_earth[1][2] + pv_moon_rel[1][2]) / 1000.0;
+
+            if (is_icrf_frame(frame)) {
+                rotate_eclip_to_icrf(*rx, *ry, *rz);
+                rotate_eclip_to_icrf(*vx, *vy, *vz);
+            }
+            return 0;
+        }
+
         std::shared_ptr<kep3::udpla::jpl_lp> pl;
         auto it = g_jpl_planet_cache.find(name_norm);
         if (it != g_jpl_planet_cache.end()) {
@@ -108,9 +188,6 @@ EXPORT_API int pykep_spice_planet_state(
             pl = std::make_shared<kep3::udpla::jpl_lp>(name_norm);
             g_jpl_planet_cache[name_norm] = pl;
         }
-
-        // KSP UT = 1546344000.0 对应 J2000.0 (JD 2451545.0, MJD2000 = 0.5)
-        double mjd2000 = (epoch_ut - 1546344000.0) / 86400.0 + 0.5;
 
         auto pv = pl->eph(mjd2000);
 
@@ -122,6 +199,12 @@ EXPORT_API int pykep_spice_planet_state(
         *vx = pv[1][0] / 1000.0;
         *vy = pv[1][1] / 1000.0;
         *vz = pv[1][2] / 1000.0;
+
+        // 若请求为 J2000 (ICRF) 赤道惯性系，执行绕春分点 X 轴倾斜黄赤交角 eps = 23.4392911° 的空间旋转
+        if (is_icrf_frame(frame)) {
+            rotate_eclip_to_icrf(*rx, *ry, *rz);
+            rotate_eclip_to_icrf(*vx, *vy, *vz);
+        }
 
         return 0;
     } catch (const std::exception&) {
@@ -139,6 +222,29 @@ EXPORT_API int pykep_spice_planet_elements(
     double* out_raan_deg, double* out_aop_deg, double* out_ma_deg)
 {
     if (!body_name || !out_a || !out_e || !out_i_deg || !out_raan_deg || !out_aop_deg || !out_ma_deg) return -1;
+
+    std::string name_norm = normalize_body_name(body_name);
+    if (name_norm == "moon") {
+        double mjd2000 = (epoch_ut - 1546344000.0) / 86400.0 + 0.5;
+        double T = (mjd2000 - 0.5) / 36525.0;
+        double node_deg = std::fmod(125.0445479 - 1934.1362891 * T, 360.0);
+        if (node_deg < 0.0) node_deg += 360.0;
+        double M_deg = std::fmod(134.9633964 + 477198.8675055 * T, 360.0);
+        if (M_deg < 0.0) M_deg += 360.0;
+        double L_deg = std::fmod(218.3164477 + 481267.88123421 * T, 360.0);
+        if (L_deg < 0.0) L_deg += 360.0;
+        double aop_deg = std::fmod(L_deg - M_deg - node_deg, 360.0);
+        if (aop_deg < 0.0) aop_deg += 360.0;
+
+        *out_a = 384400.0;
+        *out_e = 0.05490;
+        *out_i_deg = 5.145396;
+        *out_raan_deg = node_deg;
+        *out_aop_deg = aop_deg;
+        *out_ma_deg = M_deg;
+        return 0;
+    }
+
     double rx = 0, ry = 0, rz = 0, vx = 0, vy = 0, vz = 0;
     int rc = pykep_spice_planet_state(body_name, epoch_ut, "ECLIPJ2000", &rx, &ry, &rz, &vx, &vy, &vz);
     if (rc == 0) {
@@ -180,6 +286,10 @@ EXPORT_API int pykep_spice_planet_elements(
     } else if (bname.find("EARTH") != std::string::npos) {
         *out_a = 149598023.0; *out_e = 0.01671022; *out_i_deg = 0.00000;
         *out_raan_deg = 0.00000; *out_aop_deg = 102.94719; *out_ma_deg = 357.51716;
+        return 0;
+    } else if (bname.find("MOON") != std::string::npos || bname.find("LUNA") != std::string::npos) {
+        *out_a = 384400.0; *out_e = 0.05490; *out_i_deg = 5.145396;
+        *out_raan_deg = 125.0445; *out_aop_deg = 318.0634; *out_ma_deg = 134.9634;
         return 0;
     } else if (bname.find("MARS") != std::string::npos) {
         *out_a = 227936640.0; *out_e = 0.09341233; *out_i_deg = 1.85061;

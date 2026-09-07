@@ -32,6 +32,7 @@ namespace MGADebugRunner {
             TestMode2LockedOrbitEarthToMoon(ref totalTests, ref passedTests);
             TestDirectInterplanetaryEarthToVenusDiversity(ref totalTests, ref passedTests);
             TestCeresAndMercuryCandidateSequences(ref totalTests, ref passedTests);
+            TestEphemerisFrameAlignmentAndMoon(ref totalTests, ref passedTests);
 
             Console.WriteLine("==========================================================================================");
             Console.WriteLine($"🏆 综合测试总结: 全部用例已执行完毕！成功通过: {passedTests} / {totalTests} (通过率: {(double)passedTests / totalTests * 100:F1}%)");
@@ -1727,6 +1728,88 @@ Propagate Prop(Sat) {Sat.ElapsedSecs = 86400};
                 Console.WriteLine("\n✅ 谷神星与水星借力链路拓扑过滤、火星跳板赋权与目标共振延伸核验 100% 通过！\n");
             } catch (Exception ex) {
                 Console.WriteLine($"❌ 谷神星/水星拓扑测试异常: {ex.Message}\n{ex.StackTrace}");
+            }
+        }
+
+        static void TestEphemerisFrameAlignmentAndMoon(ref int total, ref int passed) {
+            total++;
+            Console.WriteLine("------------------------------------------------------------------------------------------");
+            Console.WriteLine("📐 [用例集 黄赤交角与月球星历对齐] ECLIPJ2000 vs J2000 (ICRF) 旋转与月球高精地心解析核验");
+            Console.WriteLine("------------------------------------------------------------------------------------------");
+
+            try {
+                double testUt = EphemerisTimeSystem.J2000_UT; // J2000.0
+
+                // 1. 地球在 ECLIPJ2000 与 J2000 下的状态
+                bool okEclip = PykepNative.GetSpicePlanetState("Earth", testUt, "ECLIPJ2000", out Vector3d rEclip, out Vector3d vEclip);
+                bool okJ2000 = PykepNative.GetSpicePlanetState("Earth", testUt, "J2000", out Vector3d rJ2000, out Vector3d vJ2000);
+
+                if (!okEclip || !okJ2000) {
+                    Console.WriteLine("❌ 无法获取地球 SPICE 状态！");
+                    return;
+                }
+
+                Console.WriteLine($"  [1.1] 地球日心 ECLIPJ2000: r=[{rEclip.x:F1}, {rEclip.y:F1}, {rEclip.z:F1}]km, |r|={rEclip.magnitude:F1}km");
+                Console.WriteLine($"  [1.2] 地球日心 J2000(ICRF): r=[{rJ2000.x:F1}, {rJ2000.y:F1}, {rJ2000.z:F1}]km, |r|={rJ2000.magnitude:F1}km");
+
+                // 核验 A: 模长严格守恒 (欧拉刚体旋转不改变矢径与速度大小)
+                double drMag = Math.Abs(rEclip.magnitude - rJ2000.magnitude);
+                double dvMag = Math.Abs(vEclip.magnitude - vJ2000.magnitude);
+                if (drMag > 1e-3 || dvMag > 1e-4) {
+                    Console.WriteLine($"❌ 模长不守恒: drMag={drMag:E3} km, dvMag={dvMag:E3} km/s");
+                    return;
+                }
+                Console.WriteLine($"        • 模长刚体守恒: Δ|r|={drMag:E2} km, Δ|v|={dvMag:E2} km/s ✅");
+
+                // 核验 B: 地球在 J2000 (赤道) 参考系下的角动量法向倾角必须严格对齐黄赤交角 23.439°
+                Vector3d hJ2000 = Vector3d.Cross(rJ2000, vJ2000);
+                double incEarthJ2000 = Math.Acos(Mathf.Clamp((float)(hJ2000.z / hJ2000.magnitude), -1f, 1f)) * (180.0 / Math.PI);
+                Console.WriteLine($"        • 地球公转轨道在 ICRF(J2000) 赤道系反算倾角: {incEarthJ2000:F4}° (标称黄赤交角 23.4393°)");
+                if (Math.Abs(incEarthJ2000 - 23.43929) > 0.05) {
+                    Console.WriteLine($"❌ 倾角偏差过大: {incEarthJ2000:F4}°");
+                    return;
+                }
+                Console.WriteLine("        ✅ 地球在 J2000 赤道系下的公转倾角精准对齐 23.439° 黄赤交角！");
+
+                // 2. 火星与金星在 J2000 下的倾角核验
+                PykepNative.GetSpicePlanetState("Mars", testUt, "J2000", out Vector3d rMars, out Vector3d vMars);
+                Vector3d hMars = Vector3d.Cross(rMars, vMars);
+                double incMarsJ2000 = Math.Acos(Mathf.Clamp((float)(hMars.z / hMars.magnitude), -1f, 1f)) * (180.0 / Math.PI);
+                Console.WriteLine($"  [2.1] 火星在 ICRF(J2000) 赤道系倾角: {incMarsJ2000:F3}° (标称 24.67°)");
+
+                PykepNative.GetSpicePlanetState("Venus", testUt, "J2000", out Vector3d rVenus, out Vector3d vVenus);
+                Vector3d hVenus = Vector3d.Cross(rVenus, vVenus);
+                double incVenusJ2000 = Math.Acos(Mathf.Clamp((float)(hVenus.z / hVenus.magnitude), -1f, 1f)) * (180.0 / Math.PI);
+                Console.WriteLine($"  [2.2] 金星在 ICRF(J2000) 赤道系倾角: {incVenusJ2000:F3}° (标称 24.43°)");
+
+                // 3. 月球 (Moon / Luna) 星历核验
+                bool okMoon = PykepNative.GetSpicePlanetState("Moon", testUt, "J2000", out Vector3d rMoon, out Vector3d vMoon);
+                if (!okMoon) {
+                    Console.WriteLine("❌ 月球 SPICE 状态查询失败！");
+                    return;
+                }
+                Vector3d rMoonGeo = rMoon - rJ2000;
+                Vector3d vMoonGeo = vMoon - vJ2000;
+                double moonDistKm = rMoonGeo.magnitude;
+                double moonVelKms = vMoonGeo.magnitude;
+                Console.WriteLine($"  [3.1] 月球地心相对矢量: 距离={moonDistKm:F1} km (标称 ~384,400 km), 速度={moonVelKms:F3} km/s (标称 ~1.022 km/s)");
+                if (Math.Abs(moonDistKm - 384400.0) > 30000.0) {
+                    Console.WriteLine($"❌ 月球地月距离异常: {moonDistKm:F1} km");
+                    return;
+                }
+
+                PykepNative.GetSpicePlanetElements("Moon", testUt, 398600.4418, out double ma, out double me, out double mi, out double mr, out double mo, out double mm);
+                Console.WriteLine($"  [3.2] 月球开普勒地心均根数: a={ma:F0} km, e={me:F4}, i={mi:F3}° (标称 5.145°)");
+                if (Math.Abs(ma - 384400.0) > 100.0 || Math.Abs(mi - 5.145) > 0.1) {
+                    Console.WriteLine($"❌ 月球根数异常: a={ma:F0}, i={mi:F3}");
+                    return;
+                }
+                Console.WriteLine("        ✅ 月球高精度地心解析与日心级联状态完全自洽！");
+
+                passed++;
+                Console.WriteLine("\n✅ 黄赤交角 (23.439°) 原生旋转变换与月球星历核验 100% 通过！\n");
+            } catch (Exception ex) {
+                Console.WriteLine($"❌ 星历坐标系与月球测试异常: {ex.Message}\n{ex.StackTrace}");
             }
         }
     }
