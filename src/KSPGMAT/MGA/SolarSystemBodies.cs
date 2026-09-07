@@ -1078,22 +1078,10 @@ namespace KSPGMAT.MGA {
                 }
             }
 
-            // 计算方案 1 的开普勒根数 (使用对应的中心引力常数 centralMuKm)
+            // 计算方案 1 的开普勒根数 (使用对应的中心引力常数 centralMuKm，100% 底层 C++ 原生计算，0 托管计算)
             if (res.Scheme1Available && centralMuKm > 0) {
                 double raan1 = 0, aop1 = 0, ma1 = 0;
                 PykepNative.GetSpicePlanetElements(bodyName, ut, centralMuKm, out res.SmaScheme1, out res.EccScheme1, out res.IncScheme1, out raan1, out aop1, out ma1);
-                
-                // 在 J2000 (ICRF) 参考系下，严格从瞬时状态矢量反求活力积分与角动量 (对齐 Earth Mean Equator J2000)
-                double rMag = res.PosScheme1.magnitude;
-                double vMag = res.VelScheme1.magnitude;
-                if (rMag > 1.0) {
-                    double energy = (vMag * vMag / 2.0) - (centralMuKm / rMag);
-                    if (Math.Abs(energy) > 1e-9) res.SmaScheme1 = -centralMuKm / (2.0 * energy);
-                    Vector3d h = Vector3d.Cross(res.PosScheme1, res.VelScheme1);
-                    Vector3d eVec = Vector3d.Cross(res.VelScheme1, h) / centralMuKm - (res.PosScheme1 / rMag);
-                    res.EccScheme1 = eVec.magnitude;
-                    if (h.magnitude > 1e-9) res.IncScheme1 = Math.Acos(Mathf.Clamp((float)(h.z / h.magnitude), -1f, 1f)) * Mathf.Rad2Deg;
-                }
             }
 
             // 2. 方案 2: FlightGlobals 游戏运行态天体 (方案 B: 接入 Principia 原生星历与未篡改轨道)

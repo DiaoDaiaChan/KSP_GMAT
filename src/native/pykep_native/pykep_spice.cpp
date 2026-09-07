@@ -6,6 +6,7 @@
 // ============================================================================
 
 #include "pykep_common.h"
+#include "spk_reader.hpp"
 #include <kep3/udpla/jpl_lp.hpp>
 #include <kep3/core_astro/convert_anomalies.hpp>
 
@@ -18,8 +19,26 @@
 
 namespace {
     static std::string g_loaded_spice_kernel_path = "kep3_builtin_ephemeris";
-    static std::mutex g_spice_mutex;
+    static std::recursive_mutex g_spice_mutex;
     static std::unordered_map<std::string, std::shared_ptr<kep3::udpla::jpl_lp>> g_jpl_planet_cache;
+    static kspgmat::spice::SpkReader g_spk_reader;
+
+    static void ensure_spk_loaded() {
+        if (g_spk_reader.is_loaded()) return;
+        static const char* default_paths[] = {
+            "C:\\Users\\43701\\gmat-win-R2026a\\data\\planetary_ephem\\spk\\de440.bsp",
+            "data/planetary_ephem/spk/de440.bsp",
+            "../data/planetary_ephem/spk/de440.bsp",
+            "../../data/planetary_ephem/spk/de440.bsp",
+            "de440.bsp"
+        };
+        for (const char* p : default_paths) {
+            if (g_spk_reader.load(p)) {
+                g_loaded_spice_kernel_path = p;
+                break;
+            }
+        }
+    }
 
     // IAU standard obliquity of the ecliptic at J2000.0: eps = 23°26'21.406" = 23.4392911111111°
     static constexpr double EPSILON_J2000_RAD = 23.43929111111111 * (3.14159265358979323846 / 180.0);
@@ -78,8 +97,13 @@ EXPORT_API int pykep_load_spice_kernel(const char* kernel_path) {
         return -1;
     }
 
-    std::lock_guard<std::mutex> lock(g_spice_mutex);
+    std::lock_guard<std::recursive_mutex> lock(g_spice_mutex);
     try {
+        if (g_spk_reader.load(kernel_path)) {
+            g_loaded_spice_kernel_path = std::string(kernel_path);
+            g_jpl_planet_cache.clear();
+            return 0;
+        }
         g_loaded_spice_kernel_path = std::string(kernel_path);
         g_jpl_planet_cache.clear();
         return 0;
@@ -92,7 +116,10 @@ EXPORT_API int pykep_load_spice_kernel(const char* kernel_path) {
 /// 检查当前是否已成功加载星历内核
 /// </summary>
 EXPORT_API int pykep_has_spice_loaded() {
-    std::lock_guard<std::mutex> lock(g_spice_mutex);
+    std::lock_guard<std::recursive_mutex> lock(g_spice_mutex);
+    if (g_spk_reader.is_loaded()) return 1;
+    ensure_spk_loaded();
+    if (g_spk_reader.is_loaded()) return 1;
     return g_loaded_spice_kernel_path.empty() ? 0 : 1;
 }
 
@@ -100,7 +127,7 @@ EXPORT_API int pykep_has_spice_loaded() {
 /// 获取当前加载的星历内核路径
 /// </summary>
 EXPORT_API const char* pykep_get_loaded_spice_path() {
-    std::lock_guard<std::mutex> lock(g_spice_mutex);
+    std::lock_guard<std::recursive_mutex> lock(g_spice_mutex);
     return g_loaded_spice_kernel_path.c_str();
 }
 
@@ -120,7 +147,15 @@ EXPORT_API int pykep_spice_planet_state(
         return -1;
     }
 
-    std::lock_guard<std::mutex> lock(g_spice_mutex);
+    std::lock_guard<std::recursive_mutex> lock(g_spice_mutex);
+    ensure_spk_loaded();
+
+    // 方案 A 优先：直读 NASA JPL SPK (de440.bsp) 切比雪夫多项式，零魔法数字，100% 权威
+    if (g_spk_reader.is_loaded()) {
+        if (g_spk_reader.get_planet_state(body_name, epoch_ut, frame, rx, ry, rz, vx, vy, vz)) {
+            return 0;
+        }
+    }
 
     std::string name_norm = normalize_body_name(body_name);
     if (name_norm.empty()) return -1;
@@ -129,7 +164,7 @@ EXPORT_API int pykep_spice_planet_state(
         // KSP UT = 1546344000.0 对应 J2000.0 (JD 2451545.0, MJD2000 = 0.5)
         double mjd2000 = (epoch_ut - 1546344000.0) / 86400.0 + 0.5;
 
-        // 月球特判：基于地球状态 + 高精度地月解析轨道 (Brown / ELP-2000)
+        // 月球特判：仅在未加载 de440.bsp 时作为离线后备解析模型
         if (name_norm == "moon") {
             std::shared_ptr<kep3::udpla::jpl_lp> pl_earth;
             auto it = g_jpl_planet_cache.find("earth");
@@ -223,8 +258,13 @@ EXPORT_API int pykep_spice_planet_elements(
 {
     if (!body_name || !out_a || !out_e || !out_i_deg || !out_raan_deg || !out_aop_deg || !out_ma_deg) return -1;
 
+    std::lock_guard<std::recursive_mutex> lock(g_spice_mutex);
+    ensure_spk_loaded();
+
     std::string name_norm = normalize_body_name(body_name);
+
     if (name_norm == "moon") {
+        // 月球开普勒均根数按天体力学标准定义在黄道面 (Simon et al. / ELP-2000 标准解析均根数)
         double mjd2000 = (epoch_ut - 1546344000.0) / 86400.0 + 0.5;
         double T = (mjd2000 - 0.5) / 36525.0;
         double node_deg = std::fmod(125.0445479 - 1934.1362891 * T, 360.0);
@@ -245,8 +285,38 @@ EXPORT_API int pykep_spice_planet_elements(
         return 0;
     }
 
+    // 方案 A 优先：直读 NASA JPL SPK (de440.bsp) 切比雪夫状态 + 原生 kep3::ic2par (0 魔法数字，100% 权威)
+    if (g_spk_reader.is_loaded()) {
+        double rx = 0, ry = 0, rz = 0, vx = 0, vy = 0, vz = 0;
+        bool ok = g_spk_reader.get_planet_state(body_name, epoch_ut, "J2000", &rx, &ry, &rz, &vx, &vy, &vz);
+        double mu = (mu_central_kms > 0.0) ? mu_central_kms : SUN_MU;
+
+        if (ok) {
+            try {
+                std::array<double, 3> r = {rx, ry, rz};
+                std::array<double, 3> v = {vx, vy, vz};
+                std::array<std::array<double, 3>, 2> pv = {r, v};
+                std::array<double, 6> elem = kep3::ic2par(pv, mu);
+                *out_a = elem[0];
+                *out_e = elem[1];
+                *out_i_deg = elem[2] * 180.0 / PI;
+                *out_raan_deg = elem[3] * 180.0 / PI;
+                *out_aop_deg = elem[4] * 180.0 / PI;
+
+                // elem[5] 为真近点角 f (rad)，使用 kep3 原生 f2m 严格转换为平近点角 M
+                double M_rad = kep3::f2m(elem[5], elem[1]);
+                double M_deg = std::fmod(M_rad * 180.0 / PI, 360.0);
+                if (M_deg < 0.0) M_deg += 360.0;
+                *out_ma_deg = M_deg;
+                return 0;
+            } catch (...) { }
+        }
+    }
+
+    // 后备回退：通过 pykep_spice_planet_state 获取 J2000 状态后转开普勒根数
     double rx = 0, ry = 0, rz = 0, vx = 0, vy = 0, vz = 0;
-    int rc = pykep_spice_planet_state(body_name, epoch_ut, "ECLIPJ2000", &rx, &ry, &rz, &vx, &vy, &vz);
+    // 使用 J2000 参考系，使各行星根数与 Principia / RSS (Earth Mean Equator J2000) 严格同构对齐
+    int rc = pykep_spice_planet_state(body_name, epoch_ut, "J2000", &rx, &ry, &rz, &vx, &vy, &vz);
     if (rc == 0) {
         try {
             std::array<double, 3> r = {rx, ry, rz};
@@ -259,9 +329,7 @@ EXPORT_API int pykep_spice_planet_elements(
             *out_i_deg = elem[2] * 180.0 / PI;
             *out_raan_deg = elem[3] * 180.0 / PI;
             *out_aop_deg = elem[4] * 180.0 / PI;
-            // elem[5] is E (eccentric anomaly in rad)
-            double E = elem[5];
-            double M_rad = E - elem[1] * std::sin(E);
+            double M_rad = kep3::f2m(elem[5], elem[1]);
             double M_deg = std::fmod(M_rad * 180.0 / PI, 360.0);
             if (M_deg < 0.0) M_deg += 360.0;
             *out_ma_deg = M_deg;
