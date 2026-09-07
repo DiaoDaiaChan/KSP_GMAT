@@ -524,6 +524,107 @@ namespace KSPGMAT.Model {
         }
 
         /// <summary>
+        /// 基于当前航天器 ICRF 6 维状态矢量，精确推导 J2000/ICRF 惯性系下的真开普勒轨道根数
+        /// (消除与 KSP 局部转动赤道面之间的夹角/倾角漂移，与星历/Pykep/GMAT 100% 绝对一致)
+        /// </summary>
+        public bool TryGetSpacecraftKeplerianICRF(
+            out double smaKm, 
+            out double ecc, 
+            out double incDeg, 
+            out double raanDeg, 
+            out double aopDeg, 
+            out double peAKm, 
+            out double apAKm)
+        {
+            smaKm = 0; ecc = 0; incDeg = 0; raanDeg = 0; aopDeg = 0; peAKm = 0; apAKm = 0;
+            Vector3d r = Spacecraft.PosKm;
+            Vector3d v = Spacecraft.VelKms;
+            double rMag = r.magnitude;
+            double vMag = v.magnitude;
+            if (rMag < 1.0 || vMag < 1e-4) return false;
+
+            string cb = !string.IsNullOrEmpty(Spacecraft.CentralBody) ? Spacecraft.CentralBody : "Earth";
+            var p = SolarSystemCatalog.GetPlanet(cb);
+            double mu = (p != null && p.Mu > 0) ? p.Mu : SolarSystemCatalog.EarthMu;
+            double rBodyKm = (p != null && p.RadiusKm > 0) ? p.RadiusKm : SolarSystemCatalog.EarthRadiusKm;
+
+            Vector3d h = Vector3d.Cross(r, v);
+            double hMag = h.magnitude;
+            if (hMag < 1e-7) return false;
+
+            // 倾角 i (0 ~ 180°)
+            incDeg = Math.Acos(Math.Max(-1.0, Math.Min(1.0, h.z / hMag))) * Mathf.Rad2Deg;
+
+            // 升交点矢量 n = k x h = (-hy, hx, 0)
+            Vector3d n = new Vector3d(-h.y, h.x, 0);
+            double nMag = n.magnitude;
+            if (nMag > 1e-6) {
+                raanDeg = Math.Atan2(n.y, n.x) * Mathf.Rad2Deg;
+                if (raanDeg < 0) raanDeg += 360.0;
+            } else {
+                raanDeg = 0.0;
+            }
+
+            // 偏心率矢量 e = (1/mu) * [(v^2 - mu/r)*r - (r.v)*v]
+            Vector3d eVec = (1.0 / mu) * ((vMag * vMag - mu / rMag) * r - Vector3d.Dot(r, v) * v);
+            ecc = eVec.magnitude;
+
+            // 半长轴与近地点/远地点高度
+            double invA = 2.0 / rMag - (vMag * vMag) / mu;
+            if (Math.Abs(invA) > 1e-9) {
+                smaKm = 1.0 / invA;
+            } else {
+                smaKm = rMag;
+            }
+
+            if (smaKm > 0 && ecc < 1.0) {
+                peAKm = smaKm * (1.0 - ecc) - rBodyKm;
+                apAKm = smaKm * (1.0 + ecc) - rBodyKm;
+            } else {
+                peAKm = rMag - rBodyKm;
+                apAKm = peAKm;
+            }
+
+            // 近地点幅角 aop
+            if (nMag > 1e-6 && ecc > 1e-5) {
+                double cosAop = Vector3d.Dot(n, eVec) / (nMag * ecc);
+                aopDeg = Math.Acos(Math.Max(-1.0, Math.Min(1.0, cosAop))) * Mathf.Rad2Deg;
+                if (eVec.z < 0) aopDeg = 360.0 - aopDeg;
+            } else {
+                aopDeg = 0.0;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// 将当前航天器状态与硬件参数一键同步至 MGA 任务配置 (SSOT 单一真值流)
+        /// </summary>
+        public void SyncToMGAConfig(MGAConfig cfg) {
+            if (cfg == null) return;
+            if (TryGetSpacecraftKeplerianICRF(out double sma, out double ecc, out double inc, out double raan, out double aop, out double peA, out double apA)) {
+                cfg.DeparturePeAKm = peA > 0 ? peA : 200.0;
+                cfg.DepartureApAKm = apA > 0 ? apA : 200.0;
+                cfg.DepartureInclinationDeg = (float)inc;
+                cfg.DepartureRAANDeg = (float)raan;
+                cfg.DepartureAOPDeg = (float)aop;
+                cfg.DepartureEccentricity = ecc;
+                if (!string.IsNullOrEmpty(Spacecraft.CentralBody)) {
+                    cfg.DepartureBody = Spacecraft.CentralBody;
+                }
+            }
+            cfg.SpacecraftWetMassKg = Spacecraft.TotalMassKg;
+            var budget = GetActiveStageBudget();
+            if (budget != null) {
+                if (budget.DeltaV > 0) {
+                    cfg.VesselMaxDeltaVMs = budget.DeltaV;
+                }
+                if (budget.ThrustKN > 0) cfg.LowThrustMaxThrustN = budget.ThrustKN * 1000.0;
+                if (budget.IspVac > 0) cfg.LowThrustIspSec = budget.IspVac;
+            }
+        }
+
+        /// <summary>
         /// 获取当前激活/选定发动机对应的多级火箭推进与质量预算快照 (用于右侧看板与各卡片)
         /// </summary>
         public GMATStageBudget GetActiveStageBudget() {

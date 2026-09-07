@@ -1238,70 +1238,38 @@ namespace KSPGMAT.MGA {
             if (config != null && (config.DepartureMode == MGADepartureMode.InOrbitLockedOrbit || config.LockDepartureInclination)
                 && fullChain.Count == 2 && fullChain[0].Equals(central, StringComparison.OrdinalIgnoreCase))
             {
-                var pTgt = SolarSystemCatalog.GetPlanet(fullChain[1]);
-                if (pTgt != null) {
-                    double iRad = config.DepartureInclinationDeg * Mathf.Deg2Rad;
-                    double oRad = config.DepartureRAANDeg * Mathf.Deg2Rad;
-                    Vector3d hNorm = new Vector3d(Math.Sin(iRad) * Math.Sin(oRad), -Math.Sin(iRad) * Math.Cos(oRad), Math.Cos(iRad));
-                    if (hNorm.sqrMagnitude < 0.01) hNorm = new Vector3d(0, 0, 1);
-                    else hNorm = hNorm.normalized;
+                double nomTofSec = (lowerBounds[1] + upperBounds[1]) * 0.5;
+                double scanStartUT = winStartUT;
+                double scanSpanSec = Math.Max(30.0 * 86400.0, winEndUT - winStartUT);
 
-                    double nomTofSec = (lowerBounds[1] + upperBounds[1]) * 0.5;
-                    double scanStartUT = winStartUT + lowerBounds[1];
-                    double scanEndUT = winEndUT + upperBounds[1];
-                    double scanStepSec = 21600.0; // 0.25 天步长细致扫描
-
-                    double prevT = scanStartUT;
-                    pTgt.GetRelativeState(central, prevT, out Vector3d rPrev, out _);
-                    double prevZ = Vector3d.Dot(rPrev, hNorm);
-
-                    for (double t = scanStartUT + scanStepSec; t <= scanEndUT; t += scanStepSec) {
-                        pTgt.GetRelativeState(central, t, out Vector3d rCurr, out _);
-                        double currZ = Vector3d.Dot(rCurr, hNorm);
-
-                        if (prevZ * currZ <= 0.0) {
-                            // 二分法高精度求解目标天体穿过停泊轨道平面的确切历元 tNode
-                            double t1 = prevT, t2 = t;
-                            double z1 = prevZ;
-                            for (int it = 0; it < 10; it++) {
-                                double tMid = 0.5 * (t1 + t2);
-                                pTgt.GetRelativeState(central, tMid, out Vector3d rMid, out _);
-                                double zMid = Vector3d.Dot(rMid, hNorm);
-                                if (zMid * z1 <= 0.0) {
-                                    t2 = tMid;
-                                } else {
-                                    t1 = tMid;
-                                    z1 = zMid;
-                                }
-                            }
-                            double tNode = 0.5 * (t1 + t2);
-
-                            // 对应该节点交点的名义发射时刻
-                            double depSeedUT = tNode - nomTofSec;
-                            if (depSeedUT >= lowerBounds[0] && depSeedUT <= upperBounds[0]) {
-                                double[] dToFs = new double[] { 0.0, -0.25 * 86400.0, 0.25 * 86400.0, -0.5 * 86400.0, 0.5 * 86400.0 };
-                                foreach (double dt in dToFs) {
-                                    double tofCand = Math.Max(lowerBounds[1], Math.Min(upperBounds[1], nomTofSec + dt));
-                                    double depCand = Math.Max(lowerBounds[0], Math.Min(upperBounds[0], tNode - tofCand));
-                                    var g = new double[dim];
-                                    g[0] = depCand;
-                                    g[1] = tofCand;
-                                    for (int d = 2; d < dim; d++) {
-                                        if (d < 1 + legCount) {
-                                            g[d] = (lowerBounds[d] + upperBounds[d]) * 0.5;
-                                        } else {
-                                            int dsmIdx = d - (1 + legCount);
-                                            g[d] = (config != null && config.DsmEtas != null && dsmIdx < config.DsmEtas.Count && config.DsmEtas[dsmIdx] > 0)
-                                                ? config.DsmEtas[dsmIdx]
-                                                : (config != null ? config.DsmEtaDefault : 0.5);
-                                        }
-                                    }
-                                    seedGenomes.Add(g);
-                                }
-                            }
+                if (PykepNative.FindNodalCrossing(fullChain[1], central, scanStartUT, scanSpanSec, config.DepartureInclinationDeg, config.DepartureRAANDeg, out double tNode, out _)) {
+                    double depSeedUT = tNode - nomTofSec;
+                    if (depSeedUT < lowerBounds[0]) {
+                        // 寻找下一个升降交点 (~13.6 天后)
+                        if (PykepNative.FindNodalCrossing(fullChain[1], central, tNode + 1.0 * 86400.0, scanSpanSec, config.DepartureInclinationDeg, config.DepartureRAANDeg, out double nextNode, out _)) {
+                            depSeedUT = nextNode - nomTofSec;
                         }
-                        prevT = t;
-                        prevZ = currZ;
+                    }
+                    if (depSeedUT >= lowerBounds[0] && depSeedUT <= upperBounds[0]) {
+                        double[] dToFs = new double[] { 0.0, -0.25 * 86400.0, 0.25 * 86400.0, -0.5 * 86400.0, 0.5 * 86400.0 };
+                        foreach (double dt in dToFs) {
+                            double tofCand = Math.Max(lowerBounds[1], Math.Min(upperBounds[1], nomTofSec + dt));
+                            double depCand = Math.Max(lowerBounds[0], Math.Min(upperBounds[0], depSeedUT - dt));
+                            var g = new double[dim];
+                            g[0] = depCand;
+                            g[1] = tofCand;
+                            for (int d = 2; d < dim; d++) {
+                                if (d < 1 + legCount) {
+                                    g[d] = (lowerBounds[d] + upperBounds[d]) * 0.5;
+                                } else {
+                                    int dsmIdx = d - (1 + legCount);
+                                    g[d] = (config != null && config.DsmEtas != null && dsmIdx < config.DsmEtas.Count && config.DsmEtas[dsmIdx] > 0)
+                                        ? config.DsmEtas[dsmIdx]
+                                        : (config != null ? config.DsmEtaDefault : 0.5);
+                                }
+                            }
+                            seedGenomes.Add(g);
+                        }
                     }
                 }
             }
@@ -1795,8 +1763,12 @@ namespace KSPGMAT.MGA {
             return (t1 * t2 / diff) / MGADefaults.SecondsPerDay;
         }
 
+        /// <summary>
+        /// 全面委派 C++ 原生三维兰伯特特征能量扫描与交点线求解器 (100% 原生，0 托管计算)
+        /// 彻底根除托管 atan2 投影伪极小值与地月模式 2 锁死非交点日问题
+        /// </summary>
         public static (double bestDepUT, double tofDays, double approxDV) CalculateHohmannWindow(
-            string fromBody, string toBody, double searchStartUT, double searchSpanDays = 0, double targetIncDeg = -1.0) 
+            string fromBody, string toBody, double searchStartUT, double searchSpanDays = 0, double targetIncDeg = -1.0, double targetRaanDeg = 0.0) 
         {
             if (!PykepNative.IsAvailable) {
                 KSPGMATLog.Error("PykepNative 原生库不可用，无法进行霍曼窗口物理评估 (返回失败标志 NaN)");
@@ -1812,132 +1784,35 @@ namespace KSPGMAT.MGA {
             var p1 = SolarSystemCatalog.GetPlanet(fromBody);
             var p2 = SolarSystemCatalog.GetPlanet(toBody);
             string central = ResolveTransferCentralBody(p1, p2);
-            double centralMu = SolarSystemCatalog.GetCentralMu(central);
 
-            // 如果是在行星系内部由母星泊车轨道向卫星转移 (例如 地球 -> 月球, Kerbin -> Mun)
-            if (fromBody.Equals(central, StringComparison.OrdinalIgnoreCase)) {
-                double r1 = (p1 != null ? p1.RadiusKm : MGADefaults.EarthRadiusKm) + MGADefaults.DepartureAltitudeKm;
-                double r2 = (p2 != null && p2.SMA > 0) ? p2.SMA : MGADefaults.MoonAverageSMASecKm;
-                if (CalcHohmannTransfer(r1, r2, centralMu, out _, out double tofSec, out double dvDep, out double dvArrHoh)) {
-                    double dvArr = (p2 != null && p2.Mu > 0) ? CalculateArrivalInsertionDeltaV(dvArrHoh, p2, MGADefaults.DestinationAltitudeKm, MGADefaults.DestinationAltitudeKm, false) : dvArrHoh;
-                    double totalDV = dvDep + dvArr;
-                    return (searchStartUT, tofSec / MGADefaults.SecondsPerDay, totalDV);
-                }
+            double parkInc = targetIncDeg;
+            double parkRaan = targetRaanDeg;
+            var mgaCfg = MGAStateManager.Current?.Config;
+            if (mgaCfg != null && (mgaCfg.DepartureMode == MGADepartureMode.InOrbitLockedOrbit || mgaCfg.LockDepartureInclination)) {
+                if (parkInc < 0) parkInc = mgaCfg.DepartureInclinationDeg;
+                if (parkRaan < 0) parkRaan = mgaCfg.DepartureRAANDeg;
             }
 
-            // 如果由卫星向母星返回 (例如 月球 -> 地球)
-            if (toBody.Equals(central, StringComparison.OrdinalIgnoreCase)) {
-                double r1 = (p1 != null && p1.SMA > 0) ? p1.SMA : MGADefaults.MoonAverageSMASecKm;
-                double r2 = (p2 != null ? p2.RadiusKm : MGADefaults.EarthRadiusKm) + MGADefaults.DestinationAltitudeKm;
-                if (CalcHohmannTransfer(r1, r2, centralMu, out _, out double tofSec, out double dvDepHoh, out double dvArr)) {
-                    double dvDep = (p1 != null && p1.Mu > 0) ? CalculateDepartureDeltaV(dvDepHoh, p1, MGADefaults.DepartureAltitudeKm, MGADefaults.DepartureAltitudeKm) : dvDepHoh;
-                    double totalDV = dvDep + dvArr;
-                    return (searchStartUT, tofSec / MGADefaults.SecondsPerDay, totalDV);
-                }
+            if (PykepNative.FindTransferWindow(
+                fromBody, toBody, central,
+                searchStartUT, searchSpanDays,
+                mgaCfg?.DeparturePeAKm ?? MGADefaults.DepartureAltitudeKm,
+                mgaCfg?.DestinationPeAKm ?? MGADefaults.DestinationAltitudeKm,
+                parkInc > 0 ? parkInc : 0.0, parkRaan,
+                out double bestDepUT, out double tofDays, out double approxDvKms))
+            {
+                return (bestDepUT, tofDays, approxDvKms * 1000.0);
             }
 
+            // 原生求解失败兜底 (双圆霍曼转移基线)
             double sma1 = GetRelativeSMA(p1, central, MGADefaults.DepartureAltitudeKm);
             double sma2 = GetRelativeSMA(p2, central, MGADefaults.DestinationAltitudeKm);
-
-            // 平均角速度 (rad/s) 与会合周期 (基线7.8，100% kep3 原生周期求解)
-            double t1 = CalcOrbitPeriodSec(sma1, centralMu);
-            double t2 = CalcOrbitPeriodSec(sma2, centralMu);
-            double w1 = 2.0 * Math.PI / Math.Max(1e-12, t1);
-            double w2 = 2.0 * Math.PI / Math.Max(1e-12, t2);
-            double synodicSec = 2.0 * Math.PI / Math.Max(1e-12, Math.Abs(w1 - w2));
-            double synodicDays = synodicSec / 86400.0;
-
-            // 标称霍曼转移时间 (通过 kep3 原生求解) 与所需发射相角 (基线7.8: φ = π − ω2·T_hoh), 折叠入 [0, 2π)
-            double baseTofSec = 0.0;
-            if (!CalcHohmannTransfer(sma1, sma2, centralMu, out _, out baseTofSec, out _, out _)) {
-                baseTofSec = 0.5 * CalcOrbitPeriodSec((sma1 + sma2) * 0.5, centralMu);
-            }
-            double baseTofDays = baseTofSec / 86400.0;
-
-            double reqPhase = Math.PI - w2 * baseTofSec;
-            reqPhase = ((reqPhase % (2.0 * Math.PI)) + 2.0 * Math.PI) % (2.0 * Math.PI);
-
-            double scanSpanDays = (searchSpanDays > 0) ? searchSpanDays : (synodicDays * 1.5);
-            if (targetIncDeg >= 0 && searchSpanDays <= 0) {
-                scanSpanDays = Math.Max(scanSpanDays, synodicDays * 2.0);
-            }
-            double scanEndUT = searchStartUT + scanSpanDays * 86400.0;
-
-            // 1) 相角扫描: 收集相角最接近理论霍曼相角的候选发射窗口
-            var candidateUTs = new List<double>();
-            double phaseStep = Math.Max(1800.0, synodicSec / 400.0);
-            double prevErr = double.MaxValue;
-            double prevUT = searchStartUT;
-            bool wasDecreasing = false;
-
-            for (double ut = searchStartUT; ut <= scanEndUT; ut += phaseStep) {
-                p1.GetRelativeState(central, ut, out Vector3d posA, out Vector3d velA);
-                p2.GetRelativeState(central, ut, out Vector3d posB, out Vector3d velB);
-                double phase = (Math.Atan2(posB.y, posB.x) - Math.Atan2(posA.y, posA.x));
-                phase = ((phase % (2.0 * Math.PI)) + 2.0 * Math.PI) % (2.0 * Math.PI);
-                double err = Math.Abs(phase - reqPhase);
-                if (err > Math.PI) err = 2.0 * Math.PI - err;
-
-                if (err < prevErr) {
-                    wasDecreasing = true;
-                } else if (wasDecreasing) {
-                    if (prevErr < 0.25) {
-                        candidateUTs.Add(prevUT);
-                    }
-                    wasDecreasing = false;
-                }
-                prevErr = err;
-                prevUT = ut;
-            }
-            if (candidateUTs.Count == 0) {
-                candidateUTs.Add(searchStartUT);
+            double centralMu = SolarSystemCatalog.GetCentralMu(central);
+            if (CalcHohmannTransfer(sma1, sma2, centralMu, out double totDv, out double tofSec, out _, out _)) {
+                return (searchStartUT, tofSec / MGADefaults.SecondsPerDay, totDv * 1000.0);
             }
 
-            // 2) 精扫: 以候选窗口为中心调用原生 PyKEP 兰伯特评估 ΔV 与逃逸赤纬几何
-            double bestUT = candidateUTs[0];
-            double bestTofDays = baseTofDays;
-            double minDV = double.MaxValue;
-
-            double fineSpanSec = Math.Max(86400.0, synodicSec / 6.0);
-            double fineStep = Math.Max(1800.0, synodicSec / 200.0);
-
-            foreach (double candUT in candidateUTs) {
-                double fineStartUT = candUT - fineSpanSec;
-                double fineEndUT = candUT + fineSpanSec;
-
-                for (double ut = fineStartUT; ut <= fineEndUT; ut += fineStep) {
-                    p1.GetRelativeState(central, ut, out Vector3d pos1, out Vector3d vel1);
-
-                    for (double tofMul = 0.85; tofMul <= 1.15; tofMul += 0.15) {
-                        double tofSec = baseTofSec * tofMul;
-                        p2.GetRelativeState(central, ut + tofSec, out Vector3d pos2, out Vector3d vel2);
-
-                        if (PykepNative.SolveLambert(pos1, pos2, tofSec, centralMu, false, out Vector3d v1, out Vector3d v2)) {
-                            Vector3d vInf1Vec = v1 - vel1;
-                            double vInf1 = vInf1Vec.magnitude;
-                            double vInf2 = (v2 - vel2).magnitude;
-
-                            // 原生 C++ 评估发射与到达 ΔV
-                            double dv1 = CalculateDepartureDeltaV(vInf1, p1, 200.0, 200.0);
-                            if (!double.IsNaN(dv1)) {
-                                double totalDV = dv1 + vInf2;
-                                if (totalDV < minDV) {
-                                    minDV = totalDV;
-                                    bestUT = ut;
-                                    bestTofDays = tofSec / 86400.0;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (minDV >= double.MaxValue * 0.5) {
-                KSPGMATLog.Error("霍曼窗口精扫未找到有效原生兰伯特解 (返回失败标志 NaN)");
-                return (double.NaN, double.NaN, double.NaN);
-            }
-
-            return (bestUT, bestTofDays, minDV);
+            return (double.NaN, double.NaN, double.NaN);
         }
 
         /// <summary>

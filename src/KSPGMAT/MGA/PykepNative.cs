@@ -179,6 +179,24 @@ namespace KSPGMAT.MGA {
         private delegate double PykepCalcCentralDepartureDvDelegate(
             double mu, double radius, double pe_km, double ap_km, double r_dest_km);
 
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int PykepFindNodalCrossingDelegate(
+            [MarshalAs(UnmanagedType.LPStr)] string bodyName,
+            [MarshalAs(UnmanagedType.LPStr)] string centralBody,
+            double epochStartUt, double epochSpanSec,
+            double parkIncDeg, double parkRaanDeg,
+            out double outNodeUt, out double outNodeDistKm);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int PykepFindTransferWindowDelegate(
+            [MarshalAs(UnmanagedType.LPStr)] string fromBody,
+            [MarshalAs(UnmanagedType.LPStr)] string toBody,
+            [MarshalAs(UnmanagedType.LPStr)] string centralBody,
+            double searchStartUt, double searchSpanDays,
+            double depAltKm, double arrAltKm,
+            double parkIncDeg, double parkRaanDeg,
+            out double outBestDepUt, out double outBestTofDays, out double outBestDvKms);
+
         [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Auto)]
         private static extern bool SetDllDirectory(string lpPathName);
 
@@ -220,6 +238,8 @@ namespace KSPGMAT.MGA {
         private static Kep3Vsop2013PlanetStateDelegate _fnKep3Vsop2013;
         private static Kep3CalcCoplanarAngleDelegate _fnKep3CoplanarAngle;
         private static PykepCalcCentralDepartureDvDelegate _fnCalcCentralDepDv;
+        private static PykepFindNodalCrossingDelegate _fnFindNodalCrossing;
+        private static PykepFindTransferWindowDelegate _fnFindTransferWindow;
 
         private static bool _initAttempted = false;
         private static readonly object _initLock = new object();
@@ -369,6 +389,12 @@ namespace KSPGMAT.MGA {
                             if (pCoplanar != IntPtr.Zero) _fnKep3CoplanarAngle = (Kep3CalcCoplanarAngleDelegate)Marshal.GetDelegateForFunctionPointer(pCoplanar, typeof(Kep3CalcCoplanarAngleDelegate));
                             IntPtr pCentralDep = GetProcAddress(_dllHandle, "pykep_calc_central_departure_dv");
                             if (pCentralDep != IntPtr.Zero) _fnCalcCentralDepDv = (PykepCalcCentralDepartureDvDelegate)Marshal.GetDelegateForFunctionPointer(pCentralDep, typeof(PykepCalcCentralDepartureDvDelegate));
+
+                            IntPtr pNode = GetProcAddress(_dllHandle, "pykep_find_nodal_crossing");
+                            if (pNode != IntPtr.Zero) _fnFindNodalCrossing = (PykepFindNodalCrossingDelegate)Marshal.GetDelegateForFunctionPointer(pNode, typeof(PykepFindNodalCrossingDelegate));
+
+                            IntPtr pWin = GetProcAddress(_dllHandle, "pykep_find_transfer_window");
+                            if (pWin != IntPtr.Zero) _fnFindTransferWindow = (PykepFindTransferWindowDelegate)Marshal.GetDelegateForFunctionPointer(pWin, typeof(PykepFindTransferWindowDelegate));
 
                             IntPtr ptr = _fnGetVersion();
                             if (ptr != IntPtr.Zero) {
@@ -964,6 +990,50 @@ namespace KSPGMAT.MGA {
                 } catch { }
             }
             return 0.0;
+        }
+
+        /// <summary>
+        /// 原生极速求解目标天体穿过停泊轨道平面的升/降交点历元 (100% 原生 C++ pykep_find_nodal_crossing)
+        /// 彻底消除托管启发式注种与手写交点扫描，0 托管计算
+        /// </summary>
+        public static bool FindNodalCrossing(
+            string bodyName, string centralBody,
+            double epochStartUt, double epochSpanSec,
+            double parkIncDeg, double parkRaanDeg,
+            out double outNodeUt, out double outNodeDistKm)
+        {
+            EnsureLoaded();
+            outNodeUt = 0.0;
+            outNodeDistKm = 0.0;
+            if (_isAvailable && _fnFindNodalCrossing != null) {
+                try {
+                    return _fnFindNodalCrossing(bodyName, centralBody, epochStartUt, epochSpanSec, parkIncDeg, parkRaanDeg, out outNodeUt, out outNodeDistKm) == 0;
+                } catch { }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 原生全周期三维兰伯特特征能量窗口求解器 (100% 原生 C++ pykep_find_transfer_window)
+        /// 运行真实 3D 兰伯特能量全周期扫描与高精局部细化，彻底杜绝托管 atan2 投影伪波谷
+        /// </summary>
+        public static bool FindTransferWindow(
+            string fromBody, string toBody, string centralBody,
+            double searchStartUt, double searchSpanDays,
+            double depAltKm, double arrAltKm,
+            double parkIncDeg, double parkRaanDeg,
+            out double outBestDepUt, out double outBestTofDays, out double outBestDvKms)
+        {
+            EnsureLoaded();
+            outBestDepUt = double.NaN;
+            outBestTofDays = double.NaN;
+            outBestDvKms = double.NaN;
+            if (_isAvailable && _fnFindTransferWindow != null) {
+                try {
+                    return _fnFindTransferWindow(fromBody, toBody, centralBody, searchStartUt, searchSpanDays, depAltKm, arrAltKm, parkIncDeg, parkRaanDeg, out outBestDepUt, out outBestTofDays, out outBestDvKms) == 0;
+                } catch { }
+            }
+            return false;
         }
     }
 }

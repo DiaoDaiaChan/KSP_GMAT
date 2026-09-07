@@ -194,21 +194,12 @@ namespace KSPGMAT.UI {
 
         private void SyncDepartureOrbitFromActiveVessel() {
             Vessel v = FlightGlobals.ActiveVessel;
-            if (v != null && v.orbit != null) {
-                double peA = v.orbit.PeA / 1000.0;
-                double apA = v.orbit.ApA / 1000.0;
-                mgaConfig.DeparturePeAKm = peA > 0 ? peA : 200.0;
-                mgaConfig.DepartureApAKm = apA > 0 ? apA : 200.0;
-                mgaConfig.DepartureInclinationDeg = Mathf.Clamp((float)Math.Abs(v.orbit.inclination), 0f, 90f);
-                mgaConfig.DepartureRAANDeg = (float)v.orbit.LAN;
-                mgaConfig.DepartureAOPDeg = (float)v.orbit.argumentOfPeriapsis;
-                mgaConfig.DepartureEccentricity = v.orbit.eccentricity;
+            if (v != null) {
+                GMATStateManager.Current.SyncFromVessel(v);
+                GMATStateManager.Current.SyncToMGAConfig(mgaConfig);
                 mgaConfig.LockDepartureInclination = true;
                 mgaConfig.LockDepartureRAAN = true;
-                if (v.mainBody != null && SolarSystemCatalog.Planets.ContainsKey(v.mainBody.bodyName)) {
-                    mgaConfig.DepartureBody = v.mainBody.bodyName;
-                }
-                ScreenMessages.PostScreenMessage($"已从飞船准备在轨参数: Inc={mgaConfig.DepartureInclinationDeg:F1}°, LAN={mgaConfig.DepartureRAANDeg:F1}°, PeA={mgaConfig.DeparturePeAKm:F0}km", 3.5f, ScreenMessageStyle.UPPER_CENTER);
+                ScreenMessages.PostScreenMessage($"已从飞船同步真实 ICRF 在轨参数: Inc={mgaConfig.DepartureInclinationDeg:F1}°, LAN={mgaConfig.DepartureRAANDeg:F1}°, PeA={mgaConfig.DeparturePeAKm:F0}km", 3.5f, ScreenMessageStyle.UPPER_CENTER);
             } else {
                 ScreenMessages.PostScreenMessage("未检测到有效飞行中飞船轨道，已保留默认锁死参数", 3f, ScreenMessageStyle.UPPER_CENTER);
             }
@@ -261,8 +252,13 @@ namespace KSPGMAT.UI {
             if (startUT <= 0) startUT = Planetarium.GetUniversalTime() > 0 ? Planetarium.GetUniversalTime() : 0.0;
             UnityEngine.Debug.Log($"[KSPGMAT-MGA] >>> 点击 [自动求解]: {mgaConfig.DepartureBody} -> {target} | 输入历元: '{mgaDepDateInput}' (startUT={startUT:F1})");
 
+            if (mgaConfig.DepartureMode == MGADepartureMode.InOrbitLockedOrbit && FlightGlobals.ActiveVessel != null) {
+                GMATStateManager.Current.SyncFromVessel(FlightGlobals.ActiveVessel);
+                GMATStateManager.Current.SyncToMGAConfig(mgaConfig);
+            }
             double targetInc = (mgaConfig.DepartureMode == MGADepartureMode.InOrbitLockedOrbit || mgaConfig.LockDepartureInclination) ? mgaConfig.DepartureInclinationDeg : -1.0;
-            var (optUT, tofDays, approxDV) = PykepBridge.CalculateHohmannWindow(mgaConfig.DepartureBody, target, startUT, 0, targetInc);
+            double targetRaan = (mgaConfig.DepartureMode == MGADepartureMode.InOrbitLockedOrbit || mgaConfig.LockDepartureRAAN) ? mgaConfig.DepartureRAANDeg : -1.0;
+            var (optUT, tofDays, approxDV) = PykepBridge.CalculateHohmannWindow(mgaConfig.DepartureBody, target, startUT, 0, targetInc, targetRaan);
             if (double.IsNaN(optUT)) {
                 UnityEngine.Debug.LogWarning($"[KSPGMAT-MGA] CalculateHohmannWindow 返回 NaN (C++ 原生库未就绪或无法计算)");
                 ScreenMessages.PostScreenMessage(I18n.T("mga_native_unavailable"), 4.5f, ScreenMessageStyle.UPPER_CENTER);
@@ -1045,8 +1041,13 @@ namespace KSPGMAT.UI {
                 if (startUT <= 0) startUT = Planetarium.GetUniversalTime();
                 string targetBody = (mgaConfig.FlybySequence != null && mgaConfig.FlybySequence.Count > 0) ? mgaConfig.FlybySequence[0] : mgaConfig.DestinationBody;
                 SolarSystemCatalog.EnsureAllPlanetsCached();
+                if (mgaConfig.DepartureMode == MGADepartureMode.InOrbitLockedOrbit && FlightGlobals.ActiveVessel != null) {
+                    GMATStateManager.Current.SyncFromVessel(FlightGlobals.ActiveVessel);
+                    GMATStateManager.Current.SyncToMGAConfig(mgaConfig);
+                }
                 double targetInc = (mgaConfig.DepartureMode == MGADepartureMode.InOrbitLockedOrbit || mgaConfig.LockDepartureInclination) ? mgaConfig.DepartureInclinationDeg : -1.0;
-                var (optUT, tofDays, approxDV) = PykepBridge.CalculateHohmannWindow(mgaConfig.DepartureBody, targetBody, startUT, 0, targetInc);
+                double targetRaan = (mgaConfig.DepartureMode == MGADepartureMode.InOrbitLockedOrbit || mgaConfig.LockDepartureRAAN) ? mgaConfig.DepartureRAANDeg : -1.0;
+                var (optUT, tofDays, approxDV) = PykepBridge.CalculateHohmannWindow(mgaConfig.DepartureBody, targetBody, startUT, 0, targetInc, targetRaan);
                 if (double.IsNaN(optUT)) {
                     ScreenMessages.PostScreenMessage(I18n.T("mga_native_unavailable"), 4.5f, ScreenMessageStyle.UPPER_CENTER);
                 } else {
@@ -1803,8 +1804,13 @@ namespace KSPGMAT.UI {
                 double startUT = GMATClient.ParseUtcGregorian(mgaDepDateInput);
                 if (startUT <= 0) startUT = Planetarium.GetUniversalTime() > 0 ? Planetarium.GetUniversalTime() : 0.0;
                 string firstTarget = mgaConfig.FlybySequence[0];
+                if (mgaConfig.DepartureMode == MGADepartureMode.InOrbitLockedOrbit && FlightGlobals.ActiveVessel != null) {
+                    GMATStateManager.Current.SyncFromVessel(FlightGlobals.ActiveVessel);
+                    GMATStateManager.Current.SyncToMGAConfig(mgaConfig);
+                }
                 double targetInc = (mgaConfig.DepartureMode == MGADepartureMode.InOrbitLockedOrbit || mgaConfig.LockDepartureInclination) ? mgaConfig.DepartureInclinationDeg : -1.0;
-                var (optUT, tofDays, approxDV) = PykepBridge.CalculateHohmannWindow(mgaConfig.DepartureBody, firstTarget, startUT, 0, targetInc);
+                double targetRaan = (mgaConfig.DepartureMode == MGADepartureMode.InOrbitLockedOrbit || mgaConfig.LockDepartureRAAN) ? mgaConfig.DepartureRAANDeg : -1.0;
+                var (optUT, tofDays, approxDV) = PykepBridge.CalculateHohmannWindow(mgaConfig.DepartureBody, firstTarget, startUT, 0, targetInc, targetRaan);
                 if (!double.IsNaN(optUT) && tofDays > 0) {
                     double windowHalfSpan = (tofDays < 15.0) ? Math.Max(2.0, tofDays * 1.5) : 25.0;
                     mgaConfig.EarliestDepartureUT = Math.Max(0, optUT - 86400.0 * windowHalfSpan);
