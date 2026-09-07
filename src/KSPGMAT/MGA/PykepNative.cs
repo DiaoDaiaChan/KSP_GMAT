@@ -109,6 +109,26 @@ namespace KSPGMAT.MGA {
             out double outDincDeg);
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int PykepRegisterBodyDelegate(
+            [MarshalAs(UnmanagedType.LPStr)] string name,
+            [MarshalAs(UnmanagedType.LPStr)] string parentName,
+            double mu,
+            double radiusKm,
+            double safeRadiusKm,
+            double soiRadiusKm,
+            double atmDepthKm,
+            double smaKm,
+            double ecc,
+            double incDeg,
+            double raanDeg,
+            double aopDeg,
+            double ma0Deg,
+            double epochUt);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int PykepClearRegisteredBodiesDelegate();
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate int PykepAlignInjectionDelegate(
             [In] double[] rPark0,
             [In] double[] vPark0,
@@ -188,6 +208,8 @@ namespace KSPGMAT.MGA {
         private static PykepSpicePlanetConstantsDelegate _fnSpicePlanetConstants;
         private static PykepSpicePlanetPropertiesDelegate _fnSpicePlanetProperties;
         private static PykepCompareBodyStatesDelegate _fnCompareBodyStates;
+        private static PykepRegisterBodyDelegate _fnRegisterBody;
+        private static PykepClearRegisteredBodiesDelegate _fnClearRegisteredBodies;
         private static PykepAlignInjectionDelegate _fnAlignInjection;
 
         // kep3 new algorithm hooks
@@ -324,6 +346,11 @@ namespace KSPGMAT.MGA {
                             if (pSpiceConst != IntPtr.Zero) _fnSpicePlanetConstants = (PykepSpicePlanetConstantsDelegate)Marshal.GetDelegateForFunctionPointer(pSpiceConst, typeof(PykepSpicePlanetConstantsDelegate));
                             if (pSpiceProps != IntPtr.Zero) _fnSpicePlanetProperties = (PykepSpicePlanetPropertiesDelegate)Marshal.GetDelegateForFunctionPointer(pSpiceProps, typeof(PykepSpicePlanetPropertiesDelegate));
                             if (pCompStates != IntPtr.Zero) _fnCompareBodyStates = (PykepCompareBodyStatesDelegate)Marshal.GetDelegateForFunctionPointer(pCompStates, typeof(PykepCompareBodyStatesDelegate));
+
+                            IntPtr pRegBody = GetProcAddress(_dllHandle, "pykep_register_body");
+                            if (pRegBody != IntPtr.Zero) _fnRegisterBody = (PykepRegisterBodyDelegate)Marshal.GetDelegateForFunctionPointer(pRegBody, typeof(PykepRegisterBodyDelegate));
+                            IntPtr pClearBodies = GetProcAddress(_dllHandle, "pykep_clear_registered_bodies");
+                            if (pClearBodies != IntPtr.Zero) _fnClearRegisteredBodies = (PykepClearRegisteredBodiesDelegate)Marshal.GetDelegateForFunctionPointer(pClearBodies, typeof(PykepClearRegisteredBodiesDelegate));
 
                             IntPtr pAlign = GetProcAddress(_dllHandle, "pykep_align_injection");
                             if (pAlign != IntPtr.Zero) _fnAlignInjection = (PykepAlignInjectionDelegate)Marshal.GetDelegateForFunctionPointer(pAlign, typeof(PykepAlignInjectionDelegate));
@@ -739,6 +766,37 @@ namespace KSPGMAT.MGA {
                 return res == 0;
             } catch { }
             return false;
+        }
+
+        /// <summary>
+        /// 动态向底层 C++ 注册天体物理常数与开普勒轨道根数（彻底消除硬编码，支持任意行星系统）
+        /// </summary>
+        public static bool RegisterBody(
+            string name, string parentName, double mu, double radiusKm, double safeRadiusKm,
+            double soiRadiusKm, double atmDepthKm, double smaKm, double ecc, double incDeg,
+            double raanDeg, double aopDeg, double ma0Deg, double epochUt)
+        {
+            EnsureLoaded();
+            if (string.IsNullOrEmpty(name) || !_isAvailable || _fnRegisterBody == null) return false;
+            try {
+                return _fnRegisterBody(name, parentName ?? "", mu, radiusKm, safeRadiusKm, soiRadiusKm, atmDepthKm, smaKm, ecc, incDeg, raanDeg, aopDeg, ma0Deg, epochUt) == 0;
+            } catch {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 清空底层 C++ 动态注册表并重置为太阳系基准状态
+        /// </summary>
+        public static bool ClearRegisteredBodies()
+        {
+            EnsureLoaded();
+            if (!_isAvailable || _fnClearRegisteredBodies == null) return false;
+            try {
+                return _fnClearRegisteredBodies() == 0;
+            } catch {
+                return false;
+            }
         }
 
         /// <summary>

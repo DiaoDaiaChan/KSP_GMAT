@@ -510,6 +510,9 @@ namespace KSPGMAT.MGA {
                     }
                 } catch { }
             }
+            if (_planetsCache.TryGetValue(name, out var cached) && !string.IsNullOrEmpty(cached.ParentName)) {
+                return cached.ParentName;
+            }
             string upper = name.Trim().ToUpperInvariant();
             if (upper == "MOON" || upper == "LUNA" || upper.Contains("月球")) return "Earth";
             if (upper == "PHOBOS" || upper == "DEIMOS") return "Mars";
@@ -616,6 +619,26 @@ namespace KSPGMAT.MGA {
                             if (!string.IsNullOrEmpty(b.bodyName) && !_planetsCache.ContainsKey(b.bodyName)) {
                                 _planetsCache[b.bodyName] = sp;
                             }
+
+                            // 将天体动态注入底层 C++ 原生引擎注册表 (0 源码硬编码)
+                            try {
+                                PykepNative.RegisterBody(
+                                    sp.Name,
+                                    sp.ParentName,
+                                    sp.Mu,
+                                    sp.RadiusKm,
+                                    sp.SafeRadiusKm,
+                                    sp.SoiKm,
+                                    sp.AtmosphereDepthKm,
+                                    sp.SMA,
+                                    sp.ECC,
+                                    sp.INC,
+                                    sp.RAAN,
+                                    sp.AOP,
+                                    sp.MA0,
+                                    sp.EpochJ2000
+                                );
+                            } catch { }
                         }
                     }
                 }

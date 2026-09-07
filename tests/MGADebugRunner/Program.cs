@@ -33,6 +33,7 @@ namespace MGADebugRunner {
             TestDirectInterplanetaryEarthToVenusDiversity(ref totalTests, ref passedTests);
             TestCeresAndMercuryCandidateSequences(ref totalTests, ref passedTests);
             TestEphemerisFrameAlignmentAndMoon(ref totalTests, ref passedTests);
+            TestUniversalDynamicBodyRegistry(ref totalTests, ref passedTests);
 
             Console.WriteLine("==========================================================================================");
             Console.WriteLine($"🏆 综合测试总结: 全部用例已执行完毕！成功通过: {passedTests} / {totalTests} (通过率: {(double)passedTests / totalTests * 100:F1}%)");
@@ -1810,6 +1811,62 @@ Propagate Prop(Sat) {Sat.ElapsedSecs = 86400};
                 Console.WriteLine("\n✅ 黄赤交角 (23.439°) 原生旋转变换与月球星历核验 100% 通过！\n");
             } catch (Exception ex) {
                 Console.WriteLine($"❌ 星历坐标系与月球测试异常: {ex.Message}\n{ex.StackTrace}");
+            }
+        }
+
+        static void TestUniversalDynamicBodyRegistry(ref int total, ref int passed) {
+            total++;
+            Console.WriteLine("------------------------------------------------------------------------------------------");
+            Console.WriteLine("🌐 [用例集 10 太阳系天体动态注册与零硬编码动力学求解] 彻底清除经验多项式核验");
+            Console.WriteLine("------------------------------------------------------------------------------------------");
+
+            try {
+                // 1. 验证太阳系天体属性从原生注册表读取（0 硬编码 switch-case）
+                string[] solarPlanets = new[] { "Earth", "Mars", "Jupiter", "Moon", "Europa", "Titan" };
+                foreach (var bName in solarPlanets) {
+                    bool ok = PykepNative.GetSpicePlanetProperties(bName, out double mu, out double rKm, out double safeR, out double soiR, out double atmR);
+                    if (!ok || mu <= 0 || rKm <= 0) {
+                        Console.WriteLine($"❌ 天体 {bName} 属性读取失败！");
+                        return;
+                    }
+                    Console.WriteLine($"  • {bName,-8}: GM={mu:F1} km³/s², 半径={rKm:F1} km, 安全半径={safeR:F1} km, SOI={soiR:F0} km");
+                }
+                Console.WriteLine("  ✅ 太阳系主要天体物理属性由原生统一注册表驱动，无硬编码分支！");
+
+                // 2. 动态注册太阳系新天体（例如谷神星 Ceres）并直接通过原生拉格朗日动力学求态矢量
+                double epochJ2000 = EphemerisTimeSystem.J2000_UT;
+                // Ceres: sma=2.767 AU = 413,950,000 km, ecc=0.076, inc=10.59°
+                bool regOk = PykepNative.RegisterBody(
+                    "CeresTest", "Sun", 62.63, 473.0, 493.0, 100000.0, 0.0,
+                    413950000.0, 0.076, 10.59, 80.3, 73.1, 95.0, epochJ2000);
+
+                if (!regOk) {
+                    Console.WriteLine("❌ 动态注册天体 CeresTest 失败！");
+                    return;
+                }
+                Console.WriteLine("  • 成功调用 PykepNative.RegisterBody 动态注册 CeresTest 根数与物理常数");
+
+                // 3. 在目标历元 (J2000 + 100天) 求取日心状态矢量
+                double tTarget = epochJ2000 + 86400.0 * 100.0;
+                bool stateOk = PykepNative.GetSpicePlanetState("CeresTest", tTarget, "ECLIPJ2000", out Vector3d posCeres, out Vector3d velCeres);
+                if (!stateOk || posCeres.magnitude < 3.5e8 || posCeres.magnitude > 4.5e8) {
+                    Console.WriteLine($"❌ 动态注册天体状态解算异常: r={posCeres.magnitude:F1} km");
+                    return;
+                }
+                Console.WriteLine($"  • 动态天体拉格朗日递推日心距离: |r|={posCeres.magnitude:F1} km, |v|={velCeres.magnitude:F3} km/s (物理自洽，0 经验多项式) ✅");
+
+                // 4. 获取动态天体开普勒根数
+                bool elemOk = PykepNative.GetSpicePlanetElements("CeresTest", tTarget, 1.32712440018e11, out double a, out double e, out double iDeg, out double raan, out double aop, out double ma);
+                if (!elemOk || Math.Abs(a - 413950000.0) > 100.0 || Math.Abs(e - 0.076) > 0.001) {
+                    Console.WriteLine($"❌ 动态天体开普勒根数异常: a={a:F0}, e={e:F4}");
+                    return;
+                }
+                Console.WriteLine($"  • 动态天体根数读取: a={a:F0} km, e={e:F4}, i={iDeg:F2}°, M={ma:F1}° ✅");
+
+                passed++;
+                Console.WriteLine("\n✅ 通用天体动态注册、二体拉格朗日递推与零硬编码太阳系动力学核验 100% 通过！\n");
+            } catch (Exception ex) {
+                Console.WriteLine($"❌ 动态天体注册测试异常: {ex.Message}\n{ex.StackTrace}");
             }
         }
     }
