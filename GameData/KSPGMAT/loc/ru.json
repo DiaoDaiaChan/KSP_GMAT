@@ -126,6 +126,8 @@
   "btn_expand_all": "Развернуть все",
   "btn_flyby_only_on": "Гравитационный маневр-Only: On",
   "btn_flyby_only_toggle": "Гравитационный маневр-Only: Off",
+  "btn_wsb_manifold_on": "🌀 Многотельное многообразие (WSB): В оптимизации",
+  "btn_wsb_manifold_off": "🌀 Многотельное многообразие (WSB): Отключено (В ожидании)",
   "btn_focus_view": "Фокус вида",
   "btn_fold_log_close": "▾ Свернуть лог",
   "btn_fold_log_open": "▸ Развернуть лог",

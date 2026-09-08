@@ -16,3 +16,4 @@
 #include "pykep_spice.cpp"
 #include "pykep_align_injection.cpp"
 #include "pykep_transfer_window.cpp"
+#include "pykep_wsb_manifold.cpp"

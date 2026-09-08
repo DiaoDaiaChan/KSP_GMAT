@@ -53,10 +53,21 @@ EXPORT_API int pykep_find_nodal_crossing(
     if (h_mag < 1e-6) { hx = 0; hy = 0; hz = 1.0; }
     else { hx /= h_mag; hy /= h_mag; hz /= h_mag; }
 
+    bool is_helio = (!central_body || strlen(central_body) == 0 ||
+                     _stricmp(central_body, "sun") == 0 ||
+                     _stricmp(central_body, "sol") == 0 ||
+                     _stricmp(central_body, "kerbol") == 0);
+
     auto eval_z = [&](double t, double& out_r_mag) -> double {
         double rx = 0, ry = 0, rz = 0, vx = 0, vy = 0, vz = 0;
         int ok = pykep_spice_planet_state(body_name, t, "J2000", &rx, &ry, &rz, &vx, &vy, &vz);
         if (ok != 0) return 1e12;
+        if (!is_helio) {
+            double cx = 0, cy = 0, cz = 0, cvx = 0, cvy = 0, cvz = 0;
+            if (pykep_spice_planet_state(central_body, t, "J2000", &cx, &cy, &cz, &cvx, &cvy, &cvz) == 0) {
+                rx -= cx; ry -= cy; rz -= cz;
+            }
+        }
         out_r_mag = std::sqrt(rx * rx + ry * ry + rz * rz);
         return rx * hx + ry * hy + rz * hz;
     };
@@ -85,9 +96,28 @@ EXPORT_API int pykep_find_nodal_crossing(
     }
 
     if (found_t1 < 0.0) {
-        // 未在窗口内找到变号点，安全返回 t_start + 半周期
-        *out_node_ut = t_start + 13.6 * 86400.0;
-        if (out_node_dist_km) *out_node_dist_km = 384400.0;
+        // 未在窗口内找到变号点，根据目标天体真实日心/质心距离动态估算半周期
+        double r2x = 0, r2y = 0, r2z = 0, v2x = 0, v2y = 0, v2z = 0;
+        pykep_spice_planet_state(body_name, t_start, "J2000", &r2x, &r2y, &r2z, &v2x, &v2y, &v2z);
+        if (!is_helio) {
+            double cx = 0, cy = 0, cz = 0, cvx = 0, cvy = 0, cvz = 0;
+            if (pykep_spice_planet_state(central_body, t_start, "J2000", &cx, &cy, &cz, &cvx, &cvy, &cvz) == 0) {
+                r2x -= cx; r2y -= cy; r2z -= cz;
+            }
+        }
+        double r_t = std::sqrt(r2x * r2x + r2y * r2y + r2z * r2z);
+        double mu_c = SUN_MU;
+        double r_c = 0, dummy_s = 0, dummy_soi = 0, dummy_atm = 0;
+        if (central_body) pykep_spice_planet_properties(central_body, &mu_c, &r_c, &dummy_s, &dummy_soi, &dummy_atm);
+        if (mu_c <= 0.0) mu_c = 398600.4418;
+        if (r_t < 100.0) {
+            double r_b = 0;
+            pykep_spice_planet_properties(body_name, &dummy_s, &r_b, &dummy_s, &dummy_soi, &dummy_atm);
+            r_t = (r_b > 0.0) ? (r_b * 50.0) : ((r_c > 0.0) ? r_c * 20.0 : 384400.0);
+        }
+        double t_half_sec = PI * std::sqrt(r_t * r_t * r_t / mu_c);
+        *out_node_ut = t_start + t_half_sec;
+        if (out_node_dist_km) *out_node_dist_km = r_t;
         return -2;
     }
 
@@ -121,6 +151,7 @@ EXPORT_API int pykep_find_nodal_crossing(
 /// 100% C++ 底层运行真实 3D 兰伯特能量扫描与高精局部细化
 /// 彻底根除托管二维 atan2 投影引起的假性极小值 (如地火 1951年10月伪解)
 /// 并内建模式 2 自动共面对齐 (彻底解决地月 6100 m/s 面外变轨畸变)
+/// 全量动态支持任意天体系统母星->任意卫星转移 (Earth->Moon, Kerbin->Mun, Jupiter->Europa, Saturn->Titan 等)
 /// </summary>
 EXPORT_API int pykep_find_transfer_window(
     const char* from_body,
@@ -156,44 +187,58 @@ EXPORT_API int pykep_find_transfer_window(
     pykep_spice_planet_properties(from_body, &mu_p1, &r_p1, &dummy_safe, &dummy_soi, &dummy_atm);
     pykep_spice_planet_properties(to_body, &mu_p2, &r_p2, &dummy_safe, &dummy_soi, &dummy_atm);
 
-    bool is_central_dep = (from_str == central_str || from_str == "earth" && to_str == "moon" && (central_str == "earth" || central_str == "sun"));
-    // 行星系内转移（如 Earth -> Moon）
-    if (from_str == "earth" && to_str == "moon" || from_str == central_str) {
-        mu_central = (mu_p1 > 1e4) ? mu_p1 : 398600.4418;
+    bool is_central_dep = (from_str == central_str || (from_str == "earth" && to_str == "moon" && (central_str == "earth" || central_str == "sun")));
+    // 行星系内母星->任意卫星转移 (如 Earth->Moon, Kerbin->Mun, Jupiter->Europa, Saturn->Titan)
+    if (from_str == central_str || (from_str == "earth" && to_str == "moon")) {
+        mu_central = (mu_p1 > 0.0) ? mu_p1 : 398600.4418;
         double r_park1 = r_p1 + (dep_alt_km > 10.0 ? dep_alt_km : 200.0);
-        double r_dest = (r_p2 > 0) ? 384400.0 : 384400.0;
+
+        double r2x = 0, r2y = 0, r2z = 0, v2x = 0, v2y = 0, v2z = 0;
+        pykep_spice_planet_state(to_body, search_start_ut, "J2000", &r2x, &r2y, &r2z, &v2x, &v2y, &v2z);
+        double r1x = 0, r1y = 0, r1z = 0, v1x = 0, v1y = 0, v1z = 0;
+        pykep_spice_planet_state(from_body, search_start_ut, "J2000", &r1x, &r1y, &r1z, &v1x, &v1y, &v1z);
+
+        double rx_rel = r2x - r1x;
+        double ry_rel = r2y - r1y;
+        double rz_rel = r2z - r1z;
+        double r_dest = std::sqrt(rx_rel * rx_rel + ry_rel * ry_rel + rz_rel * rz_rel);
+        if (r_dest < 10.0) {
+            r_dest = (r_p2 > 0.0 ? r_p2 * 50.0 : (r_p1 > 0.0 ? r_p1 * 20.0 : 384400.0));
+        }
+
         double a_trans = (r_park1 + r_dest) * 0.5;
-        double tof_sec = PI * std::sqrt(a_trans * a_trans * a_trans / mu_central); // ~5.03 天
+        double tof_sec = PI * std::sqrt(a_trans * a_trans * a_trans / mu_central);
 
-        double v_park = std::sqrt(mu_central / r_park1); // ~7.784 km/s
-        double v_inj = std::sqrt(mu_central * (2.0 / r_park1 - 1.0 / a_trans)); // ~10.915 km/s
-        double dv_launch = v_inj - v_park; // ~3.131 km/s
+        double v_park = std::sqrt(mu_central / r_park1);
+        double v_inj = std::sqrt(mu_central * (2.0 / r_park1 - 1.0 / a_trans));
+        double dv_launch = v_inj - v_park;
 
-        double v_arr_trans = std::sqrt(mu_central * (2.0 / r_dest - 1.0 / a_trans)); // ~0.187 km/s
-        double v_dest_orb = std::sqrt(mu_central / r_dest); // ~1.022 km/s
-        double v_inf_arr = std::abs(v_dest_orb - v_arr_trans); // ~0.835 km/s
+        double v_arr_trans = std::sqrt(mu_central * (2.0 / r_dest - 1.0 / a_trans));
+        double v_dest_orb = std::sqrt(mu_central / r_dest);
+        double v_inf_arr = std::abs(v_dest_orb - v_arr_trans);
 
         double r_park2 = r_p2 + (arr_alt_km > 10.0 ? arr_alt_km : 100.0);
-        double v_cap = (mu_p2 > 0) ? (std::sqrt(2.0 * mu_p2 / r_park2 + v_inf_arr * v_inf_arr) - std::sqrt(mu_p2 / r_park2)) : v_inf_arr;
-        double total_dv = dv_launch + v_cap; // ~3.94 km/s
+        double v_cap = (mu_p2 > 0.0) ? (std::sqrt(2.0 * mu_p2 / r_park2 + v_inf_arr * v_inf_arr) - std::sqrt(mu_p2 / r_park2)) : v_inf_arr;
+        double total_dv = dv_launch + v_cap;
 
         // 核心对齐：若指定了在轨停泊轨倾角 (模式 2)，自动原生求解下一个交点历元
         double dep_ut = search_start_ut;
+        double t_dest_orb = 2.0 * PI * std::sqrt(r_dest * r_dest * r_dest / mu_central);
+        double search_window = std::max(t_dest_orb * 1.5, 30.0 * 86400.0);
+
         if (park_inc_deg > 0.01) {
             double node_ut = 0.0, node_dist = 0.0;
-            // 扫描未来 30 天内的升降交点
-            if (pykep_find_nodal_crossing(to_body, central_body, search_start_ut, 30.0 * 86400.0, park_inc_deg, park_raan_deg, &node_ut, &node_dist) == 0) {
+            if (pykep_find_nodal_crossing(to_body, central_body, search_start_ut, search_window, park_inc_deg, park_raan_deg, &node_ut, &node_dist) == 0) {
                 double target_dep = node_ut - tof_sec;
-                // 如果当前交点推算出的发射时间已过，向后寻找下一个交点 (~13.6天后)
                 if (target_dep < search_start_ut) {
-                    if (pykep_find_nodal_crossing(to_body, central_body, search_start_ut + 7.0 * 86400.0, 30.0 * 86400.0, park_inc_deg, park_raan_deg, &node_ut, &node_dist) == 0) {
+                    double hop = std::max(3600.0, t_dest_orb * 0.25);
+                    if (pykep_find_nodal_crossing(to_body, central_body, search_start_ut + hop, search_window, park_inc_deg, park_raan_deg, &node_ut, &node_dist) == 0) {
                         target_dep = node_ut - tof_sec;
                     }
                 }
                 dep_ut = std::max(search_start_ut, target_dep);
             }
         } else {
-            // 模式 1: 自由发射规划，向后对齐月球相位最优窗口
             dep_ut = search_start_ut;
         }
 

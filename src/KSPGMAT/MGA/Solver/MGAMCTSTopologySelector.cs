@@ -103,19 +103,26 @@ namespace KSPGMAT.MGA
             MGAAdaptiveSolverConfig config, 
             int maxChains = 8)
         {
+            if (config != null && config.MaxCandidateTopologies > 0)
+            {
+                maxChains = config.MaxCandidateTopologies;
+            }
             var sequences = new List<List<string>>();
             if (string.IsNullOrEmpty(config.DeparturePlanet) || string.IsNullOrEmpty(config.ArrivalPlanet))
                 return sequences;
 
-            // 1. 直达序列恒为最高优先级基准
-            sequences.Add(new List<string> { config.ArrivalPlanet });
+            // 1. 若用户未指定中途借力意向天体，直达序列作为最高优先级基准
+            if (config.FlybySequence == null || config.FlybySequence.Count == 0)
+            {
+                sequences.Add(new List<string> { config.ArrivalPlanet });
+            }
 
             // 若用户指定了特定借力链，按配置自动展开乱序与高价值插序
             if (config.FlybySequence != null && config.FlybySequence.Count > 0)
             {
                 if (config.EnablePermutationsAndInsertions)
                 {
-                    var expanded = ExpandPermutationsAndInsertions(config.DeparturePlanet, config.ArrivalPlanet, config.FlybySequence, maxChains);
+                    var expanded = ExpandPermutationsAndInsertions(config.DeparturePlanet, config.ArrivalPlanet, config.FlybySequence, maxChains * 2);
                     foreach (var chain in expanded)
                     {
                         if (!sequences.Any(s => s.SequenceEqual(chain)))
@@ -298,7 +305,11 @@ namespace KSPGMAT.MGA
             var result = new List<List<string>>();
             if (rawFlybys == null || rawFlybys.Count == 0) return result;
 
-            var cleaned = rawFlybys.Where(p => !string.IsNullOrEmpty(p) && !p.Equals(departure, StringComparison.OrdinalIgnoreCase)).ToList();
+            var cleaned = new List<string>(rawFlybys.Where(p => !string.IsNullOrEmpty(p)));
+            if (cleaned.Count > 0 && cleaned[0].Equals(departure, StringComparison.OrdinalIgnoreCase))
+                cleaned.RemoveAt(0);
+            if (cleaned.Count > 0 && cleaned[cleaned.Count - 1].Equals(arrival, StringComparison.OrdinalIgnoreCase))
+                cleaned.RemoveAt(cleaned.Count - 1);
             if (cleaned.Count == 0) return result;
 
             // 1. 用户原始序列作为最高优先级基准
@@ -307,17 +318,10 @@ namespace KSPGMAT.MGA
             // 2. 中途天体乱序全排列探索 (Permutations)
             if (cleaned.Count >= 2 && cleaned.Count <= 5)
             {
-                bool lastIsArrival = cleaned.Last().Equals(arrival, StringComparison.OrdinalIgnoreCase);
-                var subToPermute = lastIsArrival ? cleaned.Take(cleaned.Count - 1).ToList() : new List<string>(cleaned);
-                string fixedEnd = lastIsArrival ? cleaned.Last() : null;
-
-                var allPerms = GetPermutations(subToPermute);
+                var allPerms = GetPermutations(cleaned);
                 foreach (var p in allPerms)
                 {
                     var chain = new List<string>(p);
-                    if (fixedEnd != null) chain.Add(fixedEnd);
-                    else if (!chain.Last().Equals(arrival, StringComparison.OrdinalIgnoreCase)) chain.Add(arrival);
-
                     if (!result.Any(r => r.SequenceEqual(chain)))
                     {
                         result.Add(chain);
@@ -380,10 +384,10 @@ namespace KSPGMAT.MGA
             }
 
             // 3.5 远外深空巨行星外向弹弓插序探索 (Outward Giant Swing-by Assist Insertion)
-            // 普适物理律: 前往远外深空天体 (rArr >= rDep * 3.0，如土星、天王星、海王星) 时，
+            // 普适物理律: 前往远外深空天体 (rArr >= rDep * GiantAssistDistanceRatio) 时，
             // 若尚未经过中间巨行星 (如木星)，在到达目标前插入位于中途的极大引力天体 (Mu 极大值)，
             // 是物理上实现深空大角度抛射与零工质加速的根本保证
-            if (pArrObj != null && pDepObj != null && pArrObj.SMA >= pDepObj.SMA * 3.0)
+            if (pArrObj != null && pDepObj != null && pArrObj.SMA >= pDepObj.SMA * MGADefaults.GiantAssistDistanceRatio)
             {
                 string parentSys = pDepObj.ParentName ?? SolarSystemCatalog.RootStarName;
                 string rootStar = SolarSystemCatalog.RootStarName;
@@ -406,17 +410,7 @@ namespace KSPGMAT.MGA
                         if (!baseChain.Any(p => p.Equals(giantAssist.Name, StringComparison.OrdinalIgnoreCase)))
                         {
                             var inserted = new List<string>(baseChain);
-                            int insIdx = inserted.Count - 1;
-                            if (insIdx >= 0 && inserted[insIdx].Equals(arrival, StringComparison.OrdinalIgnoreCase))
-                            {
-                                inserted.Insert(insIdx, giantAssist.Name);
-                            }
-                            else
-                            {
-                                inserted.Add(giantAssist.Name);
-                                if (!inserted.Last().Equals(arrival, StringComparison.OrdinalIgnoreCase))
-                                    inserted.Add(arrival);
-                            }
+                            inserted.Add(giantAssist.Name);
                             if (!result.Any(r => r.SequenceEqual(inserted)))
                             {
                                 candidatesToInsertGiant.Add(inserted);
@@ -434,19 +428,15 @@ namespace KSPGMAT.MGA
             }
 
             // 3.8 势阱爬升中继插序 (Inward-to-Outward Gravity Well Climbing Assist)
-            // 真实物理法则：当借力链从太阳深引力井天体 (如 Mercury SMA < 0.5 AU) 跨越至远外行星 (如 Jupiter/Neptune SMA > 2.0 AU) 时，
-            // 二体能量极差达 15~18 km/s，单次微小天体借力无法跨越。
-            // 必须插入中途爬升天体 (Venus / Earth) 逐级泵升远心点，杜绝超大 DSM 消耗！
+            // 真实物理法则：当借力链从太阳深引力井天体跨越至远外行星时，二体能量极差大，
+            // 必须插入中途爬升天体逐级泵升远心点，杜绝超大 DSM 消耗！
             if (pDepObj != null)
             {
                 var climbingCandidates = new List<List<string>>();
                 foreach (var baseChain in result.Take(8).ToList())
                 {
                     var chainWithArr = new List<string>(baseChain);
-                    if (!chainWithArr.Last().Equals(arrival, StringComparison.OrdinalIgnoreCase))
-                    {
-                        chainWithArr.Add(arrival);
-                    }
+                    chainWithArr.Add(arrival);
 
                     for (int i = 0; i < chainWithArr.Count - 1; i++)
                     {
@@ -454,50 +444,96 @@ namespace KSPGMAT.MGA
                         var pNext = SolarSystemCatalog.GetPlanet(chainWithArr[i + 1]);
                         if (pCurr != null && pNext != null && pCurr.SMA > 0 && pNext.SMA > 0)
                         {
-                            if (pCurr.SMA < pDepObj.SMA && pNext.SMA >= pDepObj.SMA * 2.0)
+                            if (pCurr.SMA < pDepObj.SMA && pNext.SMA >= pDepObj.SMA * MGADefaults.GravityClimbingDistanceRatio)
                             {
-                                // 获取按半长轴严格升序排列的所有中间跳板天体 (例如从水星到海王星: Venus -> Earth -> Jupiter)
+                                // 获取按半长轴严格升序排列的所有中间跳板天体 (严格排除恒星根天体与卫星，仅保留母恒星直接绕行行星)
+                                string parentSys = pDepObj.ParentName ?? SolarSystemCatalog.RootStarName;
+                                string rootStar = SolarSystemCatalog.RootStarName;
                                 var steppingStones = SolarSystemCatalog.Planets.Values
-                                    .Where(b => b.SMA > pCurr.SMA && b.SMA < pNext.SMA && b.Mu >= 500.0 && b.RadiusKm > 0 &&
+                                    .Where(b => !string.IsNullOrEmpty(b.Name) &&
+                                                !b.IsMoon &&
+                                                !b.Name.Equals(departure, StringComparison.OrdinalIgnoreCase) &&
+                                                !b.Name.Equals(arrival, StringComparison.OrdinalIgnoreCase) &&
+                                                !b.Name.Equals(parentSys, StringComparison.OrdinalIgnoreCase) &&
+                                                !b.Name.Equals(rootStar, StringComparison.OrdinalIgnoreCase) &&
+                                                !b.Name.Equals("Sun", StringComparison.OrdinalIgnoreCase) &&
+                                                !b.Name.Equals("Sol", StringComparison.OrdinalIgnoreCase) &&
+                                                !b.Name.Equals("Kerbol", StringComparison.OrdinalIgnoreCase) &&
+                                                (b.ParentName == null || b.ParentName.Equals(parentSys, StringComparison.OrdinalIgnoreCase) || b.ParentName.Equals(rootStar, StringComparison.OrdinalIgnoreCase)) &&
+                                                b.SMA > pCurr.SMA && b.SMA < pNext.SMA && b.Mu >= MGADefaults.MinSteppingStoneMu && b.RadiusKm > 0 &&
                                                 !b.Name.Equals(chainWithArr[i], StringComparison.OrdinalIgnoreCase) &&
                                                 !b.Name.Equals(chainWithArr[i + 1], StringComparison.OrdinalIgnoreCase))
                                     .OrderBy(b => b.SMA)
                                     .ToList();
 
-                                // 筛选具显著引力助推能力的行星跳板 (内行星保留 Venus/Earth，外行星选取 1 颗主巨行星如 Jupiter)
-                                var innerLadder = steppingStones.Where(b => b.SMA < 4.0 * 1.496e8 && ((b.Mu / b.RadiusKm >= 35.0) || b.Mu >= 1.0e7)).ToList();
-                                var outerGiant = steppingStones.Where(b => b.SMA >= 4.0 * 1.496e8).OrderByDescending(b => b.Mu).Take(1).ToList();
+                                // 筛选具显著引力助推能力的行星跳板 (内行星保留势深显著天体，外行星选取巨行星)
+                                var innerLadder = steppingStones.Where(b => b.SMA < MGADefaults.InnerSystemMaxSmaKm && 
+                                    ((b.GravityPotentialDepth >= MGADefaults.MinAssistPowerIndexInner) || b.Mu >= MGADefaults.GiantPlanetMinMu)).ToList();
+                                var outerGiants = steppingStones.Where(b => b.SMA >= MGADefaults.InnerSystemMaxSmaKm).OrderBy(b => b.SMA).Take(2).ToList();
                                 var ladder = new List<SolarPlanet>(innerLadder);
-                                ladder.AddRange(outerGiant);
+                                if (outerGiants.Count > 0) ladder.Add(outerGiants[0]);
 
                                 if (ladder.Count > 0)
                                 {
-                                    // 1. 严格按半长轴升序逐阶爬升梯子: [pCurr] ➔ Venus ➔ Earth ➔ Jupiter ➔ [pNext]
-                                    var ladderChain = new List<string>(chainWithArr);
+                                    // 1. 严格按半长轴升序逐阶爬升梯子: [pCurr] ➔ Venus ➔ Earth ➔ Jupiter
+                                    var ladderChain = new List<string>(baseChain);
                                     ladderChain.InsertRange(i + 1, ladder.Select(l => l.Name));
                                     if (!result.Any(r => r.SequenceEqual(ladderChain)) && !climbingCandidates.Any(r => r.SequenceEqual(ladderChain)))
                                     {
                                         climbingCandidates.Add(ladderChain);
                                     }
 
-                                    // 2. 若终点为远外深空行星 (SMA >= pDepObj.SMA * 5.0，如 Neptune/Uranus)，在地球处插入 2:1 共振槽静候外行星窗口
-                                    var earthBody = ladder.FirstOrDefault(l => l.Name.Equals(pDepObj.Name, StringComparison.OrdinalIgnoreCase));
-                                    if (earthBody != null && pNext.SMA >= pDepObj.SMA * 5.0)
+                                    // 2. 出发星 2:1 共振槽 (如 Earth -> Earth 2:1 调相蓄能)
+                                    var depBodyInLadder = ladder.FirstOrDefault(l => l.Name.Equals(pDepObj.Name, StringComparison.OrdinalIgnoreCase));
+                                    if (depBodyInLadder != null)
                                     {
-                                        var resonantLadder = new List<string>(chainWithArr);
+                                        var resonantLadder = new List<string>(baseChain);
                                         var ladderWithRes = new List<string>();
                                         foreach (var l in ladder)
                                         {
                                             ladderWithRes.Add(l.Name);
-                                            if (l.Name.Equals(earthBody.Name, StringComparison.OrdinalIgnoreCase))
+                                            if (l.Name.Equals(depBodyInLadder.Name, StringComparison.OrdinalIgnoreCase))
                                             {
-                                                ladderWithRes.Add(earthBody.Name); // 插入同星 2:1 开普勒共振调相
+                                                ladderWithRes.Add(depBodyInLadder.Name); // 插入同星 2:1 开普勒共振调相
                                             }
                                         }
                                         resonantLadder.InsertRange(i + 1, ladderWithRes);
                                         if (!result.Any(r => r.SequenceEqual(resonantLadder)) && !climbingCandidates.Any(r => r.SequenceEqual(resonantLadder)))
                                         {
                                             climbingCandidates.Add(resonantLadder);
+                                        }
+
+                                        // 3. 内侧高引力跳板回升多次共振 + 出发星 2:1 共振 (双重多阶共振)
+                                        var dualResLadder = new List<string>(baseChain);
+                                        var ladderWithDualRes = new List<string>();
+                                        var innerHighGravityBody = ladder.Where(l => l.SMA < pDepObj.SMA).OrderByDescending(l => l.GravityPotentialDepth).FirstOrDefault();
+                                        foreach (var l in ladder)
+                                        {
+                                            ladderWithDualRes.Add(l.Name);
+                                            if ((innerHighGravityBody != null && l.Name.Equals(innerHighGravityBody.Name, StringComparison.OrdinalIgnoreCase)) || 
+                                                l.Name.Equals(depBodyInLadder.Name, StringComparison.OrdinalIgnoreCase))
+                                            {
+                                                ladderWithDualRes.Add(l.Name);
+                                            }
+                                        }
+                                        dualResLadder.InsertRange(i + 1, ladderWithDualRes);
+                                        if (!result.Any(r => r.SequenceEqual(dualResLadder)) && !climbingCandidates.Any(r => r.SequenceEqual(dualResLadder)))
+                                        {
+                                            climbingCandidates.Add(dualResLadder);
+                                        }
+                                    }
+
+                                    // 4. 双巨行星超级弹弓 (木星 + 土星)
+                                    if (outerGiants.Count >= 2)
+                                    {
+                                        var saturnLadder = new List<string>(baseChain);
+                                        var ladderSat = new List<string>(innerLadder.Select(l => l.Name));
+                                        ladderSat.Add(outerGiants[0].Name);
+                                        ladderSat.Add(outerGiants[1].Name);
+                                        saturnLadder.InsertRange(i + 1, ladderSat);
+                                        if (!result.Any(r => r.SequenceEqual(saturnLadder)) && !climbingCandidates.Any(r => r.SequenceEqual(saturnLadder)))
+                                        {
+                                            climbingCandidates.Add(saturnLadder);
                                         }
                                     }
                                 }
@@ -507,7 +543,7 @@ namespace KSPGMAT.MGA
                 }
                 foreach (var cc in climbingCandidates)
                 {
-                    if (result.Count < maxCombinations + 24)
+                    if (result.Count < maxCombinations + 48)
                     {
                         result.Add(cc);
                     }
@@ -526,8 +562,8 @@ namespace KSPGMAT.MGA
                     var pBody = SolarSystemCatalog.GetPlanet(body);
                     if (pBody != null && pBody.Mu > 0 && pBody.RadiusKm > 0)
                     {
-                        double flybyPower = pBody.Mu / pBody.RadiusKm;
-                        int resMax = (flybyPower < 15.0) ? 4 : (flybyPower < 60.0 ? 3 : 2);
+                        double flybyPower = pBody.GravityPotentialDepth;
+                        int resMax = (flybyPower < MGADefaults.FlybyPowerWeakThreshold) ? 6 : (flybyPower < MGADefaults.FlybyPowerMediumThreshold ? 4 : 2);
                         for (int n = 1; n <= resMax; n++)
                         {
                             var resChainN = new List<string>(baseChain);
@@ -593,13 +629,22 @@ namespace KSPGMAT.MGA
                     if (pA == null || pA.SMA <= 0) continue;
 
                     // 寻找轨道相邻或强引力势阱中继中介天体 B (如 Mercury 的中介是 Venus; Venus 的中介是 Earth; Earth 的中介是 Venus 或 Jupiter)
+                    string parentSysN = pA.ParentName ?? SolarSystemCatalog.RootStarName;
+                    string rootStarN = SolarSystemCatalog.RootStarName;
                     var neighborBList = SolarSystemCatalog.Planets.Values
                         .Where(b => !string.IsNullOrEmpty(b.Name) &&
+                                    !b.IsMoon &&
                                     !b.Name.Equals(bodyA, StringComparison.OrdinalIgnoreCase) &&
                                     !b.Name.Equals(departure, StringComparison.OrdinalIgnoreCase) &&
+                                    !b.Name.Equals(arrival, StringComparison.OrdinalIgnoreCase) &&
+                                    !b.Name.Equals(parentSysN, StringComparison.OrdinalIgnoreCase) &&
+                                    !b.Name.Equals(rootStarN, StringComparison.OrdinalIgnoreCase) &&
+                                    !b.Name.Equals("Sun", StringComparison.OrdinalIgnoreCase) &&
+                                    !b.Name.Equals("Sol", StringComparison.OrdinalIgnoreCase) &&
+                                    !b.Name.Equals("Kerbol", StringComparison.OrdinalIgnoreCase) &&
                                     b.Mu > 0 && b.RadiusKm > 0 &&
-                                    b.SMA > 0 && Math.Abs(Math.Log(b.SMA / pA.SMA)) < 1.5)
-                        .OrderByDescending(b => b.Mu / b.RadiusKm)
+                                    b.SMA > 0 && Math.Abs(Math.Log(b.SMA / pA.SMA)) < MGADefaults.NeighborBodyMaxLogSmaRatio)
+                        .OrderByDescending(b => b.GravityPotentialDepth)
                         .Take(2)
                         .ToList();
 
@@ -631,6 +676,20 @@ namespace KSPGMAT.MGA
             {
                 result.Add(ic);
             }
+
+            // 严格杜绝末尾重复追加 Arrival (如 Neptune -> Neptune) 或开头残留 Departure
+            foreach (var chain in result)
+            {
+                while (chain.Count > 0 && chain[chain.Count - 1].Equals(arrival, StringComparison.OrdinalIgnoreCase))
+                {
+                    chain.RemoveAt(chain.Count - 1);
+                }
+                while (chain.Count > 0 && chain[0].Equals(departure, StringComparison.OrdinalIgnoreCase))
+                {
+                    chain.RemoveAt(0);
+                }
+            }
+            result = result.Where(c => c.Count > 0).ToList();
 
             return result;
         }
@@ -700,11 +759,19 @@ namespace KSPGMAT.MGA
             string departure, 
             string arrival, 
             List<string> flybyChain,
-            string centralBody = "Sun")
+            string centralBody = "Sun",
+            double depMinFactor = 0.65,
+            double depMaxFactor = 1.50)
         {
             var fullChain = new List<string> { departure };
             if (flybyChain != null) fullChain.AddRange(flybyChain);
-            fullChain.Add(arrival);
+            if (!string.IsNullOrEmpty(arrival))
+            {
+                if (fullChain.Count == 0 || !fullChain[fullChain.Count - 1].Equals(arrival, StringComparison.OrdinalIgnoreCase))
+                {
+                    fullChain.Add(arrival);
+                }
+            }
 
             var bounds = new List<(double MinDays, double MaxDays)>();
             double muCentralM = (SolarSystemCatalog.GetCentralMu(centralBody) > 0 
@@ -723,23 +790,53 @@ namespace KSPGMAT.MGA
 
                 if (b1.Equals(b2, StringComparison.OrdinalIgnoreCase))
                 {
-                    // 同星共振调相段：依据天体公转周期精确锁定开普勒共振槽 (1:1, 3:2, 2:1, 3:1 等)
+                    // 同星共振调相段：依据天体公转周期与势阱能量包络线锁定物理有效共振槽
                     double tOrbDays = 2.0 * Math.PI * Math.Sqrt(Math.Pow(sma1 * 1000.0, 3.0) / muCentralM) / 86400.0;
                     if (tOrbDays <= 0 || double.IsNaN(tOrbDays)) tOrbDays = 365.25;
-                    double minLeg = Math.Max(0.5, tOrbDays * 0.50);
-                    double maxLeg = Math.Max(minLeg + 5.0, tOrbDays * 3.50);
+
+                    // 普适开普勒共振调相段：允许 1:1, 2:1 等物理多阶有理共振槽
+                    // 浅势阱小天体 (如水星/Moho μ/R < 20) 严格限制在 2:1 共振以内 (<= 2.25 T_orb)，防止航天器被误抛至超大椭圆脱离内侧对齐
+                    double resMaxFactor = (p1 != null && p1.RadiusKm > 0 && (p1.Mu / p1.RadiusKm) < 20.0) 
+                        ? 2.25 
+                        : MGADefaults.ResonanceToFMaxFactor;
+                    double minLeg = Math.Max(0.5, tOrbDays * MGADefaults.ResonanceToFMinFactor);
+                    double maxLeg = Math.Max(minLeg + 5.0, tOrbDays * resMaxFactor);
                     bounds.Add((minLeg, maxLeg));
                 }
                 else
                 {
-                    // 异星转移段：依霍曼半长轴留足物理弧段
+                    // 异星转移段：依霍曼转移半长轴与转移几何分类动态划定物理弧段
                     double aTrans = (sma1 + sma2) * 0.5;
                     double tHohmannDays = Math.PI * Math.Sqrt(Math.Pow(aTrans * 1000.0, 3.0) / muCentralM) / 86400.0;
                     if (tHohmannDays <= 0 || double.IsNaN(tHohmannDays)) tHohmannDays = 200.0;
-                    double minFactor = (sma2 >= sma1 * 3.0 || sma1 >= sma2 * 3.0) ? 0.18 : 0.40;
-                    double maxFactor = (sma1 < 1.1e8 || sma2 < 1.1e8) ? 4.50 : 2.40; // 涉及内行星（水星/金星）放宽转移上限以允许更多圈数等待 (如 370d 多圈返金星)
+
+                    double ratioSma = Math.Max(sma1, sma2) / Math.Max(1.0, Math.Min(sma1, sma2));
+                    double minFactor, maxFactor;
+
+                    if (k == 0)
+                    {
+                        // 始发段受用户/配置设定的出射因子约束
+                        minFactor = depMinFactor;
+                        maxFactor = depMaxFactor;
+                    }
+                    else if (ratioSma <= MGADefaults.AdjacentTransferSmaRatioThreshold)
+                    {
+                        // 近邻天体转移 (如 Venus <-> Mercury 比值 1.87, Earth <-> Venus 比值 1.38):
+                        // 物理单弧转移是以真近点角变化 delta_theta ~ 180° 为主的椭圆弧段，
+                        // 航时严格限制在 [NearTransferToFMinFactor * T_H, NearTransferToFMaxFactor * T_H]
+                        minFactor = MGADefaults.NearTransferToFMinFactor;
+                        maxFactor = MGADefaults.NearTransferToFMaxFactor;
+                    }
+                    else
+                    {
+                        // 远距离跨体系/外行星转移 (如 Earth -> Jupiter, Jupiter -> Neptune):
+                        // 留出充分的宽窗口探索跨度
+                        minFactor = (ratioSma >= MGADefaults.GiantAssistDistanceRatio) ? MGADefaults.OuterTransferToFMinFactor : MGADefaults.FarTransferToFMinFactor;
+                        maxFactor = MGADefaults.OuterTransferToFMaxFactor;
+                    }
+
                     double minLeg = Math.Max(5.0, tHohmannDays * minFactor);
-                    double maxLeg = Math.Max(minLeg + 30.0, tHohmannDays * maxFactor);
+                    double maxLeg = Math.Max(minLeg + 10.0, tHohmannDays * maxFactor);
                     bounds.Add((minLeg, maxLeg));
                 }
             }
@@ -754,9 +851,12 @@ namespace KSPGMAT.MGA
         public static (double MinDays, double MaxDays) CalculateAdaptiveToFBounds(
             string departure, 
             string arrival, 
-            List<string> flybyChain)
+            List<string> flybyChain,
+            string centralBody = "Sun",
+            double depMinFactor = 0.65,
+            double depMaxFactor = 1.50)
         {
-            var legBounds = AutoDeriveResonantLegBounds(departure, arrival, flybyChain);
+            var legBounds = AutoDeriveResonantLegBounds(departure, arrival, flybyChain, centralBody, depMinFactor, depMaxFactor);
             double totalMinDays = 0.0;
             double totalMaxDays = 0.0;
             foreach (var b in legBounds)
@@ -794,6 +894,37 @@ namespace KSPGMAT.MGA
                 }
             }
             return result;
+        }
+
+        /// <summary>
+        /// IJCAI 2015 开普勒历表周期离散网格生成器 (Ephemeris Grid)
+        /// G = { t0 + j * (l * tau_i / 360°) }
+        /// 将连续搜索时间按借力天体真实公转周期 tau_i 离散化，使同星共振和借力交会自然捕捉行星对齐切点
+        /// </summary>
+        public static List<double> GetEphemerisGridEpochs(string bodyName, double t0, double spanDays, double resolutionDeg = 22.5)
+        {
+            var epochs = new List<double>();
+            var pBody = SolarSystemCatalog.GetPlanet(bodyName);
+            if (pBody == null || pBody.SMA <= 0) return epochs;
+
+            string central = pBody.ParentName ?? SolarSystemCatalog.RootStarName;
+            double centralMu = SolarSystemCatalog.GetCentralMu(central);
+            if (centralMu <= 0) centralMu = SolarSystemCatalog.SunMu;
+
+            double sma = pBody.SMA;
+            double periodSec = 2.0 * Math.PI * Math.Sqrt(Math.Pow(sma * 1000.0, 3.0) / (centralMu * 1e9));
+            double periodDays = periodSec / 86400.0;
+            if (periodDays <= 0 || double.IsNaN(periodDays)) periodDays = 365.25;
+
+            double stepDays = periodDays * (resolutionDeg / 360.0);
+            stepDays = Math.Max(1.0, stepDays);
+
+            int steps = (int)Math.Ceiling(spanDays / stepDays);
+            for (int j = 0; j <= steps; j++)
+            {
+                epochs.Add(t0 + j * stepDays * 86400.0);
+            }
+            return epochs;
         }
 
         /// <summary>
@@ -897,51 +1028,42 @@ namespace KSPGMAT.MGA
                     int spacing = Math.Abs(i - cIdx);
                     if (isBackLeg && spacing > config.MaxBackSpacing) continue;
 
+                    // Contraction 剪枝门禁 (IJCAI 2015): 凡二体转移或转角赤字超限的枝节点立即剪除整颗子树
+                    if (!isResonance) {
+                        var pCur = SolarSystemCatalog.GetPlanet(currentBody);
+                        if (pCur != null && pNext != null && pCur.SMA > 0 && pNext.SMA > 0) {
+                            double ratioSma = Math.Max(pCur.SMA, pNext.SMA) / Math.Min(pCur.SMA, pNext.SMA);
+                            // 若非巨行星助推且单次半长轴跨度超 6 倍 (无中间跳板直飞外太阳系)，直接剪枝
+                            if (ratioSma > 6.0 && pCur.Mu < 1e5 && pNext.Mu < 1e5) {
+                                continue;
+                            }
+                        }
+                    }
+
                     var newChain = new List<string>(currentChain) { nextBody };
                     queue.Enqueue((newChain, curRes + (isResonance ? 1 : 0), curBack + (isBackLeg ? 1 : 0)));
                 }
             }
 
-            // 智能天体力学价值赋权排序 (Zero Hardcoding / 完全基于开普勒轨道半长轴阶梯与引力势能深度标准化物理量)
-            var pOrigin = SolarSystemCatalog.GetPlanet(origin);
-            double rDep = (pOrigin != null && pOrigin.SMA > 0) ? pOrigin.SMA : 1.496e8;
-            double rDest = (destPlanet != null && destPlanet.SMA > 0) ? destPlanet.SMA : 1.496e8;
-            double rMin = Math.Min(rDep, rDest);
-            double rMax = Math.Max(rDep, rDest);
-            double rSpan = Math.Max(1.0, rMax - rMin);
-
+            // 确定性 Max 估计器 (IJCAI 2015): X = max(0, (DeltaV_max - DeltaV_tot) / DeltaV_max)
+            double maxBudgetMs = (config.ConstrainByVesselDeltaV && config.VesselMaxDeltaVMs > 0) ? config.VesselMaxDeltaVMs : 4000.0;
             results = results.OrderByDescending(c => {
-                // 直接到达标杆基准给予基础基准分
-                if (c.Count == 1 && c[0].Equals(dest, StringComparison.OrdinalIgnoreCase)) return 50.0;
+                if (c.Count == 1 && c[0].Equals(dest, StringComparison.OrdinalIgnoreCase)) return 0.5;
 
-                double score = 0.0;
-                for (int idx = 0; idx < c.Count; idx++) {
-                    string bName = c[idx];
-                    var p = SolarSystemCatalog.GetPlanet(bName);
-                    if (p == null) continue;
-
-                    // 物理量 1: 天体引力势能深度贡献 (引力井越深，双曲转角与动量改变能力越大)
-                    if (p.Mu > 0) {
-                        score += 10.0 * Math.Log10(Math.Max(1.0, p.Mu));
-                    }
-
-                    // 物理量 2: 轨道阶梯几何匹配 (中间天体公转轨道半长轴处于起点与目标之间时，天然充当轨道能量过渡阶梯)
-                    if (p.SMA >= rMin && p.SMA <= rMax) {
-                        double midProgress = 1.0 - Math.Abs(p.SMA - (rMin + rMax) * 0.5) / (rSpan * 0.5 + 1e-5);
-                        score += 35.0 * Math.Max(0.2, midProgress);
-                    }
-
-                    // 物理量 3: 目标天体同星共振减速价值 (当目标天体具备显著引力井时，同星共振逐次削减到达双曲渐近速度 V_inf)
-                    if (bName.Equals(dest, StringComparison.OrdinalIgnoreCase) && idx < c.Count - 1 && p.Mu >= 1000.0) {
-                        score += 15.0 * Math.Log10(Math.Max(1.0, p.Mu));
+                double totalDeficitKms = 0.0;
+                for (int idx = 0; idx < c.Count - 1; idx++) {
+                    var pA = SolarSystemCatalog.GetPlanet(c[idx]);
+                    var pB = SolarSystemCatalog.GetPlanet(c[idx + 1]);
+                    if (pA != null && pB != null && pA.SMA > 0 && pB.SMA > 0) {
+                        if (!c[idx].Equals(c[idx + 1], StringComparison.OrdinalIgnoreCase)) {
+                            double rRatio = Math.Max(pA.SMA, pB.SMA) / Math.Min(pA.SMA, pB.SMA);
+                            if (rRatio > 4.0 && pA.Mu < 1e5) totalDeficitKms += (rRatio - 4.0) * 1.5;
+                        }
                     }
                 }
-
-                // 物理量 4: 航段复杂度适度正则化 (2~4 段为工程最实用区间)
-                if (c.Count >= 2 && c.Count <= 4) score += 10.0;
-                else if (c.Count > 4) score -= (c.Count - 4) * 15.0;
-
-                return score;
+                double estimatedTotalMs = 3800.0 + totalDeficitKms * 1000.0;
+                double xScore = Math.Max(0.0, (maxBudgetMs - estimatedTotalMs) / maxBudgetMs);
+                return xScore;
             }).ToList();
 
             return results;

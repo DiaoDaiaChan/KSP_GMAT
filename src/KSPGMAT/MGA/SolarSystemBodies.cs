@@ -234,5 +234,40 @@ namespace KSPGMAT.MGA {
                 GetParentCentricState(ut, out posKm, out velKms);
             }
         }
+
+        /// <summary>
+        /// 天体引力势阱特征深度 (km^2/s^2)，反映安全近心点处的引力势能深度 Phi_safe = Mu / SafeRadiusKm
+        /// </summary>
+        public double GravityPotentialDepth {
+            get {
+                double rSafe = SafeRadiusKm > 0 ? SafeRadiusKm : (RadiusKm > 0 ? RadiusKm + 100.0 : 6000.0);
+                return (Mu > 0 && rSafe > 0) ? Mu / rSafe : 0.0;
+            }
+        }
+
+        /// <summary>
+        /// 给定进入双曲过剩速度 vInf (km/s) 下，天体无动力双曲飞越的最大几何偏转角 (deg)
+        /// delta_max = 2 * arcsin(1 / (1 + r_safe * v_inf^2 / Mu))
+        /// </summary>
+        public double ComputeMaxDeflectionDeg(double vInfKms) {
+            if (vInfKms <= 1e-6 || Mu <= 0.0) return 0.0;
+            double rSafe = SafeRadiusKm > 0 ? SafeRadiusKm : (RadiusKm > 0 ? RadiusKm + 100.0 : 6000.0);
+            double e = 1.0 + (rSafe * vInfKms * vInfKms) / Mu;
+            if (e <= 1.0) return 180.0;
+            double sinHalfDelta = 1.0 / e;
+            if (sinHalfDelta > 1.0) sinHalfDelta = 1.0;
+            return 2.0 * Math.Asin(sinHalfDelta) * (180.0 / Math.PI);
+        }
+
+        /// <summary>
+        /// 给定双曲过剩速度 vInf (km/s) 下，纯双曲弹弓可获得的最大日心速度增量极值 (km/s) (仅启发式评估)
+        /// DeltaV_boost_max = 2 * v_inf * sin(delta_max / 2) = 2 * v_inf / (1 + r_safe * v_inf^2 / Mu)
+        /// </summary>
+        public double ComputeMaxHeliocentricBoostKms(double vInfKms) {
+            if (vInfKms <= 1e-6 || Mu <= 0.0) return 0.0;
+            double rSafe = SafeRadiusKm > 0 ? SafeRadiusKm : (RadiusKm > 0 ? RadiusKm + 100.0 : 6000.0);
+            double denom = 1.0 + (rSafe * vInfKms * vInfKms) / Mu;
+            return denom > 0 ? (2.0 * vInfKms) / denom : 0.0;
+        }
     }
 }

@@ -57,7 +57,7 @@ namespace KSPGMAT.MGA
 
                 var legBounds = (subCfg.LegToFBounds != null && subCfg.LegToFBounds.Count > 0)
                     ? subCfg.LegToFBounds
-                    : MGAMCTSTopologySelector.AutoDeriveResonantLegBounds(subCfg.DeparturePlanet, subCfg.ArrivalPlanet, subCfg.FlybySequence, subCfg.CentralBody);
+                    : MGAMCTSTopologySelector.AutoDeriveResonantLegBounds(subCfg.DeparturePlanet, subCfg.ArrivalPlanet, subCfg.FlybySequence, subCfg.CentralBody, subCfg.DepartureToFMinFactor, subCfg.DepartureToFMaxFactor);
 
                 // 构造底层 MGAConfig 封送
                 var mgaCfg = new MGAConfig
@@ -84,8 +84,12 @@ namespace KSPGMAT.MGA
                     ConstrainByVesselDeltaV = subCfg.ConstrainByVesselDeltaV,
                     VesselMaxDeltaVMs = subCfg.VesselMaxDeltaVMs,
                     MaxDsmDeltaVMs = subCfg.MaxDsmDeltaVMs,
+                    LaunchDeltaVCeilingMs = subCfg.LaunchDeltaVCeilingMs,
                     PopulationSize = subCfg.PopulationSize,
                     MaxGenerations = subCfg.MaxGenerations,
+                    DepartureToFMinFactor = subCfg.DepartureToFMinFactor,
+                    DepartureToFMaxFactor = subCfg.DepartureToFMaxFactor,
+                    ResonantMaxOffsetDays = subCfg.ResonantMaxOffsetDays,
                     MinToFDays = legBounds.Select(b => b.MinDays).ToList(),
                     MaxToFDays = legBounds.Select(b => b.MaxDays).ToList()
                 };

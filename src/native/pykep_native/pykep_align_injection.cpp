@@ -7,18 +7,20 @@
 
 #include "pykep_common.h"
 
-EXPORT_API int pykep_align_injection(
+EXPORT_API int pykep_align_injection_dyn(
     const double* r_park0,      // [3] km: spacecraft position at t_epoch
     const double* v_park0,      // [3] km/s: spacecraft velocity at t_epoch
     double t_epoch,             // epoch of (r_park0, v_park0)
     double mu_central,          // km^3/s^2
     int align_mode,             // 0 = target position (Lambert/inter-satellite), 1 = v_inf ejection (interplanetary)
     const double* target_arg,   // mode 0: target pos [3] km; mode 1: v_inf vector [3] km/s
+    const double* target_vel,   // mode 0: target vel [3] km/s (optional, can be null); mode 1: unused
     double target_scalar,       // mode 0: arrival UT (s); mode 1: v_inf magnitude (km/s)
+    double t_nominal_dep,       // nominal departure UT (s), for sliding ToF window
     double t_start,             // search start UT (s)
     double t_span,              // search time window (s), typically 1 orbit period
-    int sample_count,           // coarse grid count (e.g. 72)
-    int golden_iterations,      // golden section search iterations (e.g. 15)
+    int sample_count,           // coarse grid count (e.g. 120)
+    int golden_iterations,      // golden section search iterations (e.g. 20)
     double* out_aligned_ut,
     double* out_aligned_dv_frenet, // [3] prograde, radial, normal (m/s)
     double* out_aligned_dv_cart    // [3] cartesian dv (m/s), can be null
@@ -31,8 +33,8 @@ EXPORT_API int pykep_align_injection(
         return -2;
     }
 
-    if (sample_count < 12) sample_count = 72;
-    if (golden_iterations < 5) golden_iterations = 15;
+    if (sample_count < 12) sample_count = 120;
+    if (golden_iterations < 5) golden_iterations = 20;
 
     const double gr = 0.6180339887498948482; // (sqrt(5) - 1) / 2
 
@@ -55,35 +57,97 @@ EXPORT_API int pykep_align_injection(
         // =========================================================================
         // Mode 0: Target Position Transfer (e.g. Earth parking orbit -> Moon)
         // Objective: Minimize |v1_trans - v_craft| to match tangential prograde burn
+        // Supports dynamic ephemeris sliding: intercepting target at (t + tof_nominal)
         // =========================================================================
-        std::array<double, 3> r_target = { target_arg[0], target_arg[1], target_arg[2] };
+        std::array<double, 3> r_target_nom = { target_arg[0], target_arg[1], target_arg[2] };
+        bool has_target_vel = (target_vel != nullptr);
+        std::array<double, 3> v_target_nom = { 0, 0, 0 };
+        if (has_target_vel) {
+            v_target_nom = { target_vel[0], target_vel[1], target_vel[2] };
+            double v_mag2 = v_target_nom[0]*v_target_nom[0] + v_target_nom[1]*v_target_nom[1] + v_target_nom[2]*v_target_nom[2];
+            if (v_mag2 < 1e-12) {
+                has_target_vel = false;
+            }
+        }
         double arr_ut = target_scalar;
+        double tof_nominal = arr_ut - t_nominal_dep;
+        if (tof_nominal <= 10.0) {
+            tof_nominal = arr_ut - (t_start + 0.5 * t_span);
+        }
+        if (tof_nominal <= 10.0) {
+            tof_nominal = arr_ut - t_start;
+        }
+        if (tof_nominal <= 10.0) {
+            tof_nominal = 3600.0;
+        }
 
         auto eval_cost = [&](double t, double& out_cost, std::array<double, 3>& out_v1, 
                              std::array<double, 3>& out_rc, std::array<double, 3>& out_vc) -> bool {
             out_cost = 1e12;
+            if (!get_state_at(t, out_rc, out_vc)) return false;
+
             double tof = arr_ut - t;
             if (tof <= 10.0) return false;
 
-            if (!get_state_at(t, out_rc, out_vc)) return false;
-
             try {
-                kep3::lambert_problem lp(out_rc, r_target, tof, mu_central, false, 0);
+                kep3::lambert_problem lp(out_rc, r_target_nom, tof, mu_central, false, 0);
                 const auto& v1_list = lp.get_v0();
                 if (v1_list.empty()) return false;
 
+                double vc_mag = std::sqrt(out_vc[0] * out_vc[0] + out_vc[1] * out_vc[1] + out_vc[2] * out_vc[2]);
+                if (vc_mag < 1e-6) return false;
+
+                // Spacecraft Frenet orbital frame at candidate epoch t
+                std::array<double, 3> v_hat = { out_vc[0] / vc_mag, out_vc[1] / vc_mag, out_vc[2] / vc_mag };
+                std::array<double, 3> h_vec = {
+                    out_rc[1] * out_vc[2] - out_rc[2] * out_vc[1],
+                    out_rc[2] * out_vc[0] - out_rc[0] * out_vc[2],
+                    out_rc[0] * out_vc[1] - out_rc[1] * out_vc[0]
+                };
+                double h_mag = std::sqrt(h_vec[0] * h_vec[0] + h_vec[1] * h_vec[1] + h_vec[2] * h_vec[2]);
+                std::array<double, 3> n_hat = { 0, 0, 1 };
+                if (h_mag > 1e-7) {
+                    n_hat = { h_vec[0] / h_mag, h_vec[1] / h_mag, h_vec[2] / h_mag };
+                }
+                std::array<double, 3> r_hat = {
+                    v_hat[1] * n_hat[2] - v_hat[2] * n_hat[1],
+                    v_hat[2] * n_hat[0] - v_hat[0] * n_hat[2],
+                    v_hat[0] * n_hat[1] - v_hat[1] * n_hat[0]
+                };
+
                 double min_branch_cost = 1e12;
                 std::array<double, 3> min_branch_v1 = v1_list[0];
+
                 for (size_t b = 0; b < v1_list.size(); ++b) {
                     double dvx = (v1_list[b][0] - out_vc[0]) * 1000.0;
                     double dvy = (v1_list[b][1] - out_vc[1]) * 1000.0;
                     double dvz = (v1_list[b][2] - out_vc[2]) * 1000.0;
-                    double b_cost = std::sqrt(dvx * dvx + dvy * dvy + dvz * dvz);
+                    double dv_mag = std::sqrt(dvx * dvx + dvy * dvy + dvz * dvz);
+
+                    // Decompose into Prograde, Normal, Radial components (m/s)
+                    double dv_pro = dvx * v_hat[0] + dvy * v_hat[1] + dvz * v_hat[2];
+                    double dv_norm = dvx * n_hat[0] + dvy * n_hat[1] + dvz * n_hat[2];
+                    double dv_rad = dvx * r_hat[0] + dvy * r_hat[1] + dvz * r_hat[2];
+                    double dv_transverse = std::sqrt(dv_norm * dv_norm + dv_rad * dv_rad);
+
+                    // Injection burn must be prograde acceleration (dv_pro > 0)
+                    if (dv_pro <= 0.0) continue;
+
+                    // Physical Objective:
+                    // 1. Primary: Tangential co-linear injection matching true periapsis (dv_transverse -> 0)
+                    // 2. Secondary: Minimum total delta-V
+                    // Weighting penalty ensures the optimizer locks onto the true pure-prograde node
+                    // without being skewed by small ToF energy variations that introduce parasitic normal/radial dv.
+                    double b_cost = dv_mag + 4.0 * dv_transverse;
+
                     if (b_cost < min_branch_cost) {
                         min_branch_cost = b_cost;
                         min_branch_v1 = v1_list[b];
                     }
                 }
+
+                if (min_branch_cost >= 1e11) return false;
+
                 out_v1 = min_branch_v1;
                 out_cost = min_branch_cost;
                 return true;
@@ -334,3 +398,31 @@ EXPORT_API int pykep_align_injection(
         return 0;
     }
 }
+
+// 100% Backwards-compatible C-API Wrapper
+EXPORT_API int pykep_align_injection(
+    const double* r_park0,
+    const double* v_park0,
+    double t_epoch,
+    double mu_central,
+    int align_mode,
+    const double* target_arg,
+    double target_scalar,
+    double t_start,
+    double t_span,
+    int sample_count,
+    int golden_iterations,
+    double* out_aligned_ut,
+    double* out_aligned_dv_frenet,
+    double* out_aligned_dv_cart
+)
+{
+    return pykep_align_injection_dyn(
+        r_park0, v_park0, t_epoch, mu_central,
+        align_mode, target_arg, nullptr, target_scalar,
+        t_start + 0.5 * t_span,
+        t_start, t_span, sample_count, golden_iterations,
+        out_aligned_ut, out_aligned_dv_frenet, out_aligned_dv_cart
+    );
+}
+

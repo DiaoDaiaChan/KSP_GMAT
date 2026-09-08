@@ -221,7 +221,7 @@ namespace KSPGMAT.UI {
         }
 
         private void RefreshCandidateChains(bool autoSelectFirst = false) {
-            generatedCandidateChains = PykepBridge.GenerateCandidateSequences(
+            generatedCandidateChains = MGAAdaptiveSolver.GenerateCandidateSequences(
                 mgaConfig.DepartureBody, 
                 mgaConfig.DestinationBody, 
                 mgaConfig.MaxSwingBys, 
@@ -1193,6 +1193,18 @@ namespace KSPGMAT.UI {
             }
             GUILayout.EndHorizontal();
 
+            // 多体引力流形 (WSB / Invariant Manifolds) 低能捕获优化确认按钮 (默认关闭，之后待定)
+            GUILayout.Space(2);
+            GUILayout.BeginHorizontal();
+            string manifoldBtnText = mgaConfig.EnableLowEnergyManifoldCapture 
+                ? I18n.T("btn_wsb_manifold_on") 
+                : I18n.T("btn_wsb_manifold_off");
+            GUIStyle manifoldBtnStyle = mgaConfig.EnableLowEnergyManifoldCapture ? actionButtonStyle : secondaryButtonStyle;
+            if (GUILayout.Button(manifoldBtnText, manifoldBtnStyle, GUILayout.Height(18), GUILayout.ExpandWidth(true))) {
+                mgaConfig.EnableLowEnergyManifoldCapture = !mgaConfig.EnableLowEnergyManifoldCapture;
+            }
+            GUILayout.EndHorizontal();
+
             GUILayout.BeginHorizontal();
             mgaConfig.EnableMaxDuration = GUILayout.Toggle(mgaConfig.EnableMaxDuration, I18n.T("mga_max_duration"), GUILayout.Width(130));
             if (mgaConfig.EnableMaxDuration) {
@@ -1831,7 +1843,7 @@ namespace KSPGMAT.UI {
             UnityEngine.Debug.Log($"[KSPGMAT-MGA] >>> 启动 MGA 优化寻优: {mgaConfig.DepartureBody} -> {mgaConfig.DestinationBody}, 序列=[{string.Join(" -> ", mgaConfig.FlybySequence ?? new List<string>())}], 模式={mgaWorkflowMode}, 引擎={mgaConfig.EngineMode}, 约束窗口=[{GMATClient.FormatUtcGregorian(mgaConfig.EarliestDepartureUT)} ~ {GMATClient.FormatUtcGregorian(mgaConfig.LatestDepartureUT)}]");
 
             try {
-                var res = await PykepBridge.OptimizeAsync(mgaConfig, (p, msg) => {
+                var res = await MGAAdaptiveSolver.OptimizeAsync(mgaConfig, (p, msg) => {
                     mgaProgress = p;
                     mgaStatusText = msg;
                 }, mgaCts.Token);
@@ -1877,7 +1889,7 @@ namespace KSPGMAT.UI {
             mgaCts = new CancellationTokenSource();
 
             try {
-                var res = await PykepBridge.AutoOptimizeCandidateSequencesAsync(mgaConfig, (p, msg) => {
+                var res = await MGAAdaptiveSolver.AutoOptimizeCandidateSequencesAsync(mgaConfig, (p, msg) => {
                     mgaProgress = p;
                     mgaStatusText = msg;
                 }, mgaCts.Token);

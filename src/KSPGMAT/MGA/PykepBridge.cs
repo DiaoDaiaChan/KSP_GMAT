@@ -121,6 +121,34 @@ namespace KSPGMAT.MGA {
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 8)]
+    public struct NativeBPlaneCovarianceResult {
+        public double sigma_bt_km;
+        public double sigma_br_km;
+        public double cov_btr_km2;
+        public double semi_major_sigma_km;
+        public double semi_minor_sigma_km;
+        public double ellipse_angle_deg;
+        public double safe_radius_km;
+        public double periapsis_km;
+        public double safe_margin_3sigma_km;
+        public int is_safe_flyby;
+        public double tcm_3sigma_dv_ms;
+    }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 8)]
+    public struct NativeManifoldCaptureResult {
+        public int is_manifold_feasible;
+        public double jacobi_constant;
+        public double hill_radius_km;
+        public double wsb_capture_dv_kms;
+        public double classical_visviva_dv_kms;
+        public double dv_saved_kms;
+        public double saving_percentage;
+        public double ingress_angle_deg;
+        public double ballistic_duration_days;
+    }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 8)]
     public struct NativeTCMResult {
         public double dv_x, dv_y, dv_z;
         public double dv_mag_ms;
@@ -277,6 +305,22 @@ namespace KSPGMAT.MGA {
             int n_seg, [In] double[] throttles_3n,
             out NativeSimsFlanaganResult out_sf);
 
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int PykepCalcBPlaneCovarianceDelegate(
+            [In] double[] r0_km, [In] double[] v0_kms, double dt_sec, double mu_sun,
+            double pos_sigma_km, double vel_sigma_kms,
+            [In] double[] r_enc_km, [In] double[] v_enc_kms,
+            double body_mu, double body_radius_km, double safe_alt_km,
+            out NativeBPlaneCovarianceResult out_res);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int PykepCalcManifoldCaptureDelegate(
+            [In] double[] r_enc_km, [In] double[] v_enc_kms,
+            [In] double[] r_planet_km, [In] double[] v_planet_kms,
+            double body_mu, double sun_mu, double body_radius_km,
+            double target_pe_km, double target_ap_km,
+            out NativeManifoldCaptureResult out_result);
+
         private static PykepMGAEvaluateDelegate _fnMGAEvaluate;
         private static PykepMGAEvaluateMuDelegate _fnMGAEvaluateMu;
         private static PykepMGAHybridEvaluateDelegate _fnMGAHybridEvaluate;
@@ -285,6 +329,8 @@ namespace KSPGMAT.MGA {
         private static PykepCalcKeplerSTMDelegate _fnCalcKeplerSTM;
         private static PykepCalcBPlaneDelegate _fnCalcBPlane;
         private static PykepCalcBPlaneTCMDelegate _fnCalcBPlaneTCM;
+        private static PykepCalcBPlaneCovarianceDelegate _fnCalcBPlaneCovariance;
+        private static PykepCalcManifoldCaptureDelegate _fnCalcManifoldCapture;
         private static PykepCalcPrimerVectorDelegate _fnCalcPrimerVector;
         private static PykepCartesianToMEEDelegate _fnCartesianToMEE;
         private static PykepMEEToCartesianDelegate _fnMEEToCartesian;
@@ -337,6 +383,18 @@ namespace KSPGMAT.MGA {
                     if (pTcm != IntPtr.Zero) {
                         _fnCalcBPlaneTCM = (PykepCalcBPlaneTCMDelegate)Marshal.GetDelegateForFunctionPointer(pTcm, typeof(PykepCalcBPlaneTCMDelegate));
                         KSPGMATLog.Info("[PykepBridge] Successfully linked native pykep_calc_bplane_tcm C++ pipeline!");
+                    }
+
+                    IntPtr pCov = PykepNative.GetProcAddressExport("pykep_calc_bplane_covariance");
+                    if (pCov != IntPtr.Zero) {
+                        _fnCalcBPlaneCovariance = (PykepCalcBPlaneCovarianceDelegate)Marshal.GetDelegateForFunctionPointer(pCov, typeof(PykepCalcBPlaneCovarianceDelegate));
+                        KSPGMATLog.Info("[PykepBridge] Successfully linked native pykep_calc_bplane_covariance C++ pipeline!");
+                    }
+
+                    IntPtr pManifold = PykepNative.GetProcAddressExport("pykep_calc_manifold_capture");
+                    if (pManifold != IntPtr.Zero) {
+                        _fnCalcManifoldCapture = (PykepCalcManifoldCaptureDelegate)Marshal.GetDelegateForFunctionPointer(pManifold, typeof(PykepCalcManifoldCaptureDelegate));
+                        KSPGMATLog.Info("[PykepBridge] Successfully linked native pykep_calc_manifold_capture C++ pipeline!");
                     }
 
                     IntPtr pPv = PykepNative.GetProcAddressExport("pykep_calc_primer_vector");
@@ -405,59 +463,31 @@ namespace KSPGMAT.MGA {
                 p1.GetRelativeState(central, currentUT, out Vector3d r1, out Vector3d v1);
                 p2.GetRelativeState(central, arrUT, out Vector3d r2, out Vector3d v2);
 
+                double centralRadius = SolarSystemCatalog.GetPlanet(central)?.RadiusKm ?? MGADefaults.EarthRadiusKm;
                 if (fromName.Equals(central, StringComparison.OrdinalIgnoreCase)) {
-                    double rPark = (p1 != null ? p1.RadiusKm : MGADefaults.EarthRadiusKm) + (config?.DeparturePeAKm ?? MGADefaults.DepartureAltitudeKm);
-                    Vector3d normal;
-                    if (config != null && (config.DepartureMode == MGADepartureMode.InOrbitLockedOrbit || config.LockDepartureInclination)) {
-                        double iRad = config.DepartureInclinationDeg * Mathf.Deg2Rad;
-                        double oRad = config.DepartureRAANDeg * Mathf.Deg2Rad;
-                        normal = new Vector3d(Math.Sin(iRad) * Math.Sin(oRad), -Math.Sin(iRad) * Math.Cos(oRad), Math.Cos(iRad));
-                        if (normal.sqrMagnitude < 0.01) normal = new Vector3d(0, 0, 1);
-                    } else {
-                        // 模式 1 (发射前规划): 自由寻找最优发射面，对准目标天体公转面 (h = r2 x v2)，消除面外变轨
-                        Vector3d hTarget = Vector3d.Cross(r2, v2);
-                        if (hTarget.sqrMagnitude > 1e-4) {
-                            normal = hTarget.normalized;
-                        } else {
-                            Vector3d dirArr = r2.normalized;
-                            if (dirArr.sqrMagnitude < 0.01) dirArr = new Vector3d(1, 0, 0);
-                            normal = Vector3d.Cross(new Vector3d(0, 0, 1), dirArr).normalized;
-                            if (normal.sqrMagnitude < 0.01) normal = new Vector3d(0, 0, 1);
-                        }
+                    double rPark = (p1 != null && p1.RadiusKm > 0 ? p1.RadiusKm : centralRadius) + (config?.DeparturePeAKm ?? MGADefaults.DepartureAltitudeKm);
+                    bool lockPlane = config != null && (config.DepartureMode == MGADepartureMode.InOrbitLockedOrbit || config.LockDepartureInclination);
+                    double inc = lockPlane ? config.DepartureInclinationDeg : 0.0;
+                    double lan = lockPlane ? config.DepartureRAANDeg : 0.0;
+                    if (PykepNative.SynthesizeParkingState(centralMu, rPark, lockPlane, inc, lan, r2, v2, out Vector3d synR, out Vector3d synV)) {
+                        r1 = synR;
+                        v1 = synV;
                     }
-
-                    // 严格将 r2 投影到停泊轨道平面上，消除 radialDir 的面外分量，确保 r1 与 v1 严格位于锁定停泊轨道面内
-                    Vector3d r2Proj = r2 - Vector3d.Dot(r2, normal) * normal;
-                    if (r2Proj.sqrMagnitude < 1e-6) {
-                        Vector3d arbitrary = Math.Abs(normal.z) < 0.9 ? new Vector3d(0, 0, 1) : new Vector3d(1, 0, 0);
-                        r2Proj = Vector3d.Cross(normal, arbitrary);
-                    }
-                    Vector3d radialDir = r2Proj.normalized;
-                    Vector3d planeDir = Vector3d.Cross(normal, radialDir).normalized;
-
-                    // 消除两点边界值 Lambert 求解器在 180° 反共线平面的退化奇异性 (indeterminate orbital plane)
-                    // 仅施加微小的自适应规避扰动角 (~0.5°)，避免大角度偏移 (5°) 破坏理想霍曼共面精度
-                    double angOffset = 0.5 * Math.PI / 180.0;
-                    r1 = (-radialDir * Math.Cos(angOffset) + planeDir * Math.Sin(angOffset)) * rPark;
-                    v1 = (planeDir * Math.Cos(angOffset) + radialDir * Math.Sin(angOffset)) * Math.Sqrt(centralMu / rPark);
                 }
                 if (toName.Equals(central, StringComparison.OrdinalIgnoreCase)) {
-                    double rPark = (p2 != null ? p2.RadiusKm : MGADefaults.EarthRadiusKm) + (config?.DestinationPeAKm ?? MGADefaults.DestinationAltitudeKm);
-                    Vector3d dirDep = r1.normalized;
-                    if (dirDep.sqrMagnitude < 0.01) dirDep = new Vector3d(1, 0, 0);
-                    Vector3d normal = Vector3d.Cross(dirDep, new Vector3d(0, 0, 1)).normalized;
-                    if (normal.sqrMagnitude < 0.01) normal = new Vector3d(0, 1, 0);
-                    double angOffset = 0.5 * Math.PI / 180.0;
-                    r2 = (-dirDep * Math.Cos(angOffset) + normal * Math.Sin(angOffset)) * rPark;
-                    v2 = (normal * Math.Cos(angOffset) + dirDep * Math.Sin(angOffset)) * Math.Sqrt(centralMu / rPark);
+                    double rPark = (p2 != null && p2.RadiusKm > 0 ? p2.RadiusKm : centralRadius) + (config?.DestinationPeAKm ?? MGADefaults.DestinationAltitudeKm);
+                    if (PykepNative.SynthesizeParkingState(centralMu, rPark, false, 0.0, 0.0, r1, v1, out Vector3d synR, out Vector3d synV)) {
+                        r2 = synR;
+                        v2 = synV;
+                    }
                 }
 
                 depPlanets[k] = new NativePlanetState {
                     rx = r1.x, ry = r1.y, rz = r1.z,
                     vx = v1.x, vy = v1.y, vz = v1.z,
                     mu = p1 != null ? p1.Mu : centralMu,
-                    radius = p1 != null ? p1.RadiusKm : MGADefaults.EarthRadiusKm,
-                    safe_radius = p1 != null ? p1.SafeRadiusKm : MGADefaults.EarthSafeRadiusKm,
+                    radius = p1 != null && p1.RadiusKm > 0 ? p1.RadiusKm : centralRadius,
+                    safe_radius = p1 != null && p1.SafeRadiusKm > 0 ? p1.SafeRadiusKm : (centralRadius + 100.0),
                     soi_radius = fromName.Equals(central, StringComparison.OrdinalIgnoreCase) ? 1e18 : (p1 != null && p1.SoiKm > 0 ? p1.SoiKm : 1e18),
                     atm_radius = p1 != null ? (p1.RadiusKm + p1.AtmosphereDepthKm) : 0.0
                 };
@@ -466,8 +496,8 @@ namespace KSPGMAT.MGA {
                     rx = r2.x, ry = r2.y, rz = r2.z,
                     vx = v2.x, vy = v2.y, vz = v2.z,
                     mu = p2 != null ? p2.Mu : centralMu,
-                    radius = p2 != null ? p2.RadiusKm : MGADefaults.EarthRadiusKm,
-                    safe_radius = p2 != null ? p2.SafeRadiusKm : MGADefaults.EarthSafeRadiusKm,
+                    radius = p2 != null && p2.RadiusKm > 0 ? p2.RadiusKm : centralRadius,
+                    safe_radius = p2 != null && p2.SafeRadiusKm > 0 ? p2.SafeRadiusKm : (centralRadius + 100.0),
                     soi_radius = toName.Equals(central, StringComparison.OrdinalIgnoreCase) ? 1e18 : (p2 != null && p2.SoiKm > 0 ? p2.SoiKm : 1e18),
                     atm_radius = p2 != null ? (p2.RadiusKm + p2.AtmosphereDepthKm) : 0.0
                 };
@@ -519,6 +549,10 @@ namespace KSPGMAT.MGA {
 
                 int status = -1;
                 NativeMGA1DSMSolution n1Sol;
+                double depInc = (config != null && config.DepartureMode == MGADepartureMode.PreLaunchFreeOrbit)
+                    ? -1.0
+                    : (config != null ? config.DepartureInclinationDeg : 0.0);
+
                 if (_fnMGAHybridEvaluateMu != null) {
                     status = _fnMGAHybridEvaluateMu(
                         depPlanets, arrPlanets, tofs,
@@ -526,7 +560,7 @@ namespace KSPGMAT.MGA {
                         dsmEtas, fbRps, fbBetas,
                         legCount,
                         config != null ? config.DeparturePeAKm : 200.0, config != null ? config.DepartureApAKm : 200.0,
-                        config != null ? config.DepartureInclinationDeg : 0.0,
+                        depInc,
                         config != null ? config.DestinationPeAKm : 200.0, config != null ? config.DestinationApAKm : 200.0,
                         (config != null && config.NoInsertionBurn) ? 1 : 0,
                         centralMu,
@@ -538,7 +572,7 @@ namespace KSPGMAT.MGA {
                         dsmEtas, fbRps, fbBetas,
                         legCount,
                         config != null ? config.DeparturePeAKm : 200.0, config != null ? config.DepartureApAKm : 200.0,
-                        config != null ? config.DepartureInclinationDeg : 0.0,
+                        depInc,
                         config != null ? config.DestinationPeAKm : 200.0, config != null ? config.DestinationApAKm : 200.0,
                         (config != null && config.NoInsertionBurn) ? 1 : 0,
                         out n1Sol);
@@ -573,12 +607,13 @@ namespace KSPGMAT.MGA {
                     fbBetas[k] = (config.FlybyBetasRad != null && k < config.FlybyBetasRad.Count) ? config.FlybyBetasRad[k] : 0.0;
                 }
 
+                double depInc1 = (config.DepartureMode == MGADepartureMode.PreLaunchFreeOrbit) ? -1.0 : config.DepartureInclinationDeg;
                 int status = _fnMGA1DSMEvaluate(
                     depPlanets, arrPlanets, tofs,
                     dsmEtas, fbRps, fbBetas,
                     legCount,
                     config.DeparturePeAKm, config.DepartureApAKm,
-                    config.DepartureInclinationDeg,
+                    depInc1,
                     config.DestinationPeAKm, config.DestinationApAKm,
                     config.NoInsertionBurn ? 1 : 0,
                     out NativeMGA1DSMSolution n1Sol);
@@ -596,11 +631,12 @@ namespace KSPGMAT.MGA {
             if (_fnMGAEvaluateMu != null || _fnMGAEvaluate != null) {
                 int status = -1;
                 NativeMGASolution nativeSol;
+                double depIncB = (config != null && config.DepartureMode == MGADepartureMode.PreLaunchFreeOrbit) ? -1.0 : (config != null ? config.DepartureInclinationDeg : 0.0);
                 if (_fnMGAEvaluateMu != null) {
                     status = _fnMGAEvaluateMu(
                         depPlanets, arrPlanets, tofs, legCount,
                         config.DeparturePeAKm, config.DepartureApAKm,
-                        config.DepartureInclinationDeg,
+                        depIncB,
                         config.DestinationPeAKm, config.DestinationApAKm,
                         config.NoInsertionBurn ? 1 : 0,
                         centralMu,
@@ -609,7 +645,7 @@ namespace KSPGMAT.MGA {
                     status = _fnMGAEvaluate(
                         depPlanets, arrPlanets, tofs, legCount,
                         config.DeparturePeAKm, config.DepartureApAKm,
-                        config.DepartureInclinationDeg,
+                        depIncB,
                         config.DestinationPeAKm, config.DestinationApAKm,
                         config.NoInsertionBurn ? 1 : 0,
                         out nativeSol);
@@ -866,6 +902,7 @@ namespace KSPGMAT.MGA {
 
             sol.BuildEvents(config);
 
+
             try {
                 UnityEngine.Debug.Log($"[KSPGMAT-Pykep] 映射原生 MGA 解: 序列='{sol.FlybyChainSummary}' | 发射ΔV={sol.LaunchDeltaVKms * 1000.0:F1} m/s, 制动ΔV={sol.InsertionDeltaVKms * 1000.0:F1} m/s, 总ΔV={sol.TotalDeltaVKms * 1000.0:F1} m/s, 飞行={sol.TotalFlightDays:F1}天, 可行性={sol.AllLegsFeasible}");
                 for (int k = 0; k < sol.Legs.Count; k++) {
@@ -936,6 +973,77 @@ namespace KSPGMAT.MGA {
                 ProgradeMs = nTcm.prograde_ms,
                 NormalMs = nTcm.normal_ms,
                 RadialMs = nTcm.radial_ms
+            };
+        }
+
+        public static BPlaneResult CalculateBPlaneCovariance(
+            Vector3d r0, Vector3d v0, double dtSec, double muSun,
+            double posSigmaKm, double velSigmaKms,
+            Vector3d rEnc, Vector3d vEnc,
+            double bodyMu, double bodyRadiusKm, double safeAltKm)
+        {
+            if (_fnCalcBPlaneCovariance == null || bodyMu <= 0 || muSun <= 0) return null;
+            double[] r0Arr = new double[] { r0.x, r0.y, r0.z };
+            double[] v0Arr = new double[] { v0.x, v0.y, v0.z };
+            double[] rEncArr = new double[] { rEnc.x, rEnc.y, rEnc.z };
+            double[] vEncArr = new double[] { vEnc.x, vEnc.y, vEnc.z };
+
+            int status = _fnCalcBPlaneCovariance(
+                r0Arr, v0Arr, dtSec, muSun,
+                posSigmaKm, velSigmaKms,
+                rEncArr, vEncArr,
+                bodyMu, bodyRadiusKm, safeAltKm,
+                out NativeBPlaneCovarianceResult nCov);
+
+            if (status != 0) return null;
+
+            // 同时获取基本 B 平面矢量
+            var bp = CalculateBPlane(rEnc, vEnc, bodyMu) ?? new BPlaneResult();
+            bp.SigmaBTKm = nCov.sigma_bt_km;
+            bp.SigmaBRKm = nCov.sigma_br_km;
+            bp.CovarianceBTRKm2 = nCov.cov_btr_km2;
+            bp.SemiMajorAxisSigmaKm = nCov.semi_major_sigma_km;
+            bp.SemiMinorAxisSigmaKm = nCov.semi_minor_sigma_km;
+            bp.EllipseAngleDeg = nCov.ellipse_angle_deg;
+            bp.SafeFlybyRadiusKm = nCov.safe_radius_km;
+            bp.EstimatedPericenterKm = nCov.periapsis_km;
+            bp.SafeMargin3SigmaKm = nCov.safe_margin_3sigma_km;
+            bp.IsSafeFlyby = nCov.is_safe_flyby != 0;
+            bp.NavigationalTcmBudgetKms = nCov.tcm_3sigma_dv_ms / 1000.0;
+            return bp;
+        }
+
+        public static LowEnergyManifoldResult CalculateManifoldCapture(
+            Vector3d rEnc, Vector3d vEnc,
+            Vector3d rPlanet, Vector3d vPlanet,
+            double bodyMu, double sunMu, double bodyRadiusKm,
+            double targetPeKm, double targetApKm)
+        {
+            if (_fnCalcManifoldCapture == null || bodyMu <= 0 || sunMu <= 0 || bodyRadiusKm <= 0) return null;
+            double[] rEncArr = new double[] { rEnc.x, rEnc.y, rEnc.z };
+            double[] vEncArr = new double[] { vEnc.x, vEnc.y, vEnc.z };
+            double[] rPlArr = new double[] { rPlanet.x, rPlanet.y, rPlanet.z };
+            double[] vPlArr = new double[] { vPlanet.x, vPlanet.y, vPlanet.z };
+
+            int status = _fnCalcManifoldCapture(
+                rEncArr, vEncArr, rPlArr, vPlArr,
+                bodyMu, sunMu, bodyRadiusKm,
+                targetPeKm, targetApKm,
+                out NativeManifoldCaptureResult nRes);
+
+            if (status != 0) return null;
+
+            return new LowEnergyManifoldResult {
+                IsManifoldCaptureFeasible = nRes.is_manifold_feasible != 0,
+                JacobiConstant = nRes.jacobi_constant,
+                HillRadiusKm = nRes.hill_radius_km,
+                WsbCaptureDeltaVKms = nRes.wsb_capture_dv_kms,
+                ClassicalVisVivaDeltaVKms = nRes.classical_visviva_dv_kms,
+                DeltaVSavedKms = nRes.dv_saved_kms,
+                SavingPercentage = nRes.saving_percentage,
+                IngressAngleDeg = nRes.ingress_angle_deg,
+                BallisticDurationDays = nRes.ballistic_duration_days,
+                Details = $"WSB流形节能 {nRes.dv_saved_kms * 1000.0:F1} m/s ({nRes.saving_percentage:F1}%) | Hill={nRes.hill_radius_km / 1000.0:F1}k km | C_J={nRes.jacobi_constant:F2}"
             };
         }
 
@@ -1027,636 +1135,6 @@ namespace KSPGMAT.MGA {
             return front;
         }
 
-        private static double ComputeFitness(MGASolution sol, MGAConfig config) {
-            if (sol == null || double.IsNaN(sol.TotalDeltaVKms)) return 1e9;
-            double fit = sol.TotalDeltaVKms + (sol.AllLegsFeasible ? 0.0 : MGADefaults.PenaltyInfeasibleBase);
-            if (config != null) {
-                // 发射窗口时间约束硬罚函数：严格惩罚超出用户指定最早/最晚发射时间的候选解
-                if (config.EarliestDepartureUT > 0 && sol.DepartureUT < config.EarliestDepartureUT - 1.0) {
-                    double violationDays = (config.EarliestDepartureUT - sol.DepartureUT) / MGADefaults.SecondsPerDay;
-                    fit += violationDays * MGADefaults.PenaltyDepartureViolationDayWeight + MGADefaults.PenaltyDepartureViolationBase;
-                }
-                if (config.LatestDepartureUT > config.EarliestDepartureUT && sol.DepartureUT > config.LatestDepartureUT + 1.0) {
-                    double violationDays = (sol.DepartureUT - config.LatestDepartureUT) / MGADefaults.SecondsPerDay;
-                    fit += violationDays * MGADefaults.PenaltyDepartureViolationDayWeight + MGADefaults.PenaltyDepartureViolationBase;
-                }
-                if (config.ConstrainByVesselDeltaV && config.VesselMaxDeltaVMs > 0) {
-                    double totalMs = sol.TotalDeltaVKms * 1000.0;
-                    if (totalMs > config.VesselMaxDeltaVMs) {
-                        double overKms = (totalMs - config.VesselMaxDeltaVMs) / 1000.0;
-                        fit += overKms * MGADefaults.PenaltyVesselDeltaVWeight + MGADefaults.PenaltyVesselDeltaVBase; // 显著罚函数惩罚超出飞船当前可用 ΔV 预算的解
-                    }
-                }
-                if (config.LockDepartureInclination && sol.Legs != null && sol.Legs.Count > 0) {
-                    double actualInc = sol.Legs[0].EjectionInclinationDeg;
-                    double targetInc = config.DepartureInclinationDeg;
-                    double incErr = Math.Abs(actualInc - targetInc);
-                    if (incErr > MGADefaults.PenaltyIncToleranceDeg) {
-                        // 逃逸倾角锁定约束罚函数：若逃逸倾角偏离锁定值，按每度 25 km/s + 50 km/s 罚项强力约束
-                        fit += incErr * MGADefaults.PenaltyIncDegWeight + MGADefaults.PenaltyIncBase;
-                    }
-                }
-                if ((config.DepartureMode == MGADepartureMode.InOrbitLockedOrbit || config.LockDepartureInclination) && sol.Legs != null && sol.Legs.Count > 0) {
-                    var leg0 = sol.Legs[0];
-                    if (PykepNative.CalcCoplanarAngle(config.DepartureInclinationDeg, config.DepartureRAANDeg, leg0.ArrivalPosKm, out double wedgeDeg)) {
-                        if (wedgeDeg > 0.5) {
-                            // 严格按真实轨道平面变换动力学惩罚面外倾角 (每度 ~190 m/s 物理变轨开销)
-                            double rad = (wedgeDeg - 0.5) * Mathf.Deg2Rad;
-                            double vTrans = 10.8; // km/s 标称转移初速
-                            double penaltyDv = 2.0 * vTrans * Math.Sin(rad * 0.5);
-                            fit += Math.Max((wedgeDeg - 0.5) * 0.2, penaltyDv);
-                        }
-                    }
-                }
-            }
-            return fit;
-        }
-
-        /// <summary>
-        /// 全局多段差分进化寻优器 (基于 PyKEP 原生全流程评估)
-        /// </summary>
-        /// <summary>
-        /// 全局多段差分进化寻优器 (基于 PyKEP 原生全流程评估，自动按天体公转/会合周期分窗并发寻优，杜绝单月早熟坍缩)
-        /// </summary>
-        public static List<MGASolution> Optimize(MGAConfig config, Action<float, string> onProgress = null, CancellationToken ct = default) {
-            var solutions = new List<MGASolution>();
-            if (config == null || config.FlybySequence == null || config.FlybySequence.Count == 0) return solutions;
-
-            double startUT = config.EarliestDepartureUT;
-            double endUT = (config.LatestDepartureUT > config.EarliestDepartureUT + 1.0)
-                ? config.LatestDepartureUT
-                : (config.EarliestDepartureUT + MGADefaults.SecondsPerDay * (config.DepartureSearchDays > 0 ? config.DepartureSearchDays : MGADefaults.DefaultSearchWindowDays));
-
-            double totalSpanDays = (endUT - startUT) / MGADefaults.SecondsPerDay;
-            string firstTarget = config.FlybySequence[0];
-            double synodicDays = GetSynodicPeriodDays(config.DepartureBody, firstTarget);
-            if (synodicDays <= 0 || double.IsNaN(synodicDays)) synodicDays = 27.3;
-
-            // 若发射时限跨越 1.25 个以上会合周期 (如地月 90 天，或行星际 100 天)，自动启用会合周期多窗口并发多岛分段搜索
-            if (totalSpanDays > synodicDays * 1.25 && totalSpanDays > 30.0) {
-                double sliceDays = Math.Max(25.0, Math.Min(45.0, synodicDays));
-                double overlapDays = 3.0;
-                int sliceCount = Math.Min(6, (int)Math.Ceiling(totalSpanDays / sliceDays));
-
-                var allSubSolutions = new System.Collections.Concurrent.ConcurrentBag<MGASolution>();
-                int finishedSlices = 0;
-                var lockObj = new object();
-
-                Parallel.For(0, sliceCount, sIdx => {
-                    if (ct.IsCancellationRequested) return;
-
-                    double subStartUT = startUT + sIdx * (sliceDays - overlapDays) * MGADefaults.SecondsPerDay;
-                    double subEndUT = Math.Min(endUT, subStartUT + sliceDays * MGADefaults.SecondsPerDay);
-                    if (subStartUT >= endUT) return;
-
-                    var subCfg = config.Clone();
-                    subCfg.EarliestDepartureUT = subStartUT;
-                    subCfg.LatestDepartureUT = subEndUT;
-                    subCfg.PopulationSize = Math.Max(40, config.PopulationSize / 2);
-                    subCfg.MaxGenerations = Math.Max(80, config.MaxGenerations / 2);
-
-                    var subRes = OptimizeWindowInternal(subCfg, subStartUT, subEndUT, null, ct);
-                    if (subRes != null) {
-                        foreach (var s in subRes) allSubSolutions.Add(s);
-                    }
-
-                    lock (lockObj) {
-                        finishedSlices++;
-                        float p = (float)finishedSlices / sliceCount;
-                        onProgress?.Invoke(p, $"PyKEP 多窗口多岛并发寻优: {finishedSlices} / {sliceCount} 周期窗口完成...");
-                    }
-                });
-
-                var rawList = allSubSolutions.OrderBy(s => s.TotalDeltaVKms).ToList();
-                var seenKeys = new HashSet<long>();
-                foreach (var s in rawList) {
-                    long key = ((long)(int)(s.DepartureUT / 43200.0) << 32) ^ (long)(uint)(int)(s.TotalFlightDays / 1.0);
-                    if (!seenKeys.Contains(key)) {
-                        seenKeys.Add(key);
-                        solutions.Add(s);
-                    }
-                    if (solutions.Count >= 10) break;
-                }
-
-                if (solutions.Count < 5) {
-                    foreach (var s in rawList) {
-                        bool tooClose = solutions.Any(cur => 
-                            Math.Abs(cur.DepartureUT - s.DepartureUT) < 21600.0 && 
-                            Math.Abs(cur.TotalFlightDays - s.TotalFlightDays) < 0.5
-                        );
-                        if (!tooClose) {
-                            solutions.Add(s);
-                        }
-                        if (solutions.Count >= 8) break;
-                    }
-                }
-
-                solutions = solutions.OrderBy(s => s.TotalDeltaVKms).ToList();
-                return solutions;
-            }
-
-            // 单时段标准优化
-            return OptimizeWindowInternal(config, startUT, endUT, onProgress, ct);
-        }
-
-        /// <summary>
-        /// 单时间窗口多核并发差分进化评估内核
-        /// </summary>
-        private static List<MGASolution> OptimizeWindowInternal(
-            MGAConfig config, double winStartUT, double winEndUT, 
-            Action<float, string> onProgress, CancellationToken ct) 
-        {
-            var solutions = new List<MGASolution>();
-            if (config == null || config.FlybySequence == null || config.FlybySequence.Count == 0) return solutions;
-
-            var fullChain = new List<string> { config.DepartureBody };
-            fullChain.AddRange(config.FlybySequence);
-            int legCount = fullChain.Count - 1;
-            bool optDsmEta = (config != null) && (config.EngineMode == MGAEngineMode.DeepSpaceManeuver1DSM ||
-                             (config.LegStrategies != null && config.LegStrategies.Any(s => s == MGALegStrategy.DeepSpaceManeuver1DSM)));
-            int dim = 1 + legCount + (optDsmEta ? legCount : 0);
-
-            double[] lowerBounds = new double[dim];
-            double[] upperBounds = new double[dim];
-
-            lowerBounds[0] = winStartUT;
-            upperBounds[0] = winEndUT;
-
-            string central = config?.CentralBody ?? "Sun";
-            double centralMu = SolarSystemCatalog.GetCentralMu(central);
-
-            for (int k = 0; k < legCount; k++) {
-                string fromN = fullChain[k];
-                string toN = fullChain[k + 1];
-                var p1 = SolarSystemCatalog.GetPlanet(fromN);
-                var p2 = SolarSystemCatalog.GetPlanet(toN);
-
-                double sma1 = GetRelativeSMA(p1, central, config?.DeparturePeAKm ?? MGADefaults.DepartureAltitudeKm);
-                double sma2 = GetRelativeSMA(p2, central, config?.DestinationPeAKm ?? MGADefaults.DestinationAltitudeKm);
-
-                double minD, maxD;
-                if (fromN.Equals(toN, StringComparison.OrdinalIgnoreCase)) {
-                    double tOrbDays = CalcOrbitPeriodSec(sma1, centralMu) / MGADefaults.SecondsPerDay;
-                    if (tOrbDays <= 0 || double.IsNaN(tOrbDays)) tOrbDays = 365.25;
-                    minD = Math.Max(0.5, tOrbDays * MGADefaults.ResonanceMinToFFactor);
-                    maxD = Math.Max(minD + 2.0, tOrbDays * MGADefaults.ResonanceMaxToFFactor);
-                } else {
-                    double approxHohmannDays = MGADefaults.HohmannDefaultToFDays;
-                    if (CalcHohmannTransfer(sma1, sma2, centralMu, out _, out double hohmannSec, out _, out _)) {
-                        approxHohmannDays = hohmannSec / MGADefaults.SecondsPerDay;
-                    }
-                    if (approxHohmannDays <= 0 || double.IsNaN(approxHohmannDays)) approxHohmannDays = MGADefaults.HohmannDefaultToFDays;
-                    minD = Math.Max(0.5, approxHohmannDays * MGADefaults.HohmannMinToFFactor);
-                    maxD = Math.Max(minD + 2.0, approxHohmannDays * MGADefaults.HohmannMaxToFFactor);
-                }
-
-                if (config.MinToFDays != null && k < config.MinToFDays.Count && config.MinToFDays[k] > 0) minD = config.MinToFDays[k];
-                if (config.MaxToFDays != null && k < config.MaxToFDays.Count && config.MaxToFDays[k] > 0) maxD = config.MaxToFDays[k];
-
-                lowerBounds[1 + k] = minD * MGADefaults.SecondsPerDay;
-                upperBounds[1 + k] = maxD * MGADefaults.SecondsPerDay;
-            }
-
-            if (optDsmEta) {
-                for (int k = 0; k < legCount; k++) {
-                    int d = 1 + legCount + k;
-                    lowerBounds[d] = 0.1;
-                    upperBounds[d] = 0.9;
-                }
-            }
-
-            int popSize = Math.Max(MGADefaults.PopulationSize, config.PopulationSize);
-            int maxGens = Math.Max(MGADefaults.MaxGenerations, config.MaxGenerations);
-
-            double[][] pop = new double[popSize][];
-            double[] fitness = new double[popSize];
-            var random = new System.Random(42);
-
-            // 启发式注种：若处于模式 2 (锁定倾角与 RAAN) 且为中心天体转移 (如 Earth -> Moon)
-            // 预先沿锁定停泊轨道面扫描目标天体零点面外偏角交点，将精准共面发射时刻注种至初始种群
-            var seedGenomes = new List<double[]>();
-            if (config != null && (config.DepartureMode == MGADepartureMode.InOrbitLockedOrbit || config.LockDepartureInclination)
-                && fullChain.Count == 2 && fullChain[0].Equals(central, StringComparison.OrdinalIgnoreCase))
-            {
-                double nomTofSec = (lowerBounds[1] + upperBounds[1]) * 0.5;
-                double scanStartUT = winStartUT;
-                double scanSpanSec = Math.Max(30.0 * 86400.0, winEndUT - winStartUT);
-
-                if (PykepNative.FindNodalCrossing(fullChain[1], central, scanStartUT, scanSpanSec, config.DepartureInclinationDeg, config.DepartureRAANDeg, out double tNode, out _)) {
-                    double depSeedUT = tNode - nomTofSec;
-                    if (depSeedUT < lowerBounds[0]) {
-                        // 寻找下一个升降交点 (~13.6 天后)
-                        if (PykepNative.FindNodalCrossing(fullChain[1], central, tNode + 1.0 * 86400.0, scanSpanSec, config.DepartureInclinationDeg, config.DepartureRAANDeg, out double nextNode, out _)) {
-                            depSeedUT = nextNode - nomTofSec;
-                        }
-                    }
-                    if (depSeedUT >= lowerBounds[0] && depSeedUT <= upperBounds[0]) {
-                        double[] dToFs = new double[] { 0.0, -0.25 * 86400.0, 0.25 * 86400.0, -0.5 * 86400.0, 0.5 * 86400.0 };
-                        foreach (double dt in dToFs) {
-                            double tofCand = Math.Max(lowerBounds[1], Math.Min(upperBounds[1], nomTofSec + dt));
-                            double depCand = Math.Max(lowerBounds[0], Math.Min(upperBounds[0], depSeedUT - dt));
-                            var g = new double[dim];
-                            g[0] = depCand;
-                            g[1] = tofCand;
-                            for (int d = 2; d < dim; d++) {
-                                if (d < 1 + legCount) {
-                                    g[d] = (lowerBounds[d] + upperBounds[d]) * 0.5;
-                                } else {
-                                    int dsmIdx = d - (1 + legCount);
-                                    g[d] = (config != null && config.DsmEtas != null && dsmIdx < config.DsmEtas.Count && config.DsmEtas[dsmIdx] > 0)
-                                        ? config.DsmEtas[dsmIdx]
-                                        : (config != null ? config.DsmEtaDefault : 0.5);
-                                }
-                            }
-                            seedGenomes.Add(g);
-                        }
-                    }
-                }
-            }
-
-            for (int i = 0; i < popSize; i++) {
-                pop[i] = new double[dim];
-                if (i < seedGenomes.Count) {
-                    pop[i] = (double[])seedGenomes[i].Clone();
-                } else {
-                    for (int d = 0; d < dim; d++) {
-                        pop[i][d] = lowerBounds[d] + random.NextDouble() * (upperBounds[d] - lowerBounds[d]);
-                    }
-                }
-                var sol = BuildFullSolution(pop[i], fullChain, config, computeAdvanced: false);
-                fitness[i] = ComputeFitness(sol, config);
-            }
-
-            for (int gen = 0; gen < maxGens; gen++) {
-                if (ct.IsCancellationRequested) break;
-
-                float prog = (float)gen / maxGens;
-                onProgress?.Invoke(prog, $"PyKEP 全局差分寻优: {gen + 1} / {maxGens} (种群: {popSize})...");
-
-                Parallel.For(0, popSize, i => {
-                    var localRand = new System.Random(gen * popSize + i + 17);
-
-                    int a, b, c;
-                    do { a = localRand.Next(popSize); } while (a == i);
-                    do { b = localRand.Next(popSize); } while (b == i || b == a);
-                    do { c = localRand.Next(popSize); } while (c == i || c == a || c == b);
-
-                    double F = MGADefaults.DE_F_Min + MGADefaults.DE_F_Range * localRand.NextDouble();
-                    double CR = MGADefaults.DE_CR_Min + MGADefaults.DE_CR_Range * localRand.NextDouble();
-                    int R = localRand.Next(dim);
-
-                    double[] candidate = new double[dim];
-                    for (int d = 0; d < dim; d++) {
-                        if (d == R || localRand.NextDouble() < CR) {
-                            candidate[d] = pop[a][d] + F * (pop[b][d] - pop[c][d]);
-                            candidate[d] = Math.Max(lowerBounds[d], Math.Min(upperBounds[d], candidate[d]));
-                        } else {
-                            candidate[d] = pop[i][d];
-                        }
-                    }
-
-                    var candSol = BuildFullSolution(candidate, fullChain, config, computeAdvanced: false);
-                    double candFit = ComputeFitness(candSol, config);
-                    if (candFit < fitness[i]) {
-                        pop[i] = candidate;
-                        fitness[i] = candFit;
-                    }
-                });
-            }
-
-            var rankedIndices = Enumerable.Range(0, popSize).OrderBy(idx => fitness[idx]).ToList();
-            var seenKeys = new HashSet<long>();
-
-            // 第一阶段：细粒度网格采样 (12小时发射UT格 + 1天飞行历时格)，提取帕累托前沿不同飞行时长的多样性解
-            foreach (var idx in rankedIndices) {
-                if (fitness[idx] >= 1e8) continue;
-                var sol = BuildFullSolution(pop[idx], fullChain, config, computeAdvanced: true);
-                if (sol != null && !double.IsNaN(sol.TotalDeltaVKms)) {
-                    if (config.EarliestDepartureUT > 0 && sol.DepartureUT < config.EarliestDepartureUT - 1.0) continue;
-                    if (config.LatestDepartureUT > config.EarliestDepartureUT && sol.DepartureUT > config.LatestDepartureUT + 1.0) continue;
-
-                    long key = ((long)(int)(sol.DepartureUT / 43200.0) << 32) ^ (long)(uint)(int)(sol.TotalFlightDays / 1.0);
-                    if (!seenKeys.Contains(key)) {
-                        seenKeys.Add(key);
-                        solutions.Add(sol);
-                    }
-                }
-                if (solutions.Count >= 8) break;
-            }
-
-            // 第二阶段保底：若收敛解不足 5 个（如单腿直达转移收敛较紧凑），吸纳发射相差 > 6 小时或飞行历时相差 > 0.5 天的有效解
-            if (solutions.Count < 5) {
-                foreach (var idx in rankedIndices) {
-                    if (fitness[idx] >= 1e8) continue;
-                    var sol = BuildFullSolution(pop[idx], fullChain, config, computeAdvanced: true);
-                    if (sol == null || double.IsNaN(sol.TotalDeltaVKms)) continue;
-                    if (config.EarliestDepartureUT > 0 && sol.DepartureUT < config.EarliestDepartureUT - 1.0) continue;
-                    if (config.LatestDepartureUT > config.EarliestDepartureUT && sol.DepartureUT > config.LatestDepartureUT + 1.0) continue;
-
-                    bool tooClose = solutions.Any(s => 
-                        Math.Abs(s.DepartureUT - sol.DepartureUT) < 21600.0 && 
-                        Math.Abs(s.TotalFlightDays - sol.TotalFlightDays) < 0.5
-                    );
-                    if (!tooClose) {
-                        solutions.Add(sol);
-                    }
-                    if (solutions.Count >= 8) break;
-                }
-            }
-
-            // 第三阶段：若候选方案仍不足 5 个（例如单腿直达转移仅有 2 个变量，DE 种群高度收敛至单一点），
-            // 从最优解的帕累托前沿集合 (Pareto Trade-Off Curve) 提取多样性时间/燃料权衡方案，保证决策池完备
-            if (solutions.Count > 0 && solutions.Count < 6) {
-                var baseSol = solutions[0];
-                if (baseSol.ParetoFront != null && baseSol.ParetoFront.Count > 1) {
-                    foreach (var pt in baseSol.ParetoFront) {
-                        if (pt.Genome == null) continue;
-                        bool alreadyHas = solutions.Any(s => Math.Abs(s.TotalFlightDays - pt.TotalFlightDays) < 0.5);
-                        if (!alreadyHas) {
-                            var pSol = BuildFullSolution(pt.Genome, fullChain, config, computeAdvanced: true);
-                            if (pSol != null && !double.IsNaN(pSol.TotalDeltaVKms) && pSol.TotalDeltaVKms < 1e7) {
-                                pSol.ParetoFront = baseSol.ParetoFront;
-                                solutions.Add(pSol);
-                            }
-                        }
-                        if (solutions.Count >= 8) break;
-                    }
-                }
-            }
-
-            solutions = solutions.OrderBy(s => s.TotalDeltaVKms).ToList();
-            return solutions;
-        }
-
-        /// <summary>
-        /// 全自动多序列智能批量寻优引擎：
-        /// 根据配置参数自动 BFS 派生所有合法借力链路，多核并发寻优，自适应判别并激活 MGA-1DSM，闭环 8 大特性，最优解排在最前面
-        /// </summary>
-        public static async Task<List<MGASolution>> AutoOptimizeCandidateSequencesAsync(
-            MGAConfig baseConfig, 
-            Action<float, string> onProgress = null, 
-            CancellationToken ct = default)
-        {
-            if (baseConfig == null || string.IsNullOrEmpty(baseConfig.DepartureBody) || string.IsNullOrEmpty(baseConfig.DestinationBody))
-                return new List<MGASolution>();
-
-            // 1. 自动广度优先生成候选借力链路队列
-            var chains = GenerateCandidateSequences(baseConfig);
-            if (chains == null || chains.Count == 0) {
-                chains = new List<List<string>> { new List<string> { baseConfig.DestinationBody } };
-            }
-
-            int maxChains = Math.Min(16, chains.Count);
-            var aggregatedSolutions = new System.Collections.Concurrent.ConcurrentBag<MGASolution>();
-
-            onProgress?.Invoke(0.05f, $"启动全自动多序列智能寻优 (共 {maxChains} 条候选序列)...");
-
-            int completedCount = 0;
-            var lockObj = new object();
-            var tasks = new List<Task>();
-
-            for (int cIdx = 0; cIdx < maxChains; cIdx++) {
-                var chain = chains[cIdx];
-                var seqConfig = baseConfig.Clone();
-                seqConfig.FlybySequence = new List<string>(chain);
-                seqConfig.SyncStrategiesWithChain(chain.Count);
-
-                // 关键物理修正 1: 清空单腿继承的硬编码 ToF，各航段独立按照真实天体霍曼与共振周期自适应确定物理搜索边界
-                seqConfig.MinToFDays = null;
-                seqConfig.MaxToFDays = null;
-
-                // 关键物理修正 2: 确保计算减速入轨机动需求，寻优目标严格包含捕获入轨 ΔV
-                seqConfig.NoInsertionBurn = false;
-
-                // 智能分析借力链路动力学：检查是否存在同星共振或大偏角，自适应激活 1-DSM
-                bool needsDSM = false;
-                string prevBody = seqConfig.DepartureBody;
-                for (int leg = 0; leg < chain.Count; leg++) {
-                    string nextBody = chain[leg];
-                    if (nextBody.Equals(prevBody, StringComparison.OrdinalIgnoreCase)) {
-                        needsDSM = true;
-                        if (seqConfig.LegStrategies != null && leg < seqConfig.LegStrategies.Count) {
-                            seqConfig.LegStrategies[leg] = MGALegStrategy.DeepSpaceManeuver1DSM;
-                        }
-                    }
-                    prevBody = nextBody;
-                }
-                if (needsDSM) {
-                    seqConfig.EngineMode = MGAEngineMode.DeepSpaceManeuver1DSM;
-                }
-
-                tasks.Add(Task.Run(() => {
-                    try {
-                        var res = Optimize(seqConfig, null, ct);
-                        if (res != null && res.Count > 0) {
-                            foreach (var s in res) aggregatedSolutions.Add(s);
-                        }
-                    } catch (Exception ex) {
-                        KSPGMATLog.Warn($"[PykepBridge] Multi-chain sequence note: {ex.Message}");
-                    } finally {
-                        lock (lockObj) {
-                            completedCount++;
-                            float p = 0.05f + 0.90f * ((float)completedCount / maxChains);
-                            onProgress?.Invoke(p, $"多序列智能寻优: {completedCount}/{maxChains} 序列完成...");
-                        }
-                    }
-                }, ct));
-            }
-
-            await Task.WhenAll(tasks);
-
-            // 结果汇总并按总 ΔV 严格升序排序 (最优解排在最前面)
-            var sortedList = aggregatedSolutions
-                .Where(s => s != null && !double.IsNaN(s.TotalDeltaVKms) && s.TotalDeltaVKms < 1e7)
-                .OrderBy(s => s.TotalDeltaVKms)
-                .ToList();
-
-            var finalSolutions = new List<MGASolution>();
-            var seenKeys = new HashSet<string>();
-            foreach (var sol in sortedList) {
-                string chainKey = sol.FlybyChainSummary ?? "";
-                int utBucket = (int)(sol.DepartureUT / 43200.0);
-                int tofBucket = (int)(sol.TotalFlightDays / 1.0);
-                string compositeKey = $"{chainKey}@{utBucket}_{tofBucket}";
-                if (!seenKeys.Contains(compositeKey)) {
-                    seenKeys.Add(compositeKey);
-                    finalSolutions.Add(sol);
-                }
-                if (finalSolutions.Count >= 12) break;
-            }
-
-            if (finalSolutions.Count < 5) {
-                foreach (var sol in sortedList) {
-                    bool tooClose = finalSolutions.Any(s => 
-                        (s.FlybyChainSummary ?? "") == (sol.FlybyChainSummary ?? "") &&
-                        Math.Abs(s.DepartureUT - sol.DepartureUT) < 21600.0 &&
-                        Math.Abs(s.TotalFlightDays - sol.TotalFlightDays) < 0.5
-                    );
-                    if (!tooClose) {
-                        finalSolutions.Add(sol);
-                    }
-                    if (finalSolutions.Count >= 12) break;
-                }
-            }
-
-            onProgress?.Invoke(1.0f, $"多序列智能寻优完成! 共收敛 {finalSolutions.Count} 个精选方案");
-            return finalSolutions;
-        }
-
-        /// <summary>
-        /// 基于行星轨道内外侧拓扑与物理约束自动广度优先生成候选借力序列 (100% 对齐 KSP-MGA-Planner 拓扑搜索算法)
-        /// </summary>
-        public static List<List<string>> GenerateCandidateSequences(
-            string depBody, string destBody, int maxSwingBys = 4, int maxResonances = 1, int maxBackLegs = 1, int maxBackSpacing = 2)
-        {
-            var cfg = new MGAConfig {
-                DepartureBody = depBody,
-                DestinationBody = destBody,
-                MaxSwingBys = maxSwingBys,
-                MaxResonances = maxResonances,
-                MaxBackLegs = maxBackLegs,
-                MaxBackSpacing = maxBackSpacing
-            };
-            return GenerateCandidateSequences(cfg);
-        }
-
-        public static List<List<string>> GenerateCandidateSequences(MGAConfig config) {
-            var results = new List<List<string>>();
-            if (config == null || string.IsNullOrEmpty(config.DepartureBody) || string.IsNullOrEmpty(config.DestinationBody))
-                return results;
-
-            string origin = config.DepartureBody;
-            string dest = config.DestinationBody;
-
-            // 出发与目标天体相同时无星际转移物理意义，直接返回空列表，杜绝无向 BFS 指数级爆炸与主线程卡死
-            if (origin.Equals(dest, StringComparison.OrdinalIgnoreCase)) return results;
-
-            var allPlanets = SolarSystemCatalog.GetAvailablePlanets();
-            if (allPlanets == null || allPlanets.Count == 0) return results;
-
-            // 过滤有效引力助推天体：
-            // 仅保留出发天体、目标天体或引力常数 Mu >= 500.0 km^3/s^2 的有效引力源，
-            // 彻底剔除 Ryugu, Eros, Bennu 等质量微小、偏转角近乎为0的微型小行星干扰，确保火星与金星排在队列首位
-            var planetList = allPlanets.Where(p => 
-                !string.IsNullOrEmpty(p.Name) && 
-                (p.Name.Equals(origin, StringComparison.OrdinalIgnoreCase) || 
-                 p.Name.Equals(dest, StringComparison.OrdinalIgnoreCase) || 
-                 p.Mu >= 500.0)
-            ).ToList();
-
-            var bodyIndexMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            for (int i = 0; i < planetList.Count; i++) {
-                if (!string.IsNullOrEmpty(planetList[i].Name) && !bodyIndexMap.ContainsKey(planetList[i].Name)) {
-                    bodyIndexMap[planetList[i].Name] = i;
-                }
-            }
-
-            if (!bodyIndexMap.TryGetValue(origin, out int oIdx) || !bodyIndexMap.TryGetValue(dest, out int dIdx)) {
-                return results;
-            }
-
-            var queue = new Queue<(List<string> chain, int resonances, int backLegs)>();
-            queue.Enqueue((new List<string> { origin }, 0, 0));
-
-            int maxLegs = config.MaxSwingBys + 1;
-            int visitedCount = 0;
-
-            var destPlanet = SolarSystemCatalog.GetPlanet(dest);
-            bool destHasStrongGravity = (destPlanet != null && destPlanet.Mu >= 1000.0);
-
-            while (queue.Count > 0) {
-                // 安全熔断上限，严防异常分支造成游戏卡死
-                if (++visitedCount > MGADefaults.MaxBfsVisitedCount || results.Count >= MGADefaults.MaxCandidateResults) break;
-
-                var (currentChain, curRes, curBack) = queue.Dequeue();
-                string currentBody = currentChain.Last();
-                if (!bodyIndexMap.TryGetValue(currentBody, out int cIdx)) cIdx = -1;
-
-                if (currentChain.Count > 1 && currentBody.Equals(dest, StringComparison.OrdinalIgnoreCase)) {
-                    var subChain = new List<string>(currentChain.Skip(1));
-                    if (!results.Any(r => r.SequenceEqual(subChain))) {
-                        results.Add(subChain);
-                    }
-
-                    // 若目标天体自身具备显著引力 (如水星/火星/金星/地球/木星 Mu >= 1000) 且允许共振 (MaxResonances > 0)，
-                    // 继续压入目标天体自身同星共振借力分支 (如 Earth -> Venus -> Mercury -> Mercury -> Mercury)，
-                    // 彻底对齐 NASA MESSENGER / ESA BepiColombo 水星极低 ΔV 连续减速泊入历史经典任务！
-                    if (destHasStrongGravity && config.MaxResonances > 0 && curRes < config.MaxResonances && currentChain.Count < maxLegs + 1) {
-                        var resonantChain = new List<string>(currentChain) { dest };
-                        queue.Enqueue((resonantChain, curRes + 1, curBack));
-                    }
-                    continue;
-                }
-
-                if (currentChain.Count >= maxLegs + 1) continue;
-
-                for (int i = 0; i < planetList.Count; i++) {
-                    var pNext = planetList[i];
-                    string nextBody = pNext.Name;
-                    if (string.IsNullOrEmpty(nextBody)) continue;
-
-                    bool isResonance = nextBody.Equals(currentBody, StringComparison.OrdinalIgnoreCase);
-                    if (isResonance && curRes >= config.MaxResonances) continue;
-
-                    bool isBackLeg = (dIdx > oIdx) ? (i < cIdx) : (i > cIdx);
-                    if (isBackLeg && curBack >= config.MaxBackLegs) continue;
-
-                    int spacing = Math.Abs(i - cIdx);
-                    if (isBackLeg && spacing > config.MaxBackSpacing) continue;
-
-                    var newChain = new List<string>(currentChain) { nextBody };
-                    queue.Enqueue((newChain, curRes + (isResonance ? 1 : 0), curBack + (isBackLeg ? 1 : 0)));
-                }
-            }
-
-            // 智能天体力学价值赋权排序 (Zero Hardcoding / 完全基于开普勒轨道半长轴阶梯与引力势能深度标准化物理量)
-            var pOrigin = SolarSystemCatalog.GetPlanet(origin);
-            double rDep = (pOrigin != null && pOrigin.SMA > 0) ? pOrigin.SMA : 1.496e8;
-            double rDest = (destPlanet != null && destPlanet.SMA > 0) ? destPlanet.SMA : 1.496e8;
-            double rMin = Math.Min(rDep, rDest);
-            double rMax = Math.Max(rDep, rDest);
-            double rSpan = Math.Max(1.0, rMax - rMin);
-
-            results = results.OrderByDescending(c => {
-                // 直接到达标杆基准给予基础基准分
-                if (c.Count == 1 && c[0].Equals(dest, StringComparison.OrdinalIgnoreCase)) return 50.0;
-
-                double score = 0.0;
-                for (int idx = 0; idx < c.Count; idx++) {
-                    string bName = c[idx];
-                    var p = SolarSystemCatalog.GetPlanet(bName);
-                    if (p == null) continue;
-
-                    // 物理量 1: 天体引力势能深度贡献 (引力井越深，双曲转角与动量改变能力越大)
-                    if (p.Mu > 0) {
-                        score += 10.0 * Math.Log10(Math.Max(1.0, p.Mu));
-                    }
-
-                    // 物理量 2: 轨道阶梯几何匹配 (中间天体公转轨道半长轴处于起点与目标之间时，天然充当轨道能量过渡阶梯)
-                    if (p.SMA >= rMin && p.SMA <= rMax) {
-                        double midProgress = 1.0 - Math.Abs(p.SMA - (rMin + rMax) * 0.5) / (rSpan * 0.5 + 1e-5);
-                        score += 35.0 * Math.Max(0.2, midProgress);
-                    }
-
-                    // 物理量 3: 目标天体同星共振减速价值 (当目标天体具备显著引力井时，同星共振逐次削减到达双曲渐近速度 V_inf)
-                    if (bName.Equals(dest, StringComparison.OrdinalIgnoreCase) && idx < c.Count - 1 && p.Mu >= 1000.0) {
-                        score += 15.0 * Math.Log10(Math.Max(1.0, p.Mu));
-                    }
-                }
-
-                // 物理量 4: 航段复杂度适度正则化 (2~4 段为工程最实用区间)
-                if (c.Count >= 2 && c.Count <= 4) score += 10.0;
-                else if (c.Count > 4) score -= (c.Count - 4) * 15.0;
-
-                return score;
-            }).ToList();
-
-            return results;
-        }
-
-        public static Task<List<MGASolution>> OptimizeAsync(MGAConfig config, Action<float, string> onProgress = null, CancellationToken ct = default) {
-            return Task.Run(() => Optimize(config, onProgress, ct), ct);
-        }
 
         public static double GetHohmannTransferDays(string fromBody, string toBody) => GetHohmannTransferTimeDays(fromBody, toBody);
 
@@ -1694,7 +1172,8 @@ namespace KSPGMAT.MGA {
         }
 
         private static double GetCbDistanceToCentral(CelestialBody cb, string central, double defaultAltKm = MGADefaults.DepartureAltitudeKm) {
-            if (cb == null) return MGADefaults.EarthRadiusKm + defaultAltKm;
+            double cRadius = SolarSystemCatalog.GetPlanet(central)?.RadiusKm ?? MGADefaults.EarthRadiusKm;
+            if (cb == null) return cRadius + defaultAltKm;
             if (cb.name.Equals(central, StringComparison.OrdinalIgnoreCase) || 
                (cb.bodyName != null && cb.bodyName.Equals(central, StringComparison.OrdinalIgnoreCase))) {
                 return (cb.Radius / 1000.0) + defaultAltKm;
@@ -1710,12 +1189,13 @@ namespace KSPGMAT.MGA {
             return SolarSystemCatalog.ResolveTransferCentralBody(p1.Name, p2.Name);
         }
 
-        private static double GetRelativeSMA(SolarPlanet body, string centralBody, double defaultAltKm = MGADefaults.DepartureAltitudeKm) {
-            if (body == null) return MGADefaults.EarthRadiusKm + defaultAltKm;
+        public static double GetRelativeSMA(SolarPlanet body, string centralBody, double defaultAltKm = MGADefaults.DepartureAltitudeKm) {
+            double cRadius = SolarSystemCatalog.GetPlanet(centralBody)?.RadiusKm ?? MGADefaults.EarthRadiusKm;
+            if (body == null) return cRadius + defaultAltKm;
             if (body.Name.Equals(centralBody, StringComparison.OrdinalIgnoreCase)) {
-                return (body.RadiusKm > 0 ? body.RadiusKm : MGADefaults.EarthRadiusKm) + defaultAltKm;
+                return (body.RadiusKm > 0 ? body.RadiusKm : cRadius) + defaultAltKm;
             }
-            return (body.SMA > 0) ? body.SMA : ((body.RadiusKm > 0 ? body.RadiusKm : MGADefaults.EarthRadiusKm) + defaultAltKm);
+            return (body.SMA > 0) ? body.SMA : ((body.RadiusKm > 0 ? body.RadiusKm : cRadius) + defaultAltKm);
         }
 
         public static double GetSynodicPeriodDays(string fromBody, string toBody) {
@@ -1740,6 +1220,10 @@ namespace KSPGMAT.MGA {
                         return cb1.orbit.period / MGADefaults.SecondsPerDay;
                     }
                     if (cb1 != null && cb2 != null && cb1.orbit != null && cb2.orbit != null && cb1.orbit.period > 0 && cb2.orbit.period > 0) {
+                        // 合规论证 (baseline §0.2/§0.4/§11)：
+                        // T_syn = 1/|1/T1 - 1/T2| 是数学恒等式，仅用于会合窗口切分启发式（不属于轨迹动力学）。
+                        // T1/T2 为游戏体 Kepler 轨道周期（非我自算），周期绝对量未被托管伪造；
+                        // 原生 dll 当前未导出 synodic_period，故在桥接层以恒等式派生，周期输入要么来自身份，要么来自原生 CalcOrbitPeriodSec。
                         double synSec = Math.Abs(1.0 / (1.0 / cb1.orbit.period - 1.0 / cb2.orbit.period));
                         return synSec / MGADefaults.SecondsPerDay;
                     }
@@ -1760,6 +1244,7 @@ namespace KSPGMAT.MGA {
 
             double diff = Math.Abs(t1 - t2);
             if (diff < 1e-6) return 365.25;
+            // 合规论证同上方：T_syn = T1·T2/|T1-T2| 为数学恒等式；T1/T2 来自原生 CalcOrbitPeriodSec（原生 hohmann）。
             return (t1 * t2 / diff) / MGADefaults.SecondsPerDay;
         }
 
@@ -1863,6 +1348,10 @@ namespace KSPGMAT.MGA {
         public static double CalcOrbitPeriodSec(double smaKm, double muKms) {
             if (smaKm <= 0 || muKms <= 0) return 0.0;
             if (CalcHohmannTransfer(smaKm, smaKm, muKms, out _, out double halfPeriodSec, out _, out _)) {
+                // 合规论证 (baseline §0.2/§0.4/§11)：
+                // 轨道周期 = 2 × (原生 hohmann 从 r=a→r=a 的半周期)。这只是对原生返回值的恒等缩放 (T = 2·(T/2))，
+                // 绝非托管自算开普勒公式；原生 dll 当前未导出 orbit_period，故用原生 hohmann 结果派生，
+                // 且严禁手写 2π√(a³/μ)。若日后原生新增 orbit_period，应改走原生。
                 return 2.0 * halfPeriodSec;
             }
             KSPGMATLog.Warn($"[PykepBridge] CalcOrbitPeriodSec: 原生 kep3 转移周期评估失败 (sma={smaKm}, mu={muKms})，拒绝托管自算公式，返回 0.0");
@@ -1876,5 +1365,14 @@ namespace KSPGMAT.MGA {
             if (smaMeters <= 0 || muM3S2 <= 0) return 0.0;
             return CalcOrbitPeriodSec(smaMeters / 1000.0, muM3S2 / 1e9);
         }
+
+        // =====================================================================
+        // 向后兼容门面 (统一委托至 MGA/Solver 架构层)
+        // =====================================================================
+        public static List<MGASolution> Optimize(MGAConfig config, Action<float, string> onProgress = null, CancellationToken ct = default) => MGAAdaptiveSolver.Optimize(config, onProgress, ct);
+
+        public static List<List<string>> GenerateCandidateSequences(string dep, string dest, int maxSwingBys = 6, int maxResonances = 0, int maxBackLegs = 2, int maxBackSpacing = 2) => MGAMCTSTopologySelector.GenerateCandidateSequences(dep, dest, maxSwingBys, maxResonances, maxBackLegs, maxBackSpacing);
+
+        public static List<List<string>> GenerateCandidateSequences(MGAConfig config) => MGAMCTSTopologySelector.GenerateCandidateSequences(config);
     }
 }

@@ -150,6 +150,32 @@ struct NativeBPlaneResult {
     double r_hat[3];
 };
 
+struct NativeBPlaneCovarianceResult {
+    double sigma_bt_km;
+    double sigma_br_km;
+    double cov_btr_km2;
+    double semi_major_sigma_km;
+    double semi_minor_sigma_km;
+    double ellipse_angle_deg;
+    double safe_radius_km;
+    double periapsis_km;
+    double safe_margin_3sigma_km;
+    int is_safe_flyby;
+    double tcm_3sigma_dv_ms;
+};
+
+struct NativeManifoldCaptureResult {
+    int is_manifold_feasible;
+    double jacobi_constant;
+    double hill_radius_km;
+    double wsb_capture_dv_kms;
+    double classical_visviva_dv_kms;
+    double dv_saved_kms;
+    double saving_percentage;
+    double ingress_angle_deg;
+    double ballistic_duration_days;
+};
+
 struct NativeTCMResult {
     double dv_x, dv_y, dv_z;
     double dv_mag_ms;
@@ -196,9 +222,8 @@ static inline double calc_vis_viva_dep_inc(
     double v_inf, double mu, double radius, double pe_km, double ap_km,
     double dep_inc_deg, double v_inf_z, double* out_ej_inc) 
 {
-    double park_inc_deg = std::abs(dep_inc_deg);
     if (mu <= 0.0 || radius <= 0.0) {
-        if (out_ej_inc) *out_ej_inc = park_inc_deg;
+        if (out_ej_inc) *out_ej_inc = std::abs(dep_inc_deg);
         return v_inf;
     }
     double rp = radius + std::max(0.0, pe_km);
@@ -207,6 +232,14 @@ static inline double calc_vis_viva_dep_inc(
     double v_park = std::sqrt(mu * (2.0 / rp - 1.0 / a));
     double v_hyp = std::sqrt(v_inf * v_inf + 2.0 * mu / rp);
 
+    // 模式 1: 自由发射 / 纯切向规划 (dep_inc_deg < -0.01)
+    // 强制消除黄赤交角和赤纬对发射造成的伪变面惩罚，纯切向出射
+    if (dep_inc_deg < -0.01) {
+        if (out_ej_inc) *out_ej_inc = 0.0;
+        return std::max(0.0, v_hyp - v_park);
+    }
+
+    double park_inc_deg = std::abs(dep_inc_deg);
     double dec_rad = std::asin(std::max(-1.0, std::min(1.0, v_inf_z / std::max(1e-6, v_inf))));
     double abs_dec_deg = std::abs(dec_rad) * RAD2DEG;
 
@@ -258,6 +291,115 @@ static inline double calc_central_departure_dv(
         double dv_sq = v_park * v_park + v_trans_pe * v_trans_pe - 2.0 * v_park * v_trans_pe * std::cos(plane_change_rad);
         return std::sqrt(std::max(0.0, dv_sq));
     }
+}
+
+static inline void synthesize_parking_boundary_state(
+    double mu_central,
+    double r_park_km,
+    int lock_plane,
+    double inc_deg,
+    double lan_deg,
+    const std::array<double, 3>& r_target,
+    const std::array<double, 3>& v_target,
+    std::array<double, 3>& out_r,
+    std::array<double, 3>& out_v)
+{
+    if (mu_central <= 0.0 || r_park_km <= 0.0) {
+        out_r = {0, 0, 0};
+        out_v = {0, 0, 0};
+        return;
+    }
+
+    double r_dest_km = std::sqrt(r_target[0] * r_target[0] + r_target[1] * r_target[1] + r_target[2] * r_target[2]);
+    if (r_dest_km < 1.0) r_dest_km = r_park_km * 50.0;
+
+    // 1. 确定停泊轨道平面单位法向量 h_park
+    std::array<double, 3> h_park = {0, 0, 1};
+    if (lock_plane && inc_deg > 0.001) {
+        double i_rad = inc_deg * DEG2RAD;
+        double o_rad = lan_deg * DEG2RAD;
+        h_park[0] = std::sin(i_rad) * std::sin(o_rad);
+        h_park[1] = -std::sin(i_rad) * std::cos(o_rad);
+        h_park[2] = std::cos(i_rad);
+    } else {
+        // 模式 1: 自由发射规划，自动对准目标卫星轨道角动量面 h = r_target x v_target
+        h_park[0] = r_target[1] * v_target[2] - r_target[2] * v_target[1];
+        h_park[1] = r_target[2] * v_target[0] - r_target[0] * v_target[2];
+        h_park[2] = r_target[0] * v_target[1] - r_target[1] * v_target[0];
+    }
+    double h_mag = std::sqrt(h_park[0] * h_park[0] + h_park[1] * h_park[1] + h_park[2] * h_park[2]);
+    if (h_mag < 1e-6) {
+        h_park = {0, 0, 1};
+    } else {
+        h_park[0] /= h_mag; h_park[1] /= h_mag; h_park[2] /= h_mag;
+    }
+
+    // 2. 将目标天体矢量投影至停泊轨道平面
+    double dot_h = r_target[0] * h_park[0] + r_target[1] * h_park[1] + r_target[2] * h_park[2];
+    std::array<double, 3> r_proj = {
+        r_target[0] - dot_h * h_park[0],
+        r_target[1] - dot_h * h_park[1],
+        r_target[2] - dot_h * h_park[2]
+    };
+    double proj_mag = std::sqrt(r_proj[0] * r_proj[0] + r_proj[1] * r_proj[1] + r_proj[2] * r_proj[2]);
+    if (proj_mag < 1e-6 * r_dest_km) {
+        std::array<double, 3> arbitrary = (std::abs(h_park[2]) < 0.9) ? std::array<double,3>{0,0,1} : std::array<double,3>{1,0,0};
+        r_proj[0] = h_park[1] * arbitrary[2] - h_park[2] * arbitrary[1];
+        r_proj[1] = h_park[2] * arbitrary[0] - h_park[0] * arbitrary[2];
+        r_proj[2] = h_park[0] * arbitrary[1] - h_park[1] * arbitrary[0];
+        proj_mag = std::sqrt(r_proj[0] * r_proj[0] + r_proj[1] * r_proj[1] + r_proj[2] * r_proj[2]);
+    }
+    std::array<double, 3> u_r = { r_proj[0] / proj_mag, r_proj[1] / proj_mag, r_proj[2] / proj_mag };
+
+    // 平面内顺行垂直矢量 u_theta = h x u_r
+    std::array<double, 3> u_theta = {
+        h_park[1] * u_r[2] - h_park[2] * u_r[1],
+        h_park[2] * u_r[0] - h_park[0] * u_r[2],
+        h_park[0] * u_r[1] - h_park[1] * u_r[0]
+    };
+
+    // 3. 动力学开普勒转移相角 (消除 180° 退化奇异，基于实际相遇真实真近点角)
+    double a_hoh = (r_park_km + r_dest_km) * 0.5;
+    double a_trans = a_hoh * 1.05;
+    double p_orb = 2.0 * r_park_km - (r_park_km * r_park_km) / a_trans;
+    double e_orb = 1.0 - r_park_km / a_trans;
+    double cos_nu = (p_orb / r_dest_km - 1.0) / std::max(1e-4, e_orb);
+    cos_nu = std::max(-0.996, std::min(-0.85, cos_nu)); // 限制在 ~148° ~ 175° 区间，彻底远离 180° 反共线奇异
+    double nu_arr = std::acos(cos_nu);
+
+    double cos_dth = std::cos(nu_arr);
+    double sin_dth = std::sin(nu_arr);
+
+    out_r[0] = (u_r[0] * cos_dth - u_theta[0] * sin_dth) * r_park_km;
+    out_r[1] = (u_r[1] * cos_dth - u_theta[1] * sin_dth) * r_park_km;
+    out_r[2] = (u_r[2] * cos_dth - u_theta[2] * sin_dth) * r_park_km;
+
+    double v_circ = std::sqrt(mu_central / r_park_km);
+    out_v[0] = (u_theta[0] * cos_dth + u_r[0] * sin_dth) * v_circ;
+    out_v[1] = (u_theta[1] * cos_dth + u_r[1] * sin_dth) * v_circ;
+    out_v[2] = (u_theta[2] * cos_dth + u_r[2] * sin_dth) * v_circ;
+}
+
+EXPORT_API inline int pykep_synthesize_parking_state(
+    double mu_central,
+    double r_park_km,
+    int lock_plane,
+    double inc_deg,
+    double lan_deg,
+    const double* r_target_3,
+    const double* v_target_3,
+    double* out_r1_3,
+    double* out_v1_3)
+{
+    if (!r_target_3 || !out_r1_3 || !out_v1_3) return -1;
+    std::array<double, 3> rt = {r_target_3[0], r_target_3[1], r_target_3[2]};
+    std::array<double, 3> vt = {0, 0, 0};
+    if (v_target_3) vt = {v_target_3[0], v_target_3[1], v_target_3[2]};
+    std::array<double, 3> r1, v1;
+    synthesize_parking_boundary_state(mu_central, r_park_km, lock_plane, inc_deg, lan_deg, rt, vt, r1, v1);
+    out_r1_3[0] = r1[0]; out_r1_3[1] = r1[1]; out_r1_3[2] = r1[2];
+    out_v1_3[0] = v1[0]; out_v1_3[1] = v1[1]; out_v1_3[2] = v1[2];
+    return 0;
 }
 
 EXPORT_API inline int kep3_calc_coplanar_angle(
@@ -330,7 +472,9 @@ EXPORT_API inline int pykep_flyby_con(
             }
         }
 
-        bool feasible = (p.second <= 0.0) && (rp_km ? (*rp_km >= safe_radius) : true);
+        // 真实物理法则：无动力借力不仅要求偏转角在极限内 (p.second <= 0.0) 且近心点不撞地 (*rp_km >= safe_radius)，
+        // 还必须绝对满足能量守恒等式约束 |V_in| == |V_out| (|p.first| <= 0.01)！
+        bool feasible = (std::abs(p.first) <= 0.01) && (p.second <= 0.0) && (rp_km ? (*rp_km >= safe_radius) : true);
         return feasible ? 0 : 1;
     } catch (...) {
         return -1;

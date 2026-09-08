@@ -126,6 +126,8 @@
   "btn_expand_all": "展开全部",
   "btn_flyby_only_on": "纯飞掠: 开",
   "btn_flyby_only_toggle": "纯飞掠: 关",
+  "btn_wsb_manifold_on": "🌀 多体引力流形 (WSB): 已加入求解与优化",
+  "btn_wsb_manifold_off": "🌀 多体引力流形 (WSB): 未加入求解 (待定)",
   "btn_focus_view": "聚焦视图",
   "btn_fold_log_close": "收起错误日志",
   "btn_fold_log_open": "展开错误日志",

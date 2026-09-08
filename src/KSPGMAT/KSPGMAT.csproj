@@ -62,7 +62,7 @@
     </Reference>
   </ItemGroup>
 
-  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+  <Target Name="PostBuild" AfterTargets="Build">
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ProjectDir)..\..\GameData\KSPGMAT\Plugins\" ContinueOnError="true" />
     <ItemGroup>
       <NativeBinFiles Include="$(ProjectDir)..\..\GameData\KSPGMAT\native\*.bin" />

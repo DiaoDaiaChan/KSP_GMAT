@@ -104,7 +104,8 @@ namespace KSPGMAT.MGA
                 {
                     if (currentValleyUT > 0 && currentValleyDv < 1e7)
                     {
-                        double wSpan = Math.Min(60.0 * 86400.0, synDays * 0.40 * 86400.0);
+                        // 权威多岛切分：以真实 C3 能量波谷为核心划定 90 天高质量低能发射走廊
+                        double wSpan = Math.Min(90.0 * 86400.0, synDays * 0.35 * 86400.0);
                         candidates.Add(new SynodicWindowCandidate
                         {
                             WindowStartUT = Math.Max(config.SearchStartUT, currentValleyUT - wSpan * 0.5),

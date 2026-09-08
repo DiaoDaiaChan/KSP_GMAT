@@ -126,6 +126,8 @@
   "btn_expand_all": "Expand All",
   "btn_flyby_only_on": "Flyby-Only: On",
   "btn_flyby_only_toggle": "Flyby-Only: Off",
+  "btn_wsb_manifold_on": "🌀 N-Body Manifold (WSB): Active in Optimization",
+  "btn_wsb_manifold_off": "🌀 N-Body Manifold (WSB): Disabled (Pending)",
   "btn_focus_view": "Focus View",
   "btn_fold_log_close": "Collapse Log",
   "btn_fold_log_open": "Expand Log",

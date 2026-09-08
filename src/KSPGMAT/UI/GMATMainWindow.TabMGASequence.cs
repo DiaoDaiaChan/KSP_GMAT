@@ -313,7 +313,7 @@ namespace KSPGMAT.UI {
 
             try {
                 using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60))) {
-                    var res = await PykepBridge.OptimizeAsync(mgaConfig, (p, msg) => {
+                    var res = await MGAAdaptiveSolver.OptimizeAsync(mgaConfig, (p, msg) => {
                         mgaSeqSolveStatus = $"{msg} ({p * 100.0:F0}%)";
                     }, cts.Token);
 
@@ -384,6 +384,17 @@ namespace KSPGMAT.UI {
                     ScreenMessages.PostScreenMessage("已成功将当前最优解重构映射为任务序列步骤", 2.5f, ScreenMessageStyle.UPPER_CENTER);
                 } else {
                     ScreenMessages.PostScreenMessage("暂无最优解，请先在规划器中解算或从下方模版构建！", 2.5f, ScreenMessageStyle.UPPER_CENTER);
+                }
+            }
+
+            if (GUILayout.Button("📄 导出 GMAT 求解脚本", actionButtonStyle, GUILayout.Height(22))) {
+                var solToExport = selectedMgaSolution ?? MGAStateManager.Current.ActiveSolution;
+                if (solToExport != null) {
+                    string script = MGAGMATScriptBuilder.GenerateMGAScript(solToExport, mgaConfig);
+                    GUIUtility.systemCopyBuffer = script;
+                    ScreenMessages.PostScreenMessage("✅ 已生成 GMAT 行星际飞掠高精度打靶脚本，并已复制到系统剪贴板！", 4.0f, ScreenMessageStyle.UPPER_CENTER);
+                } else {
+                    ScreenMessages.PostScreenMessage("请先求解或选择一个可行的 MGA 方案后再导出 GMAT 脚本！", 2.5f, ScreenMessageStyle.UPPER_CENTER);
                 }
             }
             GUILayout.EndHorizontal();

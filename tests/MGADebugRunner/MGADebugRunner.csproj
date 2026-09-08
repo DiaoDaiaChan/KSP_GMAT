@@ -7,10 +7,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Reference Include="KSPGMAT">
-      <HintPath>..\..\GameData\KSPGMAT\Plugins\KSPGMAT.dll</HintPath>
-      <Private>true</Private>
-    </Reference>
+    <ProjectReference Include="..\..\src\KSPGMAT\KSPGMAT.csproj" />
     <Reference Include="Assembly-CSharp">
       <HintPath>C:\Program Files (x86)\Steam\steamapps\common\Kerbal Space Program_newmod\KSP_x64_Data\Managed\Assembly-CSharp.dll</HintPath>
       <Private>true</Private>

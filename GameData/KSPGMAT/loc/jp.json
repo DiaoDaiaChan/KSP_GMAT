@@ -122,6 +122,8 @@
   "btn_fields_posvel": "位置・速度",
   "btn_flyby_only_on": "スイングバイ-Only: On",
   "btn_flyby_only_toggle": "スイングバイ-Only: Off",
+  "btn_wsb_manifold_on": "🌀 多体多様体 (WSB): 最適化に適用中",
+  "btn_wsb_manifold_off": "🌀 多体多様体 (WSB): 未適用 (保留中)",
   "btn_focus_view": "フォーカス表示",
   "btn_fold_log_close": "▾ ログを格納",
   "btn_fold_log_open": "▸ ログを展開",

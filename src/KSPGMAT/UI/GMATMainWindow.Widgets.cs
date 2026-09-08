@@ -2458,15 +2458,33 @@ namespace KSPGMAT.UI {
             GUILayout.EndVertical();
             GUILayout.EndHorizontal();
 
-            // 4. 针对特定步骤展示 B 平面穿靶或借力参数
+            // 4. 针对特定步骤展示 B 平面穿靶与飞掠切入几何遥测
             if (step.type == MGAStepType.Flyby || Math.Abs(step.target_b_dot_t_km) > 0.1 || Math.Abs(step.target_b_dot_r_km) > 0.1) {
                 GUILayout.Space(3);
-                GUILayout.Label($"<b><color=#38bdf8>🎯 {I18n.T("mga_telemetry_flyby", "借力几何与 B 平面穿靶遥测")}</color></b>", labelValueStyle);
+                GUILayout.Label($"<b><color=#38bdf8>🎯 {I18n.T("mga_telemetry_flyby", "借力切入几何、飞掠高度与 B 平面遥测")}</color></b>", labelValueStyle);
+                
+                // 行 1: 切入天区与双曲进场速度
                 GUILayout.BeginHorizontal(cardBoxStyle);
-                GUILayout.Label($"穿靶矢量 B·T: <color=#38bdf8><b>{step.target_b_dot_t_km:F1} km</b></color>", labelValueStyle, GUILayout.Width(170));
-                GUILayout.Label($"穿靶矢量 B·R: <color=#38bdf8><b>{step.target_b_dot_r_km:F1} km</b></color>", labelValueStyle, GUILayout.Width(170));
-                double bMag = Math.Sqrt(step.target_b_dot_t_km * step.target_b_dot_t_km + step.target_b_dot_r_km * step.target_b_dot_r_km);
-                GUILayout.Label($"脱靶模值 |B|: <color={(bMag < 5000 ? "#34d399" : "#facc15")}><b>{bMag:F1} km</b></color>", labelValueStyle);
+                GUILayout.Label($"进场赤经 (DHA): <color=#38bdf8><b>{step.incoming_dha_deg:F1}°</b></color>", labelValueStyle, GUILayout.Width(170));
+                GUILayout.Label($"进场赤纬 (DEC): <color=#38bdf8><b>{step.incoming_dec_deg:F1}°</b></color>", labelValueStyle, GUILayout.Width(170));
+                GUILayout.Label($"双曲过剩 V∞: <color=#facc15><b>{step.v_inf_kms:F2} km/s</b></color>", labelValueStyle, GUILayout.Width(150));
+                GUILayout.Label($"轨道偏转角 δ: <color=#34d399><b>{step.flyby_turn_deg:F1}°</b></color>", labelValueStyle);
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+
+                // 行 2: 飞掠高度控制与 B 平面瞄准矢量
+                GUILayout.BeginHorizontal(cardBoxStyle);
+                GUILayout.Label($"近拱高度 hp: <color=#34d399><b>{step.periapsis_alt_km:F1} km</b></color>", labelValueStyle, GUILayout.Width(170));
+                double actualRp = step.flyby_rp_km > 0 ? step.flyby_rp_km : (rKm + step.periapsis_alt_km);
+                GUILayout.Label($"近拱半径 rp: <color=#38bdf8><b>{actualRp:F1} km</b></color>", labelValueStyle, GUILayout.Width(170));
+                GUILayout.Label($"穿靶 B·T: <color=#f8fafc><b>{step.target_b_dot_t_km:F1} km</b></color>", labelValueStyle, GUILayout.Width(170));
+                GUILayout.Label($"穿靶 B·R: <color=#f8fafc><b>{step.target_b_dot_r_km:F1} km</b></color>", labelValueStyle);
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+
+                // 行 3: GMAT 打靶求解建议（一键参数透视）
+                GUILayout.BeginHorizontal(cardBoxStyle);
+                GUILayout.Label($"<color=#34d399><b>GMAT 目标器约束:</b></color> <color=#94a3b8>Achieve DC(Sat.{step.body_name}.RMAG = {actualRp:F1}); Achieve DC(Sat.{step.body_name}.BdotT = {step.target_b_dot_t_km:F1});</color>", labelValueStyle);
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
             }

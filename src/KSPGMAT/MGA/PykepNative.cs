@@ -144,6 +144,25 @@ namespace KSPGMAT.MGA {
             out double outAlignedUt,
             [Out] double[] outAlignedDvFrenet,
             [Out] double[] outAlignedDvCart);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int PykepAlignInjectionDynDelegate(
+            [In] double[] rPark0,
+            [In] double[] vPark0,
+            double tEpoch,
+            double muCentral,
+            int alignMode,
+            [In] double[] targetArg,
+            [In] double[] targetVel,
+            double targetScalar,
+            double tNominalDep,
+            double tStart,
+            double tSpan,
+            int sampleCount,
+            int goldenIterations,
+            out double outAlignedUt,
+            [Out] double[] outAlignedDvFrenet,
+            [Out] double[] outAlignedDvCart);
         private delegate int Kep3HohmannTransferDelegate(
             double r1_km, double r2_km, double mu,
             out double outTotalDv, out double outTofSec, out double outDv1, out double outDv2);
@@ -197,6 +216,13 @@ namespace KSPGMAT.MGA {
             double parkIncDeg, double parkRaanDeg,
             out double outBestDepUt, out double outBestTofDays, out double outBestDvKms);
 
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int PykepSynthesizeParkingStateDelegate(
+            double muCentral, double rParkKm, int lockPlane,
+            double incDeg, double lanDeg,
+            [In] double[] rTarget, [In] double[] vTarget,
+            [Out] double[] outR1, [Out] double[] outV1);
+
         [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Auto)]
         private static extern bool SetDllDirectory(string lpPathName);
 
@@ -229,6 +255,7 @@ namespace KSPGMAT.MGA {
         private static PykepRegisterBodyDelegate _fnRegisterBody;
         private static PykepClearRegisteredBodiesDelegate _fnClearRegisteredBodies;
         private static PykepAlignInjectionDelegate _fnAlignInjection;
+        private static PykepAlignInjectionDynDelegate _fnAlignInjectionDyn;
 
         // kep3 new algorithm hooks
         private static Kep3HohmannTransferDelegate _fnKep3Hohmann;
@@ -240,6 +267,7 @@ namespace KSPGMAT.MGA {
         private static PykepCalcCentralDepartureDvDelegate _fnCalcCentralDepDv;
         private static PykepFindNodalCrossingDelegate _fnFindNodalCrossing;
         private static PykepFindTransferWindowDelegate _fnFindTransferWindow;
+        private static PykepSynthesizeParkingStateDelegate _fnSynthesizeParkingState;
 
         private static bool _initAttempted = false;
         private static readonly object _initLock = new object();
@@ -374,6 +402,8 @@ namespace KSPGMAT.MGA {
 
                             IntPtr pAlign = GetProcAddress(_dllHandle, "pykep_align_injection");
                             if (pAlign != IntPtr.Zero) _fnAlignInjection = (PykepAlignInjectionDelegate)Marshal.GetDelegateForFunctionPointer(pAlign, typeof(PykepAlignInjectionDelegate));
+                            IntPtr pAlignDyn = GetProcAddress(_dllHandle, "pykep_align_injection_dyn");
+                            if (pAlignDyn != IntPtr.Zero) _fnAlignInjectionDyn = (PykepAlignInjectionDynDelegate)Marshal.GetDelegateForFunctionPointer(pAlignDyn, typeof(PykepAlignInjectionDynDelegate));
 
                             IntPtr pHohmann = GetProcAddress(_dllHandle, "kep3_hohmann_transfer");
                             if (pHohmann != IntPtr.Zero) _fnKep3Hohmann = (Kep3HohmannTransferDelegate)Marshal.GetDelegateForFunctionPointer(pHohmann, typeof(Kep3HohmannTransferDelegate));
@@ -395,6 +425,9 @@ namespace KSPGMAT.MGA {
 
                             IntPtr pWin = GetProcAddress(_dllHandle, "pykep_find_transfer_window");
                             if (pWin != IntPtr.Zero) _fnFindTransferWindow = (PykepFindTransferWindowDelegate)Marshal.GetDelegateForFunctionPointer(pWin, typeof(PykepFindTransferWindowDelegate));
+
+                            IntPtr pSynPark = GetProcAddress(_dllHandle, "pykep_synthesize_parking_state");
+                            if (pSynPark != IntPtr.Zero) _fnSynthesizeParkingState = (PykepSynthesizeParkingStateDelegate)Marshal.GetDelegateForFunctionPointer(pSynPark, typeof(PykepSynthesizeParkingStateDelegate));
 
                             IntPtr ptr = _fnGetVersion();
                             if (ptr != IntPtr.Zero) {
@@ -599,6 +632,56 @@ namespace KSPGMAT.MGA {
                 KSPGMATLog.Warn($"[PykepNative.AlignInjection] Native exception: {ex.Message}");
             }
             return false;
+        }
+
+        /// <summary>
+        /// 原生 ESA PyKEP 停泊轨道高精动态滑动靶标锁相引擎
+        /// </summary>
+        public static bool AlignInjectionDyn(
+            Vector3d rPark0Km,
+            Vector3d vPark0Kms,
+            double tEpoch,
+            double muCentralKms,
+            int alignMode,
+            Vector3d targetArg,
+            Vector3d? targetVelKms,
+            double targetScalar,
+            double tNominalDep,
+            double tStart,
+            double tSpan,
+            int sampleCount,
+            int goldenIterations,
+            out double alignedUt,
+            out Vector3d alignedDvFrenet)
+        {
+            alignedUt = tStart;
+            alignedDvFrenet = Vector3d.zero;
+            EnsureLoaded();
+
+            if (_isAvailable && _fnAlignInjectionDyn != null) {
+                double[] r0 = new double[] { rPark0Km.x, rPark0Km.y, rPark0Km.z };
+                double[] v0 = new double[] { vPark0Kms.x, vPark0Kms.y, vPark0Kms.z };
+                double[] targ = new double[] { targetArg.x, targetArg.y, targetArg.z };
+                double[] targV = targetVelKms.HasValue ? new double[] { targetVelKms.Value.x, targetVelKms.Value.y, targetVelKms.Value.z } : null;
+                double[] dvFrenet = new double[3];
+
+                try {
+                    int res = _fnAlignInjectionDyn(
+                        r0, v0, tEpoch, muCentralKms, alignMode, targ, targV, targetScalar,
+                        tNominalDep, tStart, tSpan, sampleCount, goldenIterations,
+                        out alignedUt, dvFrenet, null);
+
+                    if (res == 0) {
+                        alignedDvFrenet = new Vector3d(dvFrenet[0], dvFrenet[1], dvFrenet[2]);
+                        return true;
+                    }
+                } catch (Exception ex) {
+                    KSPGMATLog.Warn($"[PykepNative.AlignInjectionDyn] Native exception: {ex.Message}");
+                }
+            }
+
+            // 退化回基准 AlignInjection
+            return AlignInjection(rPark0Km, vPark0Kms, tEpoch, muCentralKms, alignMode, targetArg, targetScalar, tStart, tSpan, sampleCount, goldenIterations, out alignedUt, out alignedDvFrenet);
         }
 
         /// <summary>
@@ -1031,6 +1114,36 @@ namespace KSPGMAT.MGA {
             if (_isAvailable && _fnFindTransferWindow != null) {
                 try {
                     return _fnFindTransferWindow(fromBody, toBody, centralBody, searchStartUt, searchSpanDays, depAltKm, arrAltKm, parkIncDeg, parkRaanDeg, out outBestDepUt, out outBestTofDays, out outBestDvKms) == 0;
+                } catch { }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 原生无奇异开普勒停泊轨道边界状态合成器 (100% 原生 C++ pykep_synthesize_parking_state)
+        /// 基于真实转移相角 (160°~172°) 确定切向注入点，彻底消除 180° 反共线奇异与人工经验偏置角
+        /// </summary>
+        public static bool SynthesizeParkingState(
+            double muCentral, double rParkKm, bool lockPlane,
+            double incDeg, double lanDeg,
+            Vector3d rTarget, Vector3d vTarget,
+            out Vector3d outR1, out Vector3d outV1)
+        {
+            outR1 = Vector3d.zero;
+            outV1 = Vector3d.zero;
+            EnsureLoaded();
+            if (_isAvailable && _fnSynthesizeParkingState != null) {
+                try {
+                    double[] rt = new double[] { rTarget.x, rTarget.y, rTarget.z };
+                    double[] vt = new double[] { vTarget.x, vTarget.y, vTarget.z };
+                    double[] r1 = new double[3];
+                    double[] v1 = new double[3];
+                    int ok = _fnSynthesizeParkingState(muCentral, rParkKm, lockPlane ? 1 : 0, incDeg, lanDeg, rt, vt, r1, v1);
+                    if (ok == 0) {
+                        outR1 = new Vector3d(r1[0], r1[1], r1[2]);
+                        outV1 = new Vector3d(v1[0], v1[1], v1[2]);
+                        return true;
+                    }
                 } catch { }
             }
             return false;

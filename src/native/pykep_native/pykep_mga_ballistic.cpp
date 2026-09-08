@@ -20,15 +20,30 @@ EXPORT_API int pykep_lambert_solve(
     std::array<double, 3> r2 = {r2x, r2y, r2z};
 
     try {
-        int nmax = (tof_sec > 86400.0 * 250.0) ? 2 : 0;
+        double r1_len = std::sqrt(r1x*r1x + r1y*r1y + r1z*r1z);
+        double r2_len = std::sqrt(r2x*r2x + r2y*r2y + r2z*r2z);
+        double r_avg = (r1_len + r2_len) * 0.5;
+        double t_orb = 2.0 * 3.14159265358979323846 * std::sqrt((r_avg * r_avg * r_avg) / mu);
+        int nmax = (t_orb > 10.0) ? (int)std::floor(tof_sec / t_orb + 0.25) : 0;
+        nmax = std::max(0, std::min(4, nmax));
         kep3::lambert_problem lp(r1, r2, tof_sec, mu, retrograde != 0, nmax);
         const auto& v1_solutions = lp.get_v0();
         const auto& v2_solutions = lp.get_v1();
 
         if (v1_solutions.empty() || v2_solutions.empty()) return -1;
 
-        *v1x = v1_solutions[0][0]; *v1y = v1_solutions[0][1]; *v1z = v1_solutions[0][2];
-        *v2x = v2_solutions[0][0]; *v2y = v2_solutions[0][1]; *v2z = v2_solutions[0][2];
+        size_t best_idx = 0;
+        double min_vsq = 1e30;
+        for (size_t i = 0; i < v1_solutions.size(); ++i) {
+            double vsq = v1_solutions[i][0]*v1_solutions[i][0] + v1_solutions[i][1]*v1_solutions[i][1] + v1_solutions[i][2]*v1_solutions[i][2];
+            if (vsq < min_vsq) {
+                min_vsq = vsq;
+                best_idx = i;
+            }
+        }
+
+        *v1x = v1_solutions[best_idx][0]; *v1y = v1_solutions[best_idx][1]; *v1z = v1_solutions[best_idx][2];
+        *v2x = v2_solutions[best_idx][0]; *v2y = v2_solutions[best_idx][1]; *v2z = v2_solutions[best_idx][2];
         return 0;
     } catch (...) {
         return -1;
@@ -130,6 +145,23 @@ EXPORT_API int pykep_mga_evaluate_mu(
 
             std::array<double, 3> r1 = {p1.rx, p1.ry, p1.rz};
             std::array<double, 3> r2 = {p2.rx, p2.ry, p2.rz};
+            std::array<double, 3> v2_dir = {p2.vx, p2.vy, p2.vz};
+
+            if (k == 0 && is_central_body(p1, effective_mu) && r1_len < 1.0) {
+                double r_park = p1.radius + std::max(0.0, dep_pe_km);
+                std::array<double, 3> syn_r, syn_v;
+                synthesize_parking_boundary_state(effective_mu, r_park, dep_inc_deg > 0.01, dep_inc_deg, 0.0, r2, v2_dir, syn_r, syn_v);
+                r1 = syn_r;
+                out_sol->legs[k].r1x = syn_r[0]; out_sol->legs[k].r1y = syn_r[1]; out_sol->legs[k].r1z = syn_r[2];
+            }
+            if (k == leg_count - 1 && is_central_body(p2, effective_mu) && r2_len < 1.0) {
+                double r_park = p2.radius + std::max(0.0, arr_pe_km);
+                std::array<double, 3> syn_r, syn_v;
+                std::array<double, 3> v1_dir = {p1.vx, p1.vy, p1.vz};
+                synthesize_parking_boundary_state(effective_mu, r_park, 0, 0.0, 0.0, r1, v1_dir, syn_r, syn_v);
+                r2 = syn_r;
+                out_sol->legs[k].r2x = syn_r[0]; out_sol->legs[k].r2y = syn_r[1]; out_sol->legs[k].r2z = syn_r[2];
+            }
 
             try {
                 kep3::lambert_problem lp(r1, r2, tof, effective_mu, false, nmax);
@@ -202,6 +234,18 @@ EXPORT_API int pykep_mga_evaluate_mu(
                         double h_park_y = p_dep.rz * p_dep.vx - p_dep.rx * p_dep.vz;
                         double h_park_z = p_dep.rx * p_dep.vy - p_dep.ry * p_dep.vx;
                         double h_park_mag = std::sqrt(h_park_x * h_park_x + h_park_y * h_park_y + h_park_z * h_park_z);
+                        if (h_park_mag < 1e-6) {
+                            if (dep_inc_deg > 0.001) {
+                                double i_rad = dep_inc_deg * DEG2RAD;
+                                h_park_x = 0; h_park_y = -std::sin(i_rad); h_park_z = std::cos(i_rad);
+                                h_park_mag = 1.0;
+                            } else {
+                                h_park_x = p_arr_first.ry * p_arr_first.vz - p_arr_first.rz * p_arr_first.vy;
+                                h_park_y = p_arr_first.rz * p_arr_first.vx - p_arr_first.rx * p_arr_first.vz;
+                                h_park_z = p_arr_first.rx * p_arr_first.vy - p_arr_first.ry * p_arr_first.vx;
+                                h_park_mag = std::sqrt(h_park_x * h_park_x + h_park_y * h_park_y + h_park_z * h_park_z);
+                            }
+                        }
 
                         double beta_rad = 0.0;
                         if (h_park_mag > 1e-6 && r_dest_km > 1e-6) {
@@ -262,6 +306,18 @@ EXPORT_API int pykep_mga_evaluate_mu(
                     double h_park_y = p1.rz * p1.vx - p1.rx * p1.vz;
                     double h_park_z = p1.rx * p1.vy - p1.ry * p1.vx;
                     double h_park_mag = std::sqrt(h_park_x * h_park_x + h_park_y * h_park_y + h_park_z * h_park_z);
+                    if (h_park_mag < 1e-6) {
+                        if (dep_inc_deg > 0.001) {
+                            double i_rad = dep_inc_deg * DEG2RAD;
+                            h_park_x = 0; h_park_y = -std::sin(i_rad); h_park_z = std::cos(i_rad);
+                            h_park_mag = 1.0;
+                        } else {
+                            h_park_x = p2.ry * p2.vz - p2.rz * p2.vy;
+                            h_park_y = p2.rz * p2.vx - p2.rx * p2.vz;
+                            h_park_z = p2.rx * p2.vy - p2.ry * p2.vx;
+                            h_park_mag = std::sqrt(h_park_x * h_park_x + h_park_y * h_park_y + h_park_z * h_park_z);
+                        }
+                    }
 
                     double beta_rad = 0.0;
                     if (h_park_mag > 1e-6 && r_dest_km > 1e-6) {

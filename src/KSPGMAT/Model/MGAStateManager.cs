@@ -73,9 +73,9 @@ namespace KSPGMAT.Model {
         // --- 7. 霍曼与扫描动力学估算 ---
         public const double HohmannDefaultToFDays = 200.0;
         public const double HohmannMinToFFactor = 0.35;
-        public const double HohmannMaxToFFactor = 2.5;
-        public const double ResonanceMinToFFactor = 0.85;
-        public const double ResonanceMaxToFFactor = 3.15;
+        public const double HohmannMaxToFFactor = 4.5;
+        public const double ResonanceMinToFFactor = 0.50;
+        public const double ResonanceMaxToFFactor = 3.60;
         public const double SynodicScanMultiple = 1.5;
         public const double SynodicScanMultipleWithInc = 2.0;
 
@@ -140,7 +140,9 @@ namespace KSPGMAT.Model {
         public static double GetBodySafeRadiusKm(string bodyName) {
             var p = SolarSystemCatalog.GetPlanet(bodyName);
             if (p != null && p.SafeRadiusKm > 0) return p.SafeRadiusKm;
-            return GetBodyRadiusKm(bodyName) + FallbackDepartureAltitudeKm;
+            double r = GetBodyRadiusKm(bodyName);
+            double atm = p != null ? p.AtmosphereDepthKm : 0.0;
+            return SolarSystemCatalog.ComputeAutomaticSafeRadiusKm(bodyName, r, atm);
         }
 
         /// <summary>
@@ -211,7 +213,7 @@ namespace KSPGMAT.Model {
         }
 
         // --- 11. 求解器惩罚函数超参数 (Penalty Weights) ---
-        public const double PenaltyInfeasibleBase = 50.0;
+        public const double PenaltyInfeasibleBase = 10000.0;
         public const double PenaltyDepartureViolationDayWeight = 100.0;
         public const double PenaltyDepartureViolationBase = 1000.0;
         public const double PenaltyVesselDeltaVWeight = 15.0;
@@ -219,6 +221,48 @@ namespace KSPGMAT.Model {
         public const double PenaltyIncDegWeight = 25.0;
         public const double PenaltyIncBase = 50.0;
         public const double PenaltyIncToleranceDeg = 0.05;
+
+        // --- 12. 引力势阱与梯级爬升常数 (Gravity Potential & Climbing Network) ---
+        public const double GiantAssistDistanceRatio = 3.0;   // 触发巨引力弹弓的外轨半长轴倍率门槛
+        public const double GravityClimbingDistanceRatio = 2.0;  // 触发梯级爬升插序的跨越倍率
+        public static double InnerSystemMaxSmaKm => 4.0 * AU_KM; // 内太阳系天体半长轴上限 (4 AU)
+        public const double MinAssistPowerIndexInner = 35.0; // 内行星显著借力效能下限 μ/r_safe ≥ 35 km²/s²
+        public const double GiantPlanetMinMu = 1.0e7; // 巨行星 μ ≥ 1e7 km³/s²
+        public const double MinSteppingStoneMu = 500.0; // 梯级跳板最小 μ 门槛
+        public const double NeighborBodyMaxLogSmaRatio = 1.5; // 交错共振桥中介天体 log(Sma) 邻近上限
+
+        // --- 13. 开普勒共振与转角动力学常数 (Resonance & Turn Dynamics) ---
+        public const double FlybyPowerWeakThreshold = 15.0; // 浅势阱（自适应 4~5 次共振）
+        public const double FlybyPowerMediumThreshold = 60.0; // 中势阱（自适应 3 次共振）
+        public const double ResonantOrbitVelocityBonusKms = 1.5; // 同星共振出射日心极值能量拓宽 +1.5 km/s
+        public const double MinEffectiveVInfKms = 2.5; // 借力有效双曲过剩速度底限
+        public const double NominalInitialVInfKms = 5.0; // 初始标称入轨/出场速度基准
+        public const double DeparturePhaseAngleToleranceDeg = 45.0; // 始发星历相位角容差门禁
+        public const double DeparturePhaseSoftPenaltyFactorMsPerDeg = 5.0; // 相位偏差软罚 5 m/s/deg
+        public const double MinGeometryTurnAngleDeg = 25.0; // 异星转移基础偏折角门禁
+        public const double ApsidalTurnaroundAngleDeg = 30.0; // 拱点折返自然过渡偏折角门禁
+        public const double ResonantReverseTurnAngleDeg = 75.0; // 同星共振蓄能时大逆转航向角收窄门禁
+        public const double DirectInwardOutwardTurnAngleDeg = 120.0; // 无共振大跨度航向角门禁
+        public const double InnerOrbitBoundaryRatio = 0.95; // 内轨道跨越判定比值
+        public const double OuterOrbitBoundaryRatio = 1.5; // 外轨道跨越判定比值
+
+        // --- 14. 航时与搜索空间缩放常数 (ToF & Search Bounds) ---
+        public const double NearTransferToFMinFactor = 0.68;
+        public const double NearTransferToFMaxFactor = 1.85;
+        public const double FarTransferToFMinFactor = 0.35;
+        public const double OuterTransferToFMinFactor = 0.20;
+        public const double OuterTransferToFMaxFactor = 2.30;
+        public const double ResonanceToFMinFactor = 0.85;
+        public const double ResonanceToFMaxFactor = 4.25;
+        public const double AdjacentTransferSmaRatioThreshold = 2.2; // 近邻 vs 跨越转移 Sma 比值阈值
+
+        // --- 15. 多岛差分进化与控制常数 (Evolutionary Control & Early Pruning) ---
+        public const double DefaultAdaptivePopulationSize = 100;
+        public const double DefaultAdaptiveMaxGenerations = 150;
+        public const double DefaultMaxDsmDeltaVMs = 500.0;
+        public const double MaxPhysicalEnergyDeficitMs = 4000.0; // 单航段不可达物理速度断层剪枝硬门禁
+        public const int EarlyAbortGenerationThreshold = 25;
+        public const double EarlyAbortDeficitThresholdMs = 4000.0; // 早期赤字熔断门槛
     }
 
     /// <summary>
@@ -299,6 +343,35 @@ namespace KSPGMAT.Model {
         public Vector3d SHat { get; set; }
         public Vector3d THat { get; set; }
         public Vector3d RHat { get; set; }
+
+        // B 平面协方差摄动分析与误差椭圆 (Covariance Dispersion Ellipse & Navigational Robustness)
+        public double SigmaBTKm { get; set; }
+        public double SigmaBRKm { get; set; }
+        public double CovarianceBTRKm2 { get; set; }
+        public double SemiMajorAxisSigmaKm { get; set; }
+        public double SemiMinorAxisSigmaKm { get; set; }
+        public double EllipseAngleDeg { get; set; }
+        public double SafeFlybyRadiusKm { get; set; }
+        public double EstimatedPericenterKm { get; set; }
+        public double SafeMargin3SigmaKm { get; set; }
+        public bool IsSafeFlyby { get; set; } = true;
+        public double NavigationalTcmBudgetKms { get; set; }
+    }
+
+    /// <summary>
+    /// 多体引力流形低能捕获与弱稳定性边界 (CR3BP Invariant Manifolds & WSB Low-Energy Capture)
+    /// </summary>
+    public class LowEnergyManifoldResult {
+        public bool IsManifoldCaptureFeasible { get; set; }
+        public double JacobiConstant { get; set; }
+        public double HillRadiusKm { get; set; }
+        public double WsbCaptureDeltaVKms { get; set; }
+        public double ClassicalVisVivaDeltaVKms { get; set; }
+        public double DeltaVSavedKms { get; set; }
+        public double SavingPercentage { get; set; }
+        public double IngressAngleDeg { get; set; }
+        public double BallisticDurationDays { get; set; }
+        public string Details { get; set; }
     }
 
     public class TCMResult {
@@ -385,6 +458,10 @@ namespace KSPGMAT.Model {
         public double FlybyDeltaVKms { get; set; }
         public bool IsFeasible { get; set; }
 
+        public double IncomingDhaDeg { get; set; }
+        public double IncomingDecDeg { get; set; }
+        public BPlaneResult BPlane { get; set; }
+
         public bool HasDSM { get; set; }
         public DSMResult DSM { get; set; }
         public Vector3d DSMPositionKm { get; set; }
@@ -440,6 +517,8 @@ namespace KSPGMAT.Model {
         public double ArrivalUT { get; set; }
         public double LaunchDeltaVKms { get; set; }
         public double InsertionDeltaVKms { get; set; }
+        public double TotalFlybyDeltaVKms => Legs != null ? Legs.Sum(l => l.FlybyDeltaVKms) : 0.0;
+        public double TotalDsmDeltaVKms => Legs != null ? Legs.Sum(l => l.DSM != null ? l.DSM.DeltaVMs / 1000.0 : 0.0) : 0.0;
         public List<MGALegResult> Legs { get; set; } = new List<MGALegResult>();
         public List<MGAEventItem> Events { get; set; } = new List<MGAEventItem>();
         public bool AllLegsFeasible { get; set; }
@@ -455,6 +534,7 @@ namespace KSPGMAT.Model {
         public PrimerVectorResult PrimerVector { get; set; }
         public BPlaneResult BPlane { get; set; }
         public TCMResult SuggestedTCM { get; set; }
+        public LowEnergyManifoldResult ManifoldCapture { get; set; }
         public MEEResult DepartureMEE { get; set; }
         public SimsFlanaganResult LowThrustSolution { get; set; }
         public List<ParetoTradeOffPoint> ParetoFront { get; set; } = new List<ParetoTradeOffPoint>();
@@ -734,6 +814,11 @@ namespace KSPGMAT.Model {
         public int MaxBackSpacing { get; set; } = MGADefaults.MaxBackSpacing;
         public bool ConstrainByVesselDeltaV { get; set; } = false;
         public double VesselMaxDeltaVMs { get; set; } = 0.0;
+        public double MaxDsmDeltaVMs { get; set; } = 0.0;
+        public double LaunchDeltaVCeilingMs { get; set; } = 0.0;
+        public double DepartureToFMinFactor { get; set; } = 0.65;
+        public double DepartureToFMaxFactor { get; set; } = 1.50;
+        public double ResonantMaxOffsetDays { get; set; } = 0.0;
 
         public double EarliestDepartureUT { get; set; }
         public double LatestDepartureUT { get; set; }
@@ -761,6 +846,7 @@ namespace KSPGMAT.Model {
         public double DestinationPeAKm { get; set; } = MGADefaults.DestinationAltitudeKm;
         public double DestinationApAKm { get; set; } = MGADefaults.DestinationAltitudeKm;
         public bool NoInsertionBurn { get; set; } = false;
+        public bool EnableLowEnergyManifoldCapture { get; set; } = false; // 多体引力流形低能捕获与弱稳定性边界优化开关 (默认关闭，待定)
 
         /// <summary>
         /// 基于天体引力影响球 (SOI) 与大气顶层边界，自动应用物理刚性约束
@@ -893,6 +979,11 @@ namespace KSPGMAT.Model {
         public double dsm_eta = MGADefaults.DsmEtaDefault;
         public double target_b_dot_t_km = 0.0;
         public double target_b_dot_r_km = 0.0;
+        public double incoming_dha_deg = 0.0;
+        public double incoming_dec_deg = 0.0;
+        public double flyby_rp_km = 0.0;
+        public double flyby_turn_deg = 0.0;
+        public double v_inf_kms = 0.0;
 
         // 求解结果与回填状态
         public bool is_solved = false;
@@ -1443,6 +1534,7 @@ namespace KSPGMAT.Model {
         /// </summary>
         public void SyncSequenceFromSolution(MGASolution sol, MGAConfig cfg = null) {
             if (sol == null || sol.Legs == null || sol.Legs.Count == 0) return;
+            MGAFlybyDynamicsHelper.EnrichSolutionFlybyDynamics(sol);
             var c = cfg ?? Config;
             var seq = new List<MGAMissionStep>();
 
@@ -1515,6 +1607,13 @@ namespace KSPGMAT.Model {
                         epoch_ut = leg.ArrivalUT,
                         epoch_utc_str = GMATClient.FormatUtcGregorian(leg.ArrivalUT),
                         periapsis_alt_km = actualFbAlt,
+                        target_b_dot_t_km = leg.BPlane != null ? leg.BPlane.BDotTKm : 0.0,
+                        target_b_dot_r_km = leg.BPlane != null ? leg.BPlane.BDotRKm : 0.0,
+                        incoming_dha_deg = leg.IncomingDhaDeg,
+                        incoming_dec_deg = leg.IncomingDecDeg,
+                        flyby_rp_km = leg.FlybyPeriapsisRadiusKm,
+                        flyby_turn_deg = leg.FlybyTurningAngleDeg,
+                        v_inf_kms = leg.VInfArrivalKms.magnitude,
                         flyby_strategy = (c.FlybyStrategies != null && k < c.FlybyStrategies.Count) ? c.FlybyStrategies[k] : MGAFlybyStrategy.UnpoweredFlyby,
                         solved_dv_ms = leg.FlybyDeltaVKms * 1000.0,
                         label = $"{leg.ToBody} Flyby (hp={actualFbAlt:F0} km, δ={leg.FlybyTurningAngleDeg:F1}°)",

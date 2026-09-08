@@ -81,6 +81,18 @@ namespace KSPGMAT.MGA {
     }
 
     public static class PorkchopGenerator {
+        public static PorkchopGrid ComputePorkchop(
+            string fromBody, string toBody, 
+            double depStartUT, double depSpanDays, 
+            double tofMinDays, double tofMaxDays,
+            double depAltKm = MGADefaults.DepartureAltitudeKm, double arrAltKm = MGADefaults.DestinationAltitudeKm,
+            bool flybyOnly = false,
+            int gridW = MGADefaults.PorkchopDefaultWidth, int gridH = MGADefaults.PorkchopDefaultHeight,
+            Action<float, string> onProgress = null) 
+        {
+            return ComputeInternal(fromBody, toBody, depStartUT, depSpanDays, tofMinDays, tofMaxDays, depAltKm, arrAltKm, flybyOnly, gridW, gridH, onProgress);
+        }
+
         public static async Task<PorkchopGrid> ComputePorkchopAsync(
             string fromBody, string toBody, 
             double depStartUT, double depSpanDays, 
@@ -128,12 +140,6 @@ namespace KSPGMAT.MGA {
                 C3Grid = new double[gridW, gridH]
             };
 
-            CelestialBody cb1 = null, cb2 = null;
-            if (FlightGlobals.ready && FlightGlobals.Bodies != null) {
-                cb1 = FlightGlobals.Bodies.Find(b => b.name.Equals(fromBody, StringComparison.OrdinalIgnoreCase) || b.bodyName.Equals(fromBody, StringComparison.OrdinalIgnoreCase));
-                cb2 = FlightGlobals.Bodies.Find(b => b.name.Equals(toBody, StringComparison.OrdinalIgnoreCase) || b.bodyName.Equals(toBody, StringComparison.OrdinalIgnoreCase));
-            }
-
             var p1 = SolarSystemCatalog.GetPlanet(fromBody);
             var p2 = SolarSystemCatalog.GetPlanet(toBody);
             string central = SolarSystemCatalog.ResolveTransferCentralBody(fromBody, toBody);
@@ -166,6 +172,16 @@ namespace KSPGMAT.MGA {
                     p1.GetRelativeState(central, depUT, out Vector3d r1, out Vector3d vP1);
                     p2.GetRelativeState(central, arrUT, out Vector3d r2, out Vector3d vP2);
 
+                    double cRadius = SolarSystemCatalog.GetPlanet(central)?.RadiusKm ?? MGADefaults.EarthRadiusKm;
+                    if (r1.sqrMagnitude < 1.0) {
+                        double rPark = (p1 != null && p1.RadiusKm > 0 ? p1.RadiusKm : cRadius) + depAltKm;
+                        PykepNative.SynthesizeParkingState(centralMu, rPark, false, 0.0, 0.0, r2, vP2, out r1, out vP1);
+                    }
+                    if (r2.sqrMagnitude < 1.0) {
+                        double rPark = (p2 != null && p2.RadiusKm > 0 ? p2.RadiusKm : cRadius) + arrAltKm;
+                        PykepNative.SynthesizeParkingState(centralMu, rPark, false, 0.0, 0.0, r1, vP1, out r2, out vP2);
+                    }
+
                     if (PykepNative.SolveLambert(r1, r2, tofSec, centralMu, false, out Vector3d v1, out Vector3d v2)) {
                         Vector3d vInfDepVec = v1 - vP1;
                         Vector3d vInfArrVec = v2 - vP2;
@@ -174,7 +190,12 @@ namespace KSPGMAT.MGA {
                         c3 = vInfDep * vInfDep;   // 原生兰伯特输出 + 原生历表速度的精确超速能量 (非近似)
 
                         // 100% 原生 C++ 动力学计算脱离脉冲与捕获脉冲 (0 托管自编公式)
-                        double depDvKm = PykepBridge.CalculateDepartureDeltaV(vInfDep, p1, depAltKm, depAltKm);
+                        double depDvKm;
+                        if (fromBody.Equals(central, StringComparison.OrdinalIgnoreCase)) {
+                            depDvKm = vInfDep;
+                        } else {
+                            depDvKm = PykepBridge.CalculateDepartureDeltaV(vInfDep, p1, depAltKm, depAltKm);
+                        }
                         if (!double.IsNaN(depDvKm)) {
                             ejDV = depDvKm * 1000.0;
                             if (!flybyOnly) {

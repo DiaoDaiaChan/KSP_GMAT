@@ -273,15 +273,16 @@ namespace KSPGMAT.MGA {
                 if (arrUT <= nominalUT) arrUT = nominalUT + leg.ToFDays * 86400.0;
 
                 Vector3d rTargetKm = Vector3d.zero;
+                Vector3d vTargetKms = Vector3d.zero;
                 if (orbit is AnalyticalParkingOrbit || orbit is StateManagedParkingOrbit) {
                     if (leg.ArrivalPosKm.sqrMagnitude > 1.0) {
                         rTargetKm = leg.ArrivalPosKm;
-                    } else {
-                        var pTarget = SolarSystemCatalog.GetPlanet(targetBodyName);
-                        if (pTarget != null) {
-                            pTarget.GetRelativeState(orbit.BodyName, arrUT, out Vector3d rT, out _);
-                            rTargetKm = rT;
-                        }
+                    }
+                    var pTarget = SolarSystemCatalog.GetPlanet(targetBodyName);
+                    if (pTarget != null) {
+                        pTarget.GetRelativeState(orbit.BodyName, arrUT, out Vector3d rT, out Vector3d vT);
+                        if (rTargetKm.sqrMagnitude < 1.0) rTargetKm = rT;
+                        vTargetKms = vT;
                     }
                 } else {
                     try {
@@ -290,6 +291,7 @@ namespace KSPGMAT.MGA {
                             if (targetCb != null && targetCb.orbit != null) {
                                 var unmod = PrincipiaInterop.GetUnmodifiedOrbit(targetCb) ?? targetCb.orbit;
                                 rTargetKm = unmod.getRelativePositionAtUT(arrUT) / 1000.0;
+                                vTargetKms = unmod.getOrbitalVelocityAtUT(arrUT) / 1000.0;
                             }
                         }
                     } catch { }
@@ -301,10 +303,11 @@ namespace KSPGMAT.MGA {
 
                 if (rTargetKm.sqrMagnitude < 1.0) return false;
 
-                // 100% ESA PyKEP 原生 C++ 闭环求解 (Izzo Lambert + 黄金分割搜索 + Frenet 投影)
-                if (PykepNative.IsAvailable && PykepNative.AlignInjection(
+                // 100% ESA PyKEP 原生 C++ 闭环求解 (Izzo Lambert + 动态滑动外推 + 黄金分割搜索 + Frenet 投影)
+                if (PykepNative.IsAvailable && PykepNative.AlignInjectionDyn(
                     rCraft0Km, vCraft0Kms, tStart, muKms,
-                    0, rTargetKm, arrUT,
+                    0, rTargetKm, (vTargetKms.sqrMagnitude > 1e-6 ? (Vector3d?)vTargetKms : null), arrUT,
+                    nominalUT,
                     tStart, orbitPeriod,
                     MGADefaults.AlignSampleCount, MGADefaults.AlignGoldenSectionIterations,
                     out alignedTime, out alignedDv))

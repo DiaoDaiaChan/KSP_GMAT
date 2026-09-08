@@ -618,6 +618,8 @@ namespace KSPGMAT.Model {
             if (budget != null) {
                 if (budget.DeltaV > 0) {
                     cfg.VesselMaxDeltaVMs = budget.DeltaV;
+                    cfg.ConstrainByVesselDeltaV = true;
+                    cfg.MaxDsmDeltaVMs = budget.DeltaV;
                 }
                 if (budget.ThrustKN > 0) cfg.LowThrustMaxThrustN = budget.ThrustKN * 1000.0;
                 if (budget.IspVac > 0) cfg.LowThrustIspSec = budget.IspVac;
