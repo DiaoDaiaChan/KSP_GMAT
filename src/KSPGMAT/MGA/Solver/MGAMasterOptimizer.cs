@@ -188,6 +188,11 @@ namespace KSPGMAT.MGA.Solver {
         public int CandidateTopologyPoolSize { get; set; } = 8;
 
         /// <summary>
+        /// 单拓扑会合窗口上限 (0=不限制; 用于快速验证/预算控制, 截断多窗口以缩短求解时长)。
+        /// </summary>
+        public int MaxWindows { get; set; } = 0;
+
+        /// <summary>
         /// 单岛进化种群规模 (50 ~ 150)。
         /// </summary>
         public int PopulationPerIsland { get; set; } = 100;
@@ -252,8 +257,8 @@ namespace KSPGMAT.MGA.Solver {
                     p.MaxSolarDistanceAu = 35.0;
                     p.ComputePreset = ComputeBudgetPreset.ExtremeDeepSpaceChallenge;
                     p.CandidateTopologyPoolSize = 8;
-                    p.PopulationPerIsland = 100;
-                    p.MaxGenerations = 150;
+                    p.PopulationPerIsland = 120;
+                    p.MaxGenerations = 200;
                     p.EnableBiDirectionalEpochCentering = true;
                     p.EnableEarlyDeficitPruning = true;
                     p.Priority = ObjectivePriority.FuelOptimal;
@@ -360,6 +365,7 @@ namespace KSPGMAT.MGA.Solver {
                 EnableEphemerisReachabilityFilter = true,
                 MaxResonances = p.MaxResonancesPerBody,
                 MaxCandidateTopologies = p.CandidateTopologyPoolSize,
+                MaxWindows = p.MaxWindows,
                 PopulationSize = p.PopulationPerIsland,
                 MaxGenerations = p.MaxGenerations,
                 FlybySafeAtmosphereMarginKm = p.FlybySafeAltitudeMarginKm,

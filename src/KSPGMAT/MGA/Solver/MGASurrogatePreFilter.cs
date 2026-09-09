@@ -41,9 +41,20 @@ namespace KSPGMAT.MGA
                 : 365.25;
 
             string fromBody = config.DeparturePlanet;
-            string toBody = (config.FlybySequence != null && config.FlybySequence.Count > 0)
-                ? config.FlybySequence[0]
-                : config.ArrivalPlanet;
+            string toBody = null;
+            if (config.FlybySequence != null && config.FlybySequence.Count > 0)
+            {
+                // 寻找首个不同于出发星的目标天体（若首个是 Earth EGA 则跳至首个异星目标如 Venus）
+                foreach (var b in config.FlybySequence)
+                {
+                    if (!string.IsNullOrEmpty(b) && !b.Equals(fromBody, StringComparison.OrdinalIgnoreCase))
+                    {
+                        toBody = b;
+                        break;
+                    }
+                }
+            }
+            if (string.IsNullOrEmpty(toBody)) toBody = config.ArrivalPlanet;
 
             var p1 = SolarSystemCatalog.GetPlanet(fromBody);
             var p2 = SolarSystemCatalog.GetPlanet(toBody);
@@ -104,20 +115,33 @@ namespace KSPGMAT.MGA
                 {
                     if (currentValleyUT > 0 && currentValleyDv < 1e7)
                     {
-                        // 权威多岛切分：以真实 C3 能量波谷为核心划定 90 天高质量低能发射走廊
-                        double wSpan = Math.Min(90.0 * 86400.0, synDays * 0.35 * 86400.0);
-                        candidates.Add(new SynodicWindowCandidate
+                        // 窗口出射能量门禁过滤：若该周期的最低出射机动估算已超出硬门禁 (如 > Ceiling * 1.08)，彻底丢弃该无效窗口！
+                        double maxWindowDvMs = (config.LaunchDeltaVCeilingMs > 0) ? config.LaunchDeltaVCeilingMs * 1.08 : 5500.0;
+                        if (currentValleyDv <= maxWindowDvMs)
                         {
-                            WindowStartUT = Math.Max(config.SearchStartUT, currentValleyUT - wSpan * 0.5),
-                            WindowEndUT = Math.Min(config.SearchEndUT, currentValleyUT + wSpan * 0.5),
-                            NominalToFDays = currentValleyTof,
-                            EstimatedMinDvKms = currentValleyDv / 1000.0
-                        });
+                            // 权威多岛切分：以真实 C3 能量波谷为核心划定 120 天高质量低能发射走廊 (彻底覆盖多借力相位偏角)
+                            double wSpan = Math.Min(120.0 * 86400.0, synDays * 0.40 * 86400.0);
+                            candidates.Add(new SynodicWindowCandidate
+                            {
+                                WindowStartUT = Math.Max(config.SearchStartUT, currentValleyUT - wSpan * 0.5),
+                                WindowEndUT = Math.Min(config.SearchEndUT, currentValleyUT + wSpan * 0.5),
+                                NominalToFDays = currentValleyTof,
+                                EstimatedMinDvKms = currentValleyDv / 1000.0
+                            });
+                        }
                     }
                     currentValleyDv = double.MaxValue;
                     currentValleyUT = 0.0;
                     lastCycleBoundary = ut;
                 }
+            }
+
+            // 按出射能量质量升序严格排序，优选能量最低的高价值窗口
+            candidates = candidates.OrderBy(c => c.EstimatedMinDvKms).ToList();
+            int maxAllowableWindows = (config.MaxWindows > 0) ? config.MaxWindows : 2;
+            if (candidates.Count > maxAllowableWindows)
+            {
+                candidates = candidates.Take(maxAllowableWindows).ToList();
             }
 
             // 如果星历初筛未捕获到有效波谷，降级为均匀会合周期划分

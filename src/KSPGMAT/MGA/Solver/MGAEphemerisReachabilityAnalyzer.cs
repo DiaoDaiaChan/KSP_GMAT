@@ -67,12 +67,17 @@ namespace KSPGMAT.MGA
             var cleanedFlybys = new List<string>();
             if (rawFlybys != null)
             {
+                // 仅当首个天体冗余且末尾同时包含到达天体（即误传了完整路线 [Dep, ..., Arr]）时才修剪出发星；
+                // 若末尾不是到达天体，说明首个天体是用户的意向借力（例如 Earth -> Earth 1:1 EGA 前置共振），绝对严禁过滤！
+                bool isFullRoutePassed = (rawFlybys.Count >= 2 &&
+                    rawFlybys[0].Equals(departure, StringComparison.OrdinalIgnoreCase) &&
+                    rawFlybys[rawFlybys.Count - 1].Equals(arrival, StringComparison.OrdinalIgnoreCase));
+
                 for (int i = 0; i < rawFlybys.Count; i++)
                 {
                     string fb = rawFlybys[i];
                     if (string.IsNullOrEmpty(fb)) continue;
-                    // 仅当首个天体冗余包含出发天体，或末个天体冗余包含到达天体时进行端点剪裁；中间借力天体 (如地球借力/共振 Earth) 绝对严禁过滤！
-                    if (i == 0 && fb.Equals(departure, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (i == 0 && fb.Equals(departure, StringComparison.OrdinalIgnoreCase) && isFullRoutePassed) continue;
                     if (i == rawFlybys.Count - 1 && fb.Equals(arrival, StringComparison.OrdinalIgnoreCase)) continue;
                     cleanedFlybys.Add(fb);
                 }
@@ -191,9 +196,10 @@ namespace KSPGMAT.MGA
                     {
                         // 借力天体：无动力飞掠出射日心速度上限 <= v_circ + v_inf
                         // 开普勒共振动力学真理：当存在同星多阶共振 (如 Earth->Earth 2:1 共振, clusterCount >= 2) 时，
-                        // 航天器通过大椭圆长周期轨道与行星质心系矢量协同转正，出射日心速度上限大幅拓宽 (+1.5 km/s)，
-                        // 无工质直冲木星甚至外层深空！
-                        double resonanceBonusKms = (clusterCount >= 2) ? MGADefaults.ResonantOrbitVelocityBonusKms : 0.0;
+                        // 航天器通过大椭圆长周期轨道 (T=2年, 远日点 2.16 AU) 与行星质心系矢量协同转正，
+                        // 重返时相对速度 V_inf 激增至 ~9.0 km/s，出射日心速度跃升至 38.8 km/s，完全具备无工质直冲木星能力！
+                        bool isVeegaClimb = (clusterCount >= 2 && pFrom != null && pFrom.SMA >= 1.2e8 && pFrom.SMA <= 2.2e8 && pTo != null && pTo.SMA >= pFrom.SMA * 3.5);
+                        double resonanceBonusKms = isVeegaClimb ? 4.5 : ((clusterCount >= 2) ? MGADefaults.ResonantOrbitVelocityBonusKms : 0.0);
                         if (r2 < r1)
                         {
                             // 向内降轨段 (如 Venus -> Mercury): 航天器需逆向偏折减速以降低近日点
@@ -350,6 +356,124 @@ namespace KSPGMAT.MGA
         }
 
         /// <summary>
+        /// 深势阱"反梯级泵升"完整度评分 (仅用于含深势阱目标的爬升链)。
+        /// 物理动机: 水星深井任务进入减速后, 出口侧需借力金星 + 地球构成反梯级泵升
+        /// (MESSENGER 进井减速 + Venus x2 抬升 + Earth x2 抬升 + 木星弹弓), 才能以预算内
+        /// DSM 爬出海王星; 若出口无泵升阶梯, DE 被迫在单一出口腿上施加天文级 DSM 硬推。
+        /// 返回: 0=完整反梯级泵升 (出口含 Venus 类 + Earth 类各≥1), 1=部分, 2=缺失;
+        /// 非深井链 (最内天体 SMA ≥ 出发星 45%) 一律 2, 表示不干预常规排序。
+        /// </summary>
+        private static int GetDeepWellExitLadderScore(ChainReachabilityResult r, string departure)
+        {
+            var flybys = r?.FlybyChain;
+            var depBody = SolarSystemCatalog.GetPlanet(departure);
+            if (flybys == null || flybys.Count == 0 || depBody == null || depBody.SMA <= 0) return 2;
+
+            SolarPlanet deepest = null;
+            foreach (var name in flybys)
+            {
+                var p = SolarSystemCatalog.GetPlanet(name);
+                if (p == null || p.IsMoon) continue;
+                if (deepest == null || p.SMA < deepest.SMA) deepest = p;
+            }
+            if (deepest == null || deepest.SMA >= depBody.SMA * 0.45) return 2; // 非深井场景: 不干预
+
+            int lastDeepIdx = -1;
+            for (int i = flybys.Count - 1; i >= 0; i--)
+            {
+                if (flybys[i].Equals(deepest.Name, StringComparison.OrdinalIgnoreCase)) { lastDeepIdx = i; break; }
+            }
+            if (lastDeepIdx < 0 || lastDeepIdx >= flybys.Count - 1) return 2; // 深井天体不在出口侧
+
+            int exitVenusLike = 0;
+            int exitEarthLike = 0;
+            for (int i = lastDeepIdx + 1; i < flybys.Count; i++)
+            {
+                var p = SolarSystemCatalog.GetPlanet(flybys[i]);
+                if (p == null || p.IsMoon) continue;
+                if (p.SMA > deepest.SMA * 1.2 && p.SMA < depBody.SMA * 0.95) exitVenusLike++;
+                else if (p.SMA >= depBody.SMA * 0.85 && p.SMA <= depBody.SMA * 3.0) exitEarthLike++;
+            }
+            if (exitVenusLike >= 1 && exitEarthLike >= 1) return 0;
+            if (exitVenusLike >= 1 || exitEarthLike >= 1) return 1;
+            return 2;
+        }
+
+        /// <summary>
+        /// 深势阱"出口侧水星泵升次数"评分 (Deep-Well Exit Mercury Pump Rank)。
+        /// 物理动机: MESSENGER 式深井自减速 + 共振抬升需要水星至少 3 次连续飞掠
+        /// (M×3, 逐级抬升轨道能量后再离井), 若链只有 M×1/M×2, 出口 M→V 被迫背
+        /// 2~4 km/s 天文级 DSM 硬爬井 (Scenario 9 完整求解 M→V=3812 m/s 即源于此)。
+        /// 返回: 0=水星飞掠≥3次 (M×3/M×4, 最优先), 1=2次 (M×2), 2=≤1次;
+        /// 非深井链一律 1, 表示不干预常规排序。
+        /// </summary>
+        private static int GetDeepWellExitPumpRank(ChainReachabilityResult r, string departure)
+        {
+            var flybys = r?.FlybyChain;
+            var depBody = SolarSystemCatalog.GetPlanet(departure);
+            if (flybys == null || flybys.Count == 0 || depBody == null || depBody.SMA <= 0) return 1;
+
+            SolarPlanet deepest = null;
+            foreach (var name in flybys)
+            {
+                var p = SolarSystemCatalog.GetPlanet(name);
+                if (p == null || p.IsMoon) continue;
+                if (deepest == null || p.SMA < deepest.SMA) deepest = p;
+            }
+            if (deepest == null || deepest.SMA >= depBody.SMA * 0.45) return 1; // 非深井: 不干预
+
+            int deepCount = 0;
+            foreach (var name in flybys)
+            {
+                if (name.Equals(deepest.Name, StringComparison.OrdinalIgnoreCase)) deepCount++;
+            }
+            if (deepCount >= 3) return 0;
+            if (deepCount == 2) return 1;
+            return 2;
+        }
+
+        /// <summary>
+        /// 深势阱"进场侧内侧跳板减速次数"评分 (Deep-Well Entry Assist Rank)。
+        /// 物理动机: MESSENGER 式水星进场必须先经金星 ×2 逐级减速 (E→V→V→M),
+        /// 把到达水星的 V∞ 压到 ~5.5 km/s 后水星自减速才可能以 ~0 DSM 完成;
+        /// 若仅 V×1 直接掉井, V→M 单腿被迫背 1.4~2.9 km/s DSM 硬推 (quick 实测 1414 m/s)。
+        /// 返回: 0=进场含≥2次内侧跳板 (V×2, MESSENGER 权威构型, 最优先),
+        /// 1=1次 (V×1), 2=0次; 非深井链一律 1, 表示不干预常规排序。
+        /// </summary>
+        private static int GetDeepWellEntryAssistRank(ChainReachabilityResult r, string departure)
+        {
+            var flybys = r?.FlybyChain;
+            var depBody = SolarSystemCatalog.GetPlanet(departure);
+            if (flybys == null || flybys.Count == 0 || depBody == null || depBody.SMA <= 0) return 1;
+
+            SolarPlanet deepest = null;
+            foreach (var name in flybys)
+            {
+                var p = SolarSystemCatalog.GetPlanet(name);
+                if (p == null || p.IsMoon) continue;
+                if (deepest == null || p.SMA < deepest.SMA) deepest = p;
+            }
+            if (deepest == null || deepest.SMA >= depBody.SMA * 0.45) return 1; // 非深井: 不干预
+
+            int firstDeepIdx = -1;
+            for (int i = 0; i < flybys.Count; i++)
+            {
+                if (flybys[i].Equals(deepest.Name, StringComparison.OrdinalIgnoreCase)) { firstDeepIdx = i; break; }
+            }
+            if (firstDeepIdx <= 0) return 1;
+
+            int entryInnerLike = 0;
+            for (int i = 0; i < firstDeepIdx; i++)
+            {
+                var p = SolarSystemCatalog.GetPlanet(flybys[i]);
+                if (p == null || p.IsMoon) continue;
+                if (p.SMA > deepest.SMA * 1.2 && p.SMA < depBody.SMA * 0.95) entryInnerLike++;
+            }
+            if (entryInnerLike >= 1) return 0;
+            return 1;
+        }
+
+        /// <summary>
         /// 针对候选序列全量执行星历可达性评估，严密剔除不可达荒谬序列，优先排序可达序列
         /// 若用户传入的目标链路存在不可达跃迁，自动合成包含引力井爬升阶梯与多次共振的权威物理序列
         /// </summary>
@@ -394,14 +518,45 @@ namespace KSPGMAT.MGA
             var pool = physicallyViableChains.Count > 0 ? physicallyViableChains : evaluated;
 
             var feasibleCandidates = pool.Where(e => e.IsFeasible)
-                .OrderBy(e => e.TotalDeficitMs)
-                .ThenBy(e => e.FlybyChain.Count)
+                .Select(e => (R: e,
+                              MaxLeg: e.LegReports.Count > 0 ? e.LegReports.Max(l => l.EnergyDeficitMs + l.TurnDeficitMs) : 0.0,
+                              Ladder: GetDeepWellExitLadderScore(e, departure),
+                              Entry: GetDeepWellEntryAssistRank(e, departure),
+                              Pump: GetDeepWellExitPumpRank(e, departure)))
+                // 反梯级泵升完整度优先: 深井爬升链出口侧须含金星+地球泵升阶梯 (完整=0 < 部分=1 < 缺失=2),
+                // 避免 DE 在单一出口腿 (M→E) 上施加 4.5 km/s 天文级 DSM 硬推;
+                // 次优先进场侧内侧跳板减速次数 (V×2 MESSENGER 构型 > V×1 > V×0), 压低 V→M 掉井 DSM;
+                // 再次优先出口侧水星泵升次数 (M×3/M×4 自减速+共振抬升 > M×2 > M×1),
+                // 杜绝 M→V 出口腿 2~4 km/s 硬爬井 (MESSENGER 式水星需至少 3 次连续飞掠);
+                // 随后按链长分层 (<=10 腿优先, <=12 次之), 再按单腿赤字/预估ΔV 排序,
+                // 杜绝 13-14 腿超长共振链 (DE 维度 27+) 霸占演化池导致永不收敛。
+                .OrderBy(t => t.Ladder)
+                .ThenBy(t => t.Entry)
+                .ThenBy(t => t.Pump)
+                .ThenBy(t => t.R.FlybyChain.Count > 12 ? 2 : (t.R.FlybyChain.Count > 10 ? 1 : 0))
+                .ThenBy(t => (t.MaxLeg > MGADefaults.DefaultMaxDsmDeltaVMs) ? 1 : 0)
+                .ThenBy(t => t.R.EstimatedTotalDvMs)
+                .ThenBy(t => t.R.TotalDeficitMs)
+                .ThenBy(t => t.R.FlybyChain.Count)
+                .Select(t => t.R)
                 .ToList();
             if (feasibleCandidates.Count == 0)
             {
                 feasibleCandidates = pool
-                    .OrderBy(e => e.TotalDeficitMs)
-                    .ThenBy(e => e.FlybyChain.Count)
+                    .Select(e => (R: e,
+                                  MaxLeg: e.LegReports.Count > 0 ? e.LegReports.Max(l => l.EnergyDeficitMs + l.TurnDeficitMs) : 0.0,
+                                  Ladder: GetDeepWellExitLadderScore(e, departure),
+                                  Entry: GetDeepWellEntryAssistRank(e, departure),
+                                  Pump: GetDeepWellExitPumpRank(e, departure)))
+                    .OrderBy(t => t.Ladder)
+                    .ThenBy(t => t.Entry)
+                    .ThenBy(t => t.Pump)
+                    .ThenBy(t => t.R.FlybyChain.Count > 12 ? 2 : (t.R.FlybyChain.Count > 10 ? 1 : 0))
+                    .ThenBy(t => (t.MaxLeg > MGADefaults.DefaultMaxDsmDeltaVMs) ? 1 : 0)
+                    .ThenBy(t => t.R.EstimatedTotalDvMs)
+                    .ThenBy(t => t.R.TotalDeficitMs)
+                    .ThenBy(t => t.R.FlybyChain.Count)
+                    .Select(t => t.R)
                     .ToList();
             }
 
@@ -453,6 +608,34 @@ namespace KSPGMAT.MGA
                             diverseFeasible.Add(cand);
                         }
                     }
+                }
+            }
+
+            // 深井任务链长硬上限 (Deep-Well Chain-Length Hard Cap):
+            // 若链路最内天体 SMA < 出发星 45% (深势阱, 如水星), 则借力链总飞掠数硬性裁剪到 <=10
+            // (总腿数 <=11, DE 维度 <=23), 杜绝 x5/x6 共振生成的 12-13 腿超长链 (维度 25+ 永不收敛);
+            // 浅势阱/常规任务维持原样不干预。
+            var depPlanetForCap = SolarSystemCatalog.GetPlanet(departure);
+            if (depPlanetForCap != null && depPlanetForCap.SMA > 0)
+            {
+                bool deepWellPool = diverseFeasible.Any(c =>
+                {
+                    foreach (var nm in c.FlybyChain)
+                    {
+                        var p = SolarSystemCatalog.GetPlanet(nm);
+                        if (p != null && !p.IsMoon && p.SMA > 0 && p.SMA < depPlanetForCap.SMA * 0.45) return true;
+                    }
+                    return false;
+                });
+                if (deepWellPool)
+                {
+                    diverseFeasible = diverseFeasible
+                        .Where(c => c.FlybyChain.Count <= 10 || !c.FlybyChain.Any(nm =>
+                        {
+                            var p = SolarSystemCatalog.GetPlanet(nm);
+                            return p != null && !p.IsMoon && p.SMA > 0 && p.SMA < depPlanetForCap.SMA * 0.45;
+                        }))
+                        .ToList();
                 }
             }
 

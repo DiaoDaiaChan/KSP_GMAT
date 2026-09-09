@@ -269,6 +269,55 @@ namespace KSPGMAT.MGA {
         private static PykepFindTransferWindowDelegate _fnFindTransferWindow;
         private static PykepSynthesizeParkingStateDelegate _fnSynthesizeParkingState;
 
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int PykepCheckCpuFeaturesDelegate(out int sse2, out int avx, out int avx2, out int fma);
+        private static PykepCheckCpuFeaturesDelegate _fnCheckCpuFeatures;
+
+        public static bool HasAVX2 { get; private set; } = false;
+        public static bool HasFMA { get; private set; } = false;
+        public static string CpuFeaturesSummary { get; private set; } = "Unknown";
+
+        [StructLayout(LayoutKind.Sequential, Pack = 8)]
+        public struct GpuPlanetElements {
+            public double sma_km;
+            public double ecc;
+            public double inc_rad;
+            public double raan_rad;
+            public double aop_rad;
+            public double ma0_rad;
+            public double epoch_ut;
+            public double mu_self;
+            public double radius_km;
+            public double park_alt_km;
+        }
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int PykepCheckGpuComputeSupportDelegate(
+            [Out] byte[] outAdapterName,
+            int maxLen,
+            out int outSupported);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int PykepPorkchopGpuEvaluateDelegate(
+            ref GpuPlanetElements p1,
+            ref GpuPlanetElements p2,
+            double centralMu,
+            double depStartUt,
+            double depSpanSec,
+            double tofMinSec,
+            double tofMaxSec,
+            int width,
+            int height,
+            int flybyOnly,
+            [Out] float[] outTotDv,
+            [Out] float[] outC3);
+
+        private static PykepCheckGpuComputeSupportDelegate _fnCheckGpuComputeSupport;
+        private static PykepPorkchopGpuEvaluateDelegate _fnPorkchopGpuEvaluate;
+
+        public static bool IsGpuComputeAvailable { get; private set; } = false;
+        public static string GpuDeviceName { get; private set; } = "Unknown";
+
         private static bool _initAttempted = false;
         private static readonly object _initLock = new object();
 
@@ -435,6 +484,41 @@ namespace KSPGMAT.MGA {
                             }
                             _isAvailable = true;
                             KSPGMATLog.Info($"[PykepNative] Successfully linked official ESA Native C++ Engine: {_versionString}");
+
+                            IntPtr pCpu = GetProcAddress(_dllHandle, "pykep_check_cpu_features");
+                            if (pCpu != IntPtr.Zero) {
+                                _fnCheckCpuFeatures = (PykepCheckCpuFeaturesDelegate)Marshal.GetDelegateForFunctionPointer(pCpu, typeof(PykepCheckCpuFeaturesDelegate));
+                                _fnCheckCpuFeatures(out int sse2, out int avx, out int avx2, out int fma);
+                                HasAVX2 = (avx2 != 0);
+                                HasFMA = (fma != 0);
+                                CpuFeaturesSummary = $"[SSE2={sse2}, AVX={avx}, AVX2={avx2}, FMA={fma}]";
+                                if (HasAVX2 && HasFMA) {
+                                    KSPGMATLog.Info($"[PykepNative] CPU 硬件加速探针: ✅ 已激活 AVX2 + FMA3 极速硬件加速流 {CpuFeaturesSummary}");
+                                } else {
+                                    KSPGMATLog.Info($"[PykepNative] CPU 硬件探针: 运行于标准兼容模式 (SSE2) {CpuFeaturesSummary}");
+                                }
+                            }
+
+                            IntPtr pGpuSupport = GetProcAddress(_dllHandle, "pykep_check_gpu_compute_support");
+                            IntPtr pGpuPorkchop = GetProcAddress(_dllHandle, "pykep_porkchop_gpu_evaluate");
+                            if (pGpuSupport != IntPtr.Zero && pGpuPorkchop != IntPtr.Zero) {
+                                _fnCheckGpuComputeSupport = (PykepCheckGpuComputeSupportDelegate)Marshal.GetDelegateForFunctionPointer(pGpuSupport, typeof(PykepCheckGpuComputeSupportDelegate));
+                                _fnPorkchopGpuEvaluate = (PykepPorkchopGpuEvaluateDelegate)Marshal.GetDelegateForFunctionPointer(pGpuPorkchop, typeof(PykepPorkchopGpuEvaluateDelegate));
+
+                                byte[] nameBuf = new byte[256];
+                                int ret = _fnCheckGpuComputeSupport(nameBuf, nameBuf.Length, out int supp);
+                                if (ret == 0 && supp != 0) {
+                                    IsGpuComputeAvailable = true;
+                                    string raw = System.Text.Encoding.ASCII.GetString(nameBuf);
+                                    int nullIdx = raw.IndexOf('\0');
+                                    GpuDeviceName = nullIdx >= 0 ? raw.Substring(0, nullIdx) : raw;
+                                    KSPGMATLog.Info($"[PykepNative] 通用 GPU 加速探针: ✅ DirectCompute CS 5.0 可用 [{GpuDeviceName}]");
+                                } else {
+                                    IsGpuComputeAvailable = false;
+                                    GpuDeviceName = "DirectCompute Unavailable";
+                                    KSPGMATLog.Info("[PykepNative] 通用 GPU 加速探针: DirectCompute 不可用，将安全回退至多核 CPU (AVX2)");
+                                }
+                            }
 
                             // 自动检测并导入 GMAT / 系统 SPICE 星历
                             TryAutoLoadSpiceFromGMAT();
@@ -1147,6 +1231,41 @@ namespace KSPGMAT.MGA {
                 } catch { }
             }
             return false;
+        }
+
+        /// <summary>
+        /// DirectCompute GPU 极速 Porkchop 批处理求解入口
+        /// (通用 DirectX 11 HLSL CS 5.0 并发计算网格点，零额外驱动依赖)
+        /// </summary>
+        public static int PorkchopGpuEvaluate(
+            ref GpuPlanetElements p1,
+            ref GpuPlanetElements p2,
+            double centralMu,
+            double depStartUt,
+            double depSpanSec,
+            double tofMinSec,
+            double tofMaxSec,
+            int width,
+            int height,
+            bool flybyOnly,
+            float[] outTotDv,
+            float[] outC3)
+        {
+            EnsureLoaded();
+            if (!_isAvailable || !IsGpuComputeAvailable || _fnPorkchopGpuEvaluate == null) return -2;
+            try {
+                return _fnPorkchopGpuEvaluate(
+                    ref p1, ref p2,
+                    centralMu,
+                    depStartUt, depSpanSec,
+                    tofMinSec, tofMaxSec,
+                    width, height,
+                    flybyOnly ? 1 : 0,
+                    outTotDv, outC3);
+            } catch (Exception ex) {
+                KSPGMATLog.Warn($"[PykepNative] GPU 计算异常回退: {ex.Message}");
+                return -3;
+            }
         }
     }
 }

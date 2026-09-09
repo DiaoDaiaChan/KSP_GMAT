@@ -99,15 +99,34 @@ namespace KSPGMAT.MGA
             double healStartUT = Math.Max(config.SearchStartUT, healCenterUT - spanSec);
             double healEndUT = Math.Min(config.SearchEndUT, healCenterUT + spanSec);
 
-            var healBounds = (config.LegToFBounds != null && config.LegToFBounds.Count > 0)
-                ? config.LegToFBounds
-                : MGAMCTSTopologySelector.AutoDeriveResonantLegBounds(config.DeparturePlanet, config.ArrivalPlanet, config.FlybySequence, config.CentralBody);
+            var bestFlybys = (bestSol.Legs != null && bestSol.Legs.Count > 1)
+                ? bestSol.Legs.Take(bestSol.Legs.Count - 1).Select(l => l.ToBody).ToList()
+                : (config.FlybySequence ?? new List<string>());
+
+            var healBounds = (bestSol.Legs != null && bestSol.Legs.Count > 0)
+                ? bestSol.Legs.Select((l, idx) => {
+                    bool isRes = !string.IsNullOrEmpty(l.FromBody) && l.FromBody.Equals(l.ToBody, StringComparison.OrdinalIgnoreCase);
+                    if (isRes)
+                    {
+                        var pB = SolarSystemCatalog.GetPlanet(l.FromBody);
+                        double smaB = PykepBridge.GetRelativeSMA(pB, config.CentralBody, 0.0);
+                        double tOrbD = PykepBridge.CalcOrbitPeriodSec(smaB, SolarSystemCatalog.GetCentralMu(config.CentralBody ?? "Sun")) / 86400.0;
+                        if (tOrbD > 0)
+                        {
+                            return (MinDays: Math.Max(0.5, tOrbD * 0.85), MaxDays: tOrbD * 3.25);
+                        }
+                    }
+                    return (MinDays: Math.Max(0.5, l.ToFDays * 0.70), MaxDays: l.ToFDays * 1.30);
+                }).ToList()
+                : ((config.LegToFBounds != null && config.LegToFBounds.Count > 0)
+                    ? config.LegToFBounds
+                    : MGAMCTSTopologySelector.AutoDeriveResonantLegBounds(config.DeparturePlanet, config.ArrivalPlanet, bestFlybys, config.CentralBody));
 
             var fineCfg = new MGAConfig
             {
                 DepartureBody = config.DeparturePlanet,
                 DestinationBody = config.ArrivalPlanet,
-                FlybySequence = config.FlybySequence,
+                FlybySequence = bestFlybys,
                 EarliestDepartureUT = healStartUT,
                 LatestDepartureUT = healEndUT,
                 DeparturePeAKm = config.DepPeKm,
@@ -127,6 +146,7 @@ namespace KSPGMAT.MGA
                 ConstrainByVesselDeltaV = config.ConstrainByVesselDeltaV,
                 VesselMaxDeltaVMs = config.VesselMaxDeltaVMs,
                 MaxDsmDeltaVMs = config.MaxDsmDeltaVMs,
+                LaunchDeltaVCeilingMs = config.LaunchDeltaVCeilingMs,
                 PopulationSize = Math.Max(60, config.PopulationSize),
                 MaxGenerations = Math.Max(120, config.MaxGenerations),
                 MinToFDays = healBounds.Select(b => b.MinDays).ToList(),
@@ -149,9 +169,13 @@ namespace KSPGMAT.MGA
                 {
                     if (hs.AllLegsFeasible)
                     {
-                        if (auditBudgetMs < 1e8 && hs.TotalDeltaVKms * 1000.0 > auditBudgetMs * 1.05) continue;
-                        if (auditDsmBudgetMs < 1e8 && (hs.TotalDsmDeltaVKms * 1000.0 > auditDsmBudgetMs * 1.05 || (hs.Legs != null && hs.Legs.Any(l => l.DSM != null && l.DSM.DeltaVMs > auditDsmBudgetMs * 1.05)))) continue;
-                        healedList.Add(hs);
+                        bool isStrictlyBetter = (hs.TotalDeltaVKms < bestSol.TotalDeltaVKms);
+                        bool withinBudget = (auditBudgetMs >= 1e8 || hs.TotalDeltaVKms * 1000.0 <= auditBudgetMs * 1.05)
+                            && (auditDsmBudgetMs >= 1e8 || (hs.TotalDsmDeltaVKms * 1000.0 <= auditDsmBudgetMs * 1.05 && (hs.Legs == null || !hs.Legs.Any(l => l.DSM != null && l.DSM.DeltaVMs > auditDsmBudgetMs * 1.05))));
+                        if (withinBudget || isStrictlyBetter)
+                        {
+                            healedList.Add(hs);
+                        }
                     }
                 }
             }

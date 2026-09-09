@@ -221,6 +221,7 @@ namespace KSPGMAT.Model {
         public const double PenaltyIncDegWeight = 25.0;
         public const double PenaltyIncBase = 50.0;
         public const double PenaltyIncToleranceDeg = 0.05;
+        public const double PenaltyPerDsmLeg = 300.0; // 每一条携带 DSM(>100m/s) 的腿固定惩罚, 强化纯弹道引力弹弓链偏好
 
         // --- 12. 引力势阱与梯级爬升常数 (Gravity Potential & Climbing Network) ---
         public const double GiantAssistDistanceRatio = 3.0;   // 触发巨引力弹弓的外轨半长轴倍率门槛
@@ -519,6 +520,14 @@ namespace KSPGMAT.Model {
         public double InsertionDeltaVKms { get; set; }
         public double TotalFlybyDeltaVKms => Legs != null ? Legs.Sum(l => l.FlybyDeltaVKms) : 0.0;
         public double TotalDsmDeltaVKms => Legs != null ? Legs.Sum(l => l.DSM != null ? l.DSM.DeltaVMs / 1000.0 : 0.0) : 0.0;
+
+        // ===== 硬门禁合规审计字段 (Hard Gate Compliance) =====
+        // 由 DE RunWindow 最终选择阶段统一赋值：无论进化期采用何种罚函数引导收敛，
+        // 上报的最优解都必须经过严格硬校验，超标值显式标记，绝不让超门禁解冒充达标。
+        public bool MeetsHardDvGate { get; set; }                 // 总ΔV + 发射 + 单腿/总DSM 全部落入硬门禁
+        public double LaunchOverBudgetMs { get; set; }            // 发射超支 (>0 即超 LaunchDeltaVCeilingMs)
+        public double DsmOverBudgetMs { get; set; }               // 总DSM 超支 (>0 即超 MaxDsmDeltaVMs)
+        public double TotalOverBudgetMs { get; set; }             // 任务总ΔV 超支 (>0 即超 VesselMaxDeltaVMs)
         public List<MGALegResult> Legs { get; set; } = new List<MGALegResult>();
         public List<MGAEventItem> Events { get; set; } = new List<MGAEventItem>();
         public bool AllLegsFeasible { get; set; }

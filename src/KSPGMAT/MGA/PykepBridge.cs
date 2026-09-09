@@ -321,10 +321,28 @@ namespace KSPGMAT.MGA {
             double target_pe_km, double target_ap_km,
             out NativeManifoldCaptureResult out_result);
 
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int PykepMGAHybridEvaluateBatchDelegate(
+            [In] NativePlanetState[] all_dep_planets,
+            [In] NativePlanetState[] all_arr_planets,
+            [In] double[] all_tofs_sec,
+            [In] int[] leg_strategies,
+            [In] int[] flyby_strategies,
+            [In] double[] all_dsm_etas,
+            [In] double[] fb_rps_km,
+            [In] double[] fb_betas_rad,
+            int num_trajectories,
+            int leg_count,
+            double dep_pe_km, double dep_ap_km, double dep_inc_deg,
+            double arr_pe_km, double arr_ap_km, int no_insertion,
+            double mu_central,
+            [Out] NativeMGA1DSMSolution[] out_sols);
+
         private static PykepMGAEvaluateDelegate _fnMGAEvaluate;
         private static PykepMGAEvaluateMuDelegate _fnMGAEvaluateMu;
         private static PykepMGAHybridEvaluateDelegate _fnMGAHybridEvaluate;
         private static PykepMGAHybridEvaluateMuDelegate _fnMGAHybridEvaluateMu;
+        private static PykepMGAHybridEvaluateBatchDelegate _fnMGAHybridEvaluateBatch;
         private static PykepMGA1DSMEvaluateDelegate _fnMGA1DSMEvaluate;
         private static PykepCalcKeplerSTMDelegate _fnCalcKeplerSTM;
         private static PykepCalcBPlaneDelegate _fnCalcBPlane;
@@ -354,6 +372,12 @@ namespace KSPGMAT.MGA {
                     if (pHybridMu != IntPtr.Zero) {
                         _fnMGAHybridEvaluateMu = (PykepMGAHybridEvaluateMuDelegate)Marshal.GetDelegateForFunctionPointer(pHybridMu, typeof(PykepMGAHybridEvaluateMuDelegate));
                         KSPGMATLog.Info("[PykepBridge] Successfully linked native pykep_mga_hybrid_evaluate_mu (Universal Mu) C++ pipeline!");
+                    }
+
+                    IntPtr pBatch = PykepNative.GetProcAddressExport("pykep_mga_hybrid_evaluate_batch");
+                    if (pBatch != IntPtr.Zero) {
+                        _fnMGAHybridEvaluateBatch = (PykepMGAHybridEvaluateBatchDelegate)Marshal.GetDelegateForFunctionPointer(pBatch, typeof(PykepMGAHybridEvaluateBatchDelegate));
+                        KSPGMATLog.Info("[PykepBridge] Successfully linked native pykep_mga_hybrid_evaluate_batch (OpenMP + AVX2) C++ pipeline!");
                     }
 
                     IntPtr pHybrid = PykepNative.GetProcAddressExport("pykep_mga_hybrid_evaluate");
@@ -501,6 +525,44 @@ namespace KSPGMAT.MGA {
                     soi_radius = toName.Equals(central, StringComparison.OrdinalIgnoreCase) ? 1e18 : (p2 != null && p2.SoiKm > 0 ? p2.SoiKm : 1e18),
                     atm_radius = p2 != null ? (p2.RadiusKm + p2.AtmosphereDepthKm) : 0.0
                 };
+
+                // 极速首航段逃逸能量门禁预检 (Leg 0 Fast Launch Ceiling Gate):
+                // 若用户设置了 LaunchDeltaVCeilingMs，
+                // 一旦首段单次出射机动超出硬门禁 1.05 倍 (如 3800 * 1.05 = 3990 m/s)，该解已无可能收敛至任务预算内。
+                // 立即抛弃不可能解，提前返回带有平滑梯度的惩罚解，完全规避后续所有航段的天文级开普勒与兰伯特求解！
+                if (k == 0 && config != null && config.LaunchDeltaVCeilingMs > 0 && legCount > 1 && !fromName.Equals(toName, StringComparison.OrdinalIgnoreCase)) {
+                    if (PykepNative.SolveLambert(r1, r2, tof, centralMu, false, out Vector3d vDep0, out _)) {
+                        Vector3d vInf0 = vDep0 - v1;
+                        double vInfMag0 = vInf0.magnitude;
+                        double p1Mu = p1 != null ? p1.Mu : 398600.4;
+                        double rPark0 = (p1 != null ? p1.RadiusKm : 6378.137) + (config.DeparturePeAKm > 0 ? config.DeparturePeAKm : 200.0);
+                        double vHyp0 = Math.Sqrt(vInfMag0 * vInfMag0 + 2.0 * p1Mu / rPark0);
+                        double vPark0 = Math.Sqrt(p1Mu / rPark0);
+                        double launchDvMs = (vHyp0 - vPark0) * 1000.0;
+                        double maxAllowedLaunchMs = config.LaunchDeltaVCeilingMs * 1.05;
+                        if (launchDvMs > maxAllowedLaunchMs) {
+                            var earlySol = new MGASolution {
+                                DepartureUT = genome[0],
+                                TotalFlightDays = tof / 86400.0,
+                                LaunchDeltaVKms = launchDvMs / 1000.0,
+                                TotalDeltaVKms = (launchDvMs / 1000.0) + 25.0 * (legCount - 1),
+                                AllLegsFeasible = false,
+                                TotalOverBudgetMs = launchDvMs - config.LaunchDeltaVCeilingMs,
+                                LaunchOverBudgetMs = launchDvMs - config.LaunchDeltaVCeilingMs,
+                                Legs = new List<MGALegResult> {
+                                    new MGALegResult {
+                                        FromBody = fromName,
+                                        ToBody = toName,
+                                        ToFDays = tof / 86400.0,
+                                        IsFeasible = false,
+                                        DSM = new DSMResult { DeltaVMs = 25000.0 * (legCount - 1) }
+                                    }
+                                }
+                            };
+                            return earlySol;
+                        }
+                    }
+                }
 
                 currentUT = arrUT;
             }
@@ -662,6 +724,181 @@ namespace KSPGMAT.MGA {
 
             // 原生 MGA 桥解算失败或未就绪：100% 遵守基线0/7/11，严禁托管自编公式拟合
             return null;
+        }
+
+        /// <summary>
+        /// 原生 OpenMP + AVX2 硬件加速批处理 MGA 轨迹解算器：
+        /// 一次性将整个种群 (例如 35~140 个个体) 扁平封送入 C++，
+        /// 在 C++ 内部以 AVX2 矢量与 OpenMP 多核并发执行计算，大幅消除 P/Invoke 与托管垃圾回收损耗
+        /// </summary>
+        public static List<MGASolution> BuildBatchSolutions(
+            List<double[]> genomes,
+            List<string> fullChain,
+            MGAConfig config)
+        {
+            if (genomes == null || genomes.Count == 0 || fullChain == null || fullChain.Count < 2) return new List<MGASolution>();
+            int popSize = genomes.Count;
+            int legCount = fullChain.Count - 1;
+            if (legCount > 16) return new List<MGASolution>();
+
+            // 若底层未链接批处理导出函数，自动平滑优雅降级为逐个求解
+            if (_fnMGAHybridEvaluateBatch == null) {
+                var fallbackList = new List<MGASolution>(popSize);
+                for (int i = 0; i < popSize; i++) {
+                    fallbackList.Add(BuildFullSolution(genomes[i], fullChain, config, computeAdvanced: false));
+                }
+                return fallbackList;
+            }
+
+            string central = config?.CentralBody ?? "Sun";
+            double centralMu = SolarSystemCatalog.GetCentralMu(central);
+            double centralRadius = SolarSystemCatalog.GetPlanet(central)?.RadiusKm ?? MGADefaults.EarthRadiusKm;
+
+            if (config != null) config.SyncStrategiesWithChain(legCount);
+
+            var legStrats = new int[legCount];
+            for (int k = 0; k < legCount; k++) {
+                if (config != null && config.LegStrategies != null && k < config.LegStrategies.Count) {
+                    legStrats[k] = (int)config.LegStrategies[k];
+                } else if (config != null && config.EngineMode == MGAEngineMode.DeepSpaceManeuver1DSM) {
+                    legStrats[k] = 1;
+                } else if (config != null && config.EngineMode == MGAEngineMode.LowThrustSimsFlanagan) {
+                    legStrats[k] = 2;
+                } else {
+                    legStrats[k] = 0;
+                }
+            }
+
+            int fbCount = Math.Max(1, legCount - 1);
+            var fbStrats = new int[fbCount];
+            for (int k = 0; k < fbCount; k++) {
+                if (config != null && config.FlybyStrategies != null && k < config.FlybyStrategies.Count) {
+                    fbStrats[k] = (int)config.FlybyStrategies[k];
+                } else {
+                    fbStrats[k] = 0;
+                }
+            }
+
+            var fbRps = new double[legCount];
+            var fbBetas = new double[legCount];
+            for (int k = 0; k < legCount; k++) {
+                fbRps[k] = (config != null && config.FlybyRpKms != null && k < config.FlybyRpKms.Count) ? config.FlybyRpKms[k] : 0.0;
+                fbBetas[k] = (config != null && config.FlybyBetasRad != null && k < config.FlybyBetasRad.Count) ? config.FlybyBetasRad[k] : 0.0;
+            }
+
+            int chainLen = fullChain.Count;
+            var planets = new SolarPlanet[chainLen];
+            var planetTemplates = new NativePlanetState[chainLen];
+            for (int c = 0; c < chainLen; c++) {
+                string bName = fullChain[c];
+                planets[c] = SolarSystemCatalog.GetPlanet(bName);
+                var p = planets[c];
+                planetTemplates[c] = new NativePlanetState {
+                    mu = p != null ? p.Mu : centralMu,
+                    radius = p != null && p.RadiusKm > 0 ? p.RadiusKm : centralRadius,
+                    safe_radius = p != null && p.SafeRadiusKm > 0 ? p.SafeRadiusKm : (centralRadius + 100.0),
+                    soi_radius = bName.Equals(central, StringComparison.OrdinalIgnoreCase) ? 1e18 : (p != null && p.SoiKm > 0 ? p.SoiKm : 1e18),
+                    atm_radius = p != null ? (p.RadiusKm + p.AtmosphereDepthKm) : 0.0
+                };
+            }
+
+            var allDepPlanets = new NativePlanetState[popSize * legCount];
+            var allArrPlanets = new NativePlanetState[popSize * legCount];
+            var allTofs = new double[popSize * legCount];
+            var allDsmEtas = new double[popSize * legCount];
+
+            for (int i = 0; i < popSize; i++) {
+                double[] genome = genomes[i];
+
+                // 1. 欧空局官方链式高效星历提取：每个天体仅求 1 次星历 (消灭 50% 跨边界重复查询)
+                var rChain = new Vector3d[chainLen];
+                var vChain = new Vector3d[chainLen];
+                double currentUT = genome[0];
+                for (int c = 0; c < chainLen; c++) {
+                    if (c > 0) currentUT += genome[c];
+                    var p = planets[c];
+                    if (p != null) {
+                        p.GetRelativeState(central, currentUT, out rChain[c], out vChain[c]);
+                    } else {
+                        rChain[c] = Vector3d.zero;
+                        vChain[c] = Vector3d.zero;
+                    }
+                }
+
+                // 2. 出发点与到达点停泊轨道合成特判 (仅首末节点处理一次)
+                if (fullChain[0].Equals(central, StringComparison.OrdinalIgnoreCase)) {
+                    var p0 = planets[0];
+                    double rPark = (p0 != null && p0.RadiusKm > 0 ? p0.RadiusKm : centralRadius) + (config?.DeparturePeAKm ?? MGADefaults.DepartureAltitudeKm);
+                    bool lockPlane = config != null && (config.DepartureMode == MGADepartureMode.InOrbitLockedOrbit || config.LockDepartureInclination);
+                    double inc = lockPlane ? config.DepartureInclinationDeg : 0.0;
+                    double lan = lockPlane ? config.DepartureRAANDeg : 0.0;
+                    if (PykepNative.SynthesizeParkingState(centralMu, rPark, lockPlane, inc, lan, rChain[1], vChain[1], out Vector3d synR, out Vector3d synV)) {
+                        rChain[0] = synR;
+                        vChain[0] = synV;
+                    }
+                }
+                if (fullChain[chainLen - 1].Equals(central, StringComparison.OrdinalIgnoreCase)) {
+                    var pLast = planets[chainLen - 1];
+                    double rPark = (pLast != null && pLast.RadiusKm > 0 ? pLast.RadiusKm : centralRadius) + (config?.DestinationPeAKm ?? MGADefaults.DestinationAltitudeKm);
+                    if (PykepNative.SynthesizeParkingState(centralMu, rPark, false, 0.0, 0.0, rChain[chainLen - 2], vChain[chainLen - 2], out Vector3d synR, out Vector3d synV)) {
+                        rChain[chainLen - 1] = synR;
+                        vChain[chainLen - 1] = synV;
+                    }
+                }
+
+                // 3. 极速填充整代航段扁平数组 (0 次额外字典查找与字符串匹配)
+                for (int k = 0; k < legCount; k++) {
+                    double tof = genome[1 + k];
+                    int flatIdx = i * legCount + k;
+
+                    allTofs[flatIdx] = tof;
+
+                    double geneEta = (genome.Length > 1 + legCount + k) ? genome[1 + legCount + k] : -1.0;
+                    if (geneEta > 0.0) {
+                        allDsmEtas[flatIdx] = Math.Max(0.05, Math.Min(0.95, geneEta));
+                    } else {
+                        allDsmEtas[flatIdx] = (config != null && config.DsmEtas != null && k < config.DsmEtas.Count && config.DsmEtas[k] > 0) ? config.DsmEtas[k] : (config != null ? config.DsmEtaDefault : 0.5);
+                    }
+
+                    var depState = planetTemplates[k];
+                    depState.rx = rChain[k].x; depState.ry = rChain[k].y; depState.rz = rChain[k].z;
+                    depState.vx = vChain[k].x; depState.vy = vChain[k].y; depState.vz = vChain[k].z;
+                    allDepPlanets[flatIdx] = depState;
+
+                    var arrState = planetTemplates[k + 1];
+                    arrState.rx = rChain[k + 1].x; arrState.ry = rChain[k + 1].y; arrState.rz = rChain[k + 1].z;
+                    arrState.vx = vChain[k + 1].x; arrState.vy = vChain[k + 1].y; arrState.vz = vChain[k + 1].z;
+                    allArrPlanets[flatIdx] = arrState;
+                }
+            }
+
+            var nSols = new NativeMGA1DSMSolution[popSize];
+            double depInc = (config != null && config.DepartureMode == MGADepartureMode.PreLaunchFreeOrbit)
+                ? -1.0
+                : (config != null ? config.DepartureInclinationDeg : 0.0);
+
+            int batchStatus = _fnMGAHybridEvaluateBatch(
+                allDepPlanets, allArrPlanets, allTofs,
+                legStrats, fbStrats,
+                allDsmEtas, fbRps, fbBetas,
+                popSize, legCount,
+                config != null ? config.DeparturePeAKm : 200.0, config != null ? config.DepartureApAKm : 200.0,
+                depInc,
+                config != null ? config.DestinationPeAKm : 200.0, config != null ? config.DestinationApAKm : 200.0,
+                (config != null && config.NoInsertionBurn) ? 1 : 0,
+                centralMu,
+                nSols);
+
+            var resultList = new List<MGASolution>(popSize);
+            for (int i = 0; i < popSize; i++) {
+                var sol = MapNative1DSMSolution(nSols[i], genomes[i][0], fullChain, config);
+                for (int k = 0; k < sol.Legs.Count && k < legStrats.Length; k++) {
+                    sol.Legs[k].Strategy = (MGALegStrategy)legStrats[k];
+                }
+                resultList.Add(sol);
+            }
+
+            return resultList;
         }
 
         private static void PopulateAdvancedAstrodynamics(MGASolution sol, double[] genome, List<string> fullChain, MGAConfig config) {

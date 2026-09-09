@@ -177,6 +177,25 @@ EXPORT_API int pykep_mga_evaluate_mu(
                 } catch (...) {}
             }
 
+            bool is_res_b = (std::abs(p1.mu - p2.mu) < 1e-4 && std::abs(p1.radius - p2.radius) < 1e-4 && !is_central_body(p1, effective_mu));
+            if (is_res_b && leg_branches[k].v1.empty()) {
+                double v_p1_mag = std::sqrt(p1.vx*p1.vx + p1.vy*p1.vy + p1.vz*p1.vz);
+                if (v_p1_mag > 1e-4 && r1_len > 1e-4) {
+                    double u_p1[3] = { p1.vx / v_p1_mag, p1.vy / v_p1_mag, p1.vz / v_p1_mag };
+                    int max_m = std::max(1, std::min(4, nmax + 1));
+                    for (int m = 1; m <= max_m; ++m) {
+                        double t_sc = tof / (double)m;
+                        double a_res = std::cbrt(effective_mu * (t_sc / (2.0 * PI)) * (t_sc / (2.0 * PI)));
+                        double v_sq = effective_mu * (2.0 / r1_len - 1.0 / a_res);
+                        if (v_sq <= 1e-4) continue;
+                        double v_req = std::sqrt(v_sq);
+                        std::array<double, 3> v_cand = { v_req * u_p1[0], v_req * u_p1[1], v_req * u_p1[2] };
+                        leg_branches[k].v1.push_back(v_cand);
+                        leg_branches[k].v2.push_back(v_cand);
+                    }
+                }
+            }
+
             if (leg_branches[k].v1.empty()) {
                 out_sol->all_feasible = 0;
                 return -2;

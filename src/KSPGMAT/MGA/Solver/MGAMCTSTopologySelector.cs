@@ -230,11 +230,20 @@ namespace KSPGMAT.MGA
                                 sequences.Add(new List<string> { primaryGiant.Name, secondaryGiant.Name, config.ArrivalPlanet });
                             }
 
-                            // 内潜反弹大加速: dep -> Inner -> dep -> Giant -> arr
-                            if (innerAssist != null && (rArr >= rDep * 3.0))
+                            // 全系巨行星大巡游接力 (Grand Tour / Voyager 2): 沿半长轴单调递增将所有中途巨行星全链串联
+                            var allOuterGiants = intermediateOuters
+                                .Where(b => b.Mu >= 5.0e6 || b.RadiusKm >= 20000.0)
+                                .OrderBy(b => b.SMA)
+                                .ToList();
+                            if (allOuterGiants.Count >= 3)
                             {
-                                sequences.Add(new List<string> { innerAssist.Name, config.DeparturePlanet, primaryGiant.Name, config.ArrivalPlanet });
+                                var grandTour = allOuterGiants.Select(g => g.Name).ToList();
+                                grandTour.Add(config.ArrivalPlanet);
+                                sequences.Add(grandTour);
                             }
+
+                            // 始发天体自身 2:1 EGA 共振蓄能 (如 Juno 2011): dep -> dep -> Giant -> arr
+                            sequences.Add(new List<string> { config.DeparturePlanet, primaryGiant.Name, config.ArrivalPlanet });
 
                             // 中继渐进跳板: 若始发天体与主巨行星之间存在中等行星
                             var steppingStone = sisterBodies
@@ -266,6 +275,28 @@ namespace KSPGMAT.MGA
                             if (innerAssist != null && secondaryGiant != null)
                             {
                                 sequences.Add(new List<string> { innerAssist.Name, primaryGiant.Name, secondaryGiant.Name, config.ArrivalPlanet });
+                            }
+                        }
+
+                        // 5.3 普适内潜反弹蓄能跳板 (Inward Swing-by Assist Ladders):
+                        // 当目标位于外侧 (rArr > rDep) 且母星系内侧存在强引力天体 (如金星) 时，
+                        // 先潜入内侧借力，再折返出发天体泵能甩向外侧
+                        if (innerAssist != null && (rArr >= rDep * 2.5))
+                        {
+                            // 基础内潜折返: dep -> Inner -> dep -> arr (VEGA)
+                            sequences.Add(new List<string> { innerAssist.Name, config.DeparturePlanet, config.ArrivalPlanet });
+                            // 伽利略级双地回折泵能: dep -> Inner -> dep -> dep -> arr (VEEGA / Galileo 拓扑！)
+                            sequences.Add(new List<string> { innerAssist.Name, config.DeparturePlanet, config.DeparturePlanet, config.ArrivalPlanet });
+                            // 双金星内潜共振回折: dep -> Inner -> Inner -> dep -> arr (VVEGA)
+                            sequences.Add(new List<string> { innerAssist.Name, innerAssist.Name, config.DeparturePlanet, config.ArrivalPlanet });
+
+                            // 若中途存在显著外侧中继巨行星 (如去土星/海王星途经木星):
+                            if (primaryGiant != null && (primaryGiant.Mu >= 5.0e6 || primaryGiant.RadiusKm >= 20000.0) && primaryGiant.SMA < rArr * 0.8)
+                            {
+                                // 卡西尼级复合多星跳板: dep -> Inner -> Inner -> dep -> Giant -> arr (VVEJGA / Cassini 拓扑！)
+                                sequences.Add(new List<string> { innerAssist.Name, innerAssist.Name, config.DeparturePlanet, primaryGiant.Name, config.ArrivalPlanet });
+                                // 伽利略+外巨行星中继: dep -> Inner -> dep -> dep -> Giant -> arr
+                                sequences.Add(new List<string> { innerAssist.Name, config.DeparturePlanet, config.DeparturePlanet, primaryGiant.Name, config.ArrivalPlanet });
                             }
                         }
                         else if (innerAssist != null)
@@ -316,13 +347,15 @@ namespace KSPGMAT.MGA
             result.Add(new List<string>(cleaned));
 
             // 2. 中途天体乱序全排列探索 (Permutations)
+            // 物理约束 (IJCAI 单调能量梯级): 交换中间天体顺序可能把外行星排到内爬升体之前，产生非物理跳跃
+            // (如 Cassini 的 Earth➔Jupiter➔Venus)，导致发射能量天文级虚高。仅保留"折叠共振重复后 SMA 单调"的排列
             if (cleaned.Count >= 2 && cleaned.Count <= 5)
             {
                 var allPerms = GetPermutations(cleaned);
                 foreach (var p in allPerms)
                 {
                     var chain = new List<string>(p);
-                    if (!result.Any(r => r.SequenceEqual(chain)))
+                    if (!result.Any(r => r.SequenceEqual(chain)) && IsSmaMonotonicLadder(chain))
                     {
                         result.Add(chain);
                         if (result.Count >= maxCombinations) break;
@@ -373,6 +406,92 @@ namespace KSPGMAT.MGA
                             }
                         }
                     }
+
+                    // 3.3 MESSENGER 式出发星前置减速链 (Deep-Well Pre-Deceleration Chain)
+                    // 真实物理法则: NASA MESSENGER 进入水星前先飞掠地球 1 次 + 金星 2 次逐级减速，
+                    // 把到达水星的 V∞ 从 ~10 km/s 压到 ~5.5 km/s，再以水星 3 次飞掠逐级减速泊入；
+                    // ESA BepiColombo 同构 (Earth x1 + Venus x2 + Mercury x6)。
+                    // 当前求解器此前只生成 [inner]+chain / [inner,inner]+chain (以出发星为隐含起点)，
+                    // 缺 "dep->dep" 出发星自身前置飞掠段，导致 Scenario 9 首腿直接掉深井 (V→M 单腿 4233 m/s 硬推)。
+                    // 此处显式派生 MESSENGER/BepiColombo 权威前置构型，把首段减速责任分摊到地球/金星逐级飞掠。
+                    bool deepWellTarget = pArrObj != null && pDepObj != null &&
+                                          pArrObj.SMA < pDepObj.SMA * 0.5;
+                    if (!deepWellTarget && pArrObj != null && pDepObj != null)
+                    {
+                        // 若目标是远外天体 (如 Neptune)，同样允许出发星前置飞掠来压低发射能量
+                        deepWellTarget = pArrObj.SMA >= pDepObj.SMA * MGADefaults.GiantAssistDistanceRatio;
+                    }
+                    if (deepWellTarget && cleaned.Count > 0)
+                    {
+                        // 变体 A (完整 MESSENGER 式): dep -> dep -> inner -> inner -> 意图...
+                        var messengerFull = new List<string> { departure, innerAssist.Name, innerAssist.Name };
+                        messengerFull.AddRange(cleaned);
+                        if (!result.Any(r => r.SequenceEqual(messengerFull)))
+                        {
+                            candidatesToInsert.Add(messengerFull);
+                        }
+                        // 变体 B (单次出发星前置 + 双内潜): dep -> dep -> inner -> 意图...
+                        var messengerSingle = new List<string> { departure, innerAssist.Name };
+                        messengerSingle.AddRange(cleaned);
+                        if (!result.Any(r => r.SequenceEqual(messengerSingle)))
+                        {
+                            candidatesToInsert.Add(messengerSingle);
+                        }
+                        // 变体 C (出发星前置 + 目标自身共振收尾): dep -> dep -> inner -> inner -> 意图 -> 意图
+                        var messengerResonant = new List<string> { departure, innerAssist.Name, innerAssist.Name };
+                        messengerResonant.AddRange(cleaned);
+                        if (cleaned.Count > 0)
+                        {
+                            // 总量守衡: 收尾追加仅允许在目标自减速飞掠总数 <4 时进行,
+                            // 杜绝 x5/x6 超长共振链 (DE 维度 25+) 霸占演化池。
+                            string tail = cleaned[cleaned.Count - 1];
+                            int tailCount = 0;
+                            foreach (var nm in messengerResonant)
+                            {
+                                if (nm.Equals(tail, StringComparison.OrdinalIgnoreCase)) tailCount++;
+                            }
+                            if (tailCount < 4) messengerResonant.Add(tail);
+                        }
+                        if (!result.Any(r => r.SequenceEqual(messengerResonant)))
+                        {
+                            candidatesToInsert.Add(messengerResonant);
+                        }
+                        // 变体 D/E (出发星前置 + 深势阱目标自身多次飞掠自减速): 意图 x3 / x4
+                        // "水星自减速"真实物理: MESSENGER 以水星 3 次飞掠逐级减速泊入, BepiColombo 以 6 次;
+                        // 显式派生中等长度自减速链 (总 6-7 腿, DE 维度 13-15), 避免仅 1 次水星飞掠
+                        // 迫使 V→M 单腿大 DSM 硬推 (此前 2659 m/s 超标根因)。
+                        if (cleaned.Count > 0)
+                        {
+                            string selfBody = cleaned[cleaned.Count - 1];
+                            var selfBodyObj = SolarSystemCatalog.GetPlanet(selfBody);
+                            if (selfBodyObj != null && selfBodyObj.SMA < pDepObj.SMA * 0.45)
+                            {
+                                // 总量守衡: 变体 D/E 只把总自减速飞掠次数"补足"到 3~4 次 (MESSENGER x3 / BepiColombo 级 x4),
+                                // 若 cleaned 已含 x3/x4 共振链则不再追加, 严禁制造 x5/x6 超长链 (DE 维度 25+ 永不收敛)。
+                                int existingSelf = 0;
+                                foreach (var nm in cleaned)
+                                {
+                                    if (nm.Equals(selfBody, StringComparison.OrdinalIgnoreCase)) existingSelf++;
+                                }
+                                foreach (int targetSelf in new int[] { 3, 4 })
+                                {
+                                    int need = targetSelf - existingSelf;
+                                    if (need <= 0) continue;
+                                    var messengerSelfDecel = new List<string> { departure, innerAssist.Name, innerAssist.Name };
+                                    messengerSelfDecel.AddRange(cleaned);
+                                    for (int s = 0; s < need; s++)
+                                    {
+                                        messengerSelfDecel.Add(selfBody);
+                                    }
+                                    if (!result.Any(r => r.SequenceEqual(messengerSelfDecel)))
+                                    {
+                                        candidatesToInsert.Add(messengerSelfDecel);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     foreach (var ins in candidatesToInsert)
                     {
                         if (result.Count < maxCombinations + 4)
@@ -778,6 +897,17 @@ namespace KSPGMAT.MGA
                 ? SolarSystemCatalog.GetCentralMu(centralBody) 
                 : (SolarSystemCatalog.SunMu > 0 ? SolarSystemCatalog.SunMu : 1.32712440018e11)) * 1e9;
 
+            // 反梯级泵升深井识别: 全链最内天体 (如 Scenario 9 的水星 0.387 AU) 是否深于出发星 45%
+            var depObjBounds = SolarSystemCatalog.GetPlanet(departure);
+            double depSmaBounds = (depObjBounds != null && depObjBounds.SMA > 0) ? depObjBounds.SMA : 1.496e8;
+            double deepestSma = double.MaxValue;
+            foreach (var bn in fullChain)
+            {
+                var bp = SolarSystemCatalog.GetPlanet(bn);
+                if (bp != null && bp.SMA > 0) deepestSma = Math.Min(deepestSma, bp.SMA);
+            }
+            bool deepWellExitMode = (deepestSma < depSmaBounds * 0.45);
+
             for (int k = 0; k < fullChain.Count - 1; k++)
             {
                 string b1 = fullChain[k];
@@ -794,12 +924,64 @@ namespace KSPGMAT.MGA
                     double tOrbDays = 2.0 * Math.PI * Math.Sqrt(Math.Pow(sma1 * 1000.0, 3.0) / muCentralM) / 86400.0;
                     if (tOrbDays <= 0 || double.IsNaN(tOrbDays)) tOrbDays = 365.25;
 
-                    // 普适开普勒共振调相段：允许 1:1, 2:1 等物理多阶有理共振槽
-                    // 浅势阱小天体 (如水星/Moho μ/R < 20) 严格限制在 2:1 共振以内 (<= 2.25 T_orb)，防止航天器被误抛至超大椭圆脱离内侧对齐
-                    double resMaxFactor = (p1 != null && p1.RadiusKm > 0 && (p1.Mu / p1.RadiusKm) < 20.0) 
-                        ? 2.25 
-                        : MGADefaults.ResonanceToFMaxFactor;
-                    double minLeg = Math.Max(0.5, tOrbDays * MGADefaults.ResonanceToFMinFactor);
+                    // 普适开普勒共振调相段：允许 1:1, 3:2, 5:2, 2:1 等物理多阶有理共振槽
+                    // 1. 浅势阱小天体 (如水星/Moho μ/R < 20) 限制在 2:1 与 5:2 以内 (<= 2.6 T_orb):
+                    //    2:1 (176d, 拱点抬至 0.84 AU) 是水星共振抬升主力槽, 5:2 (220d, 拱点抬至 ~1.04 AU)
+                    //    是反梯级泵升的亚共振辅助槽; 更高阶 (3:1=264d) 会把航天器误抛至超大椭圆脱离内侧对齐
+                    // 2. 中继大行星 (如 Earth, SMA ~ 1 AU) 若后续衔接外侧巨行星 (如 Jupiter, SMA > 5 AU):
+                    //    对齐伽利略 VEEGA 机制 (2:1 共振蓄能抬升远日点至 2.16 AU, 相对速度增至 9 km/s 直冲木星):
+                    //    上限锁定在 2.25 T_orb (820天)，彻底排除 3:1 (1100天) 劣质局部伪极值与超额 DSM！
+                    bool hasDownstreamGiant = false;
+                    for (int nxt = k + 1; nxt < fullChain.Count; nxt++)
+                    {
+                        var pNxt = SolarSystemCatalog.GetPlanet(fullChain[nxt]);
+                        if (pNxt != null && pNxt.SMA >= sma1 * 3.5) { hasDownstreamGiant = true; break; }
+                    }
+
+                    double resMinFactor = MGADefaults.ResonanceToFMinFactor;
+                    double resMaxFactor = 2.25; // 默认内侧天体 (如地球/金星) 限制在 2:1 共振以内 (0.85 ~ 2.25 T_orb)
+
+                    if (p1 != null && p1.RadiusKm > 0 && (p1.Mu / p1.RadiusKm) < 20.0)
+                    {
+                        // 浅势阱小天体 (如水星/Moho) 多次共振梯级泵升 (Resonant Ladder Pump-Up):
+                        // 允许开普勒多阶有理共振槽 (1:1=88d, 2:1=176d, 3:1=264d 泵升至 0.805 AU 跨越金星轨道)
+                        // 统一提供 0.85 ~ 3.15 T_orb 宽裕物理搜索区间，赋能 DE 求解器自适应锁定最佳相位
+                        resMinFactor = 0.85;
+                        resMaxFactor = 3.15;
+                    }
+                    else if (p1 != null && p1.SMA < depSmaBounds * 0.85 && p1.SMA > deepestSma * 1.2)
+                    {
+                        resMinFactor = 0.90;
+                        resMaxFactor = 2.15; // 金星等内侧中继跳板: 允许 1:1 (~225天) 与 2:1/3:2 多元开普勒共振调相
+                    }
+                    else if (hasDownstreamGiant && sma1 >= 1.2e8 && sma1 <= 2.2e8)
+                    {
+                        // 依据该共振段之后的下游走向区分前置 EGA 与后置 VEEGA:
+                        string nextDest = null;
+                        for (int nk = k + 1; nk < fullChain.Count; nk++)
+                        {
+                            if (!fullChain[nk].Equals(b1, StringComparison.OrdinalIgnoreCase))
+                            {
+                                nextDest = fullChain[nk];
+                                break;
+                            }
+                        }
+                        var pNextDest = !string.IsNullOrEmpty(nextDest) ? SolarSystemCatalog.GetPlanet(nextDest) : null;
+                        if (pNextDest != null && pNextDest.SMA < sma1 * 0.85)
+                        {
+                            // 前置 1:1 EGA 调速段 (如 Earth -> Earth -> Venus，锁定 340 ~ 390 天)
+                            resMinFactor = 0.93;
+                            resMaxFactor = 1.07;
+                        }
+                        else
+                        {
+                            // 地球 VEEGA 2:1 共振蓄能槽 (锁定 680 ~ 780 天, 严禁向 1:1 或 3:1 漂移)
+                            resMinFactor = 1.86;
+                            resMaxFactor = 2.14;
+                        }
+                    }
+
+                    double minLeg = Math.Max(0.5, tOrbDays * resMinFactor);
                     double maxLeg = Math.Max(minLeg + 5.0, tOrbDays * resMaxFactor);
                     bounds.Add((minLeg, maxLeg));
                 }
@@ -818,21 +1000,61 @@ namespace KSPGMAT.MGA
                         // 始发段受用户/配置设定的出射因子约束
                         minFactor = depMinFactor;
                         maxFactor = depMaxFactor;
+                        // 若始发段直接连接外侧巨行星 (如 Earth -> Jupiter, SMA 跨度 >= 3.5x):
+                        // 允许高速双曲切入 (0.35 ~ 1.50 T_H ~ 350d - 1500d)，覆盖 Voyager/New Horizons/Pioneer 等高能发射窗口
+                        if (p2 != null && p2.SMA >= sma1 * 3.5)
+                        {
+                            minFactor = Math.Min(minFactor, 0.35);
+                        }
+                    }
+                    else if (deepWellExitMode && p1 != null && p1.SMA > 0 &&
+                             p1.SMA <= deepestSma * 1.05 && p2 != null && p2.SMA > p1.SMA * 1.3)
+                    {
+                        // 深井出口反梯级泵升腿 (Deep-Well Exit Reverse-Ladder Leg):
+                        // 从全链最内天体 (水星) 爬升至外侧首个借力体 (金星):
+                        // 覆盖开普勒 Type-I 单弧与金星会合窗口 (0.75 ~ 1.45 T_H ~ 79d - 153d)
+                        // 杜绝因放宽至 3.50 T_H 导致航时漂移至 214d (相位偏移 180°) 产生的 3400 m/s 离面虚耗
+                        minFactor = 0.75;
+                        maxFactor = 1.45;
+                    }
+                    else if (p1 != null && p2 != null && p1.SMA < depSmaBounds * 0.85 && p2.SMA <= deepestSma * 1.05)
+                    {
+                        // 内潜切入深势阱腿 (如 Venus -> Mercury):
+                        // 覆盖开普勒 Type-I 与 Type-II 降交点转移 (0.65 ~ 2.20 T_H ~ 48d - 165d)
+                        minFactor = 0.65;
+                        maxFactor = 2.20;
+                    }
+                    else if (sma1 >= 1.2e8 && sma1 <= 2.2e8 && p2 != null && p2.SMA >= sma1 * 3.5)
+                    {
+                        // 从中继大行星冲向巨行星 (如 Earth -> Jupiter):
+                        // 覆盖伽利略 VEEGA 标准霍曼转移与直接切入 (0.40 ~ 1.35 T_H ~ 400d - 1350d)
+                        minFactor = 0.40;
+                        maxFactor = 1.35;
+                    }
+                    else if (p1 != null && (p1.Mu >= 5.0e6 || p1.RadiusKm >= 20000.0) && sma2 > sma1)
+                    {
+                        // 巨行星强引力大偏折弹弓高速双曲飞向外侧行星 (如 Jupiter -> Saturn, Saturn -> Uranus, Uranus -> Neptune):
+                        // 航天器经巨行星借力后能量极大，以超高速度沿双曲弧段飞向外侧天体，
+                        // 航时为标准霍曼的 0.15 ~ 0.55 T_H (覆盖 Voyager 2 木-土 2.1年、土-天 4.4年、天-海 3.6年等极速弹弓)
+                        minFactor = 0.15;
+                        maxFactor = 0.55;
                     }
                     else if (ratioSma <= MGADefaults.AdjacentTransferSmaRatioThreshold)
                     {
                         // 近邻天体转移 (如 Venus <-> Mercury 比值 1.87, Earth <-> Venus 比值 1.38):
                         // 物理单弧转移是以真近点角变化 delta_theta ~ 180° 为主的椭圆弧段，
-                        // 航时严格限制在 [NearTransferToFMinFactor * T_H, NearTransferToFMaxFactor * T_H]
+                        // 航时允许 Type-I/Type-II 弹性延伸，最大放宽至 2.40 T_H
                         minFactor = MGADefaults.NearTransferToFMinFactor;
-                        maxFactor = MGADefaults.NearTransferToFMaxFactor;
+                        maxFactor = Math.Max(MGADefaults.NearTransferToFMaxFactor, 2.40);
                     }
                     else
                     {
-                        // 远距离跨体系/外行星转移 (如 Earth -> Jupiter, Jupiter -> Neptune):
-                        // 留出充分的宽窗口探索跨度
-                        minFactor = (ratioSma >= MGADefaults.GiantAssistDistanceRatio) ? MGADefaults.OuterTransferToFMinFactor : MGADefaults.FarTransferToFMinFactor;
-                        maxFactor = MGADefaults.OuterTransferToFMaxFactor;
+                        // 远距离跨体系/外行星转移 (如 Jupiter -> Neptune 直达):
+                        // 巨行星强引力大偏折弹弓高速双曲飞向外行星 (例如 Voyager 2 约 10 年航程，对应 0.20 ~ 0.55 T_H ~ 6.5年 - 17年)
+                        // 彻底杜绝未约束至 70-85 年 void 空间导致的发散
+                        bool isGiantToOuter = (p1 != null && p1.Mu >= MGADefaults.GiantPlanetMinMu && ratioSma >= MGADefaults.GiantAssistDistanceRatio);
+                        minFactor = isGiantToOuter ? 0.20 : ((ratioSma >= MGADefaults.GiantAssistDistanceRatio) ? 0.08 : MGADefaults.FarTransferToFMinFactor);
+                        maxFactor = isGiantToOuter ? 0.55 : MGADefaults.OuterTransferToFMaxFactor;
                     }
 
                     double minLeg = Math.Max(5.0, tHohmannDays * minFactor);
@@ -894,6 +1116,38 @@ namespace KSPGMAT.MGA
                 }
             }
             return result;
+        }
+
+        /// <summary>
+        /// 物理单调能量梯级判定 (IJCAI 单调梯级约束)
+        /// 折叠连续同名天体(同星共振重复)后，若 SMA 序列保持全片单调(非降 或 非升)，则视为物理可达的梯级排序。
+        /// 拦截外行星被排到内爬升体之前的非物理跳跃(如 Cassini 的 Earth➔Jupiter➔Venus)。
+        /// </summary>
+        private static bool IsSmaMonotonicLadder(List<string> chain)
+        {
+            if (chain == null || chain.Count < 2) return true;
+
+            var collapsed = new List<double>();
+            foreach (var body in chain)
+            {
+                var p = SolarSystemCatalog.GetPlanet(body);
+                if (p == null || p.SMA <= 0) continue;
+                if (collapsed.Count == 0 || Math.Abs(collapsed[collapsed.Count - 1] - p.SMA) > 1e-6)
+                {
+                    collapsed.Add(p.SMA);
+                }
+            }
+
+            if (collapsed.Count < 2) return true;
+
+            bool nonDecreasing = true, nonIncreasing = true;
+            for (int i = 1; i < collapsed.Count; i++)
+            {
+                if (collapsed[i] < collapsed[i - 1]) nonDecreasing = false;
+                if (collapsed[i] > collapsed[i - 1]) nonIncreasing = false;
+                if (!nonDecreasing && !nonIncreasing) return false;
+            }
+            return true;
         }
 
         /// <summary>

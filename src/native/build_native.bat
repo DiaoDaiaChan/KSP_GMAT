@@ -17,14 +17,14 @@ if not exist "GameData\KSPGMAT\native" mkdir "GameData\KSPGMAT\native"
 
 echo [BUILD] Compiling pykep_bridge.cpp with official clean ESA kep3 library...
 
-cl.exe /O2 /LD /std:c++latest /EHsc /utf-8 /DNOMINMAX /DWIN32_LEAN_AND_MEAN ^
+cl.exe /O2 /arch:AVX2 /fp:fast /openmp /LD /std:c++latest /EHsc /utf-8 /DNOMINMAX /DWIN32_LEAN_AND_MEAN ^
     /I"%CONDA_LIB%\include" ^
     /I"%KEP3_ROOT%\include" ^
     /I"%KEP3_BUILD%\include" ^
     "src\native\pykep_native\pykep_bridge.cpp" ^
     /Fe:"GameData\KSPGMAT\native\pykep_native.bin" ^
     /link /LIBPATH:"%CONDA_LIB%\lib" /LIBPATH:"%KEP3_BUILD%\Release" ^
-    kep3.lib boost_serialization.lib fmt.lib
+    kep3.lib boost_serialization.lib fmt.lib d3d11.lib dxgi.lib d3dcompiler.lib
 
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] Native C++ compilation failed!
@@ -40,6 +40,7 @@ copy /y "%CONDA_LIB%\bin\libomp.dll" "GameData\KSPGMAT\native\libomp.bin" >nul 2
 copy /y "%CONDA_LIB%\bin\msvcp140.dll" "GameData\KSPGMAT\native\msvcp140.bin" >nul 2>nul
 copy /y "%CONDA_LIB%\bin\vcruntime140.dll" "GameData\KSPGMAT\native\vcruntime140.bin" >nul 2>nul
 copy /y "%CONDA_LIB%\bin\vcruntime140_1.dll" "GameData\KSPGMAT\native\vcruntime140_1.bin" >nul 2>nul
+if exist "C:\Windows\System32\vcomp140.dll" copy /y "C:\Windows\System32\vcomp140.dll" "GameData\KSPGMAT\native\vcomp140.bin" >nul 2>nul
 
 rem --- Aggressive Native Cleanup (Remove heavy MKL & unused DLLs) ---
 del /f /q "GameData\KSPGMAT\native\mkl_*.bin" 2>nul

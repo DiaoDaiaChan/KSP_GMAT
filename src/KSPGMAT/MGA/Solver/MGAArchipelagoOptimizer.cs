@@ -25,12 +25,16 @@ namespace KSPGMAT.MGA
             MGAAdaptiveSolverConfig config,
             List<MGASurrogatePreFilter.SynodicWindowCandidate> windows,
             CancellationToken ct,
-            Action<float, string> onProgress = null)
+            Action<float, string> onProgress = null,
+            int maxWindowParallelism = -1)
         {
             var allSolutions = new ConcurrentBag<MGASolution>();
             if (windows == null || windows.Count == 0) return new List<MGASolution>();
 
-            int totalWindows = windows.Count;
+            // 落地 PaGMO (Izzo 2010) 多保真度漏斗思想：按估算发射能量排序，聚焦最具潜力的前 K 个黄金窗口
+            int maxEvalWindows = (config != null && config.MaxWindows > 0) ? config.MaxWindows : 2;
+            var prioritizedWindows = windows.OrderBy(w => w.EstimatedMinDvKms).Take(maxEvalWindows).ToList();
+            int totalWindows = prioritizedWindows.Count;
             int finishedCount = 0;
             var lockObj = new object();
 
@@ -42,15 +46,22 @@ namespace KSPGMAT.MGA
             }
             catch { }
 
-            // 若窗口数 > 1，外层按岛屿独占核心并行计算，内层采用单核极速 DE 杜绝嵌套并行与线程饥饿
-            // 若窗口数 == 1，内层采用全核并行加速个体评估
-            bool innerParallel = (totalWindows == 1);
+            // 多核 CPU 弹性双层并行策略：
+            // 计算总可用核心预算 totalBudget (依据 maxWindowParallelism 或整机 ProcessorCount)；
+            // 依据候选窗口数动态划定窗口级并发度 (winWorkers) 与单窗口内 DE 变异交叉并发度 (perWindowPopulation)，
+            // 保证 winParallel * perWindowPopulation 紧密跑满全部核预算，彻底杜绝单核空转与嵌套超订。
+            bool explicitParallelBudget = (maxWindowParallelism > 0);
+            int totalBudget = explicitParallelBudget ? Math.Max(1, maxWindowParallelism) : Environment.ProcessorCount;
+            int winWorkers = Math.Min(totalWindows, totalBudget);
+            int winParallel = winWorkers;
+            int perWindowPopulation = Math.Max(1, totalBudget / winWorkers);
+            bool innerParallel = (perWindowPopulation > 1);
 
-            Parallel.For(0, totalWindows, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount }, wIdx =>
+            Parallel.For(0, totalWindows, new ParallelOptions { MaxDegreeOfParallelism = winParallel }, wIdx =>
             {
                 if (ct.IsCancellationRequested) return;
 
-                var w = windows[wIdx];
+                var w = prioritizedWindows[wIdx];
                 var subCfg = config.Clone();
                 subCfg.SearchStartUT = w.WindowStartUT;
                 subCfg.SearchEndUT = w.WindowEndUT;
@@ -98,7 +109,7 @@ namespace KSPGMAT.MGA
                 double winBudgetMs = (subCfg.ConstrainByVesselDeltaV && subCfg.VesselMaxDeltaVMs > 0) ? subCfg.VesselMaxDeltaVMs : double.MaxValue;
                 double winDsmBudgetMs = (subCfg.MaxDsmDeltaVMs > 0) ? subCfg.MaxDsmDeltaVMs : winBudgetMs;
 
-                var sols = MGADifferentialEvolution.RunWindow(mgaCfg, w.WindowStartUT, w.WindowEndUT, null, ct, parallelizeInternal: innerParallel);
+                var sols = MGADifferentialEvolution.RunWindow(mgaCfg, w.WindowStartUT, w.WindowEndUT, null, ct, parallelizeInternal: innerParallel, populationMaxParallelism: perWindowPopulation);
                 if (sols != null && sols.Count > 0)
                 {
                     var b = sols[0];

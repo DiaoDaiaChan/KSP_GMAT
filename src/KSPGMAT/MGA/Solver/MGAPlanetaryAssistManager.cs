@@ -8,6 +8,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using KSPGMAT.Model;
 
 namespace KSPGMAT.MGA
 {
@@ -131,7 +132,10 @@ namespace KSPGMAT.MGA
                 .Where(r => r.Body != null && !r.Body.IsMoon &&
                             r.Body.SMA > minSma * 1.05 && r.Body.SMA < maxSma * 0.95 &&
                             !r.Body.Name.Equals(pDep.Name, StringComparison.OrdinalIgnoreCase) &&
-                            !r.Body.Name.Equals(pArr.Name, StringComparison.OrdinalIgnoreCase))
+                            !r.Body.Name.Equals(pArr.Name, StringComparison.OrdinalIgnoreCase) &&
+                            // 引力势深/μ 门槛: 仅保留具显著引力助推能力的爬升跳板 (弱小天体如火星不足以承担能量梯级)
+                            (r.Body.GravityPotentialDepth >= MGADefaults.MinAssistPowerIndexInner
+                             || r.Body.Mu >= MGADefaults.GiantPlanetMinMu))
                 .Select(r => r.Body);
 
             if (isOutward)
@@ -279,74 +283,108 @@ namespace KSPGMAT.MGA
                     out double vInfDeep, out double singleTurnW, out double reqTurnW, out int nReq);
 
                 // 确保候选次数覆盖充分范围 (涵盖 1 到 maxCandidateN，让优化器全自动搜索最优 n*)
+                // 深势阱目标 (如 Mercury/Moho, SMA < 出发星 45%) 的共振次数上限收敛至 4:
+                // 对齐 MESSENGER (水星 x3) / BepiColombo 权威构型, 防止 5-6 次飞掠生成 13-14 腿
+                // 超长链 (DE 维度 27+) 导致无法收敛; 浅势阱目标维持原上限 6。
                 int maxCandidateN = Math.Max(nReq, 6);
                 var resonantCounts = new List<int>();
-                for (int c = maxCandidateN; c >= 1; c--)
+                if (pDep.SMA > 0 && deepW.SMA < pDep.SMA * 0.45)
                 {
-                    resonantCounts.Add(c);
+                    // 深势阱小天体 (如水星) 细化为 2, 3, 4 次飞掠/共振阶梯
+                    resonantCounts.AddRange(new int[] { 2, 3, 4 });
+                }
+                else
+                {
+                    for (int c = maxCandidateN; c >= 1; c--)
+                    {
+                        resonantCounts.Add(c);
+                    }
                 }
 
-                // 2.5 拓扑组合生成：构建完整物理爬升梯级 (涵盖单/双内侧跳板进场与离场)
+                // 2.5 拓扑组合生成：构建完整物理反梯级爬升拓扑
+                // 前置出发星共振调速 (如 Earth -> Earth 1:1 EGA，节约约 450 m/s TVI)
+                int[] depPreCounts = new int[] { 0, 1 };
                 int[] vPreCounts = (innerAssist != null) ? new int[] { 1, 2 } : new int[] { 0 };
-                int[] vPostCounts = (innerAssist != null) ? new int[] { 1, 0, 2 } : new int[] { 0 };
-                int[] midPostCounts = new int[] { 2, 1, 3 };
+                int[] vPostCounts = (innerAssist != null) ? new int[] { 1, 2, 0 } : new int[] { 0 };
+                int[] midPostCounts = new int[] { 2, 1 };
 
-                foreach (int m in resonantCounts)
+                foreach (int depPre in depPreCounts)
                 {
-                    // 拓扑家族 1: 单/双内侧跳板前置 + W x m + 内侧跳板回升 + 中继星共振 + 巨行星
-                    foreach (int vPre in vPreCounts)
+                    foreach (int m in resonantCounts)
                     {
-                        foreach (int vPost in vPostCounts)
+                        // 拓扑家族 1: 前置出发EGA/跳板 + W x m + 内侧跳板回升 + 中继星2:1共振 + 巨行星
+                        foreach (int vPre in vPreCounts)
                         {
-                            foreach (int e in midPostCounts)
+                            foreach (int vPost in vPostCounts)
                             {
-                                var chain = new List<string>();
-                                if (innerAssist != null)
+                                foreach (int e in midPostCounts)
                                 {
-                                    for (int k = 0; k < vPre; k++) chain.Add(innerAssist.Name);
-                                }
-                                for (int k = 0; k < m; k++) chain.Add(deepW.Name);
-                                if (innerAssist != null)
-                                {
-                                    for (int k = 0; k < vPost; k++) chain.Add(innerAssist.Name);
-                                }
-                                for (int k = 0; k < e; k++) chain.Add(midAssist.Name);
-                                if (giant1 != null) chain.Add(giant1.Name);
-
-                                list.Add(chain);
-
-                                // 双巨行星超级弹弓 (如 Jupiter + Saturn)
-                                if (giant1 != null && giant2 != null)
-                                {
-                                    var chainDualGiant = new List<string>(chain);
-                                    int gIdx = chainDualGiant.LastIndexOf(giant1.Name);
-                                    if (gIdx >= 0)
+                                    var chain = new List<string>();
+                                    for (int k = 0; k < depPre; k++) chain.Add(pDep.Name);
+                                    if (innerAssist != null)
                                     {
-                                        chainDualGiant.Insert(gIdx + 1, giant2.Name);
-                                        list.Add(chainDualGiant);
+                                        for (int k = 0; k < vPre; k++) chain.Add(innerAssist.Name);
+                                    }
+                                    for (int k = 0; k < m; k++) chain.Add(deepW.Name);
+                                    if (innerAssist != null)
+                                    {
+                                        for (int k = 0; k < vPost; k++) chain.Add(innerAssist.Name);
+                                    }
+                                    for (int k = 0; k < e; k++) chain.Add(midAssist.Name);
+                                    if (giant1 != null) chain.Add(giant1.Name);
+
+                                    if (!list.Any(r => r.SequenceEqual(chain)))
+                                    {
+                                        list.Add(chain);
+                                    }
+
+                                    // 双巨行星超级弹弓 (如 Jupiter + Saturn)
+                                    if (giant1 != null && giant2 != null)
+                                    {
+                                        var chainDualGiant = new List<string>(chain);
+                                        int gIdx = chainDualGiant.LastIndexOf(giant1.Name);
+                                        if (gIdx >= 0)
+                                        {
+                                            chainDualGiant.Insert(gIdx + 1, giant2.Name);
+                                            if (!list.Any(r => r.SequenceEqual(chainDualGiant)))
+                                            {
+                                                list.Add(chainDualGiant);
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
 
-                    // 拓扑家族 2: 直出回跳中继星构型 (Dep ➔ Inner x 1~2 ➔ W x N ➔ Mid x 2 ➔ Giant)
-                    if (innerAssist != null)
-                    {
-                        foreach (int vPre in vPreCounts)
+                        // 拓扑家族 2: 直出回跳中继星构型 (Dep [➔ Dep EGA] ➔ Inner x 1~2 ➔ W x N ➔ Mid x 2 ➔ Giant)
+                        if (innerAssist != null)
                         {
-                            var chainDirectMid = new List<string>();
-                            for (int k = 0; k < vPre; k++) chainDirectMid.Add(innerAssist.Name);
-                            for (int k = 0; k < m; k++) chainDirectMid.Add(deepW.Name);
-                            chainDirectMid.Add(midAssist.Name);
-                            chainDirectMid.Add(midAssist.Name);
-                            if (giant1 != null) chainDirectMid.Add(giant1.Name);
-                            list.Add(chainDirectMid);
-                            if (giant1 != null && giant2 != null)
+                            foreach (int vPre in vPreCounts)
                             {
-                                var chainDual = new List<string>(chainDirectMid);
-                                int gIdx = chainDual.LastIndexOf(giant1.Name);
-                                if (gIdx >= 0) { chainDual.Insert(gIdx + 1, giant2.Name); list.Add(chainDual); }
+                                var chainDirectMid = new List<string>();
+                                for (int k = 0; k < depPre; k++) chainDirectMid.Add(pDep.Name);
+                                for (int k = 0; k < vPre; k++) chainDirectMid.Add(innerAssist.Name);
+                                for (int k = 0; k < m; k++) chainDirectMid.Add(deepW.Name);
+                                chainDirectMid.Add(midAssist.Name);
+                                chainDirectMid.Add(midAssist.Name);
+                                if (giant1 != null) chainDirectMid.Add(giant1.Name);
+                                if (!list.Any(r => r.SequenceEqual(chainDirectMid)))
+                                {
+                                    list.Add(chainDirectMid);
+                                }
+                                if (giant1 != null && giant2 != null)
+                                {
+                                    var chainDual = new List<string>(chainDirectMid);
+                                    int gIdx = chainDual.LastIndexOf(giant1.Name);
+                                    if (gIdx >= 0)
+                                    {
+                                        chainDual.Insert(gIdx + 1, giant2.Name);
+                                        if (!list.Any(r => r.SequenceEqual(chainDual)))
+                                        {
+                                            list.Add(chainDual);
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -368,6 +406,36 @@ namespace KSPGMAT.MGA
                             interleaved.Add(midAssist.Name);
                             if (giant1 != null) interleaved.Add(giant1.Name);
                             list.Add(interleaved);
+                        }
+                    }
+                }
+
+                // 拓扑家族 5: 外缘巨行星共振相位富化 (Giant 2:1 共振 + 双巨二次弹弓)
+                // 物理依据: 深井出→远外(如 Neptune 30 AU) 仅靠单次巨行星弹弓相位不齐时被迫堆大 DSM。
+                // 对以 giant1(如 Jupiter) 收尾的链，追加 2:1 共振槽与 Saturn 二次弹弓，为 DE 提供"共振涨 aphelion + 二次弹弓"
+                // 的零工质能量抬升路径，把 DSM 转成纯引力弹弓。
+                if (giant1 != null)
+                {
+                    var snapshot = list.ToList();
+                    foreach (var baseChain in snapshot)
+                    {
+                        if (baseChain.Count == 0) continue;
+                        int lastIdx = baseChain.LastIndexOf(giant1.Name);
+                        if (lastIdx < 0) continue;
+                        if (lastIdx != baseChain.Count - 1) continue; // 只加工收尾为 giant1 的链
+
+                        // A) giant1 2:1 同星共振槽 (Jupiter ➔ Jupiter)
+                        var resChain = new List<string>(baseChain);
+                        resChain.Add(giant1.Name);
+                        if (!list.Any(r => r.SequenceEqual(resChain))) list.Add(resChain);
+
+                        // B) giant1 2:1 共振 + giant2 二次弹弓 (Jupiter ➔ Jupiter ➔ Saturn)
+                        if (giant2 != null)
+                        {
+                            var resDual = new List<string>(baseChain);
+                            resDual.Add(giant1.Name);
+                            resDual.Add(giant2.Name);
+                            if (!list.Any(r => r.SequenceEqual(resDual))) list.Add(resDual);
                         }
                     }
                 }
