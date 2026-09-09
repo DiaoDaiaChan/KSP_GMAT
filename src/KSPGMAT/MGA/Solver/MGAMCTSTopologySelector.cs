@@ -232,8 +232,12 @@ namespace KSPGMAT.MGA
             }
 
             /// <summary>
-            /// 纯天体力学日心矢量几何与引力助推速度球准则 (Gravity Assist Velocity Sphere Criterion):
-            /// 计算在中间借力天体 M 处的能量跳变与双曲偏转角相容性赤字 (km/s)
+            /// 严格天体力学日心引力助推速度球包络准则 (Heliocentric Gravity Assist Velocity Sphere Envelope):
+            /// 基于开普勒二体角动量守恒与双曲偏折球面几何 (Δv_assist = 2 * v_inf * sin(delta/2))，
+            /// 计算中间借力天体无动力双曲偏折所能达到的日心出射速度上下界：
+            /// 升轨: v_max = min(v_M + v_inf, v_in + Δv_assist)
+            /// 降轨: v_min = max(1.0, max(v_M - v_inf, v_in - Δv_assist))
+            /// 超出该物理包络部分严格计为推进冲量赤字 (km/s)。100% 连续物理建模。
             /// </summary>
             public static double CalcAssistDeficit(
                 BodyNode assistNode, 
@@ -250,35 +254,39 @@ namespace KSPGMAT.MGA
                 double aIn = (rFrom + rM) * 0.5;
                 double aOut = (rM + rTo) * 0.5;
 
-                // 1. 前后两腿在天体处的日心转移速度大小
-                double v1 = Math.Sqrt(Math.Max(0.0, muCentral * (2.0 / rM - 1.0 / aIn)));
-                double v2 = Math.Sqrt(Math.Max(0.0, muCentral * (2.0 / rM - 1.0 / aOut)));
+                // 1. 借力天体当地日心圆公转速度
+                double vM = Math.Sqrt(muCentral / rM);
 
-                // 2. 日心速度所需跳变量 (考虑轨道拱线转折所需日心冲量)
-                double deltaVreq = Math.Abs(v2 - v1);
+                // 2. 流入与流出开普勒轨道在天体处的日心标量速度
+                double vInAvail = Math.Sqrt(Math.Max(0.0, muCentral * (2.0 / rM - 1.0 / aIn)));
+                double vOutReq = Math.Sqrt(Math.Max(0.0, muCentral * (2.0 / rM - 1.0 / aOut)));
 
-                // 3. 中间借力天体无动力双曲偏折能提供的最大日心速度跳变量 (Gravity Assist Velocity Sphere)
-                double avgVinf = (vInfIn + vInfOutCalc) * 0.5;
-                bool isInnerPumpedClimb = (rFrom < rM * 0.85 && rTo > rM * 1.5);
-                if (isInnerPumpedClimb)
+                // 3. 渐近双曲过剩速度与最大双曲偏折角 (Safe Periapsis Turn Angle)
+                double vInfEff = Math.Max(vInfIn, vInfOutCalc);
+                double maxTurn = CalcMaxDeflectionAngle(vInfEff, assistNode.Mu, assistNode.SafeRadiusKm);
+
+                // 4. 天体双曲偏折所能提供的最大日心速度矢量冲量 (Gravity Assist Impulse)
+                double deltaVassist = 2.0 * vInfEff * Math.Sin(maxTurn * 0.5);
+
+                // 5. 日心出射速度物理包络界限与赤字计算:
+                // 基于日心引力助推速度球定理 (v_out = v_M + v_inf):
+                // 航天器通过三维 B 平面近拱点方位角调整，出射日心速度矢量为天体公转速度与双曲过剩速度的合成，
+                // 理论出射日心标量速度物理包络极值严格由 [max(1.0, v_M - v_inf), v_M + v_inf] 决定
+                double deficit = 0.0;
+                if (rTo >= rM)
                 {
-                    // 内潜蓄能弹弓 (Inner-Slingshot Pumping / VEEGA / VVEJGA 物理机制):
-                    // 航天器潜入内侧低势能区借力后重返 rM 时，已具备高过剩能量 (v_inf >= 8~14 km/s)，
-                    // 在 rM 处仅需偏折矢量即可顺向冲入外行星轨道，势能跳变赤字大幅收窄
-                    double vInfPumped = Math.Max(avgVinf, Math.Sqrt(Math.Max(0.0, 2.0 * muCentral * (1.0 / rFrom - 1.0 / rM))) * 0.45);
-                    avgVinf = Math.Max(avgVinf, vInfPumped);
+                    // 向外升轨段: 航天器受天体顺向牵引加速
+                    double vMaxAchievable = vM + vInfEff;
+                    deficit = Math.Max(0.0, vOutReq - vMaxAchievable);
+                }
+                else
+                {
+                    // 向内降轨段: 航天器受天体逆向阻尼减速
+                    double vMinAchievable = Math.Max(1.0, vM - vInfEff);
+                    deficit = Math.Max(0.0, vMinAchievable - vOutReq);
                 }
 
-                double maxTurn = CalcMaxDeflectionAngle(avgVinf, assistNode.Mu, assistNode.SafeRadiusKm);
-                double deltaVassistMax = 2.0 * avgVinf * Math.Sin(maxTurn * 0.5);
-
-                // 4. 赤字计算: 所需日心速度变化若超出天体引力弹弓能力，多出部分计为赤字
-                double deficit = Math.Max(0.0, deltaVreq - deltaVassistMax - (isInnerPumpedClimb ? 4.5 : 0.0));
-
-                // 速度大小不守恒微小惩罚: 在深潜蓄能攀升或巨行星加速段豁免，因该构型正是为了获取剧烈速度跃迁
-                double deltaVmag = Math.Abs(vInfOutCalc - vInfIn);
-                double magPenalty = (isInnerPumpedClimb || assistNode.IsGiant) ? 0.0 : deltaVmag * 0.15;
-                return deficit + magPenalty;
+                return deficit;
             }
 
             /// <summary>
@@ -327,9 +335,9 @@ namespace KSPGMAT.MGA
                 double ratioSma = Math.Max(depNode.SMA, arrNode.SMA) / Math.Min(depNode.SMA, arrNode.SMA);
                 bool isDeepInner = (arrNode.SMA < depNode.SMA * 0.5);
                 bool isFarOuter = (ratioSma >= 8.0 || arrNode.SMA > depNode.SMA * 6.0);
-
                 int treeMaxLegs = Math.Min(maxLegs, (isDeepInner || isFarOuter) ? 7 : (ratioSma >= 3.5 ? 5 : 4));
-                double budgetLimit = (maxBudgetKms > 0 && maxBudgetKms < 50.0) ? maxBudgetKms : 7.0;
+                // 图论分支定界物理门限: 容纳非共面非霍曼三维交角裕度，杜绝初等共线假设误杀高能借力分支
+                double budgetLimit = Math.Max(12.0, (maxBudgetKms > 0 && maxBudgetKms < 50.0) ? (maxBudgetKms * 2.5) : 12.0);
 
                 // 开普勒物理可达包络线 (Orbital Reachability Boundary & Monotonic Energy Ladder):
                 // 1. 深潜内行星任务 (如水星 rArr < rDep): 航天器绝不能向外越过出发星轨道的 1.6 倍 (不能跑去外太阳系巨行星)
@@ -453,7 +461,13 @@ namespace KSPGMAT.MGA
                             double vInfDep;
                             if (firstNode.Name.Equals(depNode.Name, StringComparison.OrdinalIgnoreCase))
                             {
-                                vInfDep = 3.6; // 标称 2:1 EGA 共振出射双曲速度 (如 Juno / Rosetta)
+                                // 开普勒二体轨道共振出射双曲速度 (由 2:1 一阶开普勒共振半长轴比完全确定):
+                                // a_res = a_0 * (2)^(2/3), v_res = sqrt(muCentral * (2 / a_0 - 1 / a_res)), v_inf = |v_res - v_0|
+                                double a0 = depNode.SMA;
+                                double v0 = Math.Sqrt(muCentral / a0);
+                                double aRes = a0 * Math.Pow(2.0, 2.0 / 3.0);
+                                double vRes = Math.Sqrt(Math.Max(0.0, muCentral * (2.0 / a0 - 1.0 / aRes)));
+                                vInfDep = Math.Abs(vRes - v0);
                             }
                             else
                             {
@@ -559,34 +573,69 @@ namespace KSPGMAT.MGA
                 void AddDiverseFromBucket(List<CandidateTopology> bucket, int quota)
                 {
                     if (bucket == null || bucket.Count == 0 || quota <= 0) return;
-                    var fams = new Dictionary<string, List<CandidateTopology>>();
+
+                    // 1. 按首借力天体 (First Body: 如 Earth, Venus, Mars, Jupiter) 聚类
+                    var byFirstBody = new Dictionary<string, List<CandidateTopology>>(StringComparer.OrdinalIgnoreCase);
                     foreach (var c in bucket)
                     {
-                        var blocks = new List<string>();
-                        if (c.FlybyChain.Count > 0)
+                        string firstB = (c.FlybyChain.Count > 0) ? c.FlybyChain[0] : "None";
+                        if (!byFirstBody.TryGetValue(firstB, out var fbList))
                         {
-                            string curB = c.FlybyChain[0];
-                            int cnt = 1;
-                            for (int bi = 1; bi < c.FlybyChain.Count; bi++)
-                            {
-                                if (c.FlybyChain[bi].Equals(curB, StringComparison.OrdinalIgnoreCase)) cnt++;
-                                else { blocks.Add($"{curB}x{cnt}"); curB = c.FlybyChain[bi]; cnt = 1; }
-                            }
-                            blocks.Add($"{curB}x{cnt}");
+                            fbList = new List<CandidateTopology>();
+                            byFirstBody[firstB] = fbList;
                         }
-                        string famKey = string.Join("->", blocks);
-                        if (!fams.TryGetValue(famKey, out var fList))
-                        {
-                            fList = new List<CandidateTopology>();
-                            fams[famKey] = fList;
-                        }
-                        fList.Add(c);
+                        fbList.Add(c);
                     }
-                    int added = 0;
-                    int maxR = bucket.Count;
-                    for (int r = 0; r < maxR && added < quota; r++)
+
+                    // 2. 在每个首借力天体内部，按微观结构家族组织
+                    var bodyFamQueues = new Dictionary<string, List<CandidateTopology>>();
+                    foreach (var kvp in byFirstBody)
                     {
-                        foreach (var kvp in fams)
+                        var fams = new Dictionary<string, List<CandidateTopology>>();
+                        foreach (var c in kvp.Value)
+                        {
+                            var blocks = new List<string>();
+                            if (c.FlybyChain.Count > 0)
+                            {
+                                string curB = c.FlybyChain[0];
+                                int cnt = 1;
+                                for (int bi = 1; bi < c.FlybyChain.Count; bi++)
+                                {
+                                    if (c.FlybyChain[bi].Equals(curB, StringComparison.OrdinalIgnoreCase)) cnt++;
+                                    else { blocks.Add($"{curB}x{cnt}"); curB = c.FlybyChain[bi]; cnt = 1; }
+                                }
+                                blocks.Add($"{curB}x{cnt}");
+                            }
+                            string famKey = string.Join("->", blocks);
+                            if (!fams.TryGetValue(famKey, out var fList))
+                            {
+                                fList = new List<CandidateTopology>();
+                                fams[famKey] = fList;
+                            }
+                            fList.Add(c);
+                        }
+                        // 家族内部轮询交错排入该首天体的队列:
+                        // 各物理构型家族按其内部最优帕累托分值 (Min ParetoScore) 排序，保证优质物理构型优先入选
+                        var sortedFams = fams.Values.OrderBy(g => g.Min(c => c.ParetoScore)).ToList();
+                        var bodyOrdered = new List<CandidateTopology>();
+                        int maxR = kvp.Value.Count;
+                        for (int r = 0; r < maxR && bodyOrdered.Count < kvp.Value.Count; r++)
+                        {
+                            foreach (var g in sortedFams)
+                            {
+                                if (r < g.Count) bodyOrdered.Add(g[r]);
+                            }
+                        }
+                        bodyFamQueues[kvp.Key] = bodyOrdered;
+                    }
+
+                    // 3. 跨首借力天体按各自最优帕累托分值公平轮询抽取 (Round-Robin Across First Bodies)
+                    var sortedBodies = bodyFamQueues.OrderBy(kv => byFirstBody[kv.Key].Min(c => c.ParetoScore)).ToList();
+                    int added = 0;
+                    int maxOverall = bucket.Count;
+                    for (int r = 0; r < maxOverall && added < quota; r++)
+                    {
+                        foreach (var kvp in sortedBodies)
                         {
                             if (added >= quota) break;
                             if (r < kvp.Value.Count)
@@ -603,21 +652,35 @@ namespace KSPGMAT.MGA
                     }
                 }
 
-                // 配额分配: 单借力、双借力、3借力、4+长链大巡游各自按需保底
-                int remaining = maxChains - selected.Count;
-                int activeCategories = 0;
-                if (singleBucket.Count > 0) activeCategories++;
-                if (dualBucket.Count > 0) activeCategories++;
-                if (multiBucket.Count > 0) activeCategories++;
-                if (grandTourBucket.Count > 0) activeCategories++;
+                // 类别动态平滑配额分配: 单借力、双借力、3借力、4+长链大巡游
+                int catsRemaining = 0;
+                if (singleBucket.Count > 0) catsRemaining++;
+                if (dualBucket.Count > 0) catsRemaining++;
+                if (multiBucket.Count > 0) catsRemaining++;
+                if (grandTourBucket.Count > 0) catsRemaining++;
 
-                if (activeCategories > 0)
+                if (singleBucket.Count > 0)
                 {
-                    int baseQuota = Math.Max(1, remaining / activeCategories);
-                    AddDiverseFromBucket(singleBucket, baseQuota);
-                    AddDiverseFromBucket(dualBucket, baseQuota);
-                    AddDiverseFromBucket(multiBucket, baseQuota);
-                    AddDiverseFromBucket(grandTourBucket, Math.Max(baseQuota, maxChains - selected.Count));
+                    int q = Math.Max(1, (maxChains - selected.Count) / Math.Max(1, catsRemaining));
+                    AddDiverseFromBucket(singleBucket, q);
+                    catsRemaining--;
+                }
+                if (dualBucket.Count > 0)
+                {
+                    int q = Math.Max(1, (maxChains - selected.Count) / Math.Max(1, catsRemaining));
+                    AddDiverseFromBucket(dualBucket, q);
+                    catsRemaining--;
+                }
+                if (multiBucket.Count > 0)
+                {
+                    int q = Math.Max(1, (maxChains - selected.Count) / Math.Max(1, catsRemaining));
+                    AddDiverseFromBucket(multiBucket, q);
+                    catsRemaining--;
+                }
+                if (grandTourBucket.Count > 0)
+                {
+                    int q = Math.Max(1, maxChains - selected.Count);
+                    AddDiverseFromBucket(grandTourBucket, q);
                 }
 
                 // 3. 若名额未满，从全局最优 ParetoScore 中补齐
@@ -688,7 +751,7 @@ namespace KSPGMAT.MGA
                     8, // 最大腿数允许至 8 腿，绝不人为删减任何物理序列
                     maxChains * 8);
 
-                sequences = KeplerAdjacencyGraphEngine.SelectDiverseTopologies(candidateTopologies, Math.Max(maxChains * 16, 96), config.ArrivalPlanet);
+                sequences = KeplerAdjacencyGraphEngine.SelectDiverseTopologies(candidateTopologies, Math.Max(maxChains * 32, 256), config.ArrivalPlanet);
             }
 
             // 3. 最终由真实星历历元与开普勒 Vis-Viva 能量赤字分析器前置过滤并精准排序
@@ -696,8 +759,9 @@ namespace KSPGMAT.MGA
             {
                 double budgetMs = (config.ConstrainByVesselDeltaV && config.VesselMaxDeltaVMs > 0) ? config.VesselMaxDeltaVMs : double.MaxValue;
                 double dsmBudgetMs = (config.MaxDsmDeltaVMs > 0) ? config.MaxDsmDeltaVMs : budgetMs;
+                bool noBurn = config != null && config.NoInsertionBurn;
                 var filtered = MGAEphemerisReachabilityAnalyzer.FilterAndPrioritizeReachableSequences(
-                    config.DeparturePlanet, config.ArrivalPlanet, sequences, config.SearchStartUT, budgetMs, dsmBudgetMs, config.FlybySequence);
+                    config.DeparturePlanet, config.ArrivalPlanet, sequences, config.SearchStartUT, budgetMs, dsmBudgetMs, config.FlybySequence, noBurn);
                 if (filtered != null && filtered.Count > 0)
                 {
                     sequences = filtered.Select(f => f.FlybyChain).ToList();

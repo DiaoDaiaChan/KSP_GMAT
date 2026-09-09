@@ -957,10 +957,14 @@ namespace KSPGMAT.MGA
                     // 2. 原生 OpenMP + AVX2 批处理动力学评估 (Native C++ Batch Evaluator)
                     var candSols = PykepBridge.BuildBatchSolutions(candidates, fullChain, config);
 
-                    // 3. 淘汰选择 (Survival Selection)
+                    // 3. 淘汰选择 (Survival Selection): 集成自适应模拟退火与 Metropolis 准则 (Parallel Tempering ASA)
+                    // 高温探索岛允许以统计力学概率跨越开普勒势阱假壁垒，低温收敛岛严格执行梯度抛光
                     for (int i = 0; i < popSize; i++) {
                         double candFit = ComputeFitness(candSols[i], config);
-                        if (candFit < fitness[i]) {
+                        int islandId = i / subPopSize;
+                        double T = MGAPhysicsLossEngine.GetIslandTemperature(gen, maxGens, islandId, islandCount);
+                        var localRand = new System.Random(gen * popSize + i + 1337);
+                        if (MGAPhysicsLossEngine.MetropolisAccept(fitness[i], candFit, T, localRand)) {
                             pop[i] = candidates[i];
                             fitness[i] = candFit;
                         }
@@ -1512,106 +1516,11 @@ namespace KSPGMAT.MGA
         }
 
         /// <summary>
-        /// DE 适应度目标函数（含发射窗口/DSM预算/飞船ΔV预算/面外倾角等罚函数）。
-        /// 从 PykepBridge 随 DE 内核一并迁出，本类为唯一调用方。
+        /// DE 适应度目标函数: 100% 委托 MGAPhysicsLossEngine 连续物理损失场引擎
+        /// (包含 C1 连续光滑二次障碍、L1 稀疏机动正则项、严格零动力飞掠凸惩罚)
         /// </summary>
         private static double ComputeFitness(MGASolution sol, MGAConfig config) {
-            if (sol == null || double.IsNaN(sol.TotalDeltaVKms)) return 1e9;
-            double fit = sol.TotalDeltaVKms + (sol.AllLegsFeasible ? 0.0 : MGADefaults.PenaltyInfeasibleBase);
-            if (config != null) {
-                // 发射窗口时间约束硬罚函数：严格惩罚超出用户指定最早/最晚发射时间的候选解
-                if (config.EarliestDepartureUT > 0 && sol.DepartureUT < config.EarliestDepartureUT - 1.0) {
-                    double violationDays = (config.EarliestDepartureUT - sol.DepartureUT) / MGADefaults.SecondsPerDay;
-                    fit += violationDays * MGADefaults.PenaltyDepartureViolationDayWeight + MGADefaults.PenaltyDepartureViolationBase;
-                }
-                if (config.LatestDepartureUT > config.EarliestDepartureUT && sol.DepartureUT > config.LatestDepartureUT + 1.0) {
-                    double violationDays = (sol.DepartureUT - config.LatestDepartureUT) / MGADefaults.SecondsPerDay;
-                    fit += violationDays * MGADefaults.PenaltyDepartureViolationDayWeight + MGADefaults.PenaltyDepartureViolationBase;
-                }
-                double dsmBudget = (config.MaxDsmDeltaVMs > 0)
-                    ? config.MaxDsmDeltaVMs
-                    : (config.ConstrainByVesselDeltaV && config.VesselMaxDeltaVMs > 0 ? config.VesselMaxDeltaVMs : 0.0);
-                if (dsmBudget > 0 && sol.Legs != null) {
-                    double totalDsmMs = sol.TotalDsmDeltaVKms * 1000.0;
-                    if (totalDsmMs > dsmBudget) {
-                        double overKms = (totalDsmMs - dsmBudget) / 1000.0;
-                        fit += 15000.0 * overKms + 30000.0 * overKms * overKms; // 连续强约束惩罚：平滑梯度引导进入预算内
-                    }
-                    foreach (var leg in sol.Legs) {
-                        if (leg.HasDSM && leg.DSM != null) {
-                            double legDsmMs = leg.DSM.DeltaVMs;
-                            // 温和拐杖惩罚 (Mid-Band Crutch Penalty): 100~500 m/s 的"温和 DSM"不再免费,
-                            // 线性递增惩罚, 迫使 DE 倾向零 DSM 纯弹道链 (真实任务仅保留几十 m/s 轨道修正);
-                            // >500 m/s 的天文级拐杖由下方二次惩罚 + 总量预算共同硬阻断。
-                            if (legDsmMs > 100.0 && legDsmMs <= dsmBudget) {
-                                fit += 600.0 * (legDsmMs - 100.0) / 1000.0;
-                            }
-                            if (legDsmMs > dsmBudget) {
-                                double overKms = (legDsmMs - dsmBudget) / 1000.0;
-                                fit += 10000.0 * overKms + 20000.0 * overKms * overKms;
-                            }
-                        }
-                        // 真实共振守卫 (True-Resonance Guard): 同星共振腿物理上应接近零 DSM
-                        // (MESSENGER/BepiColombo 实际仅几十 m/s 轨道修正), 若 DE 以天文级 DSM
-                        // "假共振直连" 掩盖几何失配 (如 1:1 水星腿 6445 m/s), 施加共振失配软惩罚,
-                        // 迫使 DE 寻找真实开普勒共振槽 (2:1/3:1 泵升) 而非 DSM 拐杖解。
-                        if (leg.HasDSM && leg.DSM != null && leg.DSM.DeltaVMs > 100.0 &&
-                            !string.IsNullOrEmpty(leg.FromBody) &&
-                            leg.FromBody.Equals(leg.ToBody, StringComparison.OrdinalIgnoreCase))
-                        {
-                            double resOverKms = (leg.DSM.DeltaVMs - 100.0) / 1000.0;
-                            fit += 2000.0 * resOverKms + 5000.0 * resOverKms * resOverKms;
-                        }
-                    }
-                }
-                if (config.ConstrainByVesselDeltaV && config.VesselMaxDeltaVMs > 0) {
-                    double totalMs = sol.TotalDeltaVKms * 1000.0;
-                    if (totalMs > config.VesselMaxDeltaVMs) {
-                        double overKms = (totalMs - config.VesselMaxDeltaVMs) / 1000.0;
-                        fit += 20000.0 * overKms + 40000.0 * overKms * overKms; // 连续强约束惩罚：平滑梯度引导
-                    }
-                }
-                if (config.LaunchDeltaVCeilingMs > 0) {
-                    double launchMs = sol.LaunchDeltaVKms * 1000.0;
-                    if (launchMs > config.LaunchDeltaVCeilingMs) {
-                        double overLaunchKms = (launchMs - config.LaunchDeltaVCeilingMs) / 1000.0;
-                        fit += 25000.0 * overLaunchKms + 50000.0 * overLaunchKms * overLaunchKms; // 严格限制首段 TVI 出射速度 (连续平滑梯度)
-                    }
-                }
-                if (sol.TotalFlybyDeltaVKms > 1e-4) {
-                    fit += sol.TotalFlybyDeltaVKms * 2000.0 + sol.TotalFlybyDeltaVKms * sol.TotalFlybyDeltaVKms * 1000.0; // 连续单调凸惩罚动力飞掠，迫使纯无动力引力弹弓
-                }
-                if (config.LockDepartureInclination && sol.Legs != null && sol.Legs.Count > 0) {
-                    double actualInc = sol.Legs[0].EjectionInclinationDeg;
-                    double targetInc = config.DepartureInclinationDeg;
-                    double incErr = Math.Abs(actualInc - targetInc);
-                    if (incErr > MGADefaults.PenaltyIncToleranceDeg) {
-                        // 逃逸倾角锁定约束罚函数：若逃逸倾角偏离锁定值，按每度 25 km/s + 50 km/s 罚项强力约束
-                        fit += incErr * MGADefaults.PenaltyIncDegWeight + MGADefaults.PenaltyIncBase;
-                    }
-                }
-                if ((config.DepartureMode == MGADepartureMode.InOrbitLockedOrbit || config.LockDepartureInclination) && sol.Legs != null && sol.Legs.Count > 0) {
-                    var leg0 = sol.Legs[0];
-                    if (PykepNative.CalcCoplanarAngle(config.DepartureInclinationDeg, config.DepartureRAANDeg, leg0.ArrivalPosKm, out double wedgeDeg)) {
-                        if (wedgeDeg > 0.5) {
-                            // 严格按真实轨道平面变换动力学惩罚面外倾角 (基于真实转移初速)
-                            double rad = (wedgeDeg - 0.5) * Mathf.Deg2Rad;
-                            double vTrans = leg0.DepartureVelKms.magnitude;
-                            if (vTrans < 0.1) {
-                                double cMu = SolarSystemCatalog.GetCentralMu(config.CentralBody);
-                                double cRadius = SolarSystemCatalog.GetPlanet(config.DepartureBody)?.RadiusKm
-                                    ?? SolarSystemCatalog.GetPlanet(config.CentralBody)?.RadiusKm
-                                    ?? MGADefaults.EarthRadiusKm;
-                                double rPark = cRadius + config.DeparturePeAKm;
-                                vTrans = Math.Sqrt(cMu / Math.Max(1.0, rPark));
-                            }
-                            double penaltyDv = 2.0 * vTrans * Math.Sin(rad * 0.5);
-                            fit += Math.Max((wedgeDeg - 0.5) * 0.2, penaltyDv);
-                        }
-                    }
-                }
-            }
-            return fit;
+            return MGAPhysicsLossEngine.ComputeLoss(sol, config);
         }
     }
 }

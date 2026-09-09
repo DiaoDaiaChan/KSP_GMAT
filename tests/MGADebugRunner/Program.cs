@@ -3231,8 +3231,10 @@ Propagate Prop(Sat) {Sat.ElapsedSecs = 86400};
                     }
                 }
 
+
+
                 var diverse = MGAMCTSTopologySelector.KeplerAdjacencyGraphEngine.SelectDiverseTopologies(
-                    rawCandidates, Math.Max(bCase.MaxCandidateTopologies * 16, 96), bCase.DestinationBody);
+                    rawCandidates, Math.Max(bCase.MaxCandidateTopologies * 32, 256), bCase.DestinationBody);
                 Console.WriteLine($"   • [2. 多样性聚类池] 产生: {diverse.Count} 组拓扑");
                 bool inDiverse = diverse.Any(c => c.SequenceEqual(bCase.HistoricalFlybySequence, StringComparer.OrdinalIgnoreCase));
                 Console.WriteLine($"     -> 包含历史拓扑: {(inDiverse ? "✅ YES" : "❌ NO")}");
@@ -3247,7 +3249,7 @@ Propagate Prop(Sat) {Sat.ElapsedSecs = 86400};
                 if (bCase.HistoricalFlybySequence.Count > 0)
                 {
                     var histRep = MGAEphemerisReachabilityAnalyzer.AnalyzeChainReachability(
-                        bCase.DepartureBody, bCase.DestinationBody, bCase.HistoricalFlybySequence, startUT, budgetMs, dsmBudgetMs);
+                        bCase.DepartureBody, bCase.DestinationBody, bCase.HistoricalFlybySequence, startUT, budgetMs, dsmBudgetMs, bCase.NoInsertionBurn);
                     Console.WriteLine($"     [Reachability for History]: IsFeasible={histRep.IsFeasible}, EstTotalDv={histRep.EstimatedTotalDvMs:F1} m/s, Deficit={histRep.TotalDeficitMs:F1} m/s");
                     foreach (var l in histRep.LegReports) {
                         Console.WriteLine($"       Leg {l.FromBody} -> {l.ToBody}: EnergyDeficit={l.EnergyDeficitMs:F1} m/s, TurnDeficit={l.TurnDeficitMs:F1} m/s, Rationale={l.Rationale}");
@@ -3255,10 +3257,35 @@ Propagate Prop(Sat) {Sat.ElapsedSecs = 86400};
                 }
 
                 var filtered = MGAEphemerisReachabilityAnalyzer.FilterAndPrioritizeReachableSequences(
-                    bCase.DepartureBody, bCase.DestinationBody, diverse, startUT, budgetMs, dsmBudgetMs, null);
+                    bCase.DepartureBody, bCase.DestinationBody, diverse, startUT, budgetMs, dsmBudgetMs, null, bCase.NoInsertionBurn);
 
                 int histRankInFiltered = filtered.FindIndex(f => f.FlybyChain.SequenceEqual(bCase.HistoricalFlybySequence, StringComparer.OrdinalIgnoreCase));
-                Console.WriteLine($"     [Hist Rank in Filtered]: {(histRankInFiltered >= 0 ? $"Rank #{histRankInFiltered + 1} of {filtered.Count}" : "NOT FOUND")}");
+                Console.WriteLine($"     [Hist Rank in Filtered]: {(histRankInFiltered >= 0 ? $"Rank #{histRankInFiltered + 1} of {filtered.Count} (Pareto={filtered[histRankInFiltered].ParetoScore:F2}, Dv={filtered[histRankInFiltered].EstimatedTotalDvMs:F0}, ToF={filtered[histRankInFiltered].EstimatedToFDays:F0}d, Def={filtered[histRankInFiltered].TotalDeficitMs:F0})" : "NOT FOUND")}");
+
+                string histFirst = (bCase.HistoricalFlybySequence != null && bCase.HistoricalFlybySequence.Count > 0) ? bCase.HistoricalFlybySequence[0] : "Direct";
+                var inSameGateway = filtered.Where(f => {
+                    string fFirst = (f.FlybyChain != null && f.FlybyChain.Count > 0) ? f.FlybyChain[0] : "Direct";
+                    return fFirst.Equals(histFirst, StringComparison.OrdinalIgnoreCase);
+                }).ToList();
+                int histRankInGateway = inSameGateway.FindIndex(f => f.FlybyChain.SequenceEqual(bCase.HistoricalFlybySequence, StringComparer.OrdinalIgnoreCase));
+                Console.WriteLine($"     [Hist in Gateway '{histFirst}']: Rank #{histRankInGateway + 1} of {inSameGateway.Count}");
+                if (!filtered.Take(bCase.MaxCandidateTopologies).Any(c => c.FlybyChain.SequenceEqual(bCase.HistoricalFlybySequence, StringComparer.OrdinalIgnoreCase)))
+                {
+                    Console.WriteLine($"       [Top 10 in Filtered for Missed Mission]:");
+                    for (int fi = 0; fi < Math.Min(10, filtered.Count); fi++)
+                    {
+                        var fc = filtered[fi];
+                        double capDv = fc.EstimatedTotalDvMs - fc.EstimatedLaunchDvMs - fc.TotalDeficitMs;
+                        Console.WriteLine($"         #{fi + 1}: Pareto={fc.ParetoScore:F2}, Dv={fc.EstimatedTotalDvMs:F0} (Lch={fc.EstimatedLaunchDvMs:F0}, Dsm={fc.TotalDeficitMs:F0}, Cap={capDv:F0}), ToF={fc.EstimatedToFDays:F0}d, Chain={string.Join("->", fc.FlybyChain)}");
+                        if (fi == 0)
+                        {
+                            foreach (var l in fc.LegReports)
+                            {
+                                Console.WriteLine($"           Leg {l.FromBody}->{l.ToBody}: EDef={l.EnergyDeficitMs:F0}, TDef={l.TurnDeficitMs:F0}, {l.Rationale}");
+                            }
+                        }
+                    }
+                }
 
                 var finalTopos = filtered.Select(f => f.FlybyChain).Take(bCase.MaxCandidateTopologies).ToList();
                 bool inFinal = finalTopos.Any(c => c.SequenceEqual(bCase.HistoricalFlybySequence, StringComparer.OrdinalIgnoreCase));
