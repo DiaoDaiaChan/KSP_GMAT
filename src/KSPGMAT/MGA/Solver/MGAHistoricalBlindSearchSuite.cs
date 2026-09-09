@@ -623,8 +623,8 @@ namespace KSPGMAT.MGA.Solver
                     sb.AppendLine($"  - **自主演化拓扑**: `Earth ➔ {(r.BestTopology.Count > 0 ? string.Join(" ➔ ", r.BestTopology) + " ➔ " : "")}{r.Case.DestinationBody}`");
                     sb.AppendLine($"  - **始发出射 ΔV**: `{sol.LaunchDeltaVKms * 1000.0:F1} m/s` (TVI 出射机动)");
                     sb.AppendLine($"  - **终点到达 ΔV**: `{sol.InsertionDeltaVKms * 1000.0:F1} m/s` ({(r.Case.NoInsertionBurn ? "高速飞掠 0 m/s 刹车" : "目标入轨捕获机动")})");
-                    sb.AppendLine($"  - **总机动预算 ΔV**: `{sol.TotalDeltaVKms * 1000.0:F1} m/s` (相较历史: `{r.DvSavedMs:+0.0;-0.0;0.0} m/s`)");
-                    sb.AppendLine($"  - **总飞行历时**: `{sol.TotalFlightDays:F1} 天` (相较历史: `{r.DaysSaved:+0.0;-0.0;0.0} 天`)");
+                    sb.AppendLine($"  - **总机动预算 ΔV**: `{sol.TotalDeltaVKms * 1000.0:F1} m/s` (相较历史节省: `{r.DvSavedMs:+0.0;-0.0;0.0} m/s`)");
+                    sb.AppendLine($"  - **总飞行历时**: `{sol.TotalFlightDays:F1} 天` (相较历史缩短: `{r.DaysSaved:+0.0;-0.0;0.0} 天`)");
                     sb.AppendLine($"  - **MCTS 候选拓扑池探索**: 共自主衍生与评估了 {r.DiscoveredTopologies.Count} 条高价值拓扑");
 
                     if (r.IsSuperHistorical)

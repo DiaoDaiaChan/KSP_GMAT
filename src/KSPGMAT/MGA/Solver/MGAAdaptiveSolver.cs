@@ -390,7 +390,8 @@ namespace KSPGMAT.MGA
                     Console.WriteLine($"\n[MGAAdaptiveSolver] 🎯 共筛选出 {candidateChains.Count} 组最优物理借力拓扑进入 DE 演化池:");
                     for (int i = 0; i < candidateChains.Count; i++)
                     {
-                        Console.WriteLine($"   #{i + 1}: {config.DeparturePlanet} ➔ {string.Join(" ➔ ", candidateChains[i])} ➔ {config.ArrivalPlanet}");
+                        string mid = (candidateChains[i].Count > 0) ? (string.Join(" ➔ ", candidateChains[i]) + " ➔ ") : "";
+                        Console.WriteLine($"   #{i + 1}: {config.DeparturePlanet} ➔ {mid}{config.ArrivalPlanet}");
                     }
                 }
                 else

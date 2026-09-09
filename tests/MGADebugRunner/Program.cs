@@ -30,6 +30,8 @@ namespace MGADebugRunner {
             bool isHistoryOnly = false;
             bool isBlindSearchOnly = false;
             string blindFilter = null;
+            bool isTopoDiagOnly = false;
+            string topoFilter = null;
             bool isPorkchopBenchOnly = false;
             bool quick = false;
             if (args != null && args.Length > 0) {
@@ -39,6 +41,14 @@ namespace MGADebugRunner {
                     if (clean == "quick" || clean == "q") { quick = true; continue; }
                     if (clean == "porkchop" || clean == "bench-porkchop" || clean == "porkchop-bench" || clean == "gpu") {
                         isPorkchopBenchOnly = true;
+                        continue;
+                    }
+                    if (clean == "topo" || clean == "diag-topo" || clean == "topodiag") {
+                        isTopoDiagOnly = true;
+                        if (i + 1 < args.Length && !args[i + 1].StartsWith("-") && !args[i + 1].StartsWith("/")) {
+                            topoFilter = args[i + 1].Trim();
+                            i++;
+                        }
                         continue;
                     }
                     if (clean == "blind" || clean == "history-blind" || clean == "blind-history" || clean == "hb" || clean == "blindsearch") {
@@ -69,6 +79,11 @@ namespace MGADebugRunner {
 
             if (isPorkchopBenchOnly) {
                 BenchmarkPorkchopScales();
+                return;
+            }
+
+            if (isTopoDiagOnly) {
+                DiagnoseHistoricalTopologies(topoFilter);
                 return;
             }
 
@@ -3147,6 +3162,133 @@ Propagate Prop(Sat) {Sat.ElapsedSecs = 86400};
             string reportPath = System.IO.Path.Combine(reportDir, "mga_historical_discovery_report.md");
             MGAHistoricalBlindSearchSuite.GenerateMarkdownReport(results, reportPath);
             Console.WriteLine($"\n📄 深度分析与物理机理报表已成功生成: {reportPath}\n");
+        }
+
+        public static void DiagnoseHistoricalTopologies(string filter = null) {
+            Console.WriteLine("==========================================================================================");
+            Console.WriteLine("🔬 [DiagnoseHistoricalTopologies] 开普勒物理图纯数学推导与星历过滤拓扑诊断 (0 模板 0 预制)");
+            Console.WriteLine("==========================================================================================\n");
+
+            var cases = MGAHistoricalBlindSearchSuite.HistoricalCatalog;
+            if (!string.IsNullOrEmpty(filter)) {
+                cases = cases.Where(c => c.MissionId.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                         c.MissionName.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                         c.DestinationBody.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0).ToList();
+            }
+
+            var summaryList = new List<(string Name, bool InRaw, bool InDiverse, bool InPool, int Rank, int MaxPool)>();
+
+            foreach (var bCase in cases) {
+                Console.WriteLine($"------------------------------------------------------------------------------------------");
+                Console.WriteLine($"🛰️ 任务: {bCase.MissionName} | {bCase.DepartureBody} ➔ {bCase.DestinationBody}");
+                Console.WriteLine($"   历史真值拓扑: {(bCase.HistoricalFlybySequence.Count > 0 ? string.Join(" ➔ ", bCase.HistoricalFlybySequence) : "(直达)")}");
+                
+                double startUT = GMATClient.ParseUtcGregorian(bCase.HistoricalLaunchStr);
+                double maxBudget = (bCase.VesselMaxDeltaVMs > 0) ? (bCase.VesselMaxDeltaVMs / 1000.0) : 7.0;
+                var rawCandidates = MGAMCTSTopologySelector.KeplerAdjacencyGraphEngine.SearchTopologies(
+                    bCase.DepartureBody, bCase.DestinationBody, "Sun", maxBudget, 8, bCase.MaxCandidateTopologies * 8);
+                
+                Console.WriteLine($"   • [1. 开普勒图论搜索] 原始生成: {rawCandidates.Count} 组拓扑");
+                bool inRaw = rawCandidates.Any(c => c.FlybyChain.SequenceEqual(bCase.HistoricalFlybySequence, StringComparer.OrdinalIgnoreCase));
+                Console.WriteLine($"     -> 包含历史拓扑: {(inRaw ? "✅ YES" : "❌ NO")}");
+
+                var histInRaw = rawCandidates.FirstOrDefault(c => c.FlybyChain.SequenceEqual(bCase.HistoricalFlybySequence, StringComparer.OrdinalIgnoreCase));
+                if (histInRaw.FlybyChain != null)
+                {
+                    Console.WriteLine($"     [Hist in Raw]: Category={histInRaw.TopologyCategory}, ParetoScore={histInRaw.ParetoScore:F2}, LaunchDv={histInRaw.LaunchDvKms:F2} km/s, Deficit={histInRaw.AssistDeficitKms:F2} km/s, ToF={histInRaw.TotalToFDays:F0}d");
+                }
+
+                if (!inRaw && bCase.HistoricalFlybySequence.Count > 0)
+                {
+                    var nodes = MGAMCTSTopologySelector.KeplerAdjacencyGraphEngine.GetSystemNodes("Sun", bCase.DepartureBody, bCase.DestinationBody);
+                    double muCentral = SolarSystemCatalog.SunMu;
+                    var full = new List<string> { bCase.DepartureBody };
+                    full.AddRange(bCase.HistoricalFlybySequence);
+                    full.Add(bCase.DestinationBody);
+                    Console.WriteLine($"     [Prune Analysis for {string.Join("->", full)}]:");
+                    double cumDef = 0;
+                    double totToF = 0;
+                    for (int k = 1; k < full.Count; k++)
+                    {
+                        string pFrom = full[k - 1];
+                        string pCurr = full[k];
+                        var nFrom = nodes.FirstOrDefault(n => n.Name.Equals(pFrom, StringComparison.OrdinalIgnoreCase));
+                        var nCurr = nodes.FirstOrDefault(n => n.Name.Equals(pCurr, StringComparison.OrdinalIgnoreCase));
+                        if (nFrom == null || nCurr == null) { Console.WriteLine($"       Leg {k}: Node not found: {pFrom} or {pCurr}!"); break; }
+                        double stepDef = 0;
+                        double legToF = 0;
+                        if (k == 1) {
+                            MGAMCTSTopologySelector.KeplerAdjacencyGraphEngine.CalcHohmannLeg(nFrom.SMA, nCurr.SMA, muCentral, out _, out _, out legToF);
+                        } else {
+                            var nPrev = nodes.FirstOrDefault(n => n.Name.Equals(full[k - 2], StringComparison.OrdinalIgnoreCase));
+                            stepDef = MGAMCTSTopologySelector.KeplerAdjacencyGraphEngine.CalcAssistDeficit(nFrom, nPrev.SMA, nCurr.SMA, muCentral, out _);
+                            MGAMCTSTopologySelector.KeplerAdjacencyGraphEngine.CalcHohmannLeg(nFrom.SMA, nCurr.SMA, muCentral, out _, out _, out legToF);
+                            if (nFrom.IsGiant && nCurr.SMA > nFrom.SMA) legToF *= 0.35;
+                        }
+                        cumDef += stepDef;
+                        totToF += legToF;
+                        Console.WriteLine($"       Step {pFrom}->{pCurr}: stepDef={stepDef:F2} km/s, cumDef={cumDef:F2} km/s (budget={maxBudget:F1} km/s), legToF={legToF:F0}d, totToF={totToF:F0}d");
+                    }
+                }
+
+                var diverse = MGAMCTSTopologySelector.KeplerAdjacencyGraphEngine.SelectDiverseTopologies(
+                    rawCandidates, Math.Max(bCase.MaxCandidateTopologies * 16, 96), bCase.DestinationBody);
+                Console.WriteLine($"   • [2. 多样性聚类池] 产生: {diverse.Count} 组拓扑");
+                bool inDiverse = diverse.Any(c => c.SequenceEqual(bCase.HistoricalFlybySequence, StringComparer.OrdinalIgnoreCase));
+                Console.WriteLine($"     -> 包含历史拓扑: {(inDiverse ? "✅ YES" : "❌ NO")}");
+
+                var multiItems = diverse.Where(d => d.Count == bCase.HistoricalFlybySequence.Count).ToList();
+                Console.WriteLine($"     [Matching Length ({bCase.HistoricalFlybySequence.Count}) in Diverse: {multiItems.Count}]:");
+                foreach (var m in multiItems.Take(6)) Console.WriteLine($"       -> {string.Join("->", m)}");
+
+                double budgetMs = bCase.VesselMaxDeltaVMs;
+                double dsmBudgetMs = bCase.MaxDsmDeltaVMs > 0 ? bCase.MaxDsmDeltaVMs : budgetMs;
+
+                if (bCase.HistoricalFlybySequence.Count > 0)
+                {
+                    var histRep = MGAEphemerisReachabilityAnalyzer.AnalyzeChainReachability(
+                        bCase.DepartureBody, bCase.DestinationBody, bCase.HistoricalFlybySequence, startUT, budgetMs, dsmBudgetMs);
+                    Console.WriteLine($"     [Reachability for History]: IsFeasible={histRep.IsFeasible}, EstTotalDv={histRep.EstimatedTotalDvMs:F1} m/s, Deficit={histRep.TotalDeficitMs:F1} m/s");
+                    foreach (var l in histRep.LegReports) {
+                        Console.WriteLine($"       Leg {l.FromBody} -> {l.ToBody}: EnergyDeficit={l.EnergyDeficitMs:F1} m/s, TurnDeficit={l.TurnDeficitMs:F1} m/s, Rationale={l.Rationale}");
+                    }
+                }
+
+                var filtered = MGAEphemerisReachabilityAnalyzer.FilterAndPrioritizeReachableSequences(
+                    bCase.DepartureBody, bCase.DestinationBody, diverse, startUT, budgetMs, dsmBudgetMs, null);
+
+                int histRankInFiltered = filtered.FindIndex(f => f.FlybyChain.SequenceEqual(bCase.HistoricalFlybySequence, StringComparer.OrdinalIgnoreCase));
+                Console.WriteLine($"     [Hist Rank in Filtered]: {(histRankInFiltered >= 0 ? $"Rank #{histRankInFiltered + 1} of {filtered.Count}" : "NOT FOUND")}");
+
+                var finalTopos = filtered.Select(f => f.FlybyChain).Take(bCase.MaxCandidateTopologies).ToList();
+                bool inFinal = finalTopos.Any(c => c.SequenceEqual(bCase.HistoricalFlybySequence, StringComparer.OrdinalIgnoreCase));
+                Console.WriteLine($"   • [3. 最终 DE 演化池] ({finalTopos.Count} 组): 包含历史拓扑: {(inFinal ? "✅ YES" : "❌ NO")}");
+                for (int i = 0; i < Math.Min(15, filtered.Count); i++) {
+                    var f = filtered[i];
+                    string mark = f.FlybyChain.SequenceEqual(bCase.HistoricalFlybySequence, StringComparer.OrdinalIgnoreCase) ? " ★ [历史命中]" : "";
+                    string inPool = i < bCase.MaxCandidateTopologies ? "[IN POOL]" : "[OUT]";
+                    Console.WriteLine($"       #{i + 1} {inPool}: Pareto={f.ParetoScore:F2}, Dv={f.EstimatedTotalDvMs:F0}m/s, ToF={f.EstimatedToFDays:F0}d, Chain={bCase.DepartureBody} ➔ {(f.FlybyChain.Count > 0 ? string.Join(" ➔ ", f.FlybyChain) + " ➔ " : "")}{bCase.DestinationBody}{mark}");
+                }
+
+                summaryList.Add((bCase.MissionName, inRaw, inDiverse, inFinal, histRankInFiltered >= 0 ? (histRankInFiltered + 1) : -1, bCase.MaxCandidateTopologies));
+            }
+
+            Console.WriteLine("\n==========================================================================================");
+            Console.WriteLine("🏆 人类历史 13 项经典深空 MGA 任务纯盲搜推导演化池全景对齐测试大榜");
+            Console.WriteLine("==========================================================================================");
+            Console.WriteLine($"{"任务名称",-32} | {"图论推导",-6} | {"多样性池",-6} | {"DE演化池",-6} | {"实际排名 / 容量",-16} | 命中状态");
+            Console.WriteLine(new string('-', 92));
+            int hitCount = 0;
+            foreach (var s in summaryList)
+            {
+                string status = s.InPool ? "★ 历史命中" : "❌ 未入池";
+                if (s.InPool) hitCount++;
+                string rankStr = s.Rank > 0 ? $"Rank #{s.Rank} / {s.MaxPool}" : "NOT FOUND";
+                Console.WriteLine($"{s.Name,-32} | {(s.InRaw ? "✅ YES" : "❌ NO"),-6} | {(s.InDiverse ? "✅ YES" : "❌ NO"),-6} | {(s.InPool ? "✅ YES" : "❌ NO"),-6} | {rankStr,-16} | {status}");
+            }
+            Console.WriteLine(new string('-', 92));
+            Console.WriteLine($"★ 历史任务入池综合命中率: {hitCount} / {summaryList.Count} ({hitCount * 100.0 / summaryList.Count:F1}%)");
+            Console.WriteLine("==========================================================================================\n");
         }
 
         static void TestWideSearchAndDirectApplication(ref int total, ref int passed) {
