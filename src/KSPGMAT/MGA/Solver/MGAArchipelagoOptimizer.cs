@@ -101,6 +101,7 @@ namespace KSPGMAT.MGA
                     DepartureToFMinFactor = subCfg.DepartureToFMinFactor,
                     DepartureToFMaxFactor = subCfg.DepartureToFMaxFactor,
                     ResonantMaxOffsetDays = subCfg.ResonantMaxOffsetDays,
+                    LambertMaxRevs = subCfg.LambertMaxRevs,
                     MinToFDays = legBounds.Select(b => b.MinDays).ToList(),
                     MaxToFDays = legBounds.Select(b => b.MaxDays).ToList()
                 };
@@ -116,7 +117,7 @@ namespace KSPGMAT.MGA
                     Console.WriteLine($"     [岛屿 {wIdx + 1,2}/{totalWindows}] 历元 {GMATClient.FormatUtcGregorian(w.WindowStartUT)}: 最佳总ΔV = {b.TotalDeltaVKms * 1000.0,7:F0} m/s (始发={b.LaunchDeltaVKms * 1000.0,6:F0} m/s, DSM={b.TotalDsmDeltaVKms * 1000.0,7:F0} m/s)");
                     foreach (var s in sols)
                     {
-                        if (s != null && !double.IsNaN(s.TotalDeltaVKms) && s.TotalDeltaVKms < 250.0)
+                        if (s != null && !double.IsNaN(s.TotalDeltaVKms) && s.TotalDeltaVKms < MGADefaults.MaxPlausibleTotalDvKms) // 过滤 >50 km/s 的动力学发散解
                         {
                             allSolutions.Add(s);
                         }

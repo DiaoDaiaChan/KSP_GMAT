@@ -18,3 +18,8 @@
 #include "pykep_transfer_window.cpp"
 #include "pykep_wsb_manifold.cpp"
 #include "pykep_gpu_porkchop.cpp"
+#include "pykep_gpu_mga_tensor.cpp"
+#include "pykep_gpu_phase_radar.cpp"
+#include "pykep_gpu_mega_pop.cpp"
+#include "pykep_gpu_bplane_mc.cpp"
+#include "pykep_gpu_sims_flanagan.cpp"

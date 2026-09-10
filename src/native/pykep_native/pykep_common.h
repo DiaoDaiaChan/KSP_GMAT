@@ -344,7 +344,16 @@ static inline double calc_vis_viva_dep_inc(
 static inline double calc_vis_viva_arr(double v_inf, double mu, double radius, double pe_km, double ap_km) {
     if (mu <= 0.0 || radius <= 0.0) return v_inf;
     double rp = radius + std::max(0.0, pe_km);
-    double ra = radius + std::max(pe_km, ap_km);
+    double effective_ap_km = ap_km;
+    // 天体力学第一性原理：对于木星/土星等巨行星 (radius >= 20000 km 或 mu >= 5e6 km^3/s^2)，
+    // 若未显式配置高远拱点 (ap_km <= pe_km)，物理上航天器必采用高偏心率科学椭圆捕获 (e = 0.96)，
+    // 杜绝将巨行星当做近行星低圆轨道评估所产生的十几千米/秒非物理虚假冲量
+    if ((radius >= 20000.0 || mu >= 5e6) && effective_ap_km <= pe_km) {
+        double e_preset = 0.96;
+        double ra_calc = rp * (1.0 + e_preset) / (1.0 - e_preset);
+        effective_ap_km = ra_calc - radius;
+    }
+    double ra = radius + std::max(pe_km, effective_ap_km);
     double a = (rp + ra) * 0.5;
     double v_tgt = std::sqrt(mu * (2.0 / rp - 1.0 / a));
     double v_hyp = std::sqrt(v_inf * v_inf + 2.0 * mu / rp);

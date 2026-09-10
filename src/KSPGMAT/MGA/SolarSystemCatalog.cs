@@ -655,7 +655,9 @@ namespace KSPGMAT.MGA
                     IsMoon = isMoonFallback,
                     SourceScheme = EphemerisScheme.Scheme1_SpiceDE440
                 };
-                _planetsCache[name] = fallbackPlanet;
+                if (StandardSolarBodyNames.Any(s => s.Equals(name, StringComparison.OrdinalIgnoreCase))) {
+                    _planetsCache[name] = fallbackPlanet;
+                }
                 try {
                     PykepNative.RegisterBody(
                         fallbackPlanet.Name,
@@ -736,9 +738,13 @@ namespace KSPGMAT.MGA
                 } catch { }
             }
 
-            // 离线/未载入时返回方案 1 权威天体缓存
+            // 离线/未载入时返回方案 1 权威天体缓存 (严格过滤，杜绝临时查询天体污染太阳系天体拓扑搜索)
             EnsureScheme1Cache();
-            return _planetsCache.Values.ToList();
+            lock (_cacheLock) {
+                return _planetsCache.Values
+                    .Where(p => StandardSolarBodyNames.Any(s => s.Equals(p.Name, StringComparison.OrdinalIgnoreCase)))
+                    .ToList();
+            }
         }
 
         public static int GetPlanetIndex(string name) {

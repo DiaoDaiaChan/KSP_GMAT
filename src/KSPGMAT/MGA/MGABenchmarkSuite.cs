@@ -96,7 +96,7 @@ namespace KSPGMAT.MGA {
                 HistoricToFDays = new List<double> { 115.0, 301.0, 731.0, 1095.0 },
                 NoInsertionBurn = true,
                 EngineMode = MGAEngineMode.HeterogeneousHybrid,
-                LegStrategies = new List<MGALegStrategy> { MGALegStrategy.Ballistic, MGALegStrategy.DeepSpaceManeuver1DSM, MGALegStrategy.DeepSpaceManeuver1DSM, MGALegStrategy.Ballistic },
+                LegStrategies = new List<MGALegStrategy> { MGALegStrategy.Ballistic, MGALegStrategy.DeepSpaceManeuver1DSM, MGALegStrategy.DeepSpaceManeuver1DSM, MGALegStrategy.DeepSpaceManeuver1DSM },
                 FlybyStrategies = new List<MGAFlybyStrategy> { MGAFlybyStrategy.UnpoweredFlyby, MGAFlybyStrategy.UnpoweredFlyby, MGAFlybyStrategy.UnpoweredFlyby }
             },
 

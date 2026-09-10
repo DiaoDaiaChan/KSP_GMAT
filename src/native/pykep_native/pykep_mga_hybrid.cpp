@@ -212,6 +212,7 @@ EXPORT_API int pykep_mga_hybrid_evaluate_mu(
                         out_sol->ejection_angle_deg = ej_ang;
                     }
                     total_dv += out_sol->launch_dv_kms;
+                    leg.is_feasible = 1;
                 } else {
                     leg.v_inf_dep_x = v1_lam[0] - p1.vx;
                     leg.v_inf_dep_y = v1_lam[1] - p1.vy;
@@ -225,8 +226,9 @@ EXPORT_API int pykep_mga_hybrid_evaluate_mu(
 
                     leg.flyby_turn_deg = delta_deg;
                     leg.flyby_rp_km = rp_km;
-                    leg.is_feasible = (fb_ok == 0) ? 1 : 0;
-                    if (fb_ok != 0) out_sol->all_feasible = 0;
+                    bool hit_planet = (rp_km < p1.safe_radius * 0.999);
+                    leg.is_feasible = hit_planet ? 0 : 1;
+                    if (hit_planet) out_sol->all_feasible = 0;
 
                     int fb_strat = (flyby_strategies != nullptr) ? flyby_strategies[k - 1] : 0;
                     double fb_impulse = pykep_flyby_dv(prev_leg.v_inf_arr_x, prev_leg.v_inf_arr_y, prev_leg.v_inf_arr_z,
@@ -255,90 +257,298 @@ EXPORT_API int pykep_mga_hybrid_evaluate_mu(
 
                 std::array<double, 3> r_dsm = {p1.rx, p1.ry, p1.rz};
                 std::array<double, 3> v_dsm_m = {0, 0, 0};
+                std::array<double, 3> r2_arr = {p2.rx, p2.ry, p2.rz};
+                std::array<double, 3> v_dsm_p = {0, 0, 0};
+                std::array<double, 3> v2_arr = {0, 0, 0};
+                bool lam_ok = false;
+                double best_dsm = 1e18;
 
                 if (k == 0) {
                     double r1_len_i = std::sqrt(r1_arr[0]*r1_arr[0] + r1_arr[1]*r1_arr[1] + r1_arr[2]*r1_arr[2]);
                     double r2_len_i = std::sqrt(r2_arr[0]*r2_arr[0] + r2_arr[1]*r2_arr[1] + r2_arr[2]*r2_arr[2]);
                     double r_avg_i = (r1_len_i + r2_len_i) * 0.5;
-                    double t_orb_i = 2.0 * 3.14159265358979323846 * std::sqrt((r_avg_i * r_avg_i * r_avg_i) / effective_mu);
+                    double t_orb_i = 2.0 * PI * std::sqrt((r_avg_i * r_avg_i * r_avg_i) / effective_mu);
                     int nmax_init = (t_orb_i > 10.0) ? (int)std::floor(tof / t_orb_i + 0.25) : 0;
                     bool is_res_init = (std::abs(p1.mu - p2.mu) < 1e-4 && std::abs(p1.radius - p2.radius) < 1e-4 && !is_central_body(p1, effective_mu));
                     if (is_res_init && nmax_init < 1) nmax_init = 1;
                     nmax_init = std::max(0, std::min(4, nmax_init));
-                    bool init_ok = false;
-                    double best_vinf = 1e18;
+
+                    // 行星当地局部开普勒轨道标架 {u_v, u_h, u_r}
+                    double v_p1_mag = std::sqrt(p1.vx*p1.vx + p1.vy*p1.vy + p1.vz*p1.vz);
+                    std::array<double, 3> u_v = { 1.0, 0.0, 0.0 };
+                    if (v_p1_mag > 1e-5) {
+                        u_v = { p1.vx / v_p1_mag, p1.vy / v_p1_mag, p1.vz / v_p1_mag };
+                    }
+                    double hx_p1 = r1_arr[1]*p1.vz - r1_arr[2]*p1.vy;
+                    double hy_p1 = r1_arr[2]*p1.vx - r1_arr[0]*p1.vz;
+                    double hz_p1 = r1_arr[0]*p1.vy - r1_arr[1]*p1.vx;
+                    double h_p1_mag = std::sqrt(hx_p1*hx_p1 + hy_p1*hy_p1 + hz_p1*hz_p1);
+                    std::array<double, 3> u_h = { 0.0, 0.0, 1.0 };
+                    if (h_p1_mag > 1e-5) {
+                        u_h = { hx_p1 / h_p1_mag, hy_p1 / h_p1_mag, hz_p1 / h_p1_mag };
+                    }
+                    std::array<double, 3> u_r = {
+                        u_v[1]*u_h[2] - u_v[2]*u_h[1],
+                        u_v[2]*u_h[0] - u_v[0]*u_h[2],
+                        u_v[0]*u_h[1] - u_v[1]*u_h[0]
+                    };
+
+                    // 下游天体势能跨越所需双曲超速估算 (用于同星共振调相 ΔV-EGA 的出场能级闭环)
+                    double v_inf_needed = 0.0;
+                    if (is_res_init && leg_count > 1) {
+                        const NativePlanetState& p_down = arr_planets[1];
+                        double r_down = std::sqrt(p_down.rx*p_down.rx + p_down.ry*p_down.ry + p_down.rz*p_down.rz);
+                        if (r_down > 1e-4) {
+                            double a_down = (r1_len_i + r_down) * 0.5;
+                            double v_down_req = std::sqrt(std::max(1e-4, effective_mu * (2.0 / std::max(1.0, r1_len_i) - 1.0 / std::max(1.0, a_down))));
+                            // 考虑引力助推双曲转向顺向增能系数 (物理极限泵升因子 ~0.60)
+                            v_inf_needed = std::abs(v_down_req - v_p1_mag) * 0.60;
+                        }
+                    }
+
+                    auto eval_init_dep_candidate = [&](const std::array<double, 3>& v_try,
+                                                       std::array<double, 3>& out_r_d,
+                                                       std::array<double, 3>& out_vm,
+                                                       std::array<double, 3>& out_vp,
+                                                       std::array<double, 3>& out_v2,
+                                                       double& out_dsm) -> double
+                    {
+                        double vx_inf = v_try[0] - p1.vx;
+                        double vy_inf = v_try[1] - p1.vy;
+                        double vz_inf = v_try[2] - p1.vz;
+                        double v_inf_mag = std::sqrt(vx_inf*vx_inf + vy_inf*vy_inf + vz_inf*vz_inf);
+                        if (v_inf_mag > 25.0) return 1e9;
+
+                        double launch_dv = 0.0;
+                        if (is_central_body(p1, effective_mu)) {
+                            double r_dest_km = std::sqrt(p2.rx*p2.rx + p2.ry*p2.ry + p2.rz*p2.rz);
+                            launch_dv = calc_central_departure_dv(p1.mu, p1.radius, dep_pe_km, dep_ap_km, r_dest_km, 0.0, nullptr);
+                        } else {
+                            launch_dv = calc_vis_viva_dep_inc(v_inf_mag, p1.mu, p1.radius, dep_pe_km, dep_ap_km, dep_inc_deg, vz_inf, nullptr);
+                        }
+
+                        std::array<double, 3> r_prop = r1_arr;
+                        std::array<double, 3> v_prop = v_try;
+                        try {
+                            pykep_propagate_lagrangian(r_prop, v_prop, dt1, effective_mu);
+                        } catch (...) {
+                            return 1e9;
+                        }
+
+                        double r_prop_len = std::sqrt(r_prop[0]*r_prop[0] + r_prop[1]*r_prop[1] + r_prop[2]*r_prop[2]);
+                        double r2_len_dsm = std::sqrt(r2_arr[0]*r2_arr[0] + r2_arr[1]*r2_arr[1] + r2_arr[2]*r2_arr[2]);
+                        double r_avg_dsm = (r_prop_len + r2_len_dsm) * 0.5;
+                        double t_orb_dsm = 2.0 * PI * std::sqrt((r_avg_dsm * r_avg_dsm * r_avg_dsm) / effective_mu);
+                        int nmax = (t_orb_dsm > 10.0) ? (int)std::floor(dt2 / t_orb_dsm + 0.25) : 0;
+                        nmax = std::max(0, std::min(4, nmax));
+
+                        try {
+                            kep3::lambert_problem lp(r_prop, r2_arr, dt2, effective_mu, false, nmax);
+                            const auto& v0_list = lp.get_v0();
+                            const auto& v1_list = lp.get_v1();
+                            double best_dsm_local = 1e9;
+                            size_t best_b = 0;
+                            bool found = false;
+                            for (size_t b = 0; b < v0_list.size(); ++b) {
+                                double dv_x = v0_list[b][0] - v_prop[0];
+                                double dv_y = v0_list[b][1] - v_prop[1];
+                                double dv_z = v0_list[b][2] - v_prop[2];
+                                double dsm_mag = std::sqrt(dv_x*dv_x + dv_y*dv_y + dv_z*dv_z);
+                                double v0_mag = std::sqrt(v0_list[b][0]*v0_list[b][0] + v0_list[b][1]*v0_list[b][1] + v0_list[b][2]*v0_list[b][2]);
+                                if (!std::isnan(dsm_mag) && !std::isinf(dsm_mag) && v0_mag < 90.0 && dsm_mag < best_dsm_local) {
+                                    best_dsm_local = dsm_mag;
+                                    best_b = b;
+                                    found = true;
+                                }
+                            }
+                            if (found) {
+                                out_r_d = r_prop;
+                                out_vm = v_prop;
+                                out_vp = v0_list[best_b];
+                                out_v2 = v1_list[best_b];
+                                out_dsm = best_dsm_local;
+                                double cand_cost = launch_dv + best_dsm_local;
+
+                                // 天体当地环绕速度标度运载注入上限惩罚 (通用齐次物理准则: v_inf <= 0.75 v_circ)
+                                if (!is_central_body(p1, effective_mu) && p1.radius > 0) {
+                                    double v_circ_dep = std::sqrt(p1.mu / std::max(1.0, p1.radius + dep_pe_km));
+                                    double v_inf_launch_limit = 0.75 * v_circ_dep;
+                                    if (v_inf_mag > v_inf_launch_limit) {
+                                        double over_v = v_inf_mag - v_inf_launch_limit;
+                                        cand_cost += 2.0 * over_v * (1.0 + over_v);
+                                    }
+                                }
+
+                                if (v_inf_needed > 0.0) {
+                                    double vax = out_v2[0] - p2.vx;
+                                    double vay = out_v2[1] - p2.vy;
+                                    double vaz = out_v2[2] - p2.vz;
+                                    double v_inf_arr = std::sqrt(vax*vax + vay*vay + vaz*vaz);
+                                    if (v_inf_arr < v_inf_needed) {
+                                        cand_cost += 1.5 * (v_inf_needed - v_inf_arr);
+                                    }
+                                }
+                                return cand_cost;
+                            }
+                        } catch (...) {}
+
+                        return 1e9;
+                    };
+
+                    std::vector<std::array<double, 3>> init_v_candidates;
+
+                    // 1. 开普勒两体 Lambert 全程转移初速
                     try {
                         kep3::lambert_problem lp_init(r1_arr, r2_arr, tof, effective_mu, false, nmax_init);
-                        const auto& v0_init_list = lp_init.get_v0();
-                        for (size_t b = 0; b < v0_init_list.size(); ++b) {
-                            double vx = v0_init_list[b][0] - p1.vx;
-                            double vy = v0_init_list[b][1] - p1.vy;
-                            double vz = v0_init_list[b][2] - p1.vz;
-                            double vinf = std::sqrt(vx*vx + vy*vy + vz*vz);
-                            double v_tot = std::sqrt(v0_init_list[b][0]*v0_init_list[b][0] + v0_init_list[b][1]*v0_init_list[b][1] + v0_init_list[b][2]*v0_init_list[b][2]);
-                            if (!std::isnan(v_tot) && !std::isinf(v_tot) && vinf < 45.0 && vinf < best_vinf) {
-                                best_vinf = vinf;
-                                cur_v_dep = v0_init_list[b];
-                                init_ok = true;
-                            }
+                        for (const auto& v0 : lp_init.get_v0()) {
+                            init_v_candidates.push_back(v0);
                         }
                     } catch (...) {}
 
+                    // 2. 共振初速候选 (针对同星共振蓄能 ΔV-EGA)
                     if (is_res_init) {
-                        double v_p1_mag = std::sqrt(p1.vx*p1.vx + p1.vy*p1.vy + p1.vz*p1.vz);
-                        if (v_p1_mag > 1e-4 && r1_len_i > 1e-4) {
-                            double u_p1[3] = { p1.vx / v_p1_mag, p1.vy / v_p1_mag, p1.vz / v_p1_mag };
-                            int max_m = std::max(1, std::min(4, nmax_init + 1));
-                            for (int m = 1; m <= max_m; ++m) {
-                                double t_sc = tof / (double)m;
-                                double a_res = std::cbrt(effective_mu * (t_sc / (2.0 * PI)) * (t_sc / (2.0 * PI)));
-                                double v_sq = effective_mu * (2.0 / r1_len_i - 1.0 / a_res);
-                                if (v_sq <= 1e-4) continue;
-                                double v_req = std::sqrt(v_sq);
-                                std::array<double, 3> v_cand = { v_req * u_p1[0], v_req * u_p1[1], v_req * u_p1[2] };
-                                double vx = v_cand[0] - p1.vx;
-                                double vy = v_cand[1] - p1.vy;
-                                double vz = v_cand[2] - p1.vz;
-                                double vinf = std::sqrt(vx*vx + vy*vy + vz*vz);
-                                if (vinf < best_vinf) {
-                                    best_vinf = vinf;
-                                    cur_v_dep = v_cand;
-                                    init_ok = true;
-                                }
+                        int max_m = std::max(1, std::min(4, nmax_init + 1));
+                        for (int m = 1; m <= max_m; ++m) {
+                            double t_sc = tof / (double)m;
+                            double a_res = std::cbrt(effective_mu * (t_sc / (2.0 * PI)) * (t_sc / (2.0 * PI)));
+                            double v_sq = effective_mu * (2.0 / std::max(1.0, r1_len_i) - 1.0 / std::max(1.0, a_res));
+                            if (v_sq <= 1e-4) continue;
+                            double v_req = std::sqrt(v_sq);
+
+                            double angles_deg[] = { 0.0, -6.0, 6.0, -12.0, 12.0, -20.0, 20.0, -30.0, 30.0 };
+                            for (double ang : angles_deg) {
+                                double rad = ang * DEG2RAD;
+                                double c_v = std::cos(rad);
+                                double s_r = std::sin(rad);
+                                init_v_candidates.push_back({
+                                    v_req * (c_v * u_v[0] + s_r * u_r[0]),
+                                    v_req * (c_v * u_v[1] + s_r * u_r[1]),
+                                    v_req * (c_v * u_v[2] + s_r * u_r[2])
+                                });
                             }
+                        }
+
+                        // 天体自然有理数共振比候选 (1:1, 4:3, 3:2, 2:1, 5:2, 3:1 等)
+                        double t_orb_body = 2.0 * PI * std::sqrt((r1_len_i * r1_len_i * r1_len_i) / effective_mu);
+                        double res_ratios[] = { 1.0, 1.25, 1.333333, 1.5, 1.75, 2.0, 2.25, 2.5, 3.0 };
+                        for (double rr : res_ratios) {
+                            double t_res = t_orb_body * rr;
+                            double a_res = std::cbrt(effective_mu * (t_res / (2.0 * PI)) * (t_res / (2.0 * PI)));
+                            double v_sq = effective_mu * (2.0 / std::max(1.0, r1_len_i) - 1.0 / std::max(1.0, a_res));
+                            if (v_sq <= 1e-4) continue;
+                            double v_req = std::sqrt(v_sq);
+
+                            double angles_deg[] = { 0.0, -8.0, 8.0, -16.0, 16.0, -25.0, 25.0 };
+                            for (double ang : angles_deg) {
+                                double rad = ang * DEG2RAD;
+                                double c_v = std::cos(rad);
+                                double s_r = std::sin(rad);
+                                init_v_candidates.push_back({
+                                    v_req * (c_v * u_v[0] + s_r * u_r[0]),
+                                    v_req * (c_v * u_v[1] + s_r * u_r[1]),
+                                    v_req * (c_v * u_v[2] + s_r * u_r[2])
+                                });
+                            }
+                        }
+                    } else {
+                        // 异星霍曼初速候选
+                        double a_hoh = (r1_len_i + r2_len_i) * 0.5;
+                        double v_sq_h = effective_mu * (2.0 / std::max(1.0, r1_len_i) - 1.0 / std::max(1.0, a_hoh));
+                        if (v_sq_h > 1e-4) {
+                            double v_req_h = std::sqrt(v_sq_h);
+                            init_v_candidates.push_back({ v_req_h * u_v[0], v_req_h * u_v[1], v_req_h * u_v[2] });
                         }
                     }
 
-                    if (!init_ok) {
-                        try {
-                            kep3::lambert_problem lp_init_retro(r1_arr, r2_arr, tof, effective_mu, true, nmax_init);
-                            const auto& v0_init_list = lp_init_retro.get_v0();
-                            for (size_t b = 0; b < v0_init_list.size(); ++b) {
-                                double vx = v0_init_list[b][0] - p1.vx;
-                                double vy = v0_init_list[b][1] - p1.vy;
-                                double vz = v0_init_list[b][2] - p1.vz;
-                                double vinf = std::sqrt(vx*vx + vy*vy + vz*vz);
-                                double v_tot = std::sqrt(v0_init_list[b][0]*v0_init_list[b][0] + v0_init_list[b][1]*v0_init_list[b][1] + v0_init_list[b][2]*v0_init_list[b][2]);
-                                if (!std::isnan(v_tot) && !std::isinf(v_tot) && vinf < 45.0 && vinf < best_vinf) {
-                                    best_vinf = vinf;
-                                    cur_v_dep = v0_init_list[b];
-                                    init_ok = true;
-                                }
-                            }
-                        } catch (...) {}
+                    // 评估所有初速候选
+                    double best_cost = 1e18;
+                    std::array<double, 3> best_v_dep = { p1.vx, p1.vy, p1.vz };
+                    std::array<double, 3> best_r_dsm = r1_arr;
+                    std::array<double, 3> best_v_dsm_m = {0,0,0};
+                    std::array<double, 3> best_v_dsm_p = {0,0,0};
+                    std::array<double, 3> best_v2 = {0,0,0};
+                    double best_dsm_val = 1e18;
+
+                    for (const auto& v_cand : init_v_candidates) {
+                        std::array<double, 3> t_r_d, t_vm, t_vp, t_v2;
+                        double t_dsm = 1e9;
+                        double c = eval_init_dep_candidate(v_cand, t_r_d, t_vm, t_vp, t_v2, t_dsm);
+                        if (c < best_cost) {
+                            best_cost = c;
+                            best_v_dep = v_cand;
+                            best_r_dsm = t_r_d;
+                            best_v_dsm_m = t_vm;
+                            best_v_dsm_p = t_vp;
+                            best_v2 = t_v2;
+                            best_dsm_val = t_dsm;
+                            lam_ok = true;
+                        }
                     }
 
-                    if (!init_ok) {
-                        double v_p1_mag = std::sqrt(p1.vx*p1.vx + p1.vy*p1.vy + p1.vz*p1.vz);
-                        double u_p1[3] = { 1, 0, 0 };
-                        if (v_p1_mag > 1e-4) {
-                            u_p1[0] = p1.vx / v_p1_mag; u_p1[1] = p1.vy / v_p1_mag; u_p1[2] = p1.vz / v_p1_mag;
+                    // 3. 极速 2D 坐标下降微调 (Coordinate Descent Refinement)
+                    if (lam_ok) {
+                        double step_v = 0.20; // km/s
+                        for (int iter = 0; iter < 3; ++iter) {
+                            bool improved = false;
+                            double test_steps[] = { -step_v, step_v };
+                            for (double ds : test_steps) {
+                                // 沿轨道公转方向微调
+                                std::array<double, 3> try_v = {
+                                    best_v_dep[0] + ds * u_v[0],
+                                    best_v_dep[1] + ds * u_v[1],
+                                    best_v_dep[2] + ds * u_v[2]
+                                };
+                                std::array<double, 3> t_r_d, t_vm, t_vp, t_v2;
+                                double t_dsm = 1e9;
+                                double c = eval_init_dep_candidate(try_v, t_r_d, t_vm, t_vp, t_v2, t_dsm);
+                                if (c < best_cost) {
+                                    best_cost = c;
+                                    best_v_dep = try_v;
+                                    best_r_dsm = t_r_d;
+                                    best_v_dsm_m = t_vm;
+                                    best_v_dsm_p = t_vp;
+                                    best_v2 = t_v2;
+                                    best_dsm_val = t_dsm;
+                                    improved = true;
+                                }
+
+                                // 沿径向微调
+                                std::array<double, 3> try_v_r = {
+                                    best_v_dep[0] + ds * u_r[0],
+                                    best_v_dep[1] + ds * u_r[1],
+                                    best_v_dep[2] + ds * u_r[2]
+                                };
+                                c = eval_init_dep_candidate(try_v_r, t_r_d, t_vm, t_vp, t_v2, t_dsm);
+                                if (c < best_cost) {
+                                    best_cost = c;
+                                    best_v_dep = try_v_r;
+                                    best_r_dsm = t_r_d;
+                                    best_v_dsm_m = t_vm;
+                                    best_v_dsm_p = t_vp;
+                                    best_v2 = t_v2;
+                                    best_dsm_val = t_dsm;
+                                    improved = true;
+                                }
+                            }
+                            step_v *= 0.5;
+                            if (!improved && iter > 0) break;
                         }
+                    }
+
+                    if (!lam_ok) {
                         double sign_dir = (r2_len_i >= r1_len_i) ? 1.0 : -1.0;
-                        cur_v_dep = { p1.vx + sign_dir * 5.0 * u_p1[0], p1.vy + sign_dir * 5.0 * u_p1[1], p1.vz + sign_dir * 5.0 * u_p1[2] };
+                        cur_v_dep = { p1.vx + sign_dir * 5.0 * u_v[0], p1.vy + sign_dir * 5.0 * u_v[1], p1.vz + sign_dir * 5.0 * u_v[2] };
                         leg.is_feasible = 0;
                         out_sol->all_feasible = 0;
+                    } else {
+                        cur_v_dep = best_v_dep;
+                        r_dsm = best_r_dsm;
+                        v_dsm_m = best_v_dsm_m;
+                        v_dsm_p = best_v_dsm_p;
+                        v2_arr = best_v2;
+                        best_dsm = best_dsm_val;
                     }
+
                     leg.v_inf_dep_x = cur_v_dep[0] - p1.vx;
                     leg.v_inf_dep_y = cur_v_dep[1] - p1.vy;
                     leg.v_inf_dep_z = cur_v_dep[2] - p1.vz;
@@ -420,6 +630,7 @@ EXPORT_API int pykep_mga_hybrid_evaluate_mu(
                         out_sol->ejection_angle_deg = ej_ang;
                     }
                     total_dv += out_sol->launch_dv_kms;
+                    leg.v1x = cur_v_dep[0]; leg.v1y = cur_v_dep[1]; leg.v1z = cur_v_dep[2];
                 } else {
                     NativeLeg1DSMResult& prev_leg = out_sol->legs[k - 1];
                     double v_in_x = prev_leg.v_inf_arr_x;
@@ -427,421 +638,314 @@ EXPORT_API int pykep_mga_hybrid_evaluate_mu(
                     double v_in_z = prev_leg.v_inf_arr_z;
                     double v_in_mag = std::sqrt(v_in_x*v_in_x + v_in_y*v_in_y + v_in_z*v_in_z);
 
-                    // 1. Solve full-leg Lambert problem to find nominal target transfer direction
                     std::array<double, 3> r1_arr = {p1.rx, p1.ry, p1.rz};
-                    std::array<double, 3> r2_arr = {p2.rx, p2.ry, p2.rz};
                     double r1_len_f = std::sqrt(r1_arr[0]*r1_arr[0] + r1_arr[1]*r1_arr[1] + r1_arr[2]*r1_arr[2]);
                     double r2_len_f = std::sqrt(r2_arr[0]*r2_arr[0] + r2_arr[1]*r2_arr[1] + r2_arr[2]*r2_arr[2]);
-                    double r_avg_f = (r1_len_f + r2_len_f) * 0.5;
-                    double t_orb_f = 2.0 * 3.14159265358979323846 * std::sqrt((r_avg_f * r_avg_f * r_avg_f) / effective_mu);
-                    int nmax_full = (t_orb_f > 10.0) ? (int)std::floor(tof / t_orb_f + 0.25) : 0;
-                    bool is_res_full = (std::abs(p1.mu - p2.mu) < 1e-4 && std::abs(p1.radius - p2.radius) < 1e-4 && !is_central_body(p1, effective_mu));
-                    if (is_res_full && nmax_full < 1) nmax_full = 1;
-                    nmax_full = std::max(0, std::min(4, nmax_full));
-                    
-                    std::array<double, 3> v_tgt_dep = {p1.vx, p1.vy, p1.vz};
-                    double best_tgt_cost = 1e18;
-                    bool lp_ok = false;
-                    std::vector<std::array<double, 3>> candidate_v0_list;
 
-                    // A. Attempt kep3 Lambert solver
+                    // 天体近拱点安全半径与双曲偏折角理论极限 (Vis-Viva & Hyperbolic Deflection Limit)
+                    double safe_rp = p1.safe_radius;
+                    double e_min = 1.0 + (safe_rp * v_in_mag * v_in_mag) / std::max(1e-6, p1.mu);
+                    double delta_max = 2.0 * std::asin(1.0 / std::max(1.0001, e_min)) * 0.998;
+
+                    double v_p1_mag = std::sqrt(p1.vx*p1.vx + p1.vy*p1.vy + p1.vz*p1.vz);
+                    double u_in[3] = { 1, 0, 0 };
+                    if (v_in_mag > 1e-5) {
+                        u_in[0] = v_in_x / v_in_mag;
+                        u_in[1] = v_in_y / v_in_mag;
+                        u_in[2] = v_in_z / v_in_mag;
+                    }
+                    double u_p1[3] = { 1, 0, 0 };
+                    if (v_p1_mag > 1e-5) {
+                        u_p1[0] = p1.vx / v_p1_mag;
+                        u_p1[1] = p1.vy / v_p1_mag;
+                        u_p1[2] = p1.vz / v_p1_mag;
+                    }
+                    double u_r1[3] = { 1, 0, 0 };
+                    if (r1_len_f > 1e-5) {
+                        u_r1[0] = r1_arr[0] / r1_len_f;
+                        u_r1[1] = r1_arr[1] / r1_len_f;
+                        u_r1[2] = r1_arr[2] / r1_len_f;
+                    }
+                    // 行星轨道角动量矢量 h = r1 x v_p1
+                    double hx = r1_arr[1]*p1.vz - r1_arr[2]*p1.vy;
+                    double hy = r1_arr[2]*p1.vx - r1_arr[0]*p1.vz;
+                    double hz = r1_arr[0]*p1.vy - r1_arr[1]*p1.vx;
+                    double h_len = std::sqrt(hx*hx + hy*hy + hz*hz);
+                    double u_h[3] = { 0, 0, 1 };
+                    if (h_len > 1e-6) {
+                        u_h[0] = hx / h_len; u_h[1] = hy / h_len; u_h[2] = hz / h_len;
+                    }
+                    // 轨道平面切向单位矢量: u_theta = u_h x u_r1
+                    double u_theta[3] = {
+                        u_h[1]*u_r1[2] - u_h[2]*u_r1[1],
+                        u_h[2]*u_r1[0] - u_h[0]*u_r1[2],
+                        u_h[0]*u_r1[1] - u_h[1]*u_r1[0]
+                    };
+
+                    // 构造借力偏折锥面的局部正交标架 {u_in, e1, e2}
+                    double dot_th_in = u_theta[0]*u_in[0] + u_theta[1]*u_in[1] + u_theta[2]*u_in[2];
+                    double w1[3] = {
+                        u_theta[0] - dot_th_in * u_in[0],
+                        u_theta[1] - dot_th_in * u_in[1],
+                        u_theta[2] - dot_th_in * u_in[2]
+                    };
+                    double w1_len = std::sqrt(w1[0]*w1[0] + w1[1]*w1[1] + w1[2]*w1[2]);
+                    if (w1_len < 1e-5) {
+                        double dot_p1_in = u_p1[0]*u_in[0] + u_p1[1]*u_in[1] + u_p1[2]*u_in[2];
+                        w1[0] = u_p1[0] - dot_p1_in * u_in[0];
+                        w1[1] = u_p1[1] - dot_p1_in * u_in[1];
+                        w1[2] = u_p1[2] - dot_p1_in * u_in[2];
+                        w1_len = std::sqrt(w1[0]*w1[0] + w1[1]*w1[1] + w1[2]*w1[2]);
+                        if (w1_len < 1e-5) {
+                            w1[0] = u_h[0]; w1[1] = u_h[1]; w1[2] = u_h[2];
+                            w1_len = std::sqrt(w1[0]*w1[0] + w1[1]*w1[1] + w1[2]*w1[2]);
+                        }
+                    }
+                    double e1[3] = { w1[0] / w1_len, w1[1] / w1_len, w1[2] / w1_len };
+                    double e2[3] = {
+                        u_in[1]*e1[2] - u_in[2]*e1[1],
+                        u_in[2]*e1[0] - u_in[0]*e1[2],
+                        u_in[0]*e1[1] - u_in[1]*e1[0]
+                    };
+
+                    auto get_cone_v_dep = [&](double delta, double beta) -> std::array<double, 3> {
+                        double cos_d = std::cos(delta);
+                        double sin_d = std::sin(delta);
+                        double cos_b = std::cos(beta);
+                        double sin_b = std::sin(beta);
+                        double u_out[3] = {
+                            cos_d * u_in[0] + sin_d * (cos_b * e1[0] + sin_b * e2[0]),
+                            cos_d * u_in[1] + sin_d * (cos_b * e1[1] + sin_b * e2[1]),
+                            cos_d * u_in[2] + sin_d * (cos_b * e1[2] + sin_b * e2[2])
+                        };
+                        return {
+                            p1.vx + v_in_mag * u_out[0],
+                            p1.vy + v_in_mag * u_out[1],
+                            p1.vz + v_in_mag * u_out[2]
+                        };
+                    };
+
+                    auto eval_dsm_candidate = [&](const std::array<double, 3>& v_dep_cand,
+                                                  std::array<double, 3>& out_r_dsm,
+                                                  std::array<double, 3>& out_v_dsm_m,
+                                                  std::array<double, 3>& out_v_dsm_p,
+                                                  std::array<double, 3>& out_v2_arr) -> double {
+                        std::array<double, 3> r_d = r1_arr;
+                        std::array<double, 3> v_d = v_dep_cand;
+                        try {
+                            pykep_propagate_lagrangian(r_d, v_d, dt1, effective_mu);
+                        } catch (...) {
+                            return 1e9;
+                        }
+                        double r_dsm_len = std::sqrt(r_d[0]*r_d[0] + r_d[1]*r_d[1] + r_d[2]*r_d[2]);
+                        double r2_len_dsm = std::sqrt(r2_arr[0]*r2_arr[0] + r2_arr[1]*r2_arr[1] + r2_arr[2]*r2_arr[2]);
+                        double r_avg_dsm = (r_dsm_len + r2_len_dsm) * 0.5;
+                        double t_orb_dsm = 2.0 * 3.14159265358979323846 * std::sqrt((r_avg_dsm * r_avg_dsm * r_avg_dsm) / effective_mu);
+                        int nmax = (t_orb_dsm > 10.0) ? (int)std::floor(dt2 / t_orb_dsm + 0.25) : 0;
+                        nmax = std::max(0, std::min(4, nmax));
+
+                        try {
+                            kep3::lambert_problem lp_dsm(r_d, r2_arr, dt2, effective_mu, false, nmax);
+                            const auto& v0_dsm_list = lp_dsm.get_v0();
+                            const auto& v1_dsm_list = lp_dsm.get_v1();
+                            double best_cost = 1e9;
+                            size_t best_idx = 0;
+                            bool found = false;
+                            for (size_t b = 0; b < v0_dsm_list.size(); ++b) {
+                                double dv_x = v0_dsm_list[b][0] - v_d[0];
+                                double dv_y = v0_dsm_list[b][1] - v_d[1];
+                                double dv_z = v0_dsm_list[b][2] - v_d[2];
+                                double dsm_mag = std::sqrt(dv_x*dv_x + dv_y*dv_y + dv_z*dv_z);
+                                double v0_mag = std::sqrt(v0_dsm_list[b][0]*v0_dsm_list[b][0] + v0_dsm_list[b][1]*v0_dsm_list[b][1] + v0_dsm_list[b][2]*v0_dsm_list[b][2]);
+                                if (!std::isnan(dsm_mag) && !std::isinf(dsm_mag) && v0_mag < 90.0 && dsm_mag < best_cost) {
+                                    best_cost = dsm_mag;
+                                    best_idx = b;
+                                    found = true;
+                                }
+                            }
+                            if (found) {
+                                out_r_dsm = r_d;
+                                out_v_dsm_m = v_d;
+                                out_v_dsm_p = v0_dsm_list[best_idx];
+                                out_v2_arr = v1_dsm_list[best_idx];
+                                return best_cost;
+                            }
+                        } catch (...) {}
+                        return 1e9;
+                    };
+
+                    std::vector<std::pair<double, double>> angle_candidates;
+
+                    // A. 显式输入参数优先 (Explicit External Guidance if provided)
+                    double rp_in = (fb_rps_km != nullptr) ? fb_rps_km[k] : 0.0;
+                    double beta_in = (fb_betas_rad != nullptr) ? fb_betas_rad[k] : 0.0;
+                    if (rp_in >= safe_rp) {
+                        double e_in = 1.0 + (rp_in * v_in_mag * v_in_mag) / std::max(1e-6, p1.mu);
+                        double delta_in = 2.0 * std::asin(1.0 / std::max(1.0001, e_in));
+                        angle_candidates.push_back({ std::min(delta_in, delta_max), beta_in });
+                    }
+
+                    // B. 开普勒活力公式能级匹配转移候选 (Keplerian Energy-Matched Tangent Transfers)
+                    bool is_res = (std::abs(p1.mu - p2.mu) < 1e-4 && std::abs(p1.radius - p2.radius) < 1e-4 && !is_central_body(p1, effective_mu));
+                    std::vector<double> a_candidates;
+                    if (is_res) {
+                        double a_res = std::cbrt((effective_mu * tof * tof) / (4.0 * 3.14159265358979323846 * 3.14159265358979323846));
+                        a_candidates.push_back(a_res);
+                        a_candidates.push_back(a_res * 0.95);
+                        a_candidates.push_back(a_res * 1.05);
+                    } else {
+                        double a_hoh = (r1_len_f + r2_len_f) * 0.5;
+                        a_candidates.push_back(a_hoh * 0.90);
+                        a_candidates.push_back(a_hoh * 0.95);
+                        a_candidates.push_back(a_hoh);
+                        a_candidates.push_back(a_hoh * 1.05);
+                        a_candidates.push_back(a_hoh * 1.15);
+                    }
+
+                    double gamma_angles[] = { -0.25, -0.12, 0.0, 0.12, 0.25 };
+                    for (double a_val : a_candidates) {
+                        double v_sq = effective_mu * (2.0 / std::max(1.0, r1_len_f) - 1.0 / std::max(1.0, a_val));
+                        if (v_sq <= 1e-4) continue;
+                        double v_req = std::sqrt(v_sq);
+                        for (double gam : gamma_angles) {
+                            double cos_g = std::cos(gam);
+                            double sin_g = std::sin(gam);
+                            double v_ideal[3] = {
+                                v_req * (cos_g * u_theta[0] + sin_g * u_r1[0]),
+                                v_req * (cos_g * u_theta[1] + sin_g * u_r1[1]),
+                                v_req * (cos_g * u_theta[2] + sin_g * u_r1[2])
+                            };
+                            double v_inf_req[3] = { v_ideal[0] - p1.vx, v_ideal[1] - p1.vy, v_ideal[2] - p1.vz };
+                            double v_inf_len = std::sqrt(v_inf_req[0]*v_inf_req[0] + v_inf_req[1]*v_inf_req[1] + v_inf_req[2]*v_inf_req[2]);
+                            if (v_inf_len > 1e-4) {
+                                double u_tgt[3] = { v_inf_req[0]/v_inf_len, v_inf_req[1]/v_inf_len, v_inf_req[2]/v_inf_len };
+                                double dot = std::max(-1.0, std::min(1.0, u_in[0]*u_tgt[0] + u_in[1]*u_tgt[1] + u_in[2]*u_tgt[2]));
+                                double req_ang = std::acos(dot);
+                                double turn_d = std::min(req_ang, delta_max);
+                                double dot_e1 = u_tgt[0]*e1[0] + u_tgt[1]*e1[1] + u_tgt[2]*e1[2];
+                                double dot_e2 = u_tgt[0]*e2[0] + u_tgt[1]*e2[1] + u_tgt[2]*e2[2];
+                                double b_ang = std::atan2(dot_e2, dot_e1);
+                                angle_candidates.push_back({ turn_d, b_ang });
+                            }
+                        }
+                    }
+
+                    // C. 尝试两体全航段直连兰伯特投影候选 (Direct Lambert Projection)
                     try {
+                        double r_avg_f = (r1_len_f + r2_len_f) * 0.5;
+                        double t_orb_f = 2.0 * 3.14159265358979323846 * std::sqrt((r_avg_f * r_avg_f * r_avg_f) / effective_mu);
+                        int nmax_full = (t_orb_f > 10.0) ? (int)std::floor(tof / t_orb_f + 0.25) : 0;
+                        nmax_full = std::max(0, std::min(2, nmax_full));
                         kep3::lambert_problem lp_full(r1_arr, r2_arr, tof, effective_mu, false, nmax_full);
                         const auto& v0_raw = lp_full.get_v0();
                         for (size_t b = 0; b < v0_raw.size(); ++b) {
                             double vx = v0_raw[b][0] - p1.vx;
                             double vy = v0_raw[b][1] - p1.vy;
                             double vz = v0_raw[b][2] - p1.vz;
-                            double v_rel_mag = std::sqrt(vx*vx + vy*vy + vz*vz);
-                            double v_tot_mag = std::sqrt(v0_raw[b][0]*v0_raw[b][0] + v0_raw[b][1]*v0_raw[b][1] + v0_raw[b][2]*v0_raw[b][2]);
-                            // Filter out unphysical Lambert collinear singularities
-                            if (!std::isnan(v_tot_mag) && !std::isinf(v_tot_mag) && v_rel_mag < 45.0 && v_tot_mag < 85.0) {
-                                candidate_v0_list.push_back(v0_raw[b]);
+                            double v_len = std::sqrt(vx*vx + vy*vy + vz*vz);
+                            if (v_len > 1e-4 && v_len < 45.0) {
+                                double u_lam[3] = { vx / v_len, vy / v_len, vz / v_len };
+                                double dot = std::max(-1.0, std::min(1.0, u_in[0]*u_lam[0] + u_in[1]*u_lam[1] + u_in[2]*u_lam[2]));
+                                double req_ang = std::acos(dot);
+                                double turn_d = std::min(req_ang, delta_max);
+                                double dot_e1 = u_lam[0]*e1[0] + u_lam[1]*e1[1] + u_lam[2]*e1[2];
+                                double dot_e2 = u_lam[0]*e2[0] + u_lam[1]*e2[1] + u_lam[2]*e2[2];
+                                double b_ang = std::atan2(dot_e2, dot_e1);
+                                angle_candidates.push_back({ turn_d, b_ang });
                             }
                         }
                     } catch (...) {}
 
-                    if (candidate_v0_list.empty()) {
-                        try {
-                            kep3::lambert_problem lp_full_retro(r1_arr, r2_arr, tof, effective_mu, true, nmax_full);
-                            const auto& v0_raw = lp_full_retro.get_v0();
-                            for (size_t b = 0; b < v0_raw.size(); ++b) {
-                                double vx = v0_raw[b][0] - p1.vx;
-                                double vy = v0_raw[b][1] - p1.vy;
-                                double vz = v0_raw[b][2] - p1.vz;
-                                double v_rel_mag = std::sqrt(vx*vx + vy*vy + vz*vz);
-                                double v_tot_mag = std::sqrt(v0_raw[b][0]*v0_raw[b][0] + v0_raw[b][1]*v0_raw[b][1] + v0_raw[b][2]*v0_raw[b][2]);
-                                if (!std::isnan(v_tot_mag) && !std::isinf(v_tot_mag) && v_rel_mag < 45.0 && v_tot_mag < 85.0) {
-                                    candidate_v0_list.push_back(v0_raw[b]);
+                    // D. 借力偏折锥面全向空间网格扫掠 (Cone Azimuth Sweep)
+                    double delta_fractions[] = { 1.0, 0.70, 0.35 };
+                    for (double d_frac : delta_fractions) {
+                        double cur_del = delta_max * d_frac;
+                        for (int a_idx = 0; a_idx < 12; ++a_idx) {
+                            double cur_bet = -3.14159265358979323846 + a_idx * (2.0 * 3.14159265358979323846 / 12.0);
+                            angle_candidates.push_back({ cur_del, cur_bet });
+                        }
+                    }
+
+                    // E. 物理直接评测与全局最优出场选择 (Direct DSM Evaluation & Local Optimization)
+                    double best_cost = 1e18;
+                    double best_delta = delta_max;
+                    double best_beta = 0.0;
+                    std::array<double, 3> best_v_dep = { p1.vx + v_in_x, p1.vy + v_in_y, p1.vz + v_in_z };
+                    std::array<double, 3> best_r_dsm = r1_arr;
+                    std::array<double, 3> best_v_dsm_m = best_v_dep;
+                    std::array<double, 3> best_v_dsm_p = {0, 0, 0};
+                    std::array<double, 3> best_v2 = {0, 0, 0};
+
+                    for (const auto& ang : angle_candidates) {
+                        double d_cand = std::max(0.0, std::min(delta_max, ang.first));
+                        double b_cand = ang.second;
+                        std::array<double, 3> v_cand = get_cone_v_dep(d_cand, b_cand);
+                        std::array<double, 3> tmp_r_dsm, tmp_v_m, tmp_v_p, tmp_v2;
+                        double cost = eval_dsm_candidate(v_cand, tmp_r_dsm, tmp_v_m, tmp_v_p, tmp_v2);
+                        if (cost < best_cost) {
+                            best_cost = cost;
+                            best_delta = d_cand;
+                            best_beta = b_cand;
+                            best_v_dep = v_cand;
+                            best_r_dsm = tmp_r_dsm;
+                            best_v_dsm_m = tmp_v_m;
+                            best_v_dsm_p = tmp_v_p;
+                            best_v2 = tmp_v2;
+                        }
+                    }
+
+                    // F. 极速 2D 坐标下降微调抛光 (Coordinate Descent Refinement)
+                    double step_d = delta_max * 0.12;
+                    double step_b = 0.20;
+                    for (int iter = 0; iter < 3; ++iter) {
+                        double test_d_deltas[] = { 0.0, -step_d, step_d };
+                        double test_b_deltas[] = { 0.0, -step_b, step_b };
+                        bool improved = false;
+                        for (double dd : test_d_deltas) {
+                            for (double db : test_b_deltas) {
+                                if (std::abs(dd) < 1e-6 && std::abs(db) < 1e-6) continue;
+                                double try_d = std::max(0.0, std::min(delta_max, best_delta + dd));
+                                double try_b = best_beta + db;
+                                std::array<double, 3> v_cand = get_cone_v_dep(try_d, try_b);
+                                std::array<double, 3> tmp_r_dsm, tmp_v_m, tmp_v_p, tmp_v2;
+                                double cost = eval_dsm_candidate(v_cand, tmp_r_dsm, tmp_v_m, tmp_v_p, tmp_v2);
+                                if (cost < best_cost) {
+                                    best_cost = cost;
+                                    best_delta = try_d;
+                                    best_beta = try_b;
+                                    best_v_dep = v_cand;
+                                    best_r_dsm = tmp_r_dsm;
+                                    best_v_dsm_m = tmp_v_m;
+                                    best_v_dsm_p = tmp_v_p;
+                                    best_v2 = tmp_v2;
+                                    improved = true;
                                 }
                             }
-                        } catch (...) {}
+                        }
+                        step_d *= 0.5;
+                        step_b *= 0.5;
+                        if (!improved && iter > 0) break;
                     }
 
-                    // B. For resonant legs (same body flyby-to-flyby, e.g. V-V, M-M, E-E):
-                    // Direct Keplerian Vis-Viva resonant synthesis to eradicate collinear singularity (2k*pi).
-                    bool has_exit_target = false;
-                    double u_exit[3] = { 0, 0, 0 };
-
-                    if (is_res_full) {
-                        // 识别同星共振集群的最终下游出口航段及出口天体，求解标称出口兰伯特矢量
-                        int exit_k = k;
-                        while (exit_k < leg_count &&
-                               std::abs(dep_planets[exit_k].mu - p1.mu) < 1e-4 &&
-                               std::abs(dep_planets[exit_k].radius - p1.radius) < 1e-4 &&
-                               std::abs(arr_planets[exit_k].mu - p1.mu) < 1e-4 &&
-                               std::abs(arr_planets[exit_k].radius - p1.radius) < 1e-4) {
-                            exit_k++;
-                        }
-                        if (exit_k < leg_count) {
-                            const NativePlanetState& dep_ex = dep_planets[exit_k];
-                            const NativePlanetState& arr_ex = arr_planets[exit_k];
-                            double tof_ex = tofs_sec[exit_k];
-                            std::array<double, 3> r1_ex = { dep_ex.rx, dep_ex.ry, dep_ex.rz };
-                            std::array<double, 3> r2_ex = { arr_ex.rx, arr_ex.ry, arr_ex.rz };
-                            double r1_ex_len = std::sqrt(r1_ex[0]*r1_ex[0] + r1_ex[1]*r1_ex[1] + r1_ex[2]*r1_ex[2]);
-                            double r2_ex_len = std::sqrt(r2_ex[0]*r2_ex[0] + r2_ex[1]*r2_ex[1] + r2_ex[2]*r2_ex[2]);
-                            double r_avg_ex = (r1_ex_len + r2_ex_len) * 0.5;
-                            double t_orb_ex = 2.0 * 3.14159265358979323846 * std::sqrt((r_avg_ex * r_avg_ex * r_avg_ex) / effective_mu);
-                            int nmax_ex = (t_orb_ex > 10.0) ? (int)std::floor(tof_ex / t_orb_ex + 0.25) : 0;
-                            nmax_ex = std::max(0, std::min(2, nmax_ex));
-                            try {
-                                kep3::lambert_problem lp_ex(r1_ex, r2_ex, tof_ex, effective_mu, false, nmax_ex);
-                                const auto& v0_ex_list = lp_ex.get_v0();
-                                if (!v0_ex_list.empty()) {
-                                    double vx = v0_ex_list[0][0] - dep_ex.vx;
-                                    double vy = v0_ex_list[0][1] - dep_ex.vy;
-                                    double vz = v0_ex_list[0][2] - dep_ex.vz;
-                                    double v_len = std::sqrt(vx*vx + vy*vy + vz*vz);
-                                    if (v_len > 1e-4) {
-                                        u_exit[0] = vx / v_len;
-                                        u_exit[1] = vy / v_len;
-                                        u_exit[2] = vz / v_len;
-                                        has_exit_target = true;
-                                    }
-                                }
-                            } catch (...) {}
-                        }
-
-                        double v_p1_mag = std::sqrt(p1.vx*p1.vx + p1.vy*p1.vy + p1.vz*p1.vz);
-                        if (v_p1_mag > 1e-4 && r1_len_f > 1e-4) {
-                            double u_p1[3] = { p1.vx / v_p1_mag, p1.vy / v_p1_mag, p1.vz / v_p1_mag };
-                            double u_r1[3] = { r1_arr[0] / r1_len_f, r1_arr[1] / r1_len_f, r1_arr[2] / r1_len_f };
-                            // Angular momentum unit vector of planet
-                            double hx = r1_arr[1]*p1.vz - r1_arr[2]*p1.vy;
-                            double hy = r1_arr[2]*p1.vx - r1_arr[0]*p1.vz;
-                            double hz = r1_arr[0]*p1.vy - r1_arr[1]*p1.vx;
-                            double h_len = std::sqrt(hx*hx + hy*hy + hz*hz);
-                            double u_h[3] = { 0, 0, 1 };
-                            if (h_len > 1e-6) {
-                                u_h[0] = hx / h_len; u_h[1] = hy / h_len; u_h[2] = hz / h_len;
-                            }
-                            // In-plane transverse unit vector (u_theta = u_h x u_r)
-                            double u_theta[3] = {
-                                u_h[1]*u_r1[2] - u_h[2]*u_r1[1],
-                                u_h[2]*u_r1[0] - u_h[0]*u_r1[2],
-                                u_h[0]*u_r1[1] - u_h[1]*u_r1[0]
-                            };
-
-                            // Incoming direction unit vector
-                            double u_in[3] = { 1, 0, 0 };
-                            if (v_in_mag > 1e-5) {
-                                u_in[0] = v_in_x / v_in_mag;
-                                u_in[1] = v_in_y / v_in_mag;
-                                u_in[2] = v_in_z / v_in_mag;
-                            }
-
-                            int max_m = std::max(1, std::min(4, nmax_full + 1));
-                            for (int m = 1; m <= max_m; ++m) {
-                                double t_sc = tof / (double)m;
-                                double a_res = std::cbrt(effective_mu * (t_sc / (2.0 * PI)) * (t_sc / (2.0 * PI)));
-                                double v_sq = effective_mu * (2.0 / r1_len_f - 1.0 / a_res);
-                                if (v_sq <= 1e-4) continue;
-                                double v_req = std::sqrt(v_sq);
-
-                                double cos_alpha = 1.0;
-                                if (v_in_mag > 1e-5) {
-                                    cos_alpha = (v_req * v_req - v_p1_mag * v_p1_mag - v_in_mag * v_in_mag) / (2.0 * v_p1_mag * v_in_mag);
-                                    cos_alpha = std::max(-1.0, std::min(1.0, cos_alpha));
-                                }
-                                double sin_alpha = std::sqrt(std::max(0.0, 1.0 - cos_alpha * cos_alpha));
-
-                                // Candidate 1: Minimum-turn 3D cone projection towards incoming direction
-                                double c_in = u_in[0]*u_p1[0] + u_in[1]*u_p1[1] + u_in[2]*u_p1[2];
-                                double w_in[3] = { u_in[0] - c_in*u_p1[0], u_in[1] - c_in*u_p1[1], u_in[2] - c_in*u_p1[2] };
-                                double w_len = std::sqrt(w_in[0]*w_in[0] + w_in[1]*w_in[1] + w_in[2]*w_in[2]);
-                                double u_w[3] = { u_r1[0], u_r1[1], u_r1[2] };
-                                if (w_len > 1e-6) {
-                                    u_w[0] = w_in[0] / w_len; u_w[1] = w_in[1] / w_len; u_w[2] = w_in[2] / w_len;
-                                }
-
-                                double u_cand1[3] = {
-                                    cos_alpha * u_p1[0] + sin_alpha * u_w[0],
-                                    cos_alpha * u_p1[1] + sin_alpha * u_w[1],
-                                    cos_alpha * u_p1[2] + sin_alpha * u_w[2]
-                                };
-                                candidate_v0_list.push_back({
-                                    p1.vx + v_in_mag * u_cand1[0],
-                                    p1.vy + v_in_mag * u_cand1[1],
-                                    p1.vz + v_in_mag * u_cand1[2]
-                                });
-
-                                // Candidate Steer: Lookahead projection steered towards downstream exit target
-                                if (has_exit_target && v_in_mag > 1e-5) {
-                                    double e2[3] = {
-                                        u_p1[1]*u_w[2] - u_p1[2]*u_w[1],
-                                        u_p1[2]*u_w[0] - u_p1[0]*u_w[2],
-                                        u_p1[0]*u_w[1] - u_p1[1]*u_w[0]
-                                    };
-                                    double c_ex = u_exit[0]*u_p1[0] + u_exit[1]*u_p1[1] + u_exit[2]*u_p1[2];
-                                    double w_ex[3] = { u_exit[0] - c_ex*u_p1[0], u_exit[1] - c_ex*u_p1[1], u_exit[2] - c_ex*u_p1[2] };
-                                    double w_ex_len = std::sqrt(w_ex[0]*w_ex[0] + w_ex[1]*w_ex[1] + w_ex[2]*w_ex[2]);
-                                    if (w_ex_len > 1e-6) {
-                                        double u_w_ex[3] = { w_ex[0] / w_ex_len, w_ex[1] / w_ex_len, w_ex[2] / w_ex_len };
-                                        double cos_psi_ex = u_w_ex[0]*u_w[0] + u_w_ex[1]*u_w[1] + u_w_ex[2]*u_w[2];
-                                        double sin_psi_ex = u_w_ex[0]*e2[0] + u_w_ex[1]*e2[1] + u_w_ex[2]*e2[2];
-                                        double psi_ex = std::atan2(sin_psi_ex, cos_psi_ex);
-
-                                        double e_min = 1.0 + (p1.safe_radius * v_in_mag * v_in_mag) / std::max(1e-6, p1.mu);
-                                        double delta_max = 2.0 * std::asin(1.0 / std::max(1.0001, e_min));
-                                        double safe_delta_max = delta_max * 0.995;
-                                        double sin_in = std::sqrt(std::max(0.0, 1.0 - c_in * c_in));
-                                        double psi_max = 0.0;
-                                        if (sin_in * sin_alpha > 1e-5) {
-                                            double r_denom = sin_in * sin_alpha;
-                                            double r_nom = std::cos(safe_delta_max) - c_in * cos_alpha;
-                                            double ratio = r_nom / r_denom;
-                                            if (ratio <= -1.0) {
-                                                psi_max = 3.14159265358979323846;
-                                            } else if (ratio < 1.0) {
-                                                psi_max = std::acos(ratio);
-                                            } else {
-                                                psi_max = 0.0;
-                                            }
-                                        }
-
-                                        double steer_fracs[] = { 1.0, 0.75, 0.5 };
-                                        for (double s_frac : steer_fracs) {
-                                            double psi_steer = std::max(-psi_max, std::min(psi_max, psi_ex)) * s_frac;
-                                            double cos_psi = std::cos(psi_steer);
-                                            double sin_psi = std::sin(psi_steer);
-                                            double u_w_s[3] = {
-                                                cos_psi * u_w[0] + sin_psi * e2[0],
-                                                cos_psi * u_w[1] + sin_psi * e2[1],
-                                                cos_psi * u_w[2] + sin_psi * e2[2]
-                                            };
-                                            double u_c_s[3] = {
-                                                cos_alpha * u_p1[0] + sin_alpha * u_w_s[0],
-                                                cos_alpha * u_p1[1] + sin_alpha * u_w_s[1],
-                                                cos_alpha * u_p1[2] + sin_alpha * u_w_s[2]
-                                            };
-                                            double u_c_s_len = std::sqrt(u_c_s[0]*u_c_s[0] + u_c_s[1]*u_c_s[1] + u_c_s[2]*u_c_s[2]);
-                                            if (u_c_s_len > 1e-6) {
-                                                u_c_s[0] /= u_c_s_len;
-                                                u_c_s[1] /= u_c_s_len;
-                                                u_c_s[2] /= u_c_s_len;
-                                            }
-                                            candidate_v0_list.push_back({
-                                                p1.vx + v_in_mag * u_c_s[0],
-                                                p1.vy + v_in_mag * u_c_s[1],
-                                                p1.vz + v_in_mag * u_c_s[2]
-                                            });
-                                        }
-                                    }
-                                }
-
-                                // Candidate 2: In-plane outward radial component
-                                double u_cand2[3] = {
-                                    cos_alpha * u_theta[0] + sin_alpha * u_r1[0],
-                                    cos_alpha * u_theta[1] + sin_alpha * u_r1[1],
-                                    cos_alpha * u_theta[2] + sin_alpha * u_r1[2]
-                                };
-                                candidate_v0_list.push_back({
-                                    p1.vx + v_in_mag * u_cand2[0],
-                                    p1.vy + v_in_mag * u_cand2[1],
-                                    p1.vz + v_in_mag * u_cand2[2]
-                                });
-
-                                // Candidate 3: In-plane inward radial component
-                                double u_cand3[3] = {
-                                    cos_alpha * u_theta[0] - sin_alpha * u_r1[0],
-                                    cos_alpha * u_theta[1] - sin_alpha * u_r1[1],
-                                    cos_alpha * u_theta[2] - sin_alpha * u_r1[2]
-                                };
-                                candidate_v0_list.push_back({
-                                    p1.vx + v_in_mag * u_cand3[0],
-                                    p1.vy + v_in_mag * u_cand3[1],
-                                    p1.vz + v_in_mag * u_cand3[2]
-                                });
-                            }
-                        }
-                    }
-
-                    if (candidate_v0_list.empty()) {
-                        // 物理兜底方向候选 (Physical Fallback Candidates)
-                        double v_p1_mag = std::sqrt(p1.vx*p1.vx + p1.vy*p1.vy + p1.vz*p1.vz);
-                        if (v_p1_mag > 1e-4) {
-                            double u_p1[3] = { p1.vx / v_p1_mag, p1.vy / v_p1_mag, p1.vz / v_p1_mag };
-                            double s_dir = (r2_len_f >= r1_len_f) ? 1.0 : -1.0;
-                            candidate_v0_list.push_back({
-                                p1.vx + s_dir * v_in_mag * u_p1[0],
-                                p1.vy + s_dir * v_in_mag * u_p1[1],
-                                p1.vz + s_dir * v_in_mag * u_p1[2]
-                            });
-                        }
-                        double d12_x = p2.rx - p1.rx, d12_y = p2.ry - p1.ry, d12_z = p2.rz - p1.rz;
-                        double d12 = std::sqrt(d12_x*d12_x + d12_y*d12_y + d12_z*d12_z);
-                        if (d12 > 1e-4) {
-                            candidate_v0_list.push_back({
-                                p1.vx + v_in_mag * (d12_x / d12),
-                                p1.vy + v_in_mag * (d12_y / d12),
-                                p1.vz + v_in_mag * (d12_z / d12)
-                            });
-                        }
-                        candidate_v0_list.push_back({
-                            p1.vx + v_in_x,
-                            p1.vy + v_in_y,
-                            p1.vz + v_in_z
-                        });
-                    }
-
-                    // Evaluate all candidates to find optimal target transfer direction
-                    for (size_t b = 0; b < candidate_v0_list.size(); ++b) {
-                        const auto& cand = candidate_v0_list[b];
-                        double vx = cand[0] - p1.vx;
-                        double vy = cand[1] - p1.vy;
-                        double vz = cand[2] - p1.vz;
-                        double v_b_mag = std::sqrt(vx*vx + vy*vy + vz*vz);
-                        double dv_diff = std::abs(v_b_mag - v_in_mag);
-
-                        double dot = (v_in_mag > 1e-4 && v_b_mag > 1e-4)
-                            ? (v_in_x*vx + v_in_y*vy + v_in_z*vz) / (v_in_mag * v_b_mag)
-                            : 1.0;
-                        dot = std::max(-1.0, std::min(1.0, dot));
-                        double req_theta = std::acos(dot);
-
-                        double e_min = 1.0 + (p1.safe_radius * v_in_mag * v_in_mag) / std::max(1e-6, p1.mu);
-                        double delta_max = 2.0 * std::asin(1.0 / std::max(1.0001, e_min));
-
-                        double turn_excess = std::max(0.0, req_theta - delta_max);
-                        double turn_penalty = 2.0 * v_in_mag * std::sin(turn_excess * 0.5);
-
-                        double branch_cost = dv_diff + turn_penalty;
-                        if (has_exit_target && is_res_full) {
-                            double dot_ex = (v_b_mag > 1e-4) ? (vx*u_exit[0] + vy*u_exit[1] + vz*u_exit[2]) / v_b_mag : 0.0;
-                            dot_ex = std::max(-1.0, std::min(1.0, dot_ex));
-                            branch_cost += 0.50 * v_in_mag * (1.0 - dot_ex);
-                        }
-                        if (branch_cost < best_tgt_cost) {
-                            best_tgt_cost = branch_cost;
-                            v_tgt_dep = cand;
-                            lp_ok = true;
-                        }
-                    }
-
-                    if (!lp_ok) {
-                        v_tgt_dep = { p1.vx + v_in_x, p1.vy + v_in_y, p1.vz + v_in_z };
-                        leg.is_feasible = 0;
-                        out_sol->all_feasible = 0;
-                    }
-
-                    double v_inf_tgt_x = v_tgt_dep[0] - p1.vx;
-                    double v_inf_tgt_y = v_tgt_dep[1] - p1.vy;
-                    double v_inf_tgt_z = v_tgt_dep[2] - p1.vz;
-                    double v_tgt_mag = std::sqrt(v_inf_tgt_x*v_inf_tgt_x + v_inf_tgt_y*v_inf_tgt_y + v_inf_tgt_z*v_inf_tgt_z);
-
-                    // 2. Perform optimal hyperbolic gravity assist deflection towards target direction
-                    double actual_rp = p1.safe_radius * 1.15;
-                    double actual_turn = 0.0;
-                    std::array<double, 3> out_v_dep = v_tgt_dep;
-
-                    if (v_in_mag > 1e-5 && v_tgt_mag > 1e-5) {
-                        double u_in[3] = { v_in_x / v_in_mag, v_in_y / v_in_mag, v_in_z / v_in_mag };
-                        double u_tgt[3] = { v_inf_tgt_x / v_tgt_mag, v_inf_tgt_y / v_tgt_mag, v_inf_tgt_z / v_tgt_mag };
-                        double dot = std::max(-1.0, std::min(1.0, u_in[0]*u_tgt[0] + u_in[1]*u_tgt[1] + u_in[2]*u_tgt[2]));
-                        double req_theta = std::acos(dot);
-
-                        double e_min = 1.0 + (p1.safe_radius * v_in_mag * v_in_mag) / std::max(1e-6, p1.mu);
-                        double delta_max = 2.0 * std::asin(1.0 / std::max(1.0001, e_min));
-
-                        double turn_angle = std::min(req_theta, delta_max);
-                        actual_turn = turn_angle * RAD2DEG;
-
-                        double e_req = 1.0 / std::max(1e-4, std::sin(turn_angle * 0.5));
-                        actual_rp = std::max(p1.safe_radius, (e_req - 1.0) * p1.mu / (v_in_mag * v_in_mag));
-
-                        // 采用精确的三维罗德里格斯偏转 (Rodriguez Rotation)，沿 u_in 与 u_tgt 构成的最佳双曲借力轨道面偏转至目标方向
-                        double nx = u_in[1]*u_tgt[2] - u_in[2]*u_tgt[1];
-                        double ny = u_in[2]*u_tgt[0] - u_in[0]*u_tgt[2];
-                        double nz = u_in[0]*u_tgt[1] - u_in[1]*u_tgt[0];
-                        double n_len = std::sqrt(nx*nx + ny*ny + nz*nz);
-                        if (n_len < 1e-6) {
-                            if (std::abs(u_in[0]) < 0.9) { nx = 1.0; ny = 0; nz = 0; }
-                            else { nx = 0; ny = 1.0; nz = 0; }
-                            double dot_u = nx*u_in[0] + ny*u_in[1] + nz*u_in[2];
-                            nx -= dot_u * u_in[0]; ny -= dot_u * u_in[1]; nz -= dot_u * u_in[2];
-                            n_len = std::sqrt(nx*nx + ny*ny + nz*nz);
-                        }
-                        nx /= n_len; ny /= n_len; nz /= n_len;
-
-                        double cos_t = std::cos(turn_angle);
-                        double sin_t = std::sin(turn_angle);
-                        double cross_u[3] = { ny*u_in[2] - nz*u_in[1], nz*u_in[0] - nx*u_in[2], nx*u_in[1] - ny*u_in[0] };
-                        double u_out[3] = { u_in[0]*cos_t + cross_u[0]*sin_t, u_in[1]*cos_t + cross_u[1]*sin_t, u_in[2]*cos_t + cross_u[2]*sin_t };
-                        out_v_dep = { p1.vx + v_in_mag * u_out[0], p1.vy + v_in_mag * u_out[1], p1.vz + v_in_mag * u_out[2] };
-                    }
-
-                    cur_v_dep = out_v_dep;
+                    cur_v_dep = best_v_dep;
                     leg.v_inf_dep_x = cur_v_dep[0] - p1.vx;
                     leg.v_inf_dep_y = cur_v_dep[1] - p1.vy;
                     leg.v_inf_dep_z = cur_v_dep[2] - p1.vz;
-                    leg.flyby_turn_deg = actual_turn;
-                    leg.flyby_rp_km = actual_rp;
-                    leg.is_feasible = 1;
-                    leg.flyby_dv_kms = 0.0;
+                    leg.flyby_turn_deg = best_delta * RAD2DEG;
+                    double sin_half = std::sin(best_delta * 0.5);
+                    double e_req = (sin_half > 1e-4) ? (1.0 / sin_half) : 100.0;
+                    leg.flyby_rp_km = std::max(safe_rp, (e_req - 1.0) * p1.mu / std::max(1e-6, v_in_mag * v_in_mag));
+                    leg.flyby_beta_deg = best_beta * RAD2DEG;
+                    leg.flyby_dv_kms = 0.0; // 严格纯无动力飞掠！
+
+                    leg.v1x = cur_v_dep[0]; leg.v1y = cur_v_dep[1]; leg.v1z = cur_v_dep[2];
+                    r_dsm = best_r_dsm;
+                    v_dsm_m = best_v_dsm_m;
+                    v_dsm_p = best_v_dsm_p;
+                    v2_arr = best_v2;
+                    best_dsm = best_cost;
+                    lam_ok = (best_cost < 1e8);
                 }
-
-                leg.v1x = cur_v_dep[0]; leg.v1y = cur_v_dep[1]; leg.v1z = cur_v_dep[2];
-                v_dsm_m = cur_v_dep;
-                try {
-                    pykep_propagate_lagrangian(r_dsm, v_dsm_m, dt1, effective_mu);
-                } catch (...) {
-                    r_dsm = { p1.rx + cur_v_dep[0] * dt1, p1.ry + cur_v_dep[1] * dt1, p1.rz + cur_v_dep[2] * dt1 };
-                    v_dsm_m = cur_v_dep;
-                    leg.is_feasible = 0;
-                    out_sol->all_feasible = 0;
-                }
-
-                std::array<double, 3> r2_arr = {p2.rx, p2.ry, p2.rz};
-                std::array<double, 3> v_dsm_p = {0, 0, 0};
-                std::array<double, 3> v2_arr = {0, 0, 0};
-
-                bool lam_ok = false;
-                double best_dsm = 1e18;
-                try {
-                    double r_dsm_len = std::sqrt(r_dsm[0]*r_dsm[0] + r_dsm[1]*r_dsm[1] + r_dsm[2]*r_dsm[2]);
-                    double r2_len_dsm = std::sqrt(r2_arr[0]*r2_arr[0] + r2_arr[1]*r2_arr[1] + r2_arr[2]*r2_arr[2]);
-                    double r_avg_dsm = (r_dsm_len + r2_len_dsm) * 0.5;
-                    double t_orb_dsm = 2.0 * 3.14159265358979323846 * std::sqrt((r_avg_dsm * r_avg_dsm * r_avg_dsm) / effective_mu);
-                    int nmax = (t_orb_dsm > 10.0) ? (int)std::floor(dt2 / t_orb_dsm + 0.25) : 0;
-                    nmax = std::max(0, std::min(4, nmax));
-                    kep3::lambert_problem lp_dsm(r_dsm, r2_arr, dt2, effective_mu, false, nmax);
-                    const auto& v0_dsm_list = lp_dsm.get_v0();
-                    const auto& v1_dsm_list = lp_dsm.get_v1();
-                    for (size_t b = 0; b < v0_dsm_list.size(); ++b) {
-                        double dv_x = v0_dsm_list[b][0] - v_dsm_m[0];
-                        double dv_y = v0_dsm_list[b][1] - v_dsm_m[1];
-                        double dv_z = v0_dsm_list[b][2] - v_dsm_m[2];
-                        double dsm_mag = std::sqrt(dv_x*dv_x + dv_y*dv_y + dv_z*dv_z);
-                        double v0_mag = std::sqrt(v0_dsm_list[b][0]*v0_dsm_list[b][0] + v0_dsm_list[b][1]*v0_dsm_list[b][1] + v0_dsm_list[b][2]*v0_dsm_list[b][2]);
-                        if (!std::isnan(dsm_mag) && !std::isinf(dsm_mag) && v0_mag < 90.0 && dsm_mag < best_dsm) {
-                            best_dsm = dsm_mag;
-                            v_dsm_p = v0_dsm_list[b];
-                            v2_arr = v1_dsm_list[b];
-                            lam_ok = true;
-                        }
-                    }
-                } catch (...) {}
 
                 // DSM 后半段顺行连接为物理唯一可行解，省去逆行 Lambert 重试耗时
 
@@ -873,6 +977,7 @@ EXPORT_API int pykep_mga_hybrid_evaluate_mu(
                     }
                     v2_arr = { p2.vx + 5.0 * u_p2[0], p2.vy + 5.0 * u_p2[1], p2.vz + 5.0 * u_p2[2] };
                 } else {
+                    leg.is_feasible = 1;
                     leg.has_dsm = 1;
                     leg.dsm.epoch_offset_sec = dt1;
                     leg.dsm.pos_x = r_dsm[0]; leg.dsm.pos_y = r_dsm[1]; leg.dsm.pos_z = r_dsm[2];
@@ -926,62 +1031,7 @@ EXPORT_API int pykep_mga_hybrid_evaluate_mu(
                     break;
                 }
 
-                if (k < leg_count - 1) {
-                    const NativePlanetState& p_fb = arr_planets[k];
-                    double rp_input = (fb_rps_km != nullptr && fb_rps_km[k] > 0.0) ? fb_rps_km[k] : 0.0;
-                    double beta_input = (fb_betas_rad != nullptr) ? fb_betas_rad[k] : 0.0;
 
-                    double v_inf_in_mag = std::sqrt(leg.v_inf_arr_x * leg.v_inf_arr_x + leg.v_inf_arr_y * leg.v_inf_arr_y + leg.v_inf_arr_z * leg.v_inf_arr_z);
-                    double safe_rp = p_fb.safe_radius;
-                    double actual_rp = (rp_input > safe_rp) ? rp_input : safe_rp * 1.15;
-                    double e_fb = 1.0 + (actual_rp * v_inf_in_mag * v_inf_in_mag) / std::max(1e-6, p_fb.mu);
-                    double delta = 2.0 * std::asin(1.0 / std::max(1.0001, e_fb));
-
-                    leg.flyby_rp_km = actual_rp;
-                    leg.flyby_turn_deg = delta * RAD2DEG;
-                    leg.flyby_beta_deg = beta_input * RAD2DEG;
-
-                    // 优先调用 kep3 官方 fb_vout
-                    std::array<double, 3> vin_abs = {leg.v_inf_arr_x + p_fb.vx, leg.v_inf_arr_y + p_fb.vy, leg.v_inf_arr_z + p_fb.vz};
-                    std::array<double, 3> vpla_abs = {p_fb.vx, p_fb.vy, p_fb.vz};
-                    try {
-                        cur_v_dep = kep3::fb_vout(vin_abs, vpla_abs, actual_rp, beta_input, p_fb.mu);
-                    } catch (...) {
-                        double v_rel_in[3] = {leg.v_inf_arr_x, leg.v_inf_arr_y, leg.v_inf_arr_z};
-                        double v_rel_in_norm = std::max(1e-6, v_inf_in_mag);
-                        double i_hat[3] = {v_rel_in[0] / v_rel_in_norm, v_rel_in[1] / v_rel_in_norm, v_rel_in[2] / v_rel_in_norm};
-
-                        double j_cross[3] = {
-                            i_hat[1] * p_fb.vz - i_hat[2] * p_fb.vy,
-                            i_hat[2] * p_fb.vx - i_hat[0] * p_fb.vz,
-                            i_hat[0] * p_fb.vy - i_hat[1] * p_fb.vx
-                        };
-                        double j_len = std::sqrt(j_cross[0]*j_cross[0] + j_cross[1]*j_cross[1] + j_cross[2]*j_cross[2]);
-                        if (j_len < 1e-6) { j_cross[0]=0; j_cross[1]=0; j_cross[2]=1; j_len=1; }
-                        double j_hat[3] = {j_cross[0]/j_len, j_cross[1]/j_len, j_cross[2]/j_len};
-
-                        double k_hat[3] = {
-                            i_hat[1] * j_hat[2] - i_hat[2] * j_hat[1],
-                            i_hat[2] * j_hat[0] - i_hat[0] * j_hat[2],
-                            i_hat[0] * j_hat[1] - i_hat[1] * j_hat[0]
-                        };
-
-                        double cos_d = std::cos(delta);
-                        double sin_d = std::sin(delta);
-                        double cos_b = std::cos(beta_input);
-                        double sin_b = std::sin(beta_input);
-
-                        double v_out_rel[3] = {
-                            v_rel_in_norm * (cos_d * i_hat[0] + sin_d * cos_b * j_hat[0] + sin_d * sin_b * k_hat[0]),
-                            v_rel_in_norm * (cos_d * i_hat[1] + sin_d * cos_b * j_hat[1] + sin_d * sin_b * k_hat[1]),
-                            v_rel_in_norm * (cos_d * i_hat[2] + sin_d * cos_b * j_hat[2] + sin_d * sin_b * k_hat[2])
-                        };
-
-                        cur_v_dep[0] = p_fb.vx + v_out_rel[0];
-                        cur_v_dep[1] = p_fb.vy + v_out_rel[1];
-                        cur_v_dep[2] = p_fb.vz + v_out_rel[2];
-                    }
-                }
             }
         }
 

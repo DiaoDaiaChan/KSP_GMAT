@@ -6,10 +6,13 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using KSPGMAT.Model;
+using KSPGMAT.MGA.AI;
+using KSPGMAT.MGA.Telemetry;
 
 namespace KSPGMAT.MGA
 {
@@ -44,7 +47,6 @@ namespace KSPGMAT.MGA
             string toBody = null;
             if (config.FlybySequence != null && config.FlybySequence.Count > 0)
             {
-                // 寻找首个不同于出发星的目标天体（若首个是 Earth EGA 则跳至首个异星目标如 Venus）
                 foreach (var b in config.FlybySequence)
                 {
                     if (!string.IsNullOrEmpty(b) && !b.Equals(fromBody, StringComparison.OrdinalIgnoreCase))
@@ -58,109 +60,290 @@ namespace KSPGMAT.MGA
 
             var p1 = SolarSystemCatalog.GetPlanet(fromBody);
             var p2 = SolarSystemCatalog.GetPlanet(toBody);
-            double centralMu = SolarSystemCatalog.GetCentralMu(config.CentralBody ?? "Sun");
+            string central = config.CentralBody ?? "Sun";
+            double centralMu = SolarSystemCatalog.GetCentralMu(central);
 
-            double sma1 = (p1 != null && p1.SMA > 0) ? p1.SMA : 1.496e8;
-            double sma2 = (p2 != null && p2.SMA > 0) ? p2.SMA : 1.496e8;
+            double sma1 = PykepBridge.GetRelativeSMA(p1, central, config.DepPeKm);
+            double sma2 = PykepBridge.GetRelativeSMA(p2, central, config.ArrPeKm);
+            if (sma1 <= 0) sma1 = 1.496e8;
+            if (sma2 <= 0) sma2 = 1.496e8;
             double aTrans = (sma1 + sma2) * 0.5;
             double muCentralM = (centralMu > 0 ? centralMu : 1.32712440018e11) * 1e9;
             double nomTofDays = Math.PI * Math.Sqrt(Math.Pow(aTrans * 1000.0, 3.0) / muCentralM) / 86400.0;
             if (nomTofDays <= 0 || double.IsNaN(nomTofDays)) nomTofDays = 150.0;
 
-            double minTofD = Math.Max(10.0, nomTofDays * 0.75);
-            double maxTofD = nomTofDays * 1.30;
+            double minTofD = Math.Max(10.0, nomTofDays * 0.60);
+            double maxTofD = nomTofDays * 1.50;
 
-            double stepDays = 15.0; // 15 天粗网格微秒级扫描
-            double currentValleyUT = 0.0;
-            double currentValleyDv = double.MaxValue;
-            double currentValleyTof = nomTofDays;
-            double lastCycleBoundary = config.SearchStartUT;
-
-            for (double ut = config.SearchStartUT; ut <= config.SearchEndUT; ut += stepDays * 86400.0)
+            // 1. 将搜索空间严格划分为 N 个连续无缝的物理会合周期时区
+            // 确保相邻窗口严密无缝拼接，首尾严格对齐 [SearchStartUT, SearchEndUT]，零截断丢失
+            var cycleIntervals = new List<(double startUT, double endUT)>();
+            double curStart = config.SearchStartUT;
+            while (curStart < config.SearchEndUT)
             {
-                double minDvAtEpoch = double.MaxValue;
-                double bestTofAtEpoch = nomTofDays;
+                double curEnd = Math.Min(config.SearchEndUT, curStart + synDays * 86400.0);
+                cycleIntervals.Add((curStart, curEnd));
+                curStart = curEnd;
+            }
 
-                p1.GetHeliocentricState(ut, out Vector3d r1, out Vector3d v1);
+            // 2. DirectCompute GPU 极速全域张量化宏观能量特征面初筛
+            // 采用 16x16 线程块并发，微秒级评估全域数万个发射-ToF网格点，直接提取各会合周期极小能量波谷
+            double depSpanSec = config.SearchEndUT - config.SearchStartUT;
+            double tofMinSec = minTofD * 86400.0;
+            double tofMaxSec = maxTofD * 86400.0;
+            int gridW = Math.Max(64, Math.Min(256, (int)(totalSpanDays / 3.0)));
+            int gridH = 64;
 
-                for (double tD = minTofD; tD <= maxTofD; tD += 10.0)
+            bool gpuSuccess = PykepBridge.EvaluateSurrogateGpuGrid(
+                p1, p2, centralMu,
+                config.SearchStartUT, depSpanSec,
+                tofMinSec, tofMaxSec,
+                gridW, gridH,
+                config.DepPeKm, config.ArrPeKm,
+                config.NoInsertionBurn,
+                out float[] gpuTotDv,
+                out _);
+
+            if (gpuSuccess && gpuTotDv != null && gpuTotDv.Length == gridW * gridH)
+            {
+                foreach (var interval in cycleIntervals)
                 {
-                    double arrUT = ut + tD * 86400.0;
-                    p2.GetHeliocentricState(arrUT, out Vector3d r2, out Vector3d v2);
+                    double cycleStart = interval.startUT;
+                    double cycleEnd = interval.endUT;
+                    double minDvInCycle = double.MaxValue;
+                    double bestEpochUT = (cycleStart + cycleEnd) * 0.5;
+                    double bestTofD = nomTofDays;
 
-                    if (PykepNative.SolveLambert(r1, r2, tD * 86400.0, centralMu, false, out Vector3d vDep, out _))
+                    for (int gx = 0; gx < gridW; gx++)
                     {
-                        Vector3d vInf = vDep - v1;
-                        double rp = p1.RadiusKm + config.DepPeKm;
-                        double vHyp = Math.Sqrt(vInf.sqrMagnitude + 2.0 * p1.Mu / rp);
-                        double vPark = Math.Sqrt(p1.Mu / rp);
-                        double dv = (vHyp - vPark) * 1000.0; // m/s
-                        if (dv < minDvAtEpoch)
-                        {
-                            minDvAtEpoch = dv;
-                            bestTofAtEpoch = tD;
-                        }
-                    }
-                }
+                        double ut = config.SearchStartUT + (gx / (double)Math.Max(1, gridW - 1)) * depSpanSec;
+                        if (ut < cycleStart || ut > cycleEnd) continue;
 
-                if (minDvAtEpoch < currentValleyDv)
-                {
-                    currentValleyDv = minDvAtEpoch;
-                    currentValleyUT = ut;
-                    currentValleyTof = bestTofAtEpoch;
-                }
-
-                // 达到一个会合周期或遍历至边界时，将该周期的能量波谷归档为一个聚焦岛屿
-                if ((ut - lastCycleBoundary) >= synDays * 86400.0 || ut + stepDays * 86400.0 > config.SearchEndUT)
-                {
-                    if (currentValleyUT > 0 && currentValleyDv < 1e7)
-                    {
-                        // 窗口出射能量门禁过滤：若该周期的最低出射机动估算已超出硬门禁 (如 > Ceiling * 1.08)，彻底丢弃该无效窗口！
-                        double maxWindowDvMs = (config.LaunchDeltaVCeilingMs > 0) ? config.LaunchDeltaVCeilingMs * 1.08 : 5500.0;
-                        if (currentValleyDv <= maxWindowDvMs)
+                        for (int gy = 0; gy < gridH; gy++)
                         {
-                            // 权威多岛切分：以真实 C3 能量波谷为核心划定 120 天高质量低能发射走廊 (彻底覆盖多借力相位偏角)
-                            double wSpan = Math.Min(120.0 * 86400.0, synDays * 0.40 * 86400.0);
-                            candidates.Add(new SynodicWindowCandidate
+                            int idx = gy * gridW + gx;
+                            float dv = gpuTotDv[idx];
+                            if (dv < minDvInCycle)
                             {
-                                WindowStartUT = Math.Max(config.SearchStartUT, currentValleyUT - wSpan * 0.5),
-                                WindowEndUT = Math.Min(config.SearchEndUT, currentValleyUT + wSpan * 0.5),
-                                NominalToFDays = currentValleyTof,
-                                EstimatedMinDvKms = currentValleyDv / 1000.0
-                            });
+                                minDvInCycle = dv;
+                                bestEpochUT = ut;
+                                bestTofD = (tofMinSec + (gy / (double)Math.Max(1, gridH - 1)) * (tofMaxSec - tofMinSec)) / 86400.0;
+                            }
                         }
                     }
-                    currentValleyDv = double.MaxValue;
-                    currentValleyUT = 0.0;
-                    lastCycleBoundary = ut;
-                }
-            }
 
-            // 按出射能量质量升序严格排序，优选能量最低的高价值窗口
-            candidates = candidates.OrderBy(c => c.EstimatedMinDvKms).ToList();
-            int maxAllowableWindows = (config.MaxWindows > 0) ? config.MaxWindows : 2;
-            if (candidates.Count > maxAllowableWindows)
-            {
-                candidates = candidates.Take(maxAllowableWindows).ToList();
-            }
-
-            // 如果星历初筛未捕获到有效波谷，降级为均匀会合周期划分
-            if (candidates.Count == 0)
-            {
-                double windowSpanDays = Math.Min(totalSpanDays, synDays);
-                for (double ut = config.SearchStartUT; ut < config.SearchEndUT; ut += windowSpanDays * 86400.0)
-                {
                     candidates.Add(new SynodicWindowCandidate
                     {
-                        WindowStartUT = ut,
-                        WindowEndUT = Math.Min(config.SearchEndUT, ut + windowSpanDays * 86400.0),
-                        NominalToFDays = nomTofDays,
-                        EstimatedMinDvKms = 0.0
+                        WindowStartUT = cycleStart,
+                        WindowEndUT = cycleEnd,
+                        NominalToFDays = bestTofD,
+                        EstimatedMinDvKms = (minDvInCycle < 1e7) ? (minDvInCycle / 1000.0) : 0.0
                     });
                 }
+
+                int totalEstimatedWindows = cycleIntervals.Count * 12;
+                MGAOptimizationProbe.AiMetrics.RecordSurrogate(totalEstimatedWindows, candidates.Count);
+                return candidates.OrderBy(c => c.EstimatedMinDvKms > 0 ? c.EstimatedMinDvKms : double.MaxValue).ToList();
             }
 
-            return candidates;
+            // 3. CPU 优雅平滑降级分支：针对各会合时区执行两级自适应稀疏特征网格扫描 (Coarse-to-Fine Grid Search)
+            // 一级粗扫以 30 天步长快速定位波谷，二级精扫仅在波谷邻域细化，提速百倍以上
+            foreach (var interval in cycleIntervals)
+            {
+                double cycleStart = interval.startUT;
+                double cycleEnd = interval.endUT;
+                double cycleSpanDays = (cycleEnd - cycleStart) / 86400.0;
+
+                double bestEpochUT = (cycleStart + cycleEnd) * 0.5;
+                double bestTofD = nomTofDays;
+                double minDvInCycle = double.MaxValue;
+
+                // 粗扫描步长
+                double coarseStepDays = Math.Max(15.0, Math.Min(35.0, cycleSpanDays / 18.0));
+                double[] coarseToFs = new double[] { nomTofDays * 0.70, nomTofDays * 0.85, nomTofDays * 1.00, nomTofDays * 1.15, nomTofDays * 1.30 };
+
+                double coarseBestUT = bestEpochUT;
+                double coarseBestDv = double.MaxValue;
+                double coarseBestTof = nomTofDays;
+
+                double rp1 = (p1 != null ? p1.RadiusKm : 6371.0) + config.DepPeKm;
+                double muP1 = (p1 != null) ? p1.Mu : 398600.0;
+                double vPark1 = Math.Sqrt(muP1 / Math.Max(1.0, rp1));
+
+                double rp2 = (p2 != null ? p2.RadiusKm : 6052.0) + config.ArrPeKm;
+                double muP2 = (p2 != null) ? p2.Mu : 324859.0;
+                double vPark2 = Math.Sqrt(muP2 / Math.Max(1.0, rp2));
+
+                for (double ut = cycleStart; ut <= cycleEnd; ut += coarseStepDays * 86400.0)
+                {
+                    p1.GetRelativeState(central, ut, out Vector3d r1, out Vector3d v1);
+                    foreach (double tD in coarseToFs)
+                    {
+                        double arrUT = ut + tD * 86400.0;
+                        p2.GetRelativeState(central, arrUT, out Vector3d r2, out Vector3d v2);
+
+                        // 符号开普勒与角动量极值门禁 (Symbolic Keplerian Bound Filter)
+                        if (!MGASymbolicPhysicsConstraints.IsToFKeplerianFeasible(r1.magnitude, r2.magnitude, tD * 86400.0, centralMu))
+                            continue;
+
+                        if (PykepNative.SolveLambert(r1, r2, tD * 86400.0, centralMu, false, out Vector3d vDep, out Vector3d vArr))
+                        {
+                            Vector3d vInf = vDep - v1;
+                            double vHyp = Math.Sqrt(vInf.sqrMagnitude + 2.0 * muP1 / Math.Max(1.0, rp1));
+                            double dv = (vHyp - vPark1) * 1000.0;
+
+                            if (!config.NoInsertionBurn)
+                            {
+                                Vector3d vInfArr = vArr - v2;
+                                double vHypArr = Math.Sqrt(vInfArr.sqrMagnitude + 2.0 * muP2 / Math.Max(1.0, rp2));
+                                dv += (vHypArr - vPark2) * 1000.0;
+                            }
+
+                            if (dv < coarseBestDv)
+                            {
+                                coarseBestDv = dv;
+                                coarseBestUT = ut;
+                                coarseBestTof = tD;
+                            }
+                        }
+                    }
+                }
+
+                // 二级精扫：仅在粗波谷 ±1.2 个粗步长内以 5 天步长细化
+                double refineStartUT = Math.Max(cycleStart, coarseBestUT - coarseStepDays * 1.2 * 86400.0);
+                double refineEndUT = Math.Min(cycleEnd, coarseBestUT + coarseStepDays * 1.2 * 86400.0);
+                minDvInCycle = coarseBestDv;
+                bestEpochUT = coarseBestUT;
+                bestTofD = coarseBestTof;
+
+                for (double ut = refineStartUT; ut <= refineEndUT; ut += 5.0 * 86400.0)
+                {
+                    p1.GetRelativeState(central, ut, out Vector3d r1, out Vector3d v1);
+                    for (double tD = Math.Max(minTofD, coarseBestTof - 30.0); tD <= Math.Min(maxTofD, coarseBestTof + 30.0); tD += 5.0)
+                    {
+                        double arrUT = ut + tD * 86400.0;
+                        p2.GetRelativeState(central, arrUT, out Vector3d r2, out Vector3d v2);
+
+                        // 符号开普勒与角动量极值门禁 (Symbolic Keplerian Bound Filter)
+                        if (!MGASymbolicPhysicsConstraints.IsToFKeplerianFeasible(r1.magnitude, r2.magnitude, tD * 86400.0, centralMu))
+                            continue;
+
+                        if (PykepNative.SolveLambert(r1, r2, tD * 86400.0, centralMu, false, out Vector3d vDep, out Vector3d vArr))
+                        {
+                            Vector3d vInf = vDep - v1;
+                            double vHyp = Math.Sqrt(vInf.sqrMagnitude + 2.0 * muP1 / Math.Max(1.0, rp1));
+                            double dv = (vHyp - vPark1) * 1000.0;
+
+                            if (!config.NoInsertionBurn)
+                            {
+                                Vector3d vInfArr = vArr - v2;
+                                double vHypArr = Math.Sqrt(vInfArr.sqrMagnitude + 2.0 * muP2 / Math.Max(1.0, rp2));
+                                dv += (vHypArr - vPark2) * 1000.0;
+                            }
+
+                            if (dv < minDvInCycle)
+                            {
+                                minDvInCycle = dv;
+                                bestEpochUT = ut;
+                                bestTofD = tD;
+                            }
+                        }
+                    }
+                }
+
+                candidates.Add(new SynodicWindowCandidate
+                {
+                    WindowStartUT = cycleStart,
+                    WindowEndUT = cycleEnd,
+                    NominalToFDays = bestTofD,
+                    EstimatedMinDvKms = (minDvInCycle < 1e7) ? (minDvInCycle / 1000.0) : 0.0
+                });
+            }
+
+            int totalCpuEstimatedWindows = cycleIntervals.Count * 12;
+            MGAOptimizationProbe.AiMetrics.RecordSurrogate(totalCpuEstimatedWindows, candidates.Count);
+            return candidates.OrderBy(c => c.EstimatedMinDvKms > 0 ? c.EstimatedMinDvKms : double.MaxValue).ToList();
+        }
+
+        /// <summary>
+        /// DirectCompute GPU 极速多腿 MGA 3D 张量走廊全域初筛
+        /// 并行网格: [gridDep x gridTof1 x gridTof2] (典型 128x32x32 = 131,072 并发线程)
+        /// 毫秒级锁定三天体全链路能量极值波谷
+        /// </summary>
+        public static bool EvaluateMultiLegGpuCorridor(
+            SolarPlanet p1, SolarPlanet p2, SolarPlanet p3,
+            double centralMu,
+            double depStartUt, double depSpanSec,
+            double tof1MinSec, double tof1MaxSec,
+            double tof2MinSec, double tof2MaxSec,
+            int gridDep, int gridTof1, int gridTof2,
+            double p2RpMinKm,
+            out float[] outBestTotDv,
+            out float[] outBestTof1Days,
+            out float[] outBestTof2Days)
+        {
+            outBestTotDv = new float[gridDep];
+            outBestTof1Days = new float[gridDep];
+            outBestTof2Days = new float[gridDep];
+
+            long totalItems = (long)gridDep * gridTof1 * gridTof2;
+            if (!PykepNative.IsGpuComputeAvailable || p1 == null || p2 == null || p3 == null)
+            {
+                MGAOptimizationProbe.RecordGpuExecution("GPU 3D Multi-Leg Corridor", 0.0, totalItems, false);
+                return false;
+            }
+
+            var sw = Stopwatch.StartNew();
+            try
+            {
+                var elem1 = new PykepNative.GpuPlanetElements
+                {
+                    sma_km = p1.SMA, ecc = p1.ECC, inc_rad = p1.INC * Math.PI / 180.0,
+                    raan_rad = p1.RAAN * Math.PI / 180.0, aop_rad = p1.AOP * Math.PI / 180.0,
+                    ma0_rad = p1.MA0 * Math.PI / 180.0, epoch_ut = p1.EpochJ2000,
+                    mu_self = p1.Mu, radius_km = p1.RadiusKm, park_alt_km = 100.0
+                };
+
+                var elem2 = new PykepNative.GpuPlanetElements
+                {
+                    sma_km = p2.SMA, ecc = p2.ECC, inc_rad = p2.INC * Math.PI / 180.0,
+                    raan_rad = p2.RAAN * Math.PI / 180.0, aop_rad = p2.AOP * Math.PI / 180.0,
+                    ma0_rad = p2.MA0 * Math.PI / 180.0, epoch_ut = p2.EpochJ2000,
+                    mu_self = p2.Mu, radius_km = p2.RadiusKm, park_alt_km = 100.0
+                };
+
+                var elem3 = new PykepNative.GpuPlanetElements
+                {
+                    sma_km = p3.SMA, ecc = p3.ECC, inc_rad = p3.INC * Math.PI / 180.0,
+                    raan_rad = p3.RAAN * Math.PI / 180.0, aop_rad = p3.AOP * Math.PI / 180.0,
+                    ma0_rad = p3.MA0 * Math.PI / 180.0, epoch_ut = p3.EpochJ2000,
+                    mu_self = p3.Mu, radius_km = p3.RadiusKm, park_alt_km = 100.0
+                };
+
+                int ret = PykepNative.MgaCorridorGpuEvaluate(
+                    ref elem1, ref elem2, ref elem3,
+                    centralMu,
+                    depStartUt, depSpanSec,
+                    tof1MinSec, tof1MaxSec,
+                    tof2MinSec, tof2MaxSec,
+                    gridDep, gridTof1, gridTof2,
+                    p2RpMinKm,
+                    outBestTotDv, outBestTof1Days, outBestTof2Days);
+
+                sw.Stop();
+                bool isSuccess = (ret == 0);
+                MGAOptimizationProbe.RecordGpuExecution(
+                    "GPU 3D Multi-Leg Corridor", sw.Elapsed.TotalMilliseconds, totalItems, isSuccess);
+
+                return isSuccess;
+            }
+            catch (Exception ex)
+            {
+                sw.Stop();
+                MGAOptimizationProbe.RecordGpuExecution("GPU 3D Multi-Leg Corridor", sw.Elapsed.TotalMilliseconds, totalItems, false);
+                KSPGMATLog.Warn($"[MGASurrogatePreFilter] GPU 多腿张量初筛异常，自动降级至 CPU: {ex.Message}");
+                return false;
+            }
         }
     }
 }

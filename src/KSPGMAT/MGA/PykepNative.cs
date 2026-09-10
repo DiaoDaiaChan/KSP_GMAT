@@ -22,6 +22,16 @@ namespace KSPGMAT.MGA {
             out double v2x, out double v2y, out double v2z);
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int PykepLambertMultiRevDelegate(
+            double r1x, double r1y, double r1z,
+            double r2x, double r2y, double r2z,
+            double tof_sec, double mu, int retrograde, int nmax,
+            int max_solutions,
+            out int out_solution_count,
+            [Out] double[] out_v1_xyz,
+            [Out] double[] out_v2_xyz);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate int PykepFlybyConDelegate(
             double v_in_x, double v_in_y, double v_in_z,
             double v_out_x, double v_out_y, double v_out_z,
@@ -238,6 +248,7 @@ namespace KSPGMAT.MGA {
 
         private static PykepGetVersionDelegate _fnGetVersion;
         private static PykepLambertSolveDelegate _fnLambertSolve;
+        private static PykepLambertMultiRevDelegate _fnLambertMultiRev;
         private static PykepFlybyConDelegate _fnFlybyCon;
         private static PykepFlybyDvDelegate _fnFlybyDv;
         private static PykepPropagateLagrangianDelegate _fnPropagateLagrangian;
@@ -314,6 +325,92 @@ namespace KSPGMAT.MGA {
 
         private static PykepCheckGpuComputeSupportDelegate _fnCheckGpuComputeSupport;
         private static PykepPorkchopGpuEvaluateDelegate _fnPorkchopGpuEvaluate;
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int PykepMgaCorridorGpuEvaluateDelegate(
+            ref GpuPlanetElements p1,
+            ref GpuPlanetElements p2,
+            ref GpuPlanetElements p3,
+            double centralMu,
+            double depStartUt,
+            double depSpanSec,
+            double tof1MinSec,
+            double tof1MaxSec,
+            double tof2MinSec,
+            double tof2MaxSec,
+            int gridDep,
+            int gridTof1,
+            int gridTof2,
+            double p2RpMinKm,
+            [Out] float[] outBestTotDv,
+            [Out] float[] outBestTof1Days,
+            [Out] float[] outBestTof2Days);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int PykepEphemerisRadarGpuEvaluateDelegate(
+            [In] GpuPlanetElements[] planetsA,
+            [In] GpuPlanetElements[] planetsB,
+            int pairCount,
+            double centralMu,
+            double startUt,
+            double stepDays,
+            int stepCount,
+            [Out] float[] outPhaseAnglesDeg);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int PykepEvaluatePopulationGpuDelegate(
+            [In] GpuPlanetElements[] bodies,
+            int bodyCount,
+            [In] float[] populationGenes,
+            int popSize,
+            int geneDim,
+            double centralMu,
+            int flybyOnly,
+            float launchCeilingKms,
+            float vesselBudgetKms,
+            float dsmBudgetKms,
+            float earliestDepUT,
+            float latestDepUT,
+            [Out] float[] outPopulationLoss);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int PykepBPlaneMonteCarloGpuEvaluateDelegate(
+            [In] double[] r0Km,
+            [In] double[] v0Kms,
+            [In] double[] targetRKm,
+            [In] double[] targetVKms,
+            double targetMu,
+            double targetRadiusKm,
+            double tofSec,
+            double centralMu,
+            double sigmaPosKm,
+            double sigmaVelKms,
+            int sampleCount,
+            out float outMeanBdotR,
+            out float outMeanBdotT,
+            out float outSigmaRR,
+            out float outSigmaTT,
+            out float outSigmaRT,
+            out float outCollisionProb);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int PykepSimsFlanaganGpuEvaluateDelegate(
+            [In] double[] r1Km,
+            [In] double[] v1Kms,
+            [In] double[] r2Km,
+            [In] double[] v2Kms,
+            double tofSec,
+            double centralMu,
+            int segmentCount,
+            int candidateCount,
+            [In] float[] impulsesXyz,
+            [Out] float[] outMismatchLoss);
+
+        private static PykepMgaCorridorGpuEvaluateDelegate _fnMgaCorridorGpuEvaluate;
+        private static PykepEphemerisRadarGpuEvaluateDelegate _fnEphemerisRadarGpuEvaluate;
+        private static PykepEvaluatePopulationGpuDelegate _fnEvaluatePopulationGpu;
+        private static PykepBPlaneMonteCarloGpuEvaluateDelegate _fnBPlaneMonteCarloGpuEvaluate;
+        private static PykepSimsFlanaganGpuEvaluateDelegate _fnSimsFlanaganGpuEvaluate;
 
         public static bool IsGpuComputeAvailable { get; private set; } = false;
         public static string GpuDeviceName { get; private set; } = "Unknown";
@@ -411,6 +508,7 @@ namespace KSPGMAT.MGA {
                     if (_dllHandle != IntPtr.Zero) {
                         IntPtr pVer = GetProcAddress(_dllHandle, "pykep_get_version");
                         IntPtr pSolve = GetProcAddress(_dllHandle, "pykep_lambert_solve");
+                        IntPtr pMultiSolve = GetProcAddress(_dllHandle, "pykep_lambert_multirev");
                         IntPtr pFbCon = GetProcAddress(_dllHandle, "pykep_flyby_con");
                         IntPtr pFbDv = GetProcAddress(_dllHandle, "pykep_flyby_dv");
                         IntPtr pProp = GetProcAddress(_dllHandle, "pykep_propagate_lagrangian");
@@ -429,6 +527,7 @@ namespace KSPGMAT.MGA {
                         if (pVer != IntPtr.Zero && pSolve != IntPtr.Zero) {
                             _fnGetVersion = (PykepGetVersionDelegate)Marshal.GetDelegateForFunctionPointer(pVer, typeof(PykepGetVersionDelegate));
                             _fnLambertSolve = (PykepLambertSolveDelegate)Marshal.GetDelegateForFunctionPointer(pSolve, typeof(PykepLambertSolveDelegate));
+                            if (pMultiSolve != IntPtr.Zero) _fnLambertMultiRev = (PykepLambertMultiRevDelegate)Marshal.GetDelegateForFunctionPointer(pMultiSolve, typeof(PykepLambertMultiRevDelegate));
                             if (pFbCon != IntPtr.Zero) _fnFlybyCon = (PykepFlybyConDelegate)Marshal.GetDelegateForFunctionPointer(pFbCon, typeof(PykepFlybyConDelegate));
                             if (pFbDv != IntPtr.Zero) _fnFlybyDv = (PykepFlybyDvDelegate)Marshal.GetDelegateForFunctionPointer(pFbDv, typeof(PykepFlybyDvDelegate));
                             if (pProp != IntPtr.Zero) _fnPropagateLagrangian = (PykepPropagateLagrangianDelegate)Marshal.GetDelegateForFunctionPointer(pProp, typeof(PykepPropagateLagrangianDelegate));
@@ -520,6 +619,31 @@ namespace KSPGMAT.MGA {
                                 }
                             }
 
+                            IntPtr pMgaCorridor = GetProcAddress(_dllHandle, "pykep_mga_corridor_gpu_evaluate");
+                            if (pMgaCorridor != IntPtr.Zero) {
+                                _fnMgaCorridorGpuEvaluate = (PykepMgaCorridorGpuEvaluateDelegate)Marshal.GetDelegateForFunctionPointer(pMgaCorridor, typeof(PykepMgaCorridorGpuEvaluateDelegate));
+                            }
+
+                            IntPtr pRadar = GetProcAddress(_dllHandle, "pykep_ephemeris_radar_gpu_evaluate");
+                            if (pRadar != IntPtr.Zero) {
+                                _fnEphemerisRadarGpuEvaluate = (PykepEphemerisRadarGpuEvaluateDelegate)Marshal.GetDelegateForFunctionPointer(pRadar, typeof(PykepEphemerisRadarGpuEvaluateDelegate));
+                            }
+
+                            IntPtr pMegaPop = GetProcAddress(_dllHandle, "pykep_evaluate_population_gpu");
+                            if (pMegaPop != IntPtr.Zero) {
+                                _fnEvaluatePopulationGpu = (PykepEvaluatePopulationGpuDelegate)Marshal.GetDelegateForFunctionPointer(pMegaPop, typeof(PykepEvaluatePopulationGpuDelegate));
+                            }
+
+                            IntPtr pBPlaneMc = GetProcAddress(_dllHandle, "pykep_bplane_monte_carlo_gpu_evaluate");
+                            if (pBPlaneMc != IntPtr.Zero) {
+                                _fnBPlaneMonteCarloGpuEvaluate = (PykepBPlaneMonteCarloGpuEvaluateDelegate)Marshal.GetDelegateForFunctionPointer(pBPlaneMc, typeof(PykepBPlaneMonteCarloGpuEvaluateDelegate));
+                            }
+
+                            IntPtr pSimsFlanagan = GetProcAddress(_dllHandle, "pykep_sims_flanagan_gpu_evaluate");
+                            if (pSimsFlanagan != IntPtr.Zero) {
+                                _fnSimsFlanaganGpuEvaluate = (PykepSimsFlanaganGpuEvaluateDelegate)Marshal.GetDelegateForFunctionPointer(pSimsFlanagan, typeof(PykepSimsFlanaganGpuEvaluateDelegate));
+                            }
+
                             // 自动检测并导入 GMAT / 系统 SPICE 星历
                             TryAutoLoadSpiceFromGMAT();
                         }
@@ -584,6 +708,78 @@ namespace KSPGMAT.MGA {
 
             KSPGMATLog.Error("pykep_lambert_solve 原生接口未就绪，严禁托管自编公式拟合");
             return false;
+        }
+
+        /// <summary>
+        /// 原生调用 ESA 官方 Izzo 兰伯特多圈求解器 (返回指定圈次上限内所有几何可行解，0 托管自编公式)
+        /// </summary>
+        public static bool SolveLambertMultiRev(
+            Vector3d r1, Vector3d r2, double tof_sec, double mu, bool retrograde, int maxRevs,
+            out List<Vector3d> v1List, out List<Vector3d> v2List)
+        {
+            EnsureLoaded();
+            v1List = new List<Vector3d>();
+            v2List = new List<Vector3d>();
+            if (tof_sec <= 0 || mu <= 0) return false;
+
+            if (_isAvailable && _fnLambertMultiRev != null && maxRevs > 0) {
+                try {
+                    int maxSolutions = Math.Max(2, (maxRevs + 1) * 2);
+                    double[] v1Buffer = new double[maxSolutions * 3];
+                    double[] v2Buffer = new double[maxSolutions * 3];
+
+                    int res = _fnLambertMultiRev(
+                        r1.x, r1.y, r1.z,
+                        r2.x, r2.y, r2.z,
+                        tof_sec, mu, retrograde ? 1 : 0, maxRevs,
+                        maxSolutions,
+                        out int solCount,
+                        v1Buffer,
+                        v2Buffer);
+
+                    if (res == 0 && solCount > 0) {
+                        for (int i = 0; i < solCount; i++) {
+                            v1List.Add(new Vector3d(v1Buffer[i * 3 + 0], v1Buffer[i * 3 + 1], v1Buffer[i * 3 + 2]));
+                            v2List.Add(new Vector3d(v2Buffer[i * 3 + 0], v2Buffer[i * 3 + 1], v2Buffer[i * 3 + 2]));
+                        }
+                        return true;
+                    }
+                } catch {
+                }
+            }
+
+            // 若多圈未找到或接口未就绪，保底单圈求解
+            if (SolveLambert(r1, r2, tof_sec, mu, retrograde, out Vector3d sv1, out Vector3d sv2)) {
+                v1List.Add(sv1);
+                v2List.Add(sv2);
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// 原生调用 ESA 官方 Izzo 兰伯特求解器 (支持多圈次，自动选取能量最低最优分支)
+        /// </summary>
+        public static bool SolveLambert(
+            Vector3d r1, Vector3d r2, double tof_sec, double mu, bool retrograde, int maxRevs,
+            out Vector3d v1, out Vector3d v2)
+        {
+            if (maxRevs > 0 && SolveLambertMultiRev(r1, r2, tof_sec, mu, retrograde, maxRevs, out var v1List, out var v2List) && v1List.Count > 0) {
+                int bestIdx = 0;
+                double minV2 = double.MaxValue;
+                for (int i = 0; i < v1List.Count; i++) {
+                    double v2Val = v1List[i].sqrMagnitude;
+                    if (v2Val < minV2) {
+                        minV2 = v2Val;
+                        bestIdx = i;
+                    }
+                }
+                v1 = v1List[bestIdx];
+                v2 = v2List[bestIdx];
+                return true;
+            }
+            return SolveLambert(r1, r2, tof_sec, mu, retrograde, out v1, out v2);
         }
 
         /// <summary>
@@ -1264,6 +1460,181 @@ namespace KSPGMAT.MGA {
                     outTotDv, outC3);
             } catch (Exception ex) {
                 KSPGMATLog.Warn($"[PykepNative] GPU 计算异常回退: {ex.Message}");
+                return -3;
+            }
+        }
+
+        /// <summary>
+        /// DirectCompute GPU 极速多腿 MGA 3D/4D 走廊张量扫描
+        /// </summary>
+        public static int MgaCorridorGpuEvaluate(
+            ref GpuPlanetElements p1,
+            ref GpuPlanetElements p2,
+            ref GpuPlanetElements p3,
+            double centralMu,
+            double depStartUt,
+            double depSpanSec,
+            double tof1MinSec,
+            double tof1MaxSec,
+            double tof2MinSec,
+            double tof2MaxSec,
+            int gridDep,
+            int gridTof1,
+            int gridTof2,
+            double p2RpMinKm,
+            float[] outBestTotDv,
+            float[] outBestTof1Days,
+            float[] outBestTof2Days)
+        {
+            EnsureLoaded();
+            if (!_isAvailable || !IsGpuComputeAvailable || _fnMgaCorridorGpuEvaluate == null) return -2;
+            try {
+                return _fnMgaCorridorGpuEvaluate(
+                    ref p1, ref p2, ref p3,
+                    centralMu,
+                    depStartUt, depSpanSec,
+                    tof1MinSec, tof1MaxSec,
+                    tof2MinSec, tof2MaxSec,
+                    gridDep, gridTof1, gridTof2,
+                    p2RpMinKm,
+                    outBestTotDv, outBestTof1Days, outBestTof2Days);
+            } catch (Exception ex) {
+                KSPGMATLog.Warn($"[PykepNative] GPU MGA 走廊张量求解异常: {ex.Message}");
+                return -3;
+            }
+        }
+
+        /// <summary>
+        /// DirectCompute GPU 极速全太阳系多天体百年历表与共振相位雷达图
+        /// </summary>
+        public static int EphemerisRadarGpuEvaluate(
+            GpuPlanetElements[] planetsA,
+            GpuPlanetElements[] planetsB,
+            int pairCount,
+            double centralMu,
+            double startUt,
+            double stepDays,
+            int stepCount,
+            float[] outPhaseAnglesDeg)
+        {
+            EnsureLoaded();
+            if (!_isAvailable || !IsGpuComputeAvailable || _fnEphemerisRadarGpuEvaluate == null) return -2;
+            try {
+                return _fnEphemerisRadarGpuEvaluate(
+                    planetsA, planetsB,
+                    pairCount, centralMu,
+                    startUt, stepDays, stepCount,
+                    outPhaseAnglesDeg);
+            } catch (Exception ex) {
+                KSPGMATLog.Warn($"[PykepNative] GPU 历表雷达计算异常: {ex.Message}");
+                return -3;
+            }
+        }
+
+        /// <summary>
+        /// DirectCompute GPU 超大规模种群批处理动力学评估
+        /// </summary>
+        public static int EvaluatePopulationGpu(
+            GpuPlanetElements[] bodies,
+            int bodyCount,
+            float[] populationGenes,
+            int popSize,
+            int geneDim,
+            double centralMu,
+            int flybyOnly,
+            float launchCeilingKms,
+            float vesselBudgetKms,
+            float dsmBudgetKms,
+            float earliestDepUT,
+            float latestDepUT,
+            float[] outPopulationLoss)
+        {
+            EnsureLoaded();
+            if (!_isAvailable || !IsGpuComputeAvailable || _fnEvaluatePopulationGpu == null) return -2;
+            try {
+                return _fnEvaluatePopulationGpu(
+                    bodies, bodyCount,
+                    populationGenes, popSize, geneDim,
+                    centralMu, flybyOnly,
+                    launchCeilingKms, vesselBudgetKms, dsmBudgetKms,
+                    earliestDepUT, latestDepUT,
+                    outPopulationLoss);
+            } catch (Exception ex) {
+                KSPGMATLog.Warn($"[PykepNative] GPU 种群批处理求解异常: {ex.Message}");
+                return -3;
+            }
+        }
+
+        /// <summary>
+        /// DirectCompute GPU 蒙特卡洛轨道分散度与 B 平面协方差分析 (10 万点秒级评估)
+        /// </summary>
+        public static int BPlaneMonteCarloGpuEvaluate(
+            double[] r0Km,
+            double[] v0Kms,
+            double[] targetRKm,
+            double[] targetVKms,
+            double targetMu,
+            double targetRadiusKm,
+            double tofSec,
+            double centralMu,
+            double sigmaPosKm,
+            double sigmaVelKms,
+            int sampleCount,
+            out float outMeanBdotR,
+            out float outMeanBdotT,
+            out float outSigmaRR,
+            out float outSigmaTT,
+            out float outSigmaRT,
+            out float outCollisionProb)
+        {
+            outMeanBdotR = 0f;
+            outMeanBdotT = 0f;
+            outSigmaRR = 0f;
+            outSigmaTT = 0f;
+            outSigmaRT = 0f;
+            outCollisionProb = 0f;
+
+            EnsureLoaded();
+            if (!_isAvailable || !IsGpuComputeAvailable || _fnBPlaneMonteCarloGpuEvaluate == null) return -2;
+            try {
+                return _fnBPlaneMonteCarloGpuEvaluate(
+                    r0Km, v0Kms, targetRKm, targetVKms,
+                    targetMu, targetRadiusKm, tofSec, centralMu,
+                    sigmaPosKm, sigmaVelKms, sampleCount,
+                    out outMeanBdotR, out outMeanBdotT,
+                    out outSigmaRR, out outSigmaTT, out outSigmaRT,
+                    out outCollisionProb);
+            } catch (Exception ex) {
+                KSPGMATLog.Warn($"[PykepNative] GPU 蒙特卡洛 B 平面评估异常: {ex.Message}");
+                return -3;
+            }
+        }
+
+        /// <summary>
+        /// DirectCompute GPU 低推力 Sims-Flanagan 离散脉冲段张量推演
+        /// </summary>
+        public static int SimsFlanaganGpuEvaluate(
+            double[] r1Km,
+            double[] v1Kms,
+            double[] r2Km,
+            double[] v2Kms,
+            double tofSec,
+            double centralMu,
+            int segmentCount,
+            int candidateCount,
+            float[] impulsesXyz,
+            float[] outMismatchLoss)
+        {
+            EnsureLoaded();
+            if (!_isAvailable || !IsGpuComputeAvailable || _fnSimsFlanaganGpuEvaluate == null) return -2;
+            try {
+                return _fnSimsFlanaganGpuEvaluate(
+                    r1Km, v1Kms, r2Km, v2Kms,
+                    tofSec, centralMu,
+                    segmentCount, candidateCount,
+                    impulsesXyz, outMismatchLoss);
+            } catch (Exception ex) {
+                KSPGMATLog.Warn($"[PykepNative] GPU Sims-Flanagan 评估异常: {ex.Message}");
                 return -3;
             }
         }

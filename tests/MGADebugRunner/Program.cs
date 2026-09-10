@@ -23,8 +23,17 @@ namespace MGADebugRunner {
             Console.WriteLine($"[4] CPU 多核加速池: {Environment.ProcessorCount} 逻辑核心 | 实时状态: {CPUMonitor.GetSnapshot()}");
             Console.WriteLine();
 
-            int totalTests = 0;
-            int passedTests = 0;
+            var modules = new Dictionary<string, ITestModule>(StringComparer.OrdinalIgnoreCase)
+            {
+                { "fast", new Modules.FastSuiteModule() },
+                { "core", new Modules.CoreSystemTestModule() },
+                { "orbit", new Modules.OrbitDynamicsTestModule() },
+                { "locked", new Modules.Mode2LockedOrbitTestModule() },
+                { "direct", new Modules.DirectDiversityTestModule() },
+                { "adaptive", new Modules.AdaptiveSolverTestModule() },
+                { "autonomous", new Modules.AutonomousMGATestModule() },
+                { "advanced", new Modules.AdvancedAstrodynamicsTestModule() }
+            };
 
             bool isScenario9Only = false;
             bool isHistoryOnly = false;
@@ -33,12 +42,23 @@ namespace MGADebugRunner {
             bool isTopoDiagOnly = false;
             string topoFilter = null;
             bool isPorkchopBenchOnly = false;
-            bool quick = false;
+            string selectedModule = null;
+            bool runFast = false;
+            bool runAll = false;
+            bool listModules = false;
+
             if (args != null && args.Length > 0) {
                 for (int i = 0; i < args.Length; i++) {
                     string raw = args[i].Trim();
                     string clean = raw.ToLowerInvariant().TrimStart('-', '/');
-                    if (clean == "quick" || clean == "q") { quick = true; continue; }
+                    if (clean == "fast" || clean == "quick" || clean == "f" || clean == "q") { runFast = true; continue; }
+                    if (clean == "all" || clean == "a") { runAll = true; continue; }
+                    if (clean == "list" || clean == "modules" || clean == "l") { listModules = true; continue; }
+                    if ((clean == "module" || clean == "m" || clean == "mod") && i + 1 < args.Length) {
+                        selectedModule = args[i + 1].Trim().ToLowerInvariant();
+                        i++;
+                        continue;
+                    }
                     if (clean == "porkchop" || clean == "bench-porkchop" || clean == "porkchop-bench" || clean == "gpu") {
                         isPorkchopBenchOnly = true;
                         continue;
@@ -63,18 +83,32 @@ namespace MGADebugRunner {
                         isHistoryOnly = true;
                         continue;
                     }
+                    if (clean == "eval-galileo" || clean == "eg") {
+                        EvalGalileo();
+                        return;
+                    }
+                    if (clean == "eval-juno" || clean == "ej") {
+                        EvalJuno();
+                        return;
+                    }
                     if (clean == "9" || clean == "scenario9" || clean == "scenario-9" || clean == "scenario_9" || clean == "s9" || clean == "emn" || clean == "challenge" || clean == "project9" || clean == "p9") {
                         isScenario9Only = true;
                         continue;
                     }
-                    if ((clean == "s" || clean == "scenario" || clean == "test" || clean == "case" || clean == "p" || clean == "project") && i + 1 < args.Length) {
-                        string next = args[i + 1].Trim().ToLowerInvariant().TrimStart('-', '/');
-                        if (next == "9" || next == "scenario9" || next == "emn") {
-                            isScenario9Only = true;
-                            continue;
-                        }
-                    }
                 }
+            }
+
+            if (listModules) {
+                Console.WriteLine("📋 [已注册测试模块列表]:");
+                foreach (var kv in modules) {
+                    Console.WriteLine($"  • --module {kv.Key,-12} | {kv.Value.Name}");
+                    Console.WriteLine($"    说明: {kv.Value.Description}");
+                }
+                Console.WriteLine("\n用法示例:");
+                Console.WriteLine("  dotnet run --project tests/MGADebugRunner/MGADebugRunner.csproj -c Release -- --fast");
+                Console.WriteLine("  dotnet run --project tests/MGADebugRunner/MGADebugRunner.csproj -c Release -- --module locked");
+                Console.WriteLine("  dotnet run --project tests/MGADebugRunner/MGADebugRunner.csproj -c Release -- --all");
+                return;
             }
 
             if (isPorkchopBenchOnly) {
@@ -98,74 +132,84 @@ namespace MGADebugRunner {
             }
 
             if (isScenario9Only) {
-                Console.WriteLine("🎯 [命令行定向运行] 已指定单例测试模式: [项目 9: 地球-水星-海王星 3700 m/s 飞掠挑战]");
-                Console.WriteLine("⚡ 已自动跳过全套前置基础用例 (用例集 A ~ S)，全速执行目标挑战以节约计算与等待时间！\n");
-                var testChains = MGAEphemerisReachabilityAnalyzer.SynthesizeClimbingSequences("Earth", "Neptune", new List<string> { "Mercury" });
-                Console.WriteLine($"[DIAGNOSTIC] Synthesized {testChains.Count} climbing sequences.");
-                foreach (var tc in testChains.Take(5)) {
-                    var rep = MGAEphemerisReachabilityAnalyzer.AnalyzeChainReachability("Earth", "Neptune", tc, GMATClient.ParseUtcGregorian("01 Jan 1951 00:00:00.000"), 4000.0, 500.0);
-                    Console.WriteLine($"Chain: Earth -> {string.Join(" -> ", tc)} -> Neptune");
-                    Console.WriteLine($"  IsFeasible={rep.IsFeasible}, TotalDeficit={rep.TotalDeficitMs:F1} m/s");
-                    foreach (var l in rep.LegReports) {
-                        Console.WriteLine($"    Leg {l.FromBody} -> {l.ToBody}: EnergyDeficit={l.EnergyDeficitMs:F1}, TurnDeficit={l.TurnDeficitMs:F1}, Rationale={l.Rationale}");
-                    }
-                }
-
-                // Also check what FilterAndPrioritizeReachableSequences actually outputs!
-                var dummyCfg = new MGAAdaptiveSolverConfig {
-                    DeparturePlanet = "Earth",
-                    ArrivalPlanet = "Neptune",
-                    FlybySequence = new List<string> { "Mercury" },
-                    SearchStartUT = GMATClient.ParseUtcGregorian("01 Jan 1951 00:00:00.000"),
-                    MaxCandidateTopologies = 8,
-                    EnablePermutationsAndInsertions = true,
-                    EnableEphemerisReachabilityFilter = true,
-                    ConstrainByVesselDeltaV = true,
-                    VesselMaxDeltaVMs = 4000.0,
-                    MaxDsmDeltaVMs = 500.0
-                };
-                var topSequences = MGAMCTSTopologySelector.GenerateOptimalFlybySequences(dummyCfg, 8);
-                Console.WriteLine($"\n[DIAGNOSTIC] GenerateOptimalFlybySequences returned {topSequences.Count} topologies:");
-                for (int i = 0; i < topSequences.Count; i++) {
-                    Console.WriteLine($"  Top #{i + 1}: Earth -> {string.Join(" -> ", topSequences[i])} -> Neptune");
-                }
-
-                int total = 1;
-                int passed = 0;
-                bool ok = RunScenario9_EarthMercuryNeptuneChallenge(quick);
-                if (ok) passed++;
-                Console.WriteLine($"\n[Scenario 9] 最终结果: {(ok ? "✅ 成功收敛通过" : "❌ 未收敛通过")} ({passed}/{total})");
+                RunScenario9_EarthMercuryNeptuneChallenge(false);
                 return;
             }
 
-            TestCapabilitiesRegistry(ref totalTests, ref passedTests);
-            TestScriptSystemRoundTrip(ref totalTests, ref passedTests);
-            TestCallPythonStepIntegration(ref totalTests, ref passedTests);
-            TestUniversalCentralBodyDecoupling(ref totalTests, ref passedTests);
-            TestParkingOrbitPhaseAlignment(ref totalTests, ref passedTests);
-            TestMode2LockedOrbitEarthToMoon(ref totalTests, ref passedTests);
-            TestDirectInterplanetaryEarthToVenusDiversity(ref totalTests, ref passedTests);
-            TestCeresAndMercuryCandidateSequences(ref totalTests, ref passedTests);
-            TestEphemerisFrameAlignmentAndMoon(ref totalTests, ref passedTests);
-            TestUniversalDynamicBodyRegistry(ref totalTests, ref passedTests);
-            TestMultiSystemCentralToMoonTransfers(ref totalTests, ref passedTests);
-            TestClassicInterplanetaryTransfers(ref totalTests, ref passedTests);
-            TestAdaptiveSolverMultiIslandAndSelfHealing(ref totalTests, ref passedTests);
-            TestAutonomousMGA_EarthToMercuryAndUranus(ref totalTests, ref passedTests);
-            TestLowEnergyCaptureAndFictionalMissions(ref totalTests, ref passedTests);
-            TestAdvancedAstrodynamicsFeatures(ref totalTests, ref passedTests);
-            TestWideSearchAndDirectApplication(ref totalTests, ref passedTests);
-            TestFlybyGeometryAndGMATScriptExport(ref totalTests, ref passedTests);
-            TestIntelligentResonantPhasing(ref totalTests, ref passedTests);
+            string reportDir = "reports/test_reports";
+            System.IO.Directory.CreateDirectory(reportDir);
 
-            Console.WriteLine("==========================================================================================");
-            Console.WriteLine($"🏆 综合测试总结: 全部用例已执行完毕！成功通过: {passedTests} / {totalTests} (通过率: {(double)passedTests / totalTests * 100:F1}%)");
-            if (passedTests == totalTests) {
-                Console.WriteLine("🎉 完美收敛！所有 MGA/Hohmann/SPICE 动力学求解均由底层 Native C++ 引擎精确收敛，无一脱靶或发散！");
-            } else {
-                Console.WriteLine("⚠️ 存在未通过用例，请检查上方日志详情！");
+            // 1. 快速回归模式 (--fast / --quick)
+            // 1. 快速回归模式 (--fast / --quick)
+            if (runFast) {
+                var fastMod = modules["fast"];
+                bool ok;
+                int passC, totC;
+                using (var ctx = new TestContext(fastMod.ModuleId, fastMod.Name, fastMod.Description, reportDir)) {
+                    ok = fastMod.Run(ctx);
+                    ctx.SaveReport(reportDir);
+                    passC = ctx.Report.PassCount;
+                    totC = ctx.Report.TotalCount;
+                }
+                Console.WriteLine($"\n[Fast Suite] 最终判定: {(ok ? "✅ 全部通过" : "❌ 存在失败")} ({passC}/{totC})");
+                return;
             }
+
+            // 2. 单模块模式 (--module <name>)
+            if (!string.IsNullOrEmpty(selectedModule)) {
+                if (!modules.TryGetValue(selectedModule, out var mod)) {
+                    Console.WriteLine($"❌ 未知模块: '{selectedModule}'. 可用模块: {string.Join(", ", modules.Keys)}");
+                    return;
+                }
+                Console.WriteLine($"🎯 [单模块定向测试] 正在执行: {mod.Name} ...");
+                bool ok;
+                int passC, totC;
+                using (var ctx = new TestContext(mod.ModuleId, mod.Name, mod.Description, reportDir)) {
+                    ok = mod.Run(ctx);
+                    ctx.SaveReport(reportDir);
+                    passC = ctx.Report.PassCount;
+                    totC = ctx.Report.TotalCount;
+                }
+                Console.WriteLine($"\n[{mod.Name}] 最终判定: {(ok ? "✅ 全部通过" : "❌ 存在失败")} ({passC}/{totC})");
+                return;
+            }
+
+            // 3. 全模块运行模式 (默认 或 --all)
+            Console.WriteLine("🚀 [全量模块化测试套件启动] 逐模块执行并独立导出 Markdown 报告与专用 Log...\n");
+            var summaryList = new List<TestModuleReport>();
+            var allSw = System.Diagnostics.Stopwatch.StartNew();
+
+            string[] execOrder = new[] { "fast", "core", "orbit", "locked", "direct", "adaptive", "autonomous", "advanced" };
+            foreach (var modKey in execOrder) {
+                if (!modules.TryGetValue(modKey, out var mod)) continue;
+                Console.WriteLine($"\n>>> 执行模块 [{modKey}]: {mod.Name} <<<");
+                using (var ctx = new TestContext(mod.ModuleId, mod.Name, mod.Description, reportDir)) {
+                    mod.Run(ctx);
+                    ctx.SaveReport(reportDir);
+                    summaryList.Add(ctx.Report);
+                }
+            }
+            allSw.Stop();
+
+            Console.WriteLine("\n==========================================================================================");
+            Console.WriteLine("🏆 全模块测试综合大榜与独立报告/日志导出清单");
             Console.WriteLine("==========================================================================================");
+            Console.WriteLine(string.Format("{0,-14} | {1,-24} | {2,-10} | {3,-9} | {4,-24} | {5,-22}", "模块标识", "模块名称", "通过状态", "耗时(ms)", "报告路径", "独立日志路径"));
+            Console.WriteLine(new string('-', 116));
+
+            int totalPassed = 0;
+            int totalCases = 0;
+            foreach (var rep in summaryList) {
+                totalPassed += rep.PassCount;
+                totalCases += rep.TotalCount;
+                string status = (rep.FailCount == 0) ? "✅ PASS" : $"❌ {rep.PassCount}/{rep.TotalCount}";
+                string rPath = $"reports/test_reports/report_{rep.ModuleId}.md";
+                string lPath = $"reports/test_reports/log_{rep.ModuleId}.log";
+                Console.WriteLine(string.Format("{0,-14} | {1,-24} | {2,-10} | {3,-9:F0} | {4,-24} | {5,-22}", rep.ModuleId, rep.ModuleName.Length > 22 ? rep.ModuleName.Substring(0, 22) : rep.ModuleName, status, rep.TotalElapsedMs, rPath, lPath));
+            }
+            Console.WriteLine(new string('-', 116));
+            Console.WriteLine($"★ 综合通过统计: {totalPassed} / {totalCases} 用例通过 (通过率: {(totalCases > 0 ? (double)totalPassed / totalCases * 100.0 : 0):F1}%), 总耗时: {allSw.Elapsed.TotalSeconds:F2} 秒");
+            Console.WriteLine("==========================================================================================\n");
         }
 
         static void TestPlanetaryCatalogDynamicLoading(ref int total, ref int passed) {
@@ -1704,6 +1748,7 @@ Propagate Prop(Sat) {Sat.ElapsedSecs = 86400};
 
                 var cfg = new MGAConfig {
                     DepartureBody = "Earth",
+                    DestinationBody = "Moon",
                     CentralBody = "Earth",
                     FlybySequence = new List<string> { "Moon" },
                     DepartureMode = MGADepartureMode.InOrbitLockedOrbit,
@@ -3133,35 +3178,136 @@ Propagate Prop(Sat) {Sat.ElapsedSecs = 86400};
         }
 
         public static void RunHistoricalBlindSearchSuite(string filter = null) {
-            Console.WriteLine("==========================================================================================");
-            Console.WriteLine("🌌 [MGAHistoricalBlindSearchSuite] 人类深空历史 MGA 任务纯盲搜与自主涌现发现测试套件");
-            Console.WriteLine("   原则: 100% 仅输入 Earth ➔ 目的地, 0 中间借力天体提示, 全由通用天体动力学自主推导！");
-            Console.WriteLine("==========================================================================================\n");
-
-            var cases = MGAHistoricalBlindSearchSuite.HistoricalCatalog;
-            if (!string.IsNullOrEmpty(filter)) {
-                cases = cases.Where(c => c.MissionId.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                         c.MissionName.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                         c.DestinationBody.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0).ToList();
-                Console.WriteLine($"🔍 [定向过滤模式] 命中 {cases.Count} 个匹配任务: {string.Join(", ", cases.Select(c => c.MissionName))}\n");
-            }
-
-            if (cases.Count == 0) {
-                Console.WriteLine("⚠️ 未找到匹配的历史任务，请检查过滤关键词 (如: voyager2, cassini, galileo, mariner10 等)！");
-                return;
-            }
-
-            var results = new List<BlindSearchResult>();
-            foreach (var bCase in cases) {
-                var res = MGAHistoricalBlindSearchSuite.RunBlindSearch(bCase);
-                results.Add(res);
-            }
-
-            string reportDir = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "reports");
+            string reportDir = "reports/test_reports";
             System.IO.Directory.CreateDirectory(reportDir);
-            string reportPath = System.IO.Path.Combine(reportDir, "mga_historical_discovery_report.md");
-            MGAHistoricalBlindSearchSuite.GenerateMarkdownReport(results, reportPath);
-            Console.WriteLine($"\n📄 深度分析与物理机理报表已成功生成: {reportPath}\n");
+            string logPath = System.IO.Path.Combine(reportDir, "log_historical_blind.log");
+
+            using (var logScope = new ModuleLogScope(logPath)) {
+                Console.WriteLine("==========================================================================================");
+                Console.WriteLine("🌌 [MGAHistoricalBlindSearchSuite] 人类深空历史 MGA 任务纯盲搜与自主涌现发现测试套件");
+                Console.WriteLine("   原则: 100% 仅输入 Earth ➔ 目的地, 0 中间借力天体提示, 全由通用天体动力学自主推导！");
+                Console.WriteLine("==========================================================================================\n");
+
+                var cases = MGAHistoricalBlindSearchSuite.HistoricalCatalog;
+                if (!string.IsNullOrEmpty(filter)) {
+                    cases = cases.Where(c => c.MissionId.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                             c.MissionName.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                             c.DestinationBody.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0).ToList();
+                    Console.WriteLine($"🔍 [定向过滤模式] 命中 {cases.Count} 个匹配任务: {string.Join(", ", cases.Select(c => c.MissionName))}\n");
+                }
+
+                if (cases.Count == 0) {
+                    Console.WriteLine("⚠️ 未找到匹配的历史任务，请检查过滤关键词 (如: voyager2, cassini, galileo, mariner10 等)！");
+                    return;
+                }
+
+                var results = new List<BlindSearchResult>();
+                foreach (var bCase in cases) {
+                    var res = MGAHistoricalBlindSearchSuite.RunBlindSearch(bCase);
+                    results.Add(res);
+                }
+
+                string reportPath = System.IO.Path.Combine(reportDir, "report_historical_blind.md");
+                string rootReportPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "reports", "mga_historical_discovery_report.md");
+                MGAHistoricalBlindSearchSuite.GenerateMarkdownReport(results, reportPath);
+                MGAHistoricalBlindSearchSuite.GenerateMarkdownReport(results, rootReportPath);
+                Console.WriteLine($"\n📄 深度分析与物理机理报表已成功生成: {reportPath}\n");
+            }
+        }
+
+        public static void EvalGalileo() {
+            Console.WriteLine("==========================================================================================");
+            Console.WriteLine("🛰️ [EvalGalileo] 诊断 Galileo VEEGA 在不同共振航时与历元下的完整物理动力学");
+            Console.WriteLine("==========================================================================================");
+
+            double launchUT = GMATClient.ParseUtcGregorian("18 Oct 1989 00:00:00.000");
+            var fullChain = new List<string> { "Earth", "Venus", "Earth", "Earth", "Jupiter" };
+            var cfg = new MGAConfig {
+                DepartureBody = "Earth",
+                DestinationBody = "Jupiter",
+                DeparturePeAKm = 200.0,
+                DepartureApAKm = 200.0,
+                DestinationPeAKm = 1000.0,
+                DestinationApAKm = 1000.0,
+                ArrivalOrbitType = MGAArrivalOrbitType.HighlyElliptic,
+                DepartureMode = MGADepartureMode.PreLaunchFreeOrbit,
+                LegStrategies = new List<MGALegStrategy> {
+                    MGALegStrategy.Ballistic,
+                    MGALegStrategy.DeepSpaceManeuver1DSM,
+                    MGALegStrategy.DeepSpaceManeuver1DSM,
+                    MGALegStrategy.DeepSpaceManeuver1DSM
+                }
+            };
+
+            // 测试 1: 历史名义航时 (115d, 301d, 731d, 1093d)
+            double[] tofsDays = new double[] { 115.0, 301.0, 731.0, 1093.0 };
+            double[] genome = new double[1 + 4 + 4];
+            genome[0] = launchUT;
+            for (int i = 0; i < 4; i++) genome[1 + i] = tofsDays[i] * 86400.0;
+            genome[5] = 0.5;
+            genome[6] = 0.5;
+            genome[7] = 0.5;
+            genome[8] = 0.5;
+
+            var sol = PykepBridge.BuildFullSolution(genome, fullChain, cfg, computeAdvanced: false);
+            if (sol != null) {
+                Console.WriteLine($"• 方案 A (历史名义): 发射={GMATClient.FormatUtcGregorian(sol.DepartureUT)}, 始发={sol.LaunchDeltaVKms*1000.0:F1} m/s, 终点捕获={sol.InsertionDeltaVKms*1000.0:F1} m/s, 总ΔV={sol.TotalDeltaVKms*1000.0:F1} m/s, 全可行={sol.AllLegsFeasible}");
+                for (int li = 0; li < sol.Legs.Count; li++) {
+                    var l = sol.Legs[li];
+                    string dsmStr = (l.DSM != null) ? $"DSM={l.DSM.DeltaVMs:F1} m/s (pro={l.DSM.ProgradeMs:F1}, nml={l.DSM.NormalMs:F1}, rad={l.DSM.RadialMs:F1})" : "无DSM";
+                    Console.WriteLine($"   Leg #{li+1}: {l.FromBody} ➔ {l.ToBody}, ToF={l.ToFDays:F1}d, 偏折={l.FlybyTurningAngleDeg:F1}°, 飞掠ΔV={l.FlybyDeltaVKms*1000.0:F1} m/s, {dsmStr}, 可行={l.IsFeasible}");
+                    Console.WriteLine($"          V_inf_dep = ({l.VInfDepartureKms.x:F3}, {l.VInfDepartureKms.y:F3}, {l.VInfDepartureKms.z:F3}) mag={l.VInfDepartureKms.magnitude:F3} km/s");
+                    Console.WriteLine($"          V_inf_arr = ({l.VInfArrivalKms.x:F3}, {l.VInfArrivalKms.y:F3}, {l.VInfArrivalKms.z:F3}) mag={l.VInfArrivalKms.magnitude:F3} km/s");
+                }
+                double loss = MGAPhysicsLossEngine.ComputeLoss(sol, cfg);
+                Console.WriteLine($"   => MGAPhysicsLossEngine ComputeLoss = {loss:F2}");
+            }
+        }
+
+        public static void EvalJuno() {
+            Console.WriteLine("==========================================================================================");
+            Console.WriteLine("🛰️ [EvalJuno] 诊断 Juno EGA 在不同共振航时与历元下的完整物理动力学");
+            Console.WriteLine("==========================================================================================");
+
+            double launchUT = GMATClient.ParseUtcGregorian("05 Aug 2011 00:00:00.000");
+            var fullChain = new List<string> { "Earth", "Earth", "Jupiter" };
+            var cfg = new MGAConfig {
+                DepartureBody = "Earth",
+                DestinationBody = "Jupiter",
+                DeparturePeAKm = 200.0,
+                DepartureApAKm = 200.0,
+                DestinationPeAKm = 4000.0,
+                DestinationApAKm = 4000.0,
+                ArrivalOrbitType = MGAArrivalOrbitType.HighlyElliptic,
+                DepartureMode = MGADepartureMode.PreLaunchFreeOrbit,
+                LegStrategies = new List<MGALegStrategy> {
+                    MGALegStrategy.DeepSpaceManeuver1DSM,
+                    MGALegStrategy.DeepSpaceManeuver1DSM
+                }
+            };
+
+            // 测试 1: 历史名义航时 (796d, 999d)
+            double[] tofsDays = new double[] { 796.0, 999.0 };
+            double[] genome = new double[1 + 2 + 2];
+            genome[0] = launchUT;
+            genome[1] = tofsDays[0] * 86400.0;
+            genome[2] = tofsDays[1] * 86400.0;
+            genome[3] = 0.5;
+            genome[4] = 0.5;
+
+            var sol = PykepBridge.BuildFullSolution(genome, fullChain, cfg, computeAdvanced: false);
+            if (sol != null) {
+                Console.WriteLine($"• 方案 A (历史名义 796d, 999d): 发射={GMATClient.FormatUtcGregorian(sol.DepartureUT)}, 始发={sol.LaunchDeltaVKms*1000.0:F1} m/s, 终点捕获={sol.InsertionDeltaVKms*1000.0:F1} m/s, 总ΔV={sol.TotalDeltaVKms*1000.0:F1} m/s, 全可行={sol.AllLegsFeasible}");
+                for (int li = 0; li < sol.Legs.Count; li++) {
+                    var l = sol.Legs[li];
+                    string dsmStr = (l.DSM != null) ? $"DSM={l.DSM.DeltaVMs:F1} m/s (pro={l.DSM.ProgradeMs:F1}, nml={l.DSM.NormalMs:F1}, rad={l.DSM.RadialMs:F1})" : "无DSM";
+                    Console.WriteLine($"   Leg #{li+1}: {l.FromBody} ➔ {l.ToBody}, ToF={l.ToFDays:F1}d, 偏折={l.FlybyTurningAngleDeg:F1}°, 飞掠ΔV={l.FlybyDeltaVKms*1000.0:F1} m/s, {dsmStr}, 可行={l.IsFeasible}");
+                    Console.WriteLine($"          V_inf_dep = ({l.VInfDepartureKms.x:F3}, {l.VInfDepartureKms.y:F3}, {l.VInfDepartureKms.z:F3}) mag={l.VInfDepartureKms.magnitude:F3} km/s");
+                    Console.WriteLine($"          V_inf_arr = ({l.VInfArrivalKms.x:F3}, {l.VInfArrivalKms.y:F3}, {l.VInfArrivalKms.z:F3}) mag={l.VInfArrivalKms.magnitude:F3} km/s");
+                }
+                double loss = MGAPhysicsLossEngine.ComputeLoss(sol, cfg);
+                Console.WriteLine($"   => MGAPhysicsLossEngine ComputeLoss = {loss:F2}");
+            }
         }
 
         public static void DiagnoseHistoricalTopologies(string filter = null) {
@@ -3234,7 +3380,7 @@ Propagate Prop(Sat) {Sat.ElapsedSecs = 86400};
 
 
                 var diverse = MGAMCTSTopologySelector.KeplerAdjacencyGraphEngine.SelectDiverseTopologies(
-                    rawCandidates, Math.Max(bCase.MaxCandidateTopologies * 32, 256), bCase.DestinationBody);
+                    rawCandidates, Math.Max(bCase.MaxCandidateTopologies * 512, 4096), bCase.DestinationBody);
                 Console.WriteLine($"   • [2. 多样性聚类池] 产生: {diverse.Count} 组拓扑");
                 bool inDiverse = diverse.Any(c => c.SequenceEqual(bCase.HistoricalFlybySequence, StringComparer.OrdinalIgnoreCase));
                 Console.WriteLine($"     -> 包含历史拓扑: {(inDiverse ? "✅ YES" : "❌ NO")}");
@@ -3244,7 +3390,9 @@ Propagate Prop(Sat) {Sat.ElapsedSecs = 86400};
                 foreach (var m in multiItems.Take(6)) Console.WriteLine($"       -> {string.Join("->", m)}");
 
                 double budgetMs = bCase.VesselMaxDeltaVMs;
-                double dsmBudgetMs = bCase.MaxDsmDeltaVMs > 0 ? bCase.MaxDsmDeltaVMs : budgetMs;
+                double dsmBudgetMs = (bCase.PropulsionType == MGAPropulsionType.LowThrustElectric)
+                    ? Math.Max(bCase.MaxDsmDeltaVMs, budgetMs)
+                    : ((bCase.MaxDsmDeltaVMs > 0) ? bCase.MaxDsmDeltaVMs : budgetMs);
 
                 if (bCase.HistoricalFlybySequence.Count > 0)
                 {
@@ -3269,6 +3417,12 @@ Propagate Prop(Sat) {Sat.ElapsedSecs = 86400};
                 }).ToList();
                 int histRankInGateway = inSameGateway.FindIndex(f => f.FlybyChain.SequenceEqual(bCase.HistoricalFlybySequence, StringComparer.OrdinalIgnoreCase));
                 Console.WriteLine($"     [Hist in Gateway '{histFirst}']: Rank #{histRankInGateway + 1} of {inSameGateway.Count}");
+                Console.WriteLine($"     [All {inSameGateway.Count} in Gateway '{histFirst}']: ");
+                for (int gi = 0; gi < inSameGateway.Count; gi++)
+                {
+                    var gfc = inSameGateway[gi];
+                    Console.WriteLine($"       #{gi + 1}: Pareto={gfc.ParetoScore:F2}, Dv={gfc.EstimatedTotalDvMs:F0}, ToF={gfc.EstimatedToFDays:F0}d, Chain={string.Join("->", gfc.FlybyChain)}");
+                }
                 if (!filtered.Take(bCase.MaxCandidateTopologies).Any(c => c.FlybyChain.SequenceEqual(bCase.HistoricalFlybySequence, StringComparer.OrdinalIgnoreCase)))
                 {
                     Console.WriteLine($"       [Top 10 in Filtered for Missed Mission]:");

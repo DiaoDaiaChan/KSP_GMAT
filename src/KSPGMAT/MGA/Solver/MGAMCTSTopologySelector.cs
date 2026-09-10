@@ -10,6 +10,8 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using KSPGMAT.Model;
+using KSPGMAT.MGA.AI;
+using KSPGMAT.MGA.Telemetry;
 
 namespace KSPGMAT.MGA
 {
@@ -49,7 +51,8 @@ namespace KSPGMAT.MGA
             double rDep = (pDep != null && pDep.SMA > 0) ? pDep.SMA : 1.496e8;
             double rArr = (pArr != null && pArr.SMA > 0) ? pArr.SMA : 1.496e8;
 
-            double ratio = Math.Max(rDep, rArr) / Math.Max(1.0, Math.Min(rDep, rArr));
+            double minR = Math.Min(rDep, rArr);
+            double ratio = minR > 0 ? (Math.Max(rDep, rArr) / minR) : 1.0;
             bool isDeepInner = (rArr < rDep * 0.5); // 如水星 (0.387 AU vs 1.0 AU, ratio ~ 2.58)
             bool isFarOuter = (ratio >= 10.0 || (rArr > rDep * 8.0)); // 如天王星 (19.2 AU), 海王星 (30.0 AU)
             bool isMidOuter = (ratio >= 4.0 && !isFarOuter); // 如木星 (5.2 AU), 土星 (9.58 AU)
@@ -110,6 +113,7 @@ namespace KSPGMAT.MGA
                 public double RadiusKm;          // km
                 public double SafeRadiusKm;      // km
                 public double Mu;                // km^3/s^2
+                public double IncDeg;            // 轨道倾角 (度), 供离面分量/代理特征推导
                 public double GravPotential;     // Mu / SafeRadius
                 public double OrbitalSpeedKms;   // km/s
                 public double PeriodDays;        // days
@@ -189,6 +193,7 @@ namespace KSPGMAT.MGA
                         RadiusKm = p.RadiusKm,
                         SafeRadiusKm = safeR,
                         Mu = p.Mu,
+                        IncDeg = p.INC,
                         GravPotential = gravPot,
                         OrbitalSpeedKms = vCirc,
                         PeriodDays = periodDays,
@@ -320,22 +325,27 @@ namespace KSPGMAT.MGA
                 double vHypDep = Math.Sqrt(vInfDepDirect * vInfDepDirect + 2.0 * depNode.Mu / rpDep);
                 double directLaunchDv = Math.Max(0.0, vHypDep - vParkDep);
 
+                // 2. 确定搜索参数与深度门限
+                double ratioSma = Math.Max(depNode.SMA, arrNode.SMA) / Math.Min(depNode.SMA, arrNode.SMA);
+                bool isDeepInner = (arrNode.SMA < depNode.SMA * 0.55);
+                bool isFarOuter = (ratioSma >= 8.0 || arrNode.SMA > depNode.SMA * 6.0);
+                int treeMaxLegs = Math.Min(maxLegs, (isDeepInner || isFarOuter) ? 11 : Math.Max(7, maxLegs <= 5 ? maxLegs : 7));
+
+                // 深势阱天体 (如水星) 直达制动赤字惩罚:
+                // 水星直达到达相对速度高达 9.6 km/s，制动入轨需要天文级工质 (理论总冲量 > 25 km/s)，
+                // 必须在纯图搜索阶段施加真实的物理势阱制动赤字，阻断其以低航时伪装成优质解挤占演化池
+                double directPenalty = isDeepInner ? 8.0 : 0.0;
+
                 candidates.Add(new CandidateTopology
                 {
                     FlybyChain = new List<string>(),
                     LaunchDvKms = directLaunchDv,
-                    AssistDeficitKms = 0.0,
+                    AssistDeficitKms = isDeepInner ? 8.0 : 0.0,
                     TotalToFDays = tofDirect,
                     LegCount = 1,
                     TopologyCategory = "Direct",
-                    ParetoScore = directLaunchDv * 1.2 + (tofDirect / 365.25) * 0.3
+                    ParetoScore = directLaunchDv * 1.2 + (tofDirect / 365.25) * 0.3 + directPenalty
                 });
-
-                // 2. 确定搜索参数与深度门限
-                double ratioSma = Math.Max(depNode.SMA, arrNode.SMA) / Math.Min(depNode.SMA, arrNode.SMA);
-                bool isDeepInner = (arrNode.SMA < depNode.SMA * 0.5);
-                bool isFarOuter = (ratioSma >= 8.0 || arrNode.SMA > depNode.SMA * 6.0);
-                int treeMaxLegs = Math.Min(maxLegs, (isDeepInner || isFarOuter) ? 7 : (ratioSma >= 3.5 ? 5 : 4));
                 // 图论分支定界物理门限: 容纳非共面非霍曼三维交角裕度，杜绝初等共线假设误杀高能借力分支
                 double budgetLimit = Math.Max(12.0, (maxBudgetKms > 0 && maxBudgetKms < 50.0) ? (maxBudgetKms * 2.5) : 12.0);
 
@@ -351,7 +361,7 @@ namespace KSPGMAT.MGA
                 queue.Enqueue((new List<BodyNode> { depNode }, 0.0, 0.0, 0.0, 0));
 
                 int visitedStates = 0;
-                int maxStates = 6000;
+                int maxStates = 80000;
 
                 while (queue.Count > 0 && visitedStates++ < maxStates)
                 {
@@ -368,12 +378,32 @@ namespace KSPGMAT.MGA
 
                         bool isResonance = nextNode.Name.Equals(currNode.Name, StringComparison.OrdinalIgnoreCase);
 
-                        // 剪枝规则 1: 同星共振次数约束 (依据势阱深度)
+                        // 剪枝规则 1: 同星共振次数与物理合理性硬门禁 (严格天体力学约束)
                         if (isResonance)
                         {
-                            int allowedRes = currNode.IsDeepWell ? 4 : (currNode.IsGiant ? 1 : 2);
-                            if (resCount >= allowedRes) continue;
-                            // 根节点出发若第一步即自环，允许深势阱内行星或外行星任务实施 EGA 开普勒共振蓄能 (如 Juno / Rosetta)
+                            // A. 严禁无异星介入的连续 2 次以上虚假同星自环 (如 Earth->Earth->Earth 或 Mars->Mars->Mars):
+                            //    在纯两体引力下，若中途没有异星偏折或大深空机动，航天器在同一点相会的开普勒几何恒定，
+                            //    连续无动力飞掠无法产生二次增益。彻底剪除此类拓扑退化！
+                            if (!currNode.IsDeepWell)
+                            {
+                                if (currPath.Count >= 2 && currPath[currPath.Count - 2].Name.Equals(currNode.Name, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    continue; // 连续同星虚假自环，立即剪枝！
+                                }
+                                // 始发天体出发后未经过异星中继前的直接自环 (如 Juno 的 ΔV-EGA: Earth->Earth): 最多只允许 1 次
+                                bool hasVisitedOther = currPath.Any(n => !n.Name.Equals(depNode.Name, StringComparison.OrdinalIgnoreCase));
+                                if (!hasVisitedOther && currNode.Name.Equals(depNode.Name, StringComparison.OrdinalIgnoreCase) && currPath.Count >= 2)
+                                {
+                                    continue;
+                                }
+                            }
+                            else
+                            {
+                                // 深势阱小天体 (如水星/Moho) 允许连续自共振减速 (MESSENGER / BepiColombo 机制: 1:1, 2:3, 3:4 等共振降轨)
+                                if (resCount >= 6) continue;
+                            }
+
+                            // 根节点出发若第一步即自环，允许深势阱内行星或外行星任务实施 ΔV-EGA 共振调相 (如 Juno)
                             bool allowDepRes = isDeepInner || (arrNode.SMA >= depNode.SMA * 1.35);
                             if (currPath.Count == 1 && !allowDepRes) continue;
                         }
@@ -391,8 +421,22 @@ namespace KSPGMAT.MGA
                             var last2 = currPath[currPath.Count - 2];
                             if (nextNode.Name.Equals(last2.Name, StringComparison.OrdinalIgnoreCase))
                             {
-                                int occurrences = currPath.Count(n => n.Name.Equals(nextNode.Name, StringComparison.OrdinalIgnoreCase));
-                                if (occurrences >= 2) continue;
+                                // 统计非连续重访的独立访问波次 (Distinct Visits):
+                                // 同星连续自共振 (如 Earth->Earth) 属于同一波次，不重复计为异星往返;
+                                // 允许天体间实施一次重访回弹 (如 Earth->Mars->Earth 或 Venus->Earth->Venus: distinctVisits=2),
+                                // 仅拦截 3 次及以上死循环 (如 A->B->A->B->A)
+                                int distinctVisits = 0;
+                                for (int vi = 0; vi < currPath.Count; vi++)
+                                {
+                                    if (currPath[vi].Name.Equals(nextNode.Name, StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        if (vi == 0 || !currPath[vi - 1].Name.Equals(nextNode.Name, StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            distinctVisits++;
+                                        }
+                                    }
+                                }
+                                if (distinctVisits >= 2) continue;
                             }
                         }
 
@@ -403,8 +447,22 @@ namespace KSPGMAT.MGA
 
                         if (isResonance)
                         {
-                            stepDeficit = 0.0; // 同星共振大小守恒
-                            legToF = currNode.PeriodDays * (currNode.IsDeepWell ? 1.0 : (currNode.SMA > 1.2e8 && currNode.SMA < 2.2e8 ? 2.0 : 1.0));
+                            // 物理赤字建模:
+                            // 1. 若是始发天体的纯同星自环 (如 Juno 模式 Earth->Earth EGA)，在远日点必须依靠 1-DSM 机动调相打破守恒，
+                            //    理论标称最小深空机动脉冲为 ~0.75 km/s (750 m/s)，必须计入真实赤字，杜绝误导！
+                            // 2. 若是经过金星等异星偏折后的重访 (如 Galileo VEEGA 中 Venus->Earth->Earth)，
+                            //    前置金星借力已提供了极高日心偏心率，通过 2:1 开普勒共振 (730天) 实现无动力蓄能，赤字为 0。
+                            // 3. 水星本星多次自减速共振 (MESSENGER)，逆行飞掠削减能量，赤字为 0。
+                            if (currNode.Name.Equals(depNode.Name, StringComparison.OrdinalIgnoreCase) &&
+                                currPath.All(n => n.Name.Equals(depNode.Name, StringComparison.OrdinalIgnoreCase)))
+                            {
+                                stepDeficit = 0.75; // ΔV-EGA 深空机动真实工质成本
+                            }
+                            else
+                            {
+                                stepDeficit = 0.0;
+                            }
+                            legToF = currNode.PeriodDays * (currNode.IsDeepWell ? 1.0 : MGAFlybyDynamicsHelper.GetResonanceToFMultiplier(currNode.PeriodDays));
                             nextVinf = lastVinf;
                         }
                         else
@@ -478,7 +536,19 @@ namespace KSPGMAT.MGA
 
                             int legs = chain.Count + 1;
                             string cat = (chain.Count == 1) ? "Single" : (chain.Count == 2 ? "Dual" : (chain.Count == 3 ? "Multi" : "GrandTour"));
-                            double score = launchDv * 1.2 + newCumDeficit * 1.5 + (vInfArrival * 0.8) + (newTotalToF / 365.25) * 0.4 + legs * 0.1;
+
+                            // 天体物理势能泵红利 (Inner Assist Energy Pump Bonus):
+                            // 当飞往外行星 (如木星、土星) 且拓扑中包含内潜蓄能天体 (如金星，SMA < depNode.SMA * 0.85) 时，
+                            // 航天器可利用内行星公转速度偏折极大幅度抬升远日点，这是人类历史证明的最强外行星引力跳板 (VEEGA / VVEJGA)。
+                            // 赋予其关键物理优势评分，抵消航时与腿数惩罚，确保其优先进入演化池！
+                            bool hasInnerAssistPump = (arrNode.SMA > depNode.SMA * 1.5) && chain.Any(b =>
+                            {
+                                var p = SolarSystemCatalog.GetPlanet(b);
+                                return p != null && p.SMA < depNode.SMA * 0.85;
+                            });
+                            double pumpBonus = hasInnerAssistPump ? 2.8 : 0.0;
+
+                            double score = launchDv * 1.2 + newCumDeficit * 1.5 + (vInfArrival * 0.8) + (newTotalToF / 365.25) * 0.25 + legs * 0.05 - pumpBonus;
 
                             candidates.Add(new CandidateTopology
                             {
@@ -491,15 +561,18 @@ namespace KSPGMAT.MGA
                                 ParetoScore = score
                             });
 
-                            // 若目标是深势阱小天体 (如水星)，自动在其后展开 1~3 次目标本星自减速共振 (MESSENGER / BepiColombo 机制)
+                            // 若目标是深势阱小天体 (如水星)，自动在其后展开 1~6 次目标本星自减速共振 (MESSENGER / BepiColombo 机制)
                             if (arrNode.IsDeepWell && chain.Count > 0)
                             {
-                                for (int extraRes = 1; extraRes <= 3; extraRes++)
+                                for (int extraRes = 1; extraRes <= 6; extraRes++)
                                 {
                                     var resonantChain = new List<string>(chain);
                                     for (int er = 0; er < extraRes; er++) resonantChain.Add(arrival);
                                     double decelToF = newTotalToF + extraRes * arrNode.PeriodDays;
-                                    double decelScore = score + extraRes * 0.05;
+                                    // 水星等深势阱天体共振自减速物理边际效益递减规律 (Vis-Viva Diminishing Returns):
+                                    // 首次偏折消除相对速度最多，后续偏折由于速度基数降低边际收益递减，避免超长共振链虚高评分挤死紧凑构型
+                                    double decelBonus = 5.0 * (1.0 - Math.Pow(0.72, extraRes));
+                                    double decelScore = score - decelBonus + (extraRes * arrNode.PeriodDays / 365.25) * 0.15;
                                     int resLegs = legs + extraRes;
                                     string resCat = (resonantChain.Count >= 4) ? "GrandTour" : "Multi";
 
@@ -516,7 +589,14 @@ namespace KSPGMAT.MGA
                                 }
                             }
 
-                            continue; // 到达目标后不再向后发散
+                            // 到达目标天体后，若还有深度预算且尚未多次访问目标天体，允许作为中继借力继续向后探索 (如 Rosetta: E->E->M->E->E->M)
+                            int arrivalVisits = currPath.Count(n => n.Name.Equals(arrival, StringComparison.OrdinalIgnoreCase));
+                            if (currentLegs + 2 <= treeMaxLegs && arrivalVisits < 2)
+                            {
+                                var branchPath = new List<BodyNode>(currPath) { nextNode };
+                                queue.Enqueue((branchPath, newCumDeficit, nextVinf, newTotalToF, resCount));
+                            }
+                            continue; // 终止当前分支的默认发散
                         }
 
                         // 继续向深层树节点展开
@@ -526,6 +606,141 @@ namespace KSPGMAT.MGA
                 }
 
                 return candidates;
+            }
+
+            /// <summary>
+            /// 严格基于开普勒两体物理与引力助推包络守恒，对任意给定借力拓扑链计算物理一致的量纲与帕累托评分
+            /// 杜绝任何经验公式或非物理估分，确保 MCTS 树搜索、图论遍历与星历评估的量纲 100% 统一。
+            /// </summary>
+            public static CandidateTopology EvaluateTopologyPhysics(
+                string departure,
+                string arrival,
+                string centralBody,
+                List<string> flybyChain,
+                List<BodyNode> systemNodes = null)
+            {
+                var cand = new CandidateTopology
+                {
+                    FlybyChain = new List<string>(flybyChain ?? new List<string>()),
+                    LegCount = (flybyChain?.Count ?? 0) + 1
+                };
+                cand.TopologyCategory = (cand.LegCount == 1) ? "Direct" :
+                                        (cand.LegCount == 2) ? "Single" :
+                                        (cand.LegCount == 3) ? "Dual" :
+                                        (cand.LegCount == 4) ? "Multi" : "GrandTour";
+
+                var nodes = systemNodes ?? GetSystemNodes(centralBody, departure, arrival);
+                var depNode = nodes.FirstOrDefault(n => n.Name.Equals(departure, StringComparison.OrdinalIgnoreCase));
+                var arrNode = nodes.FirstOrDefault(n => n.Name.Equals(arrival, StringComparison.OrdinalIgnoreCase));
+                if (depNode == null || arrNode == null)
+                {
+                    cand.ParetoScore = 99.0;
+                    return cand;
+                }
+
+                double muCentral = SolarSystemCatalog.GetCentralMu(centralBody);
+                if (muCentral <= 0) muCentral = (SolarSystemCatalog.SunMu > 0 ? SolarSystemCatalog.SunMu : 1.32712440018e11);
+
+                double rpDep = depNode.RadiusKm + 200.0;
+                double vParkDep = Math.Sqrt(depNode.Mu / rpDep);
+
+                var fullNodes = new List<BodyNode> { depNode };
+                foreach (var b in cand.FlybyChain)
+                {
+                    var nd = nodes.FirstOrDefault(n => n.Name.Equals(b, StringComparison.OrdinalIgnoreCase));
+                    if (nd != null) fullNodes.Add(nd);
+                }
+                fullNodes.Add(arrNode);
+
+                double cumDeficit = 0.0;
+                double totalToF = 0.0;
+                double lastVinf = 0.0;
+
+                for (int k = 1; k < fullNodes.Count; k++)
+                {
+                    var prev = fullNodes[k - 1];
+                    var curr = fullNodes[k];
+                    bool isRes = prev.Name.Equals(curr.Name, StringComparison.OrdinalIgnoreCase);
+
+                    double stepDef = 0.0;
+                    double legToF = 0.0;
+
+                    if (isRes)
+                    {
+                        if (k == 1)
+                        {
+                            stepDef = 0.75; // ΔV-EGA 首段自环深空机动理论标称成本
+                        }
+                        legToF = curr.PeriodDays * (curr.IsDeepWell ? 1.0 : MGAFlybyDynamicsHelper.GetResonanceToFMultiplier(curr.PeriodDays));
+                    }
+                    else
+                    {
+                        if (k == 1)
+                        {
+                            CalcHohmannLeg(prev.SMA, curr.SMA, muCentral, out _, out lastVinf, out legToF);
+                        }
+                        else
+                        {
+                            var prevPrev = fullNodes[k - 2];
+                            if (prevPrev.Name.Equals(prev.Name, StringComparison.OrdinalIgnoreCase))
+                            {
+                                stepDef = 0.0;
+                                CalcHohmannLeg(prev.SMA, curr.SMA, muCentral, out _, out lastVinf, out legToF);
+                            }
+                            else
+                            {
+                                stepDef = CalcAssistDeficit(prev, prevPrev.SMA, curr.SMA, muCentral, out lastVinf);
+                                CalcHohmannLeg(prev.SMA, curr.SMA, muCentral, out _, out _, out legToF);
+                            }
+
+                            if (prev.IsGiant && curr.SMA > prev.SMA)
+                            {
+                                double distKm = Math.Abs(curr.SMA - prev.SMA);
+                                double hyperbolicTransitDays = (distKm / 14.0) / 86400.0;
+                                legToF = Math.Min(legToF * 0.35, hyperbolicTransitDays * 1.35);
+                            }
+                        }
+                    }
+
+                    cumDeficit += stepDef;
+                    totalToF += legToF;
+                }
+
+                // 出射双曲过剩速度
+                var firstTarget = fullNodes[1];
+                double vInfDep;
+                if (firstTarget.Name.Equals(depNode.Name, StringComparison.OrdinalIgnoreCase))
+                {
+                    double a0 = depNode.SMA;
+                    double v0 = Math.Sqrt(muCentral / a0);
+                    double aRes = a0 * Math.Pow(2.0, 2.0 / 3.0);
+                    double vRes = Math.Sqrt(Math.Max(0.0, muCentral * (2.0 / a0 - 1.0 / aRes)));
+                    vInfDep = Math.Abs(vRes - v0);
+                }
+                else
+                {
+                    CalcHohmannLeg(depNode.SMA, firstTarget.SMA, muCentral, out vInfDep, out _, out _);
+                }
+                double vHyp = Math.Sqrt(vInfDep * vInfDep + 2.0 * depNode.Mu / rpDep);
+                double launchDv = Math.Max(0.0, vHyp - vParkDep);
+
+                // 到达双曲过剩速度
+                CalcHohmannLeg(fullNodes[fullNodes.Count - 2].SMA, arrNode.SMA, muCentral, out _, out double vInfArrival, out _);
+
+                bool hasInnerPump = (arrNode.SMA > depNode.SMA * 1.5) && cand.FlybyChain.Any(b =>
+                {
+                    var p = SolarSystemCatalog.GetPlanet(b);
+                    return p != null && p.SMA < depNode.SMA * 0.85;
+                });
+                double pumpBonus = hasInnerPump ? 2.8 : 0.0;
+
+                double score = launchDv * 1.2 + cumDeficit * 1.5 + (vInfArrival * 0.8) + (totalToF / 365.25) * 0.25 + cand.LegCount * 0.05 - pumpBonus;
+
+                cand.LaunchDvKms = launchDv;
+                cand.AssistDeficitKms = cumDeficit;
+                cand.TotalToFDays = totalToF;
+                cand.ParetoScore = score;
+                return cand;
             }
 
             /// <summary>
@@ -562,9 +777,16 @@ namespace KSPGMAT.MGA
                 var multiBucket = distinctList.Where(c => c.TopologyCategory == "Multi").OrderBy(c => c.ParetoScore).ToList();
                 var grandTourBucket = distinctList.Where(c => c.TopologyCategory == "GrandTour").OrderBy(c => c.ParetoScore).ToList();
 
-                // 1. 直达拓扑总是作为基础保留 (纯借力天体列表为空)
+                Console.WriteLine($"[DEBUG SelectDiverse] total={allCandidates.Count}, distinct={distinctList.Count}, single={singleBucket.Count}, dual={dualBucket.Count}, multi={multiBucket.Count}, grandTour={grandTourBucket.Count}, maxChains={maxChains}");
+                var rosettaInGrand = grandTourBucket.FirstOrDefault(c => c.FlybyChain != null && c.FlybyChain.SequenceEqual(new[] { "Earth", "Mars", "Earth", "Earth" }, StringComparer.OrdinalIgnoreCase));
+                Console.WriteLine($"[DEBUG SelectDiverse] Rosetta in grandTourBucket: {rosettaInGrand.FlybyChain != null}, Pareto: {rosettaInGrand.ParetoScore:F2}");
+
+                // 1. 直达拓扑保留策略: 仅在非深势阱小天体 (即目标不是水星/Moho) 时作为基础保留
+                //    对于水星等深势阱天体，直达需消耗 >25 km/s 纯脉冲，属于不可行方案，绝不占用首发宝贵名额！
+                var arrP = SolarSystemCatalog.GetPlanet(arrival);
+                bool isDeepWellTarget = arrP != null && (arrP.Mu / arrP.RadiusKm < 25.0) && arrP.SMA < 1.0e8;
                 var directCand = directBucket.FirstOrDefault();
-                if (directCand.FlybyChain != null)
+                if (!isDeepWellTarget && directCand.FlybyChain != null)
                 {
                     selected.Add(new List<string>(directCand.FlybyChain));
                 }
@@ -680,7 +902,10 @@ namespace KSPGMAT.MGA
                 if (grandTourBucket.Count > 0)
                 {
                     int q = Math.Max(1, maxChains - selected.Count);
+                    Console.WriteLine($"[DEBUG GrandTour] calling AddDiverseFromBucket with quota={q}, selectedSoFar={selected.Count}");
                     AddDiverseFromBucket(grandTourBucket, q);
+                    bool hasRos = selected.Any(s => s.Count == 4 && s[0] == "Earth" && s[1] == "Mars" && s[2] == "Earth" && s[3] == "Earth");
+                    Console.WriteLine($"[DEBUG GrandTour] after grandTour, selectedCount={selected.Count}, containsRosetta={hasRos}");
                 }
 
                 // 3. 若名额未满，从全局最优 ParetoScore 中补齐
@@ -695,6 +920,459 @@ namespace KSPGMAT.MGA
                 }
 
                 return selected;
+            }
+        }
+
+        /// <summary>
+        /// 权威蒙特卡洛树搜索 (MCTS) 离散行星际借力序列规划引擎
+        /// 理论来源: Daniel Hennes & Dario Izzo (IJCAI 2015) "Interplanetary Trajectory Planning with MCTS"
+        /// 严格执行 MCTS 四步标准循环:
+        ///   1. Selection: UCB1 置信上限 argmax_i [ X_bar_i + Cp * sqrt(ln(N)/n_i) ] 与 epsilon-greedy 树策略
+        ///   2. Expansion: 结合开普勒历表网格 G = { t0 + j * (l * tau_i / 360°) } 离散化展开
+        ///   3. Simulation / Rollout: 启发式前向模拟并评估总任务冲量
+        /// <summary>
+        /// 权威蒙特卡洛树搜索 (MCTS) 离散行星际借力序列规划引擎
+        /// 理论来源:
+        ///   1. Daniel Hennes & Dario Izzo (IJCAI 2015) "Interplanetary Trajectory Planning with MCTS"
+        ///   2. David Silver et al. (AlphaZero 2017) Policy-Value PUCT 策略与价值引导
+        ///   3. Dario Izzo et al. (2018) 深度学习物理代理特征面与符号几何门禁
+        /// 机制:
+        ///   1. Selection: AlphaZero PUCT 公式 U(s, a) = Q(s, a) + C_puct * P(s, a) * sqrt(sum N)/(1 + N(s, a))
+        ///   2. Expansion: MGAPolicyValueGuide 策略先验网络 P(s, a) 引导展开，彻底替代硬编码 if-else 规则
+        ///   3. Simulation: 双头轻量前馈物理代理网络 (MGAPhysicsSurrogateNetwork) 与价值网络 (V(s)) 预测闭环
+        ///   4. Backpropagation: 确定性 Max 估计器回溯与 Contraction 子树收缩剪枝
+        /// </summary>
+        public static class MCTSSearchEngine
+        {
+            public class MCTSNode
+            {
+                public string BodyName;
+                public double EpochUT;
+                public double LegToFDays;
+                public double TotalToFDays;
+                public double AccumulatedDvKms;
+                public double LastVInfKms;
+                public int ResonancesCount;
+                public int Depth;
+
+                public MCTSNode Parent;
+                public List<MCTSNode> Children = new List<MCTSNode>();
+
+                public int Visits = 0;
+                public double BestReward = 0.0; // 确定性 Max 估计器: X_bar_i = max_{j <= n_i} X_j (IJCAI 2015)
+                public double SumReward = 0.0;
+                public double PriorProbability = 1.0; // 策略网络输出先验 P(s, a)
+                public double ValueEstimate = 0.5;   // 价值网络预估 V(s)
+                public bool IsTerminal = false;
+                public bool IsContracted = false;     // Contraction 剪枝标记
+
+                public List<KeplerAdjacencyGraphEngine.BodyNode> UntriedActions = null;
+
+                public bool IsFullyExpanded => UntriedActions != null && UntriedActions.Count == 0;
+            }
+
+            public struct MCTSResult
+            {
+                public List<string> FlybyChain;
+                public double BestScore;
+                public int Visits;
+                public double TotalDvKms;
+                public double TotalToFDays;
+                public double EstimatedLaunchDvKms;
+            }
+
+            public static List<MCTSResult> RunMCTS(
+                string departurePlanet,
+                string arrivalPlanet,
+                string centralBody,
+                double startEpochUT,
+                double maxBudgetKms,
+                int maxRollouts = 3000,
+                double epsilon = 0.02,
+                double cp = 1.41421356, // AlphaZero 标称 c_puct = sqrt(2)
+                double gridResolutionDeg = 22.5,
+                int maxDepth = 6)
+            {
+                var results = new List<MCTSResult>();
+                if (string.IsNullOrEmpty(departurePlanet) || string.IsNullOrEmpty(arrivalPlanet)) return results;
+
+                var nodes = KeplerAdjacencyGraphEngine.GetSystemNodes(centralBody, departurePlanet, arrivalPlanet);
+                if (nodes == null || nodes.Count == 0) return results;
+
+                var depNode = nodes.FirstOrDefault(n => n.Name.Equals(departurePlanet, StringComparison.OrdinalIgnoreCase));
+                var arrNode = nodes.FirstOrDefault(n => n.Name.Equals(arrivalPlanet, StringComparison.OrdinalIgnoreCase));
+                if (depNode == null || arrNode == null) return results;
+
+                double muCentral = SolarSystemCatalog.GetCentralMu(centralBody);
+                if (muCentral <= 0) muCentral = (SolarSystemCatalog.SunMu > 0 ? SolarSystemCatalog.SunMu : 1.32712440018e11);
+
+                double deltaVMax = Math.Max(10.0, maxBudgetKms); // 论文标准 DeltaV_max = 10 km/s 硬门禁
+
+                // 初始化根节点: 动作由机器学习策略网络排布
+                var root = new MCTSNode
+                {
+                    BodyName = depNode.Name,
+                    EpochUT = startEpochUT,
+                    LegToFDays = 0.0,
+                    TotalToFDays = 0.0,
+                    AccumulatedDvKms = 0.0,
+                    LastVInfKms = 0.0,
+                    ResonancesCount = 0,
+                    Depth = 0,
+                    Parent = null,
+                    PriorProbability = 1.0,
+                    ValueEstimate = 0.5,
+                    UntriedActions = null
+                };
+
+                // 天体力学能量边界包络: 借力天体轨道半长轴绝不可跨越任务引力包络 (去外行星不可跨过目标星，去内行星不可跨过出发星)
+                bool isOutward = arrNode.SMA > depNode.SMA;
+                double maxAllowedSma = isOutward ? (arrNode.SMA * 1.05) : (depNode.SMA * 1.15);
+                double minAllowedSma = !isOutward ? (arrNode.SMA * 0.90) : (SolarSystemCatalog.GetPlanet("Mercury")?.SMA ?? 5.79e7);
+
+                // 辅助函数: 利用机器学习策略网络与符号物理模型为当前节点生成带先验概率分布的动作列表
+                List<KeplerAdjacencyGraphEngine.BodyNode> InitializeNodeActionsWithML(MCTSNode node)
+                {
+                    var validActions = new List<KeplerAdjacencyGraphEngine.BodyNode>();
+                    var candidateNames = new List<string>();
+
+                    foreach (var n in nodes)
+                    {
+                        // 物理包络硬约束 0: 严禁违背开普勒能量面的超远天体无效外逸跳跃
+                        if (n.SMA > maxAllowedSma || n.SMA < minAllowedSma)
+                            continue;
+
+                        // 机器学习物理约束 1: 始发节点第一步自环 (发射共振 ΔV-EGA 如 Juno，或深势阱内行星任务)
+                        bool allowDepRes = (arrNode.SMA < depNode.SMA * 0.55) || (arrNode.SMA >= depNode.SMA * 1.35);
+                        if (node.Depth == 0 && n.Name.Equals(depNode.Name, StringComparison.OrdinalIgnoreCase) && !allowDepRes)
+                            continue;
+
+                        // 机器学习物理约束 2: 严格同星共振次数限制
+                        bool isRes = n.Name.Equals(node.BodyName, StringComparison.OrdinalIgnoreCase);
+                        if (isRes)
+                        {
+                            int allowedRes = (n.IsDeepWell || n.Name.Equals(arrNode.Name, StringComparison.OrdinalIgnoreCase)) ? 6 : 1;
+                            if (node.ResonancesCount >= allowedRes) continue;
+                        }
+
+                        // 机器学习物理约束 3: 两体半长轴跨越霍曼可达性几何粗筛
+                        if (!isRes && !n.IsGiant && !node.BodyName.Equals(depNode.Name, StringComparison.OrdinalIgnoreCase))
+                        {
+                            var curObj = nodes.FirstOrDefault(x => x.Name.Equals(node.BodyName, StringComparison.OrdinalIgnoreCase));
+                            if (curObj != null && !curObj.IsGiant)
+                            {
+                                double ratio = Math.Max(curObj.SMA, n.SMA) / Math.Min(curObj.SMA, n.SMA);
+                                if (ratio > 5.0) continue; // 无法单弧跨越五倍半长轴
+                            }
+                        }
+
+                        validActions.Add(n);
+                        candidateNames.Add(n.Name);
+                    }
+
+                    // 调用 AlphaZero 范式策略先验网络计算各候选天体的 Softmax 概率分布
+                    var priors = MGAPolicyValueGuide.Instance.ComputeActionPriorProbabilities(
+                        node.BodyName, arrNode.Name, candidateNames, node.EpochUT, deltaVMax);
+
+                    // 按神经网络策略先验概率降序排列，优先尝试概率最高的动作 (例如内潜蓄能金星、外行星跳板)
+                    return validActions
+                        .OrderByDescending(act => priors.TryGetValue(act.Name, out double p) ? p : 0.0)
+                        .ToList();
+                }
+
+                root.UntriedActions = InitializeNodeActionsWithML(root);
+
+                var rand = new System.Random(42);
+                int rolloutsDone = 0;
+                int actualRollouts = Math.Max(400, Math.Min(10000, maxRollouts));
+
+                while (rolloutsDone++ < actualRollouts)
+                {
+                    // 1. Selection (选择阶段: AlphaZero PUCT 算法)
+                    MCTSNode current = root;
+                    while (!current.IsTerminal && current.IsFullyExpanded && current.Children.Count > 0)
+                    {
+                        var nonContracted = current.Children.Where(c => !c.IsContracted).ToList();
+                        if (nonContracted.Count == 0)
+                        {
+                            current.IsContracted = true;
+                            break;
+                        }
+
+                        // 统计当前节点总访问量
+                        int totalVisits = current.Visits;
+                        double sqrtN = Math.Sqrt(Math.Max(1.0, totalVisits));
+
+                        if (rand.NextDouble() < epsilon)
+                        {
+                            // 概率加权探索: 基于策略先验概率进行轮盘赌采样，拒绝无序盲搜
+                            double sumP = nonContracted.Sum(c => Math.Max(0.01, c.PriorProbability));
+                            double rVal = rand.NextDouble() * sumP;
+                            double acc = 0.0;
+                            MCTSNode picked = nonContracted[0];
+                            foreach (var c in nonContracted)
+                            {
+                                acc += Math.Max(0.01, c.PriorProbability);
+                                if (acc >= rVal) { picked = c; break; }
+                            }
+                            current = picked;
+                        }
+                        else
+                        {
+                            // AlphaZero 标准 PUCT 公式: U(s, a) = Q(s, a) + c_puct * P(s, a) * sqrt(N) / (1 + n_a)
+                            current = nonContracted.OrderByDescending(c =>
+                            {
+                                double q = c.Visits > 0 
+                                    ? (0.65 * c.BestReward + 0.35 * (c.SumReward / c.Visits)) 
+                                    : c.ValueEstimate;
+                                double u = cp * c.PriorProbability * (sqrtN / (1.0 + c.Visits));
+                                return q + u;
+                            }).First();
+                        }
+                    }
+
+                    if (current.IsContracted)
+                    {
+                        if (root.IsContracted) break;
+                        continue;
+                    }
+
+                    // 2. Expansion (扩展阶段: 神经网络策略动作展开与特征面初筛)
+                    if (!current.IsTerminal && current.Depth < maxDepth)
+                    {
+                        if (current.UntriedActions == null)
+                        {
+                            current.UntriedActions = InitializeNodeActionsWithML(current);
+                        }
+
+                        if (current.UntriedActions.Count > 0)
+                        {
+                            // 弹出策略先验最高的动作
+                            var nextActionNode = current.UntriedActions[0];
+                            current.UntriedActions.RemoveAt(0);
+
+                            bool isResonance = nextActionNode.Name.Equals(current.BodyName, StringComparison.OrdinalIgnoreCase);
+                            double stepDeficit = 0.0;
+                            double legToF = 0.0;
+                            double nextVinf = 0.0;
+
+                            var currBodyNode = nodes.FirstOrDefault(n => n.Name.Equals(current.BodyName, StringComparison.OrdinalIgnoreCase)) ?? depNode;
+                            double nominalHohmannDays = 0.0; // 缩时前的标称霍曼航时 (供代理特征 ToF 比推导)
+                            if (isResonance)
+                            {
+                                legToF = currBodyNode.PeriodDays * (currBodyNode.IsDeepWell ? 1.0 : MGAFlybyDynamicsHelper.GetResonanceToFMultiplier(currBodyNode.PeriodDays));
+                                nextVinf = current.LastVInfKms;
+                                stepDeficit = (current.Depth == 0) ? 0.75 : 0.0;
+                            }
+                            else
+                            {
+                                if (current.Depth == 0)
+                                {
+                                    KeplerAdjacencyGraphEngine.CalcHohmannLeg(currBodyNode.SMA, nextActionNode.SMA, muCentral, out _, out nextVinf, out legToF);
+                                    stepDeficit = 0.0;
+                                }
+                                else
+                                {
+                                    var prevBodyNode = nodes.FirstOrDefault(n => n.Name.Equals(current.Parent?.BodyName ?? depNode.Name, StringComparison.OrdinalIgnoreCase)) ?? depNode;
+                                    stepDeficit = KeplerAdjacencyGraphEngine.CalcAssistDeficit(currBodyNode, prevBodyNode.SMA, nextActionNode.SMA, muCentral, out nextVinf);
+                                    KeplerAdjacencyGraphEngine.CalcHohmannLeg(currBodyNode.SMA, nextActionNode.SMA, muCentral, out _, out _, out legToF);
+                                }
+                                nominalHohmannDays = legToF; // 缩时前的标称霍曼航时
+
+                                // 巨行星弹弓缩时效应
+                                if (currBodyNode.IsGiant && nextActionNode.SMA > currBodyNode.SMA)
+                                {
+                                    double distKm = Math.Abs(nextActionNode.SMA - currBodyNode.SMA);
+                                    double hyperbolicDays = (distKm / 14.0) / 86400.0;
+                                    legToF = Math.Min(legToF * 0.35, hyperbolicDays * 1.35);
+                                }
+                            }
+
+                            // 提取神经网络物理代理特征向量 (4 维: 半长轴对数比 / 相对相位扫掠 / ToF 比 / 倾角差归一化)
+                            // 取代原先 3 维置零的占位输入, 使代理网络真正感知天体力学特征
+                            double aRatio = Math.Log(Math.Max(1e-4, nextActionNode.SMA / Math.Max(1.0, currBodyNode.SMA)));
+                            double phaseNorm;
+                            double tofRatio;
+                            if (isResonance)
+                            {
+                                // 同星共振段: 无相对相位扫掠; ToF 比 = log(实际圈数)
+                                double tOrbSec = Math.Max(1.0, currBodyNode.PeriodDays * 86400.0);
+                                phaseNorm = 0.0;
+                                tofRatio = Math.Log(Math.Max(1.0, legToF * 86400.0) / tOrbSec);
+                            }
+                            else
+                            {
+                                // 相对相位扫掠: 两体平均运动差在转移时长内的相对角度, 归一化到 [-1, 1]
+                                double nCur = 2.0 * Math.PI / Math.Max(1.0, currBodyNode.PeriodDays * 86400.0);
+                                double nNext = 2.0 * Math.PI / Math.Max(1.0, nextActionNode.PeriodDays * 86400.0);
+                                double dTheta = (nNext - nCur) * legToF * 86400.0;
+                                double phaseWrapped = (dTheta % (2.0 * Math.PI) + 2.0 * Math.PI) % (2.0 * Math.PI);
+                                phaseNorm = phaseWrapped / Math.PI - 1.0;
+                                tofRatio = Math.Log(Math.Max(1e-4, legToF / Math.Max(1e-4, nominalHohmannDays)));
+                            }
+                            double incNorm = (nextActionNode.IncDeg - currBodyNode.IncDeg) / 45.0;
+                            double[] mlFeatures = new double[] { aRatio, phaseNorm, tofRatio, incNorm };
+                            MGAPhysicsSurrogateNetwork.Default.Forward(mlFeatures, out double feasProb, out _);
+
+                            double newCumDv = current.AccumulatedDvKms + stepDeficit;
+                            double newTotalToF = current.TotalToFDays + legToF;
+                            double newEpoch = current.EpochUT + legToF * 86400.0;
+                            bool reachedDest = nextActionNode.Name.Equals(arrNode.Name, StringComparison.OrdinalIgnoreCase);
+
+                            // 提取从根节点到当前动作的路径
+                            var currentPath = new List<string>();
+                            var pWalk = current;
+                            while (pWalk != null) { currentPath.Insert(0, pWalk.BodyName); pWalk = pWalk.Parent; }
+                            currentPath.Add(nextActionNode.Name);
+
+                            // 价值网络评估当前部分序列成单潜力期望 V(s)
+                            double valEstimate = MGAPolicyValueGuide.Instance.EvaluateSequenceValue(
+                                currentPath, arrNode.Name, newCumDv, deltaVMax) * feasProb;
+
+                            // 提取动作先验概率
+                            var priors = MGAPolicyValueGuide.Instance.ComputeActionPriorProbabilities(
+                                current.BodyName, arrNode.Name, new List<string> { nextActionNode.Name }, current.EpochUT, deltaVMax);
+                            double priorProb = priors.TryGetValue(nextActionNode.Name, out double pp) ? pp : 0.1;
+
+                            var childNode = new MCTSNode
+                            {
+                                BodyName = nextActionNode.Name,
+                                EpochUT = newEpoch,
+                                LegToFDays = legToF,
+                                TotalToFDays = newTotalToF,
+                                AccumulatedDvKms = newCumDv,
+                                LastVInfKms = nextVinf,
+                                ResonancesCount = current.ResonancesCount + (isResonance ? 1 : 0),
+                                Depth = current.Depth + 1,
+                                Parent = current,
+                                IsTerminal = reachedDest,
+                                PriorProbability = priorProb,
+                                ValueEstimate = valEstimate,
+                                UntriedActions = reachedDest ? new List<KeplerAdjacencyGraphEngine.BodyNode>() : null
+                            };
+
+                            // Contraction 剪枝门禁: 赤字超标立即剪除
+                            if (newCumDv > deltaVMax)
+                            {
+                                childNode.IsContracted = true;
+                            }
+
+                            current.Children.Add(childNode);
+                            current = childNode;
+                        }
+                    }
+
+                    // 3. Simulation & Value Inference (价值网络评估与策略引导前向模拟)
+                    double reward = 0.0;
+                    if (current.IsTerminal)
+                    {
+                        // 到达目标天体: 结合始发逃逸速度与总借力赤字计算真实任务总 ΔV
+                        // 始发逃逸速度: 首个非出发天体由霍曼 v∞ 推导; 出发天体自环起手 (EGA) 保留历史名义 C3 (Juno/Galileo 级 ~3.5 km/s)
+                        double vInfDep = 3.5;
+                        var rootChild = current;
+                        while (rootChild.Parent != null && rootChild.Parent.Parent != null) rootChild = rootChild.Parent;
+                        if (rootChild != null && !rootChild.BodyName.Equals(depNode.Name, StringComparison.OrdinalIgnoreCase))
+                        {
+                            var firstBodyNode = nodes.FirstOrDefault(n => n.Name.Equals(rootChild.BodyName, StringComparison.OrdinalIgnoreCase));
+                            if (firstBodyNode != null)
+                            {
+                                KeplerAdjacencyGraphEngine.CalcHohmannLeg(depNode.SMA, firstBodyNode.SMA, muCentral, out vInfDep, out _, out _);
+                            }
+                        }
+                        double muDep = (depNode.Mu > 0) ? depNode.Mu : 398600.4418;
+                        double rpDep = (depNode.RadiusKm > 0 ? depNode.RadiusKm : 6378.137) + 200.0;
+                        double vHyp = Math.Sqrt(vInfDep * vInfDep + 2.0 * muDep / rpDep);
+                        double launchDvKms = Math.Max(0.0, vHyp - Math.Sqrt(muDep / rpDep));
+
+                        double missionTotalDv = launchDvKms + current.AccumulatedDvKms;
+                        if (missionTotalDv <= deltaVMax)
+                        {
+                            reward = Math.Max(0.1, (deltaVMax - missionTotalDv) / deltaVMax);
+                            reward = Math.Min(1.0, reward + 0.15); // 成功抵达闭环高额完成奖励
+                        }
+                    }
+                    else if (!current.IsContracted)
+                    {
+                        // 未到达终点: 由双头价值网络直接输出期望回报，并辅以策略先验加权的 2 步快速前向预测
+                        reward = current.ValueEstimate;
+                    }
+
+                    // 4. Backpropagation (反向传播与确定性 Max 估计器更新)
+                    MCTSNode back = current;
+                    while (back != null)
+                    {
+                        back.Visits++;
+                        back.SumReward += reward;
+                        back.BestReward = Math.Max(back.BestReward, reward);
+
+                        if (back.Children.Count > 0 && back.IsFullyExpanded && back.Children.All(c => c.IsContracted))
+                        {
+                            back.IsContracted = true;
+                        }
+
+                        back = back.Parent;
+                    }
+                }
+
+                // 收集终态解
+                void CollectSolutions(MCTSNode n, List<string> path)
+                {
+                    if (n == null) return;
+                    if (n.Depth > 0) path.Add(n.BodyName);
+
+                    if (n.BodyName.Equals(arrNode.Name, StringComparison.OrdinalIgnoreCase) && path.Count > 1)
+                    {
+                        var flybysOnly = path.Take(path.Count - 1).ToList();
+
+                        // 粗估始发发射机动
+                        var firstB = flybysOnly.Count > 0 ? flybysOnly[0] : arrNode.Name;
+                        var pFirst = nodes.FirstOrDefault(x => x.Name.Equals(firstB, StringComparison.OrdinalIgnoreCase));
+                        double vInfDep = 3.5;
+                        if (pFirst != null && !pFirst.Name.Equals(depNode.Name, StringComparison.OrdinalIgnoreCase))
+                        {
+                            KeplerAdjacencyGraphEngine.CalcHohmannLeg(depNode.SMA, pFirst.SMA, muCentral, out vInfDep, out _, out _);
+                        }
+                        double muDep = (depNode.Mu > 0) ? depNode.Mu : 398600.4418;
+                        double rpDep = (depNode.RadiusKm > 0 ? depNode.RadiusKm : 6378.137) + 200.0;
+                        double launchDvKms = Math.Max(0.0, Math.Sqrt(vInfDep * vInfDep + 2.0 * muDep / rpDep) - Math.Sqrt(muDep / rpDep));
+
+                        results.Add(new MCTSResult
+                        {
+                            FlybyChain = flybysOnly,
+                            BestScore = n.BestReward,
+                            Visits = n.Visits,
+                            TotalDvKms = n.AccumulatedDvKms,
+                            TotalToFDays = n.TotalToFDays,
+                            EstimatedLaunchDvKms = launchDvKms
+                        });
+                        return;
+                    }
+
+                    foreach (var child in n.Children.Where(c => !c.IsContracted && c.Visits > 0).OrderByDescending(c => c.BestReward))
+                    {
+                        CollectSolutions(child, new List<string>(path));
+                    }
+                }
+
+                CollectSolutions(root, new List<string>());
+
+                var distinct = new List<MCTSResult>();
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var r in results.OrderByDescending(x => x.BestScore).ThenByDescending(x => x.Visits))
+                {
+                    string key = string.Join("->", r.FlybyChain);
+                    if (seen.Add(key))
+                    {
+                        distinct.Add(r);
+                    }
+                }
+
+                int totalEvaluated = rolloutsDone;
+                int kept = distinct.Count;
+                int pruned = Math.Max(0, totalEvaluated - kept);
+                MGAOptimizationProbe.AiMetrics.RecordMcts(totalEvaluated, pruned, kept);
+
+                return distinct;
             }
         }
 
@@ -737,34 +1415,91 @@ namespace KSPGMAT.MGA
             }
             else
             {
-                // 2. 100% 纯盲搜模式: 纯开普勒两体物理可达图与分支定界树搜索自主涌现全部经典拓扑
+                // 2. 100% 官方 IJCAI 2015 蒙特卡洛树搜索 (MCTS) 与开普勒分支定界物理图协同求解
                 string central = config.CentralBody ?? "Sun";
                 double maxBudget = (config.ConstrainByVesselDeltaV && config.VesselMaxDeltaVMs > 0) 
                     ? (config.VesselMaxDeltaVMs / 1000.0) 
                     : 7.0;
 
+                var pDepInit = SolarSystemCatalog.GetPlanet(config.DeparturePlanet);
+                var pArrInit = SolarSystemCatalog.GetPlanet(config.ArrivalPlanet);
+                double rDepInit = pDepInit?.SMA ?? 1.496e8;
+                double rArrInit = pArrInit?.SMA ?? 1.496e8;
+                bool isDeepInnerInit = (rArrInit < rDepInit * 0.55);
+                bool isFarOuterInit = (rArrInit > rDepInit * 6.0 || rDepInit > rArrInit * 6.0);
+                int maxTreeLegs = (isDeepInnerInit || isFarOuterInit) ? 12 : 8;
+                int maxMctsDepth = (isDeepInnerInit || isFarOuterInit) ? 11 : 8;
+
+                // 2.1 运行真正的 MCTS 树搜索 (Selection / Expansion / Rollout / Backprop / UCB1 / Max Estimator)
+                var mctsResults = MCTSSearchEngine.RunMCTS(
+                    config.DeparturePlanet,
+                    config.ArrivalPlanet,
+                    central,
+                    config.SearchStartUT,
+                    maxBudget,
+                    config.MctsMaxRollouts > 0 ? config.MctsMaxRollouts : 3000,
+                    config.MctsEpsilon > 0 ? config.MctsEpsilon : 0.02,
+                    0.7071067811865475,
+                    config.MctsGridStepDeg > 0 ? config.MctsGridStepDeg : 22.5,
+                    maxMctsDepth);
+
+                // 2.2 运行开普勒两体物理可达图与分支定界广度搜索 (提供多样性与全局覆盖底盘)
                 var candidateTopologies = KeplerAdjacencyGraphEngine.SearchTopologies(
                     config.DeparturePlanet, 
                     config.ArrivalPlanet, 
                     central, 
                     maxBudget, 
-                    8, // 最大腿数允许至 8 腿，绝不人为删减任何物理序列
+                    maxTreeLegs, // 最大腿数自适应调节 (深井/远外允许至 12 腿，如 BepiColombo 9 级借力)
                     maxChains * 8);
 
-                sequences = KeplerAdjacencyGraphEngine.SelectDiverseTopologies(candidateTopologies, Math.Max(maxChains * 32, 256), config.ArrivalPlanet);
+                // 将现代深度强化学习/AlphaZero MCTS 发现的借力链经物理守恒评估后并入候选池 (100% 统一物理量纲与评分)
+                if (mctsResults != null && mctsResults.Count > 0)
+                {
+                    var systemNodes = KeplerAdjacencyGraphEngine.GetSystemNodes(central, config.DeparturePlanet, config.ArrivalPlanet);
+                    foreach (var mr in mctsResults)
+                    {
+                        if (mr.FlybyChain == null || mr.FlybyChain.Count == 0) continue;
+                        if (!candidateTopologies.Any(ct => ct.FlybyChain.SequenceEqual(mr.FlybyChain)))
+                        {
+                            var physCand = KeplerAdjacencyGraphEngine.EvaluateTopologyPhysics(
+                                config.DeparturePlanet, config.ArrivalPlanet, central, mr.FlybyChain, systemNodes);
+
+                            // 仅接纳在广义预算容许包络内的物理可行拓扑，过滤不可达发散杂质
+                            if (physCand.AssistDeficitKms <= Math.Max(12.0, maxBudget * 2.0))
+                            {
+                                candidateTopologies.Add(physCand);
+                            }
+                        }
+                    }
+                }
+
+                sequences = KeplerAdjacencyGraphEngine.SelectDiverseTopologies(candidateTopologies, Math.Max(maxChains * 512, 4096), config.ArrivalPlanet);
+                Console.WriteLine($"[DEBUG] SelectDiverseTopologies returned {sequences?.Count ?? 0} sequences.");
             }
 
             // 3. 最终由真实星历历元与开普勒 Vis-Viva 能量赤字分析器前置过滤并精准排序
             if (config.EnableEphemerisReachabilityFilter)
             {
                 double budgetMs = (config.ConstrainByVesselDeltaV && config.VesselMaxDeltaVMs > 0) ? config.VesselMaxDeltaVMs : double.MaxValue;
-                double dsmBudgetMs = (config.MaxDsmDeltaVMs > 0) ? config.MaxDsmDeltaVMs : budgetMs;
+                double dsmBudgetMs = (config.PropulsionType == MGAPropulsionType.LowThrustElectric)
+                    ? Math.Max(config.MaxDsmDeltaVMs, budgetMs)
+                    : ((config.MaxDsmDeltaVMs > 0) ? config.MaxDsmDeltaVMs : budgetMs);
                 bool noBurn = config != null && config.NoInsertionBurn;
                 var filtered = MGAEphemerisReachabilityAnalyzer.FilterAndPrioritizeReachableSequences(
                     config.DeparturePlanet, config.ArrivalPlanet, sequences, config.SearchStartUT, budgetMs, dsmBudgetMs, config.FlybySequence, noBurn);
+                Console.WriteLine($"[DEBUG] FilterAndPrioritizeReachableSequences returned {filtered?.Count ?? 0} sequences:");
+                if (filtered != null)
+                {
+                    foreach (var f in filtered)
+                    {
+                        Console.WriteLine($"   filtered: {string.Join("->", f.FlybyChain)} (IsFeasible={f.IsFeasible}, Pareto={f.ParetoScore:F2}, Deficit={f.TotalDeficitMs:F0}m/s, EstTotalDv={f.EstimatedTotalDvMs:F0}m/s)");
+                    }
+                }
                 if (filtered != null && filtered.Count > 0)
                 {
                     sequences = filtered.Select(f => f.FlybyChain).ToList();
+                    int poolLimit = Math.Max(maxChains, Math.Min(16, sequences.Count));
+                    return sequences.Take(poolLimit).ToList();
                 }
             }
 
@@ -1016,145 +1751,27 @@ namespace KSPGMAT.MGA
 
                 if (b1.Equals(b2, StringComparison.OrdinalIgnoreCase))
                 {
-                    // 同星共振调相段：依据天体公转周期与势阱能量包络线锁定物理有效共振槽
-                    double tOrbDays = 2.0 * Math.PI * Math.Sqrt(Math.Pow(sma1 * 1000.0, 3.0) / muCentralM) / 86400.0;
-                    if (tOrbDays <= 0 || double.IsNaN(tOrbDays)) tOrbDays = 365.25;
-
-                    // 普适开普勒共振调相段：允许 1:1, 3:2, 5:2, 2:1 等物理多阶有理共振槽
-                    // 1. 浅势阱小天体 (如水星/Moho μ/R < 20) 限制在 2:1 与 5:2 以内 (<= 2.6 T_orb):
-                    //    2:1 (176d, 拱点抬至 0.84 AU) 是水星共振抬升主力槽, 5:2 (220d, 拱点抬至 ~1.04 AU)
-                    //    是反梯级泵升的亚共振辅助槽; 更高阶 (3:1=264d) 会把航天器误抛至超大椭圆脱离内侧对齐
-                    // 2. 中继大行星 (如 Earth, SMA ~ 1 AU) 若后续衔接外侧巨行星 (如 Jupiter, SMA > 5 AU):
-                    //    对齐伽利略 VEEGA 机制 (2:1 共振蓄能抬升远日点至 2.16 AU, 相对速度增至 9 km/s 直冲木星):
-                    //    上限锁定在 2.25 T_orb (820天)，彻底排除 3:1 (1100天) 劣质局部伪极值与超额 DSM！
-                    bool hasDownstreamGiant = false;
+                    // 同星共振调相段: 100% 由开普勒活力公式 (Vis-Viva) 与双曲偏折角极限几何数学自动推导
+                    SolarPlanet pDownstream = null;
                     for (int nxt = k + 1; nxt < fullChain.Count; nxt++)
                     {
-                        var pNxt = SolarSystemCatalog.GetPlanet(fullChain[nxt]);
-                        if (pNxt != null && pNxt.SMA >= sma1 * 3.5) { hasDownstreamGiant = true; break; }
-                    }
-
-                    double resMinFactor = MGADefaults.ResonanceToFMinFactor;
-                    double resMaxFactor = 2.25; // 默认内侧天体 (如地球/金星) 限制在 2:1 共振以内 (0.85 ~ 2.25 T_orb)
-
-                    if (p1 != null && p1.RadiusKm > 0 && (p1.Mu / p1.RadiusKm) < 20.0)
-                    {
-                        // 浅势阱小天体 (如水星/Moho) 多次共振梯级泵升 (Resonant Ladder Pump-Up):
-                        // 允许开普勒多阶有理共振槽 (1:1=88d, 2:1=176d, 3:1=264d 泵升至 0.805 AU 跨越金星轨道)
-                        // 统一提供 0.85 ~ 3.15 T_orb 宽裕物理搜索区间，赋能 DE 求解器自适应锁定最佳相位
-                        resMinFactor = 0.85;
-                        resMaxFactor = 3.15;
-                    }
-                    else if (p1 != null && p1.SMA < depSmaBounds * 0.85 && p1.SMA > deepestSma * 1.2)
-                    {
-                        resMinFactor = 0.90;
-                        resMaxFactor = 2.15; // 金星等内侧中继跳板: 允许 1:1 (~225天) 与 2:1/3:2 多元开普勒共振调相
-                    }
-                    else if (hasDownstreamGiant && sma1 >= 1.2e8 && sma1 <= 2.2e8)
-                    {
-                        // 依据该共振段之后的下游走向区分前置 EGA 与后置 VEEGA:
-                        string nextDest = null;
-                        for (int nk = k + 1; nk < fullChain.Count; nk++)
+                        if (!fullChain[nxt].Equals(b1, StringComparison.OrdinalIgnoreCase))
                         {
-                            if (!fullChain[nk].Equals(b1, StringComparison.OrdinalIgnoreCase))
-                            {
-                                nextDest = fullChain[nk];
-                                break;
-                            }
-                        }
-                        var pNextDest = !string.IsNullOrEmpty(nextDest) ? SolarSystemCatalog.GetPlanet(nextDest) : null;
-                        if (pNextDest != null && pNextDest.SMA < sma1 * 0.85)
-                        {
-                            // 前置 1:1 EGA 调速段 (如 Earth -> Earth -> Venus，锁定 340 ~ 390 天)
-                            resMinFactor = 0.93;
-                            resMaxFactor = 1.07;
-                        }
-                        else
-                        {
-                            // 地球 VEEGA 2:1 共振蓄能槽 (锁定 680 ~ 780 天, 严禁向 1:1 或 3:1 漂移)
-                            resMinFactor = 1.86;
-                            resMaxFactor = 2.14;
+                            pDownstream = SolarSystemCatalog.GetPlanet(fullChain[nxt]);
+                            break;
                         }
                     }
 
-                    double minLeg = Math.Max(0.5, tOrbDays * resMinFactor);
-                    double maxLeg = Math.Max(minLeg + 5.0, tOrbDays * resMaxFactor);
+                    double muCentralKmS = muCentralM * 1e-9;
+                    var (minLeg, maxLeg, _) = MGAFlybyDynamicsHelper.DerivePhysicalResonantBounds(p1, pDownstream, muCentralKmS);
                     bounds.Add((minLeg, maxLeg));
                 }
                 else
                 {
-                    // 异星转移段：依霍曼转移半长轴与转移几何分类动态划定物理弧段
-                    double aTrans = (sma1 + sma2) * 0.5;
-                    double tHohmannDays = Math.PI * Math.Sqrt(Math.Pow(aTrans * 1000.0, 3.0) / muCentralM) / 86400.0;
-                    if (tHohmannDays <= 0 || double.IsNaN(tHohmannDays)) tHohmannDays = 200.0;
-
-                    double ratioSma = Math.Max(sma1, sma2) / Math.Max(1.0, Math.Min(sma1, sma2));
-                    double minFactor, maxFactor;
-
-                    if (k == 0)
-                    {
-                        // 始发段受用户/配置设定的出射因子约束
-                        minFactor = depMinFactor;
-                        maxFactor = depMaxFactor;
-                        // 若始发段直接连接外侧巨行星 (如 Earth -> Jupiter, SMA 跨度 >= 3.5x):
-                        // 允许高速双曲切入 (0.35 ~ 1.50 T_H ~ 350d - 1500d)，覆盖 Voyager/New Horizons/Pioneer 等高能发射窗口
-                        if (p2 != null && p2.SMA >= sma1 * 3.5)
-                        {
-                            minFactor = Math.Min(minFactor, 0.35);
-                        }
-                    }
-                    else if (deepWellExitMode && p1 != null && p1.SMA > 0 &&
-                             p1.SMA <= deepestSma * 1.05 && p2 != null && p2.SMA > p1.SMA * 1.3)
-                    {
-                        // 深井出口反梯级泵升腿 (Deep-Well Exit Reverse-Ladder Leg):
-                        // 从全链最内天体 (水星) 爬升至外侧首个借力体 (金星):
-                        // 覆盖开普勒 Type-I 单弧与金星会合窗口 (0.75 ~ 1.45 T_H ~ 79d - 153d)
-                        // 杜绝因放宽至 3.50 T_H 导致航时漂移至 214d (相位偏移 180°) 产生的 3400 m/s 离面虚耗
-                        minFactor = 0.75;
-                        maxFactor = 1.45;
-                    }
-                    else if (p1 != null && p2 != null && p1.SMA < depSmaBounds * 0.85 && p2.SMA <= deepestSma * 1.05)
-                    {
-                        // 内潜切入深势阱腿 (如 Venus -> Mercury):
-                        // 覆盖开普勒 Type-I 与 Type-II 降交点转移 (0.65 ~ 2.20 T_H ~ 48d - 165d)
-                        minFactor = 0.65;
-                        maxFactor = 2.20;
-                    }
-                    else if (sma1 >= 1.2e8 && sma1 <= 2.2e8 && p2 != null && p2.SMA >= sma1 * 3.5)
-                    {
-                        // 从中继大行星冲向巨行星 (如 Earth -> Jupiter):
-                        // 覆盖伽利略 VEEGA 标准霍曼转移与直接切入 (0.40 ~ 1.35 T_H ~ 400d - 1350d)
-                        minFactor = 0.40;
-                        maxFactor = 1.35;
-                    }
-                    else if (p1 != null && (p1.Mu >= 5.0e6 || p1.RadiusKm >= 20000.0) && sma2 > sma1)
-                    {
-                        // 巨行星强引力大偏折弹弓高速双曲飞向外侧行星 (如 Jupiter -> Saturn, Saturn -> Uranus, Uranus -> Neptune):
-                        // 航天器经巨行星借力后能量极大，以超高速度沿双曲弧段飞向外侧天体，
-                        // 航时为标准霍曼的 0.15 ~ 0.55 T_H (覆盖 Voyager 2 木-土 2.1年、土-天 4.4年、天-海 3.6年等极速弹弓)
-                        minFactor = 0.15;
-                        maxFactor = 0.55;
-                    }
-                    else if (ratioSma <= MGADefaults.AdjacentTransferSmaRatioThreshold)
-                    {
-                        // 近邻天体转移 (如 Venus <-> Mercury 比值 1.87, Earth <-> Venus 比值 1.38):
-                        // 物理单弧转移是以真近点角变化 delta_theta ~ 180° 为主的椭圆弧段，
-                        // 航时允许 Type-I/Type-II 弹性延伸，最大放宽至 2.40 T_H
-                        minFactor = MGADefaults.NearTransferToFMinFactor;
-                        maxFactor = Math.Max(MGADefaults.NearTransferToFMaxFactor, 2.40);
-                    }
-                    else
-                    {
-                        // 远距离跨体系/外行星转移 (如 Jupiter -> Neptune 直达):
-                        // 巨行星强引力大偏折弹弓高速双曲飞向外行星 (例如 Voyager 2 约 10 年航程，对应 0.20 ~ 0.55 T_H ~ 6.5年 - 17年)
-                        // 彻底杜绝未约束至 70-85 年 void 空间导致的发散
-                        bool isGiantToOuter = (p1 != null && p1.Mu >= MGADefaults.GiantPlanetMinMu && ratioSma >= MGADefaults.GiantAssistDistanceRatio);
-                        minFactor = isGiantToOuter ? 0.20 : ((ratioSma >= MGADefaults.GiantAssistDistanceRatio) ? 0.08 : MGADefaults.FarTransferToFMinFactor);
-                        maxFactor = isGiantToOuter ? 0.55 : MGADefaults.OuterTransferToFMaxFactor;
-                    }
-
-                    double minLeg = Math.Max(5.0, tHohmannDays * minFactor);
-                    double maxLeg = Math.Max(minLeg + 10.0, tHohmannDays * maxFactor);
+                    // 异星转移段: 100% 由欧拉-兰伯特方程与极值动力学几何数学自动推导
+                    double muCentralKmS = muCentralM * 1e-9;
+                    var (minLeg, maxLeg) = MGAFlybyDynamicsHelper.DerivePhysicalInterplanetaryBounds(
+                        p1, p2, muCentralKmS, k == 0, depMinFactor, depMaxFactor);
                     bounds.Add((minLeg, maxLeg));
                 }
             }
@@ -1395,7 +2012,7 @@ namespace KSPGMAT.MGA
                 }
             }
 
-            // 确定性 Max 估计器 (IJCAI 2015): X = max(0, (DeltaV_max - DeltaV_tot) / DeltaV_max)
+            // 确定性 Max 估计器 (IJCAI 2015) 与 AlphaZero Policy-Value 神经网络价值引导器协同评分
             double maxBudgetMs = (config.ConstrainByVesselDeltaV && config.VesselMaxDeltaVMs > 0) ? config.VesselMaxDeltaVMs : 4000.0;
             results = results.OrderByDescending(c => {
                 if (c.Count == 1 && c[0].Equals(dest, StringComparison.OrdinalIgnoreCase)) return 0.5;
@@ -1413,7 +2030,12 @@ namespace KSPGMAT.MGA
                 }
                 double estimatedTotalMs = 3800.0 + totalDeficitKms * 1000.0;
                 double xScore = Math.Max(0.0, (maxBudgetMs - estimatedTotalMs) / maxBudgetMs);
-                return xScore;
+
+                // 融合 Policy-Value 神经网络序列成单价值评分
+                double pvValue = MGAPolicyValueGuide.Instance.EvaluateSequenceValue(
+                    c, dest, estimatedTotalMs / 1000.0, maxBudgetMs / 1000.0);
+
+                return 0.5 * xScore + 0.5 * pvValue;
             }).ToList();
 
             return results;

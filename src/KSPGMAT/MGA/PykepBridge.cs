@@ -526,48 +526,12 @@ namespace KSPGMAT.MGA {
                     atm_radius = p2 != null ? (p2.RadiusKm + p2.AtmosphereDepthKm) : 0.0
                 };
 
-                // 极速首航段逃逸能量门禁预检 (Leg 0 Fast Launch Ceiling Gate):
-                // 若用户设置了 LaunchDeltaVCeilingMs，
-                // 一旦首段单次出射机动超出硬门禁 1.05 倍 (如 3800 * 1.05 = 3990 m/s)，该解已无可能收敛至任务预算内。
-                // 立即抛弃不可能解，提前返回带有平滑梯度的惩罚解，完全规避后续所有航段的天文级开普勒与兰伯特求解！
-                if (k == 0 && config != null && config.LaunchDeltaVCeilingMs > 0 && legCount > 1 && !fromName.Equals(toName, StringComparison.OrdinalIgnoreCase)) {
-                    if (PykepNative.SolveLambert(r1, r2, tof, centralMu, false, out Vector3d vDep0, out _)) {
-                        Vector3d vInf0 = vDep0 - v1;
-                        double vInfMag0 = vInf0.magnitude;
-                        double p1Mu = p1 != null ? p1.Mu : 398600.4;
-                        double rPark0 = (p1 != null ? p1.RadiusKm : 6378.137) + (config.DeparturePeAKm > 0 ? config.DeparturePeAKm : 200.0);
-                        double vHyp0 = Math.Sqrt(vInfMag0 * vInfMag0 + 2.0 * p1Mu / rPark0);
-                        double vPark0 = Math.Sqrt(p1Mu / rPark0);
-                        double launchDvMs = (vHyp0 - vPark0) * 1000.0;
-                        double maxAllowedLaunchMs = config.LaunchDeltaVCeilingMs * 1.05;
-                        if (launchDvMs > maxAllowedLaunchMs) {
-                            var earlySol = new MGASolution {
-                                DepartureUT = genome[0],
-                                TotalFlightDays = tof / 86400.0,
-                                LaunchDeltaVKms = launchDvMs / 1000.0,
-                                TotalDeltaVKms = (launchDvMs / 1000.0) + 25.0 * (legCount - 1),
-                                AllLegsFeasible = false,
-                                TotalOverBudgetMs = launchDvMs - config.LaunchDeltaVCeilingMs,
-                                LaunchOverBudgetMs = launchDvMs - config.LaunchDeltaVCeilingMs,
-                                Legs = new List<MGALegResult> {
-                                    new MGALegResult {
-                                        FromBody = fromName,
-                                        ToBody = toName,
-                                        ToFDays = tof / 86400.0,
-                                        IsFeasible = false,
-                                        DSM = new DSMResult { DeltaVMs = 25000.0 * (legCount - 1) }
-                                    }
-                                }
-                            };
-                            return earlySol;
-                        }
-                    }
-                }
+
 
                 currentUT = arrUT;
             }
 
-            if (config != null) config.SyncStrategiesWithChain(legCount);
+            if (config != null) config.SyncStrategiesWithChain(legCount, fullChain);
 
             // 1. 优先使用官方统一异构分段混合求解器 (Hybrid Multi-Strategy Evaluator with Universal Mu)
             if (_fnMGAHybridEvaluateMu != null || _fnMGAHybridEvaluate != null) {
@@ -754,7 +718,7 @@ namespace KSPGMAT.MGA {
             double centralMu = SolarSystemCatalog.GetCentralMu(central);
             double centralRadius = SolarSystemCatalog.GetPlanet(central)?.RadiusKm ?? MGADefaults.EarthRadiusKm;
 
-            if (config != null) config.SyncStrategiesWithChain(legCount);
+            if (config != null) config.SyncStrategiesWithChain(legCount, fullChain);
 
             var legStrats = new int[legCount];
             for (int k = 0; k < legCount; k++) {
@@ -807,12 +771,14 @@ namespace KSPGMAT.MGA {
             var allTofs = new double[popSize * legCount];
             var allDsmEtas = new double[popSize * legCount];
 
+            // 复用单代星历链条缓冲区，彻底根绝内层频繁 GC 分配
+            var rChain = new Vector3d[chainLen];
+            var vChain = new Vector3d[chainLen];
+
             for (int i = 0; i < popSize; i++) {
                 double[] genome = genomes[i];
 
                 // 1. 欧空局官方链式高效星历提取：每个天体仅求 1 次星历 (消灭 50% 跨边界重复查询)
-                var rChain = new Vector3d[chainLen];
-                var vChain = new Vector3d[chainLen];
                 double currentUT = genome[0];
                 for (int c = 0; c < chainLen; c++) {
                     if (c > 0) currentUT += genome[c];
@@ -1601,6 +1567,89 @@ namespace KSPGMAT.MGA {
         public static double CalcOrbitPeriodSecM(double smaMeters, double muM3S2) {
             if (smaMeters <= 0 || muM3S2 <= 0) return 0.0;
             return CalcOrbitPeriodSec(smaMeters / 1000.0, muM3S2 / 1e9);
+        }
+
+        /// <summary>
+        /// DirectCompute GPU 极速特征面求解入口：
+        /// 批量计算发射时域-ToF 能量曲面张量，提供微秒级宏观特征初筛。
+        /// 若显卡不支持或执行失败，平滑返回 false，由调用方无缝回退至 CPU 两级网格扫描。
+        /// </summary>
+        public static bool EvaluateSurrogateGpuGrid(
+            SolarPlanet p1, SolarPlanet p2, double centralMu,
+            double depStartUT, double depSpanSec,
+            double tofMinSec, double tofMaxSec,
+            int gridW, int gridH,
+            double depPeKm, double arrPeKm,
+            bool flybyOnly,
+            out float[] outTotDv,
+            out float[] outC3)
+        {
+            outTotDv = null;
+            outC3 = null;
+            if (!PykepNative.IsGpuComputeAvailable || p1 == null || p2 == null || p1.SMA <= 0 || p2.SMA <= 0)
+                return false;
+
+            try
+            {
+                var elem1 = new PykepNative.GpuPlanetElements
+                {
+                    sma_km = p1.SMA,
+                    ecc = p1.ECC,
+                    inc_rad = p1.INC * (Math.PI / 180.0),
+                    raan_rad = p1.RAAN * (Math.PI / 180.0),
+                    aop_rad = p1.AOP * (Math.PI / 180.0),
+                    ma0_rad = p1.MA0 * (Math.PI / 180.0),
+                    epoch_ut = p1.EpochJ2000,
+                    mu_self = p1.Mu,
+                    radius_km = p1.RadiusKm,
+                    park_alt_km = depPeKm
+                };
+
+                var elem2 = new PykepNative.GpuPlanetElements
+                {
+                    sma_km = p2.SMA,
+                    ecc = p2.ECC,
+                    inc_rad = p2.INC * (Math.PI / 180.0),
+                    raan_rad = p2.RAAN * (Math.PI / 180.0),
+                    aop_rad = p2.AOP * (Math.PI / 180.0),
+                    ma0_rad = p2.MA0 * (Math.PI / 180.0),
+                    epoch_ut = p2.EpochJ2000,
+                    mu_self = p2.Mu,
+                    radius_km = p2.RadiusKm,
+                    park_alt_km = arrPeKm
+                };
+
+                int totalPts = gridW * gridH;
+                var dvArr = new float[totalPts];
+                var c3Arr = new float[totalPts];
+
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                int ret = PykepNative.PorkchopGpuEvaluate(
+                    ref elem1, ref elem2,
+                    centralMu,
+                    depStartUT, depSpanSec,
+                    tofMinSec, tofMaxSec,
+                    gridW, gridH,
+                    flybyOnly,
+                    dvArr, c3Arr);
+                sw.Stop();
+
+                if (ret == 0)
+                {
+                    outTotDv = dvArr;
+                    outC3 = c3Arr;
+                    Telemetry.MGAOptimizationProbe.RecordGpuExecution("DirectCompute Surrogate Porkchop", sw.Elapsed.TotalMilliseconds, totalPts, true);
+                    MGAStepProfiler.RecordMs("GPU批处理: DirectCompute Porkchop特征面网格", sw.Elapsed.TotalMilliseconds);
+                    return true;
+                }
+                Telemetry.MGAOptimizationProbe.RecordGpuExecution("DirectCompute Surrogate Porkchop", sw.Elapsed.TotalMilliseconds, totalPts, false);
+                return false;
+            }
+            catch (Exception ex)
+            {
+                KSPGMATLog.Warn($"[PykepBridge] EvaluateSurrogateGpuGrid 异常: {ex.Message}");
+                return false;
+            }
         }
 
         // =====================================================================

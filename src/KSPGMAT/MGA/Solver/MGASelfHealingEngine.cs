@@ -10,6 +10,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using KSPGMAT.Model;
+using KSPGMAT.MGA.Telemetry;
 
 namespace KSPGMAT.MGA
 {
@@ -147,6 +148,7 @@ namespace KSPGMAT.MGA
                 VesselMaxDeltaVMs = config.VesselMaxDeltaVMs,
                 MaxDsmDeltaVMs = config.MaxDsmDeltaVMs,
                 LaunchDeltaVCeilingMs = config.LaunchDeltaVCeilingMs,
+                LambertMaxRevs = config.LambertMaxRevs,
                 PopulationSize = Math.Max(60, config.PopulationSize),
                 MaxGenerations = Math.Max(120, config.MaxGenerations),
                 MinToFDays = healBounds.Select(b => b.MinDays).ToList(),
@@ -183,6 +185,8 @@ namespace KSPGMAT.MGA
             // 若自愈成功找到更优解，置于最前
             if (healedList.Count > 0 && healedList[0].TotalDeltaVKms < bestSol.TotalDeltaVKms)
             {
+                double savedKms = bestSol.TotalDeltaVKms - healedList[0].TotalDeltaVKms;
+                MGAOptimizationProbe.AiMetrics.RecordSelfHealing(true, savedKms);
                 KSPGMATLog.Info($"[MGASelfHealing] ✅ 自愈成功！总机动从 {bestSol.TotalDeltaVKms*1000:F0} m/s 降至 {healedList[0].TotalDeltaVKms*1000:F0} m/s");
                 foreach (var old in candidates)
                 {
@@ -194,6 +198,7 @@ namespace KSPGMAT.MGA
                 return healedList;
             }
 
+            MGAOptimizationProbe.AiMetrics.RecordSelfHealing(false, 0.0);
             return candidates;
         }
     }

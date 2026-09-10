@@ -19,6 +19,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using KSPGMAT.Model;
+using KSPGMAT.MGA.Telemetry;
 
 namespace KSPGMAT.MGA
 {
@@ -66,6 +67,9 @@ namespace KSPGMAT.MGA
         public double DepIncDeg { get; set; } = -1.0; // 默认 -1 触发纯切向
         public double ArrPeKm { get; set; } = 200.0;
         public double ArrApKm { get; set; } = 200.0;
+        public MGAArrivalOrbitType ArrivalOrbitType { get; set; } = MGAArrivalOrbitType.HighlyElliptic; // 预留 GUI 终端轨道模式 (高椭圆/圆轨/飞掠)
+        public bool AutoAdaptGiantPlanetEllipse { get; set; } = true; // 预留 GUI 自动按巨行星科学标准椭圆推算远拱点
+        public MGAPropulsionType PropulsionType { get; set; } = MGAPropulsionType.ChemicalImpulsive; // 预留 GUI 推进系统模式 (化学脉冲 vs 低推力电推)
         public bool NoInsertionBurn { get; set; } = false; // 高速飞掠模式 (Flyby Only / 终点刹车为0)
         public MGAEngineMode EngineMode { get; set; } = MGAEngineMode.BallisticImpulsive; // 纯弹道 vs 1-DSM深空机动
         public List<MGALegStrategy> LegStrategies { get; set; } = null;
@@ -94,8 +98,8 @@ namespace KSPGMAT.MGA
         public double SearchStartUT { get; set; }
         public double SearchEndUT { get; set; }
         public ToFEncodingMode ToFEncoding { get; set; } = ToFEncodingMode.Alpha;
-        public double TotalToFMinDays { get; set; } = 150.0;
-        public double TotalToFMaxDays { get; set; } = 400.0;
+        public double TotalToFMinDays { get; set; } = -1.0;
+        public double TotalToFMaxDays { get; set; } = -1.0;
         public List<(double MinDays, double MaxDays)> LegToFBounds { get; set; } = new List<(double, double)>();
 
         // 3. 兰伯特底层参数
@@ -174,8 +178,8 @@ namespace KSPGMAT.MGA
 
         public static MGAAdaptiveSolverConfig FromMGAConfig(MGAConfig cfg)
         {
-            double maxTof = (cfg.MaxToFDays != null && cfg.MaxToFDays.Count > 0) ? cfg.MaxToFDays[0] : 400.0;
-            double minTof = (cfg.MinToFDays != null && cfg.MinToFDays.Count > 0) ? cfg.MinToFDays[0] : 150.0;
+            double maxTof = (cfg.MaxToFDays != null && cfg.MaxToFDays.Count > 0) ? cfg.MaxToFDays.Sum() : -1.0;
+            double minTof = (cfg.MinToFDays != null && cfg.MinToFDays.Count > 0) ? cfg.MinToFDays.Sum() : -1.0;
 
             var c = new MGAAdaptiveSolverConfig
             {
@@ -193,7 +197,10 @@ namespace KSPGMAT.MGA
                     : DepartureModePolicy.OrbitLocked,
                 ArrPeKm = cfg.DestinationPeAKm,
                 ArrApKm = cfg.DestinationApAKm,
-                NoInsertionBurn = cfg.NoInsertionBurn,
+                ArrivalOrbitType = cfg.ArrivalOrbitType,
+                AutoAdaptGiantPlanetEllipse = cfg.AutoAdaptGiantPlanetEllipse,
+                PropulsionType = cfg.PropulsionType,
+                NoInsertionBurn = cfg.NoInsertionBurn || (cfg.ArrivalOrbitType == MGAArrivalOrbitType.Flyby),
                 EnableLowEnergyManifoldCapture = cfg.EnableLowEnergyManifoldCapture,
                 EngineMode = cfg.EngineMode,
                 LegStrategies = cfg.LegStrategies != null ? new List<MGALegStrategy>(cfg.LegStrategies) : null,
@@ -282,27 +289,6 @@ namespace KSPGMAT.MGA
             return false;
         }
 
-        /// <summary>
-        /// 粗略估算借力链所需总 DSM 相对量级 (km/s)，仅供拓扑排序兜底，不参与求解决策。
-        /// 共振段(同星)本身视为泵能,不计入跨势阱赤字。
-        /// </summary>
-        private static double EstimateChainDsmCs(List<string> chain)
-        {
-            double tot = 0.0;
-            if (chain == null || chain.Count < 2) return tot;
-            for (int i = 0; i < chain.Count - 1; i++)
-            {
-                var pL = SolarSystemCatalog.GetPlanet(chain[i]);
-                var pR = SolarSystemCatalog.GetPlanet(chain[i + 1]);
-                if (pL == null || pR == null || pL.SMA <= 0 || pR.SMA <= 0) continue;
-                if (pL.Name.Equals(pR.Name, StringComparison.OrdinalIgnoreCase)) continue; // 共振段不计
-                if (Math.Abs(pL.SMA - pR.SMA) < 1e-9) continue;                            // 同星防除零
-                double ratio = Math.Max(pL.SMA, pR.SMA) / Math.Min(pL.SMA, pR.SMA);
-                if (ratio > 1.5) tot += (ratio - 1.5) * 1.8;                               // 经验系数，仅排序用
-            }
-            return tot;
-        }
-
         public static List<MGASolution> Solve(
             MGAAdaptiveSolverConfig config,
             CancellationToken ct,
@@ -311,6 +297,7 @@ namespace KSPGMAT.MGA
             if (config == null) return new List<MGASolution>();
 
             MGAStepProfiler.Reset();
+            MGAOptimizationProbe.Reset();
             var reportSw = System.Diagnostics.Stopwatch.StartNew();
             var mathReport = new MGAMathDiagnosticReport();
             LastDiagnosticReport = mathReport;
@@ -328,17 +315,43 @@ namespace KSPGMAT.MGA
                 NoInsertionBurn = config.NoInsertionBurn
             };
 
+            // 终端捕获模型物理对齐 (GUI 预留接口统一自适应推导)
+            if (config.ArrivalOrbitType == MGAArrivalOrbitType.Flyby || config.NoInsertionBurn)
+            {
+                config.NoInsertionBurn = true;
+            }
+            else
+            {
+                var destP = SolarSystemCatalog.GetPlanet(config.ArrivalPlanet);
+                bool isGiant = destP != null && (destP.Mu >= 5e6 || destP.RadiusKm >= 20000.0);
+                if (config.ArrivalOrbitType == MGAArrivalOrbitType.HighlyElliptic || (config.AutoAdaptGiantPlanetEllipse && isGiant))
+                {
+                    if (config.ArrApKm <= config.ArrPeKm)
+                    {
+                        MGADefaults.GetBodyCaptureAltitudeBounds(config.ArrivalPlanet, out _, out _, out double maxApA);
+                        double destR = destP != null && destP.RadiusKm > 0 ? destP.RadiusKm : 6000.0;
+                        double rp = destR + config.ArrPeKm;
+                        double ePreset = 0.95;
+                        double ra = rp * (1.0 + ePreset) / (1.0 - ePreset);
+                        config.ArrApKm = Math.Min(maxApA, Math.Round(ra - destR));
+                    }
+                }
+            }
+
+            double userSpecifiedMaxToF = (config != null && config.TotalToFMaxDays > 0) ? config.TotalToFMaxDays : -1.0;
             if (config.AutoTuneToFBounds)
             {
                 var (dynMin, dynMax) = MGAMCTSTopologySelector.CalculateAdaptiveToFBounds(config.DeparturePlanet, config.ArrivalPlanet, config.FlybySequence);
                 config.TotalToFMinDays = dynMin;
-                config.TotalToFMaxDays = dynMax;
+                config.TotalToFMaxDays = (userSpecifiedMaxToF > 0) ? userSpecifiedMaxToF : dynMax;
             }
 
             var candidateChains = new List<List<string>>();
-            if (config.FlybySequence != null && config.FlybySequence.Count > 0 && !config.EnablePermutationsAndInsertions)
+            if (!config.EnablePermutationsAndInsertions)
             {
-                var newFlybys = config.FlybySequence.Where(b => !b.Equals(config.ArrivalPlanet, StringComparison.OrdinalIgnoreCase)).ToList();
+                var newFlybys = (config.FlybySequence ?? new List<string>())
+                    .Where(b => !b.Equals(config.ArrivalPlanet, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
                 candidateChains.Add(newFlybys);
             }
             else
@@ -351,28 +364,13 @@ namespace KSPGMAT.MGA
                 }
                 if (sequences != null && sequences.Count > 0)
                 {
-                    // === 方案A: 共振优先入池 ===
-                    // 深井爬升任务(如 Earth→Mercury→…→Neptune)的中段跨势阱腿依赖多圈共振泵能分摊能量，
-                    // 纯依赖单段大 DSM 硬推的拓扑预估 ΔV 高、被降序排序挤后，常被前 N 条低阶近邻链挤出演化池，
-                    // 使得含 Venus→Venus / Mercury→Mercury 共振段的物理梯级链永远进不了 DE。
-                    // 据此对深井爬升场景做"共振优先"重排：含相邻同星共振段(泵能)的链排前，再用原有序做多样性兜底。
-                    bool deepWellClimb = IsDeepWellClimbScenario(config);
-                    if (deepWellClimb && sequences.Count > 1 && !config.EnableEphemerisReachabilityFilter)
+                    Console.WriteLine($"[DEBUG] GenerateOptimalFlybySequences returned {sequences.Count} sequences:");
+                    for (int i = 0; i < sequences.Count; i++)
                     {
-                        sequences = sequences
-                            .OrderByDescending(s => HasAdjacentResonanceSegment(s))
-                            .ThenBy(s => EstimateChainDsmCs(s))
-                            .ToList();
+                        Console.WriteLine($"   seq[{i}]: {(sequences[i].Count > 0 ? string.Join(" ➔ ", sequences[i]) : "(Direct)")}");
                     }
-
-                    // 选取经能量赤字审计与天体引力井分析评估的高价值多样性拓扑进行多拓扑全局演化
-                    // 针对长链高维深井爬升任务，精炼候选拓扑池至前 2~3 条最具物理可行性的最优构型，
-                    // 彻底阻断在次优或重复链上的天文级重复计算！
-                    int maxChainsToEval = Math.Min(config.MaxCandidateTopologies > 0 ? config.MaxCandidateTopologies : 4, sequences.Count);
-                    if (deepWellClimb)
-                    {
-                        maxChainsToEval = Math.Min(maxChainsToEval, 3);
-                    }
+                    int poolCapacity = Math.Max(config.MaxCandidateTopologies > 0 ? config.MaxCandidateTopologies : 8, Math.Min(16, sequences.Count));
+                    int maxChainsToEval = Math.Min(poolCapacity, sequences.Count);
                     for (int c = 0; c < maxChainsToEval; c++)
                     {
                         var chain = sequences[c];
@@ -453,10 +451,12 @@ namespace KSPGMAT.MGA
             int totalTopos = candidateChains.Count;
             double globalBestEpochUT = 0.0;
             double globalBestDvMs = double.MaxValue;
-            // 拓扑层有界并发：原串行 for 仅依赖窗口级并行(常 2 核)，导致 CPU 拉不满、整机几十分钟白等。
-            // 改为拓扑并发填满整机核数；每个拓扑窗口层按 perTopoWindowParallel 降核，杜绝 Parallel 嵌套超订。
+            // 拓扑层动态工作流去超订 (Thread De-oversubscription & Workflow Stream):
+            // 将外层拓扑并发度限制为 2~3，避免外层拓扑与内层多岛差分进化/前向注种/C++ OpenMP 产生多层嵌套超订 (Over-subscription)，
+            // 确保每个活跃拓扑能充分享受全部 CPU 核心的高速缓存与 AVX2 算力。
             var aggLock = new object();
-            int topoParallel = Math.Min(totalTopos, Math.Max(1, Environment.ProcessorCount));
+            int maxOuterTopo = (Environment.ProcessorCount >= 16) ? 2 : 1;
+            int topoParallel = Math.Min(totalTopos, maxOuterTopo);
             int perTopoWindowParallel = Math.Max(1, Environment.ProcessorCount / Math.Max(1, topoParallel));
 
             Parallel.For(0, totalTopos, new ParallelOptions { MaxDegreeOfParallelism = topoParallel }, tIdx =>
@@ -467,72 +467,63 @@ namespace KSPGMAT.MGA
                 Console.WriteLine($"\n>>> [MGAAdaptiveSolver] 正在演化拓扑 #{tIdx + 1}/{totalTopos}: {config.DeparturePlanet} ➔ {string.Join(" ➔ ", topoFlybys)} ➔ {config.ArrivalPlanet} <<<");
                 var subCfg = config.Clone();
                 subCfg.FlybySequence = topoFlybys;
+                subCfg.EnablePermutationsAndInsertions = false;
+                subCfg.LegStrategies = null;
+                subCfg.LegToFBounds = null;
+                subCfg.AutoTuneToFBounds = true;
 
-                // 双向联动 1: 跨拓扑发射窗口最优对齐 (Cross-Topology Launch Window Centering)
-                // 关键安全门禁：仅当历史全局最优解实质性收敛进入预算走廊 (如 <= 6000 m/s) 时才允许窗口聚焦收窄，
-                // 若历史解仍属于万元级粗劣解，绝不收窄发射窗口，严防局部假极值将后续高维拓扑锁死在坏历元
-                double focusThresholdMs = (config.ConstrainByVesselDeltaV && config.VesselMaxDeltaVMs > 0)
-                    ? config.VesselMaxDeltaVMs
-                    : 4000.0;
-                double cbEpoch; double cbDv;
-                lock (aggLock) { cbEpoch = globalBestEpochUT; cbDv = globalBestDvMs; }
-                if (tIdx > 0 && cbEpoch > 0.0 && cbDv <= focusThresholdMs)
-                {
-                    double centerSpanSec = MGADefaults.DeparturePhaseAngleToleranceDeg * MGADefaults.SecondsPerDay;
-                    double winStart = Math.Max(config.SearchStartUT, cbEpoch - centerSpanSec);
-                    double winEnd = Math.Min(config.SearchEndUT, cbEpoch + centerSpanSec);
-                    if (winEnd > winStart + 10.0 * MGADefaults.SecondsPerDay)
-                    {
-                        subCfg.SearchStartUT = winStart;
-                        subCfg.SearchEndUT = winEnd;
-                        Console.WriteLine($"   [双向联动] 依据优胜拓扑发射历元动态对齐搜索窗口: [{GMATClient.FormatUtcGregorian(winStart)} ~ {GMATClient.FormatUtcGregorian(winEnd)}]");
-                    }
-                }
+                // 天体力学第一性原理：各拓扑的首段借力目标天体不同，星际会合周期与物理窗口完全独立，
+                // 严禁将不同首段天体的拓扑强行锁死在单一历元，确保各拓扑独立在全域搜索窗口内遍历其真实星际会合面。
+                subCfg.SearchStartUT = config.SearchStartUT;
+                subCfg.SearchEndUT = config.SearchEndUT;
 
                 if (subCfg.AutoTuneToFBounds)
                 {
                     var (dynMin, dynMax) = MGAMCTSTopologySelector.CalculateAdaptiveToFBounds(subCfg.DeparturePlanet, subCfg.ArrivalPlanet, subCfg.FlybySequence, subCfg.CentralBody, subCfg.DepartureToFMinFactor, subCfg.DepartureToFMaxFactor);
                     subCfg.TotalToFMinDays = dynMin;
-                    subCfg.TotalToFMaxDays = dynMax;
+                    subCfg.TotalToFMaxDays = (userSpecifiedMaxToF > 0) ? userSpecifiedMaxToF : dynMax;
                     subCfg.LegToFBounds = MGAMCTSTopologySelector.AutoDeriveResonantLegBounds(subCfg.DeparturePlanet, subCfg.ArrivalPlanet, subCfg.FlybySequence, subCfg.CentralBody, subCfg.DepartureToFMinFactor, subCfg.DepartureToFMaxFactor);
                 }
 
                 // DeltaV-EGA (深空机动与借力协同): 在跨势阱折返或多次共振航段中，自适应激活 1-DSM 与多圈共振调相
-                if (subCfg.LegStrategies == null || subCfg.LegStrategies.Count == 0)
+                var fullChainEga = new List<string> { subCfg.DeparturePlanet };
+                if (subCfg.FlybySequence != null) fullChainEga.AddRange(subCfg.FlybySequence);
+                fullChainEga.Add(subCfg.ArrivalPlanet);
+                int neededLegs = fullChainEga.Count - 1;
+
+                if (subCfg.LegStrategies == null || subCfg.LegStrategies.Count != neededLegs)
                 {
-                    var fullChainEga = new List<string> { subCfg.DeparturePlanet };
-                    if (subCfg.FlybySequence != null) fullChainEga.AddRange(subCfg.FlybySequence);
-                    fullChainEga.Add(subCfg.ArrivalPlanet);
                     var strats = new List<MGALegStrategy>();
-                    for (int s = 0; s < fullChainEga.Count - 1; s++)
+                    for (int s = 0; s < neededLegs; s++)
                     {
-                        bool isResonant = fullChainEga[s].Equals(fullChainEga[s + 1], StringComparison.OrdinalIgnoreCase);
-                        // 大跨越转移腿判定: 相邻天体 SMA 比值超阈值 (跨越势阱) 时，给予 aphelion 附近 1-DSM 调相自由度
-                        bool isLargeCrossing = false;
-                        if (!isResonant)
-                        {
-                            var pL = SolarSystemCatalog.GetPlanet(fullChainEga[s]);
-                            var pR = SolarSystemCatalog.GetPlanet(fullChainEga[s + 1]);
-                            if (pL != null && pR != null && pL.SMA > 0 && pR.SMA > 0)
-                            {
-                                double ratio = Math.Max(pL.SMA, pR.SMA) / Math.Min(pL.SMA, pR.SMA);
-                                isLargeCrossing = ratio >= MGADefaults.AdjacentTransferSmaRatioThreshold;
-                            }
-                        }
-                        // 当求解器配置为 1-DSM 模式时，所有航段均应配置 1-DSM 策略，
-                        // 确保底层 C++ 引擎在所有借力点强制保持进出场渐近线速度模值严格相等 (|V_inf,out| = |V_inf,in|)，
-                        // 彻底杜绝纯 Ballistic 模式下相邻兰伯特弧速度不匹配导致的假性飞掠脉冲 (fb_dv 恒为 0.0 m/s)。
-                        // 仅在纯弹道无机动模式下，非大跨越航段才配置 Ballistic。
-                        if (subCfg.EngineMode == MGAEngineMode.DeepSpaceManeuver1DSM || isLargeCrossing)
-                        {
-                            strats.Add(MGALegStrategy.DeepSpaceManeuver1DSM);
-                        }
-                        else
+                        // 天体力学第一性原理 (MGA-1DSM 统一公理):
+                        // 1. 首航段 (s == 0): 若出发星与到达星不同 (From != To)，由运载火箭工质驱动发射注入开普勒弹道 (Ballistic)；
+                        //    若出发星与到达星相同 (From == To，如 Juno 的 ΔV-EGA: Earth ➔ Earth，Rosetta: Earth ➔ Earth)，
+                        //    根据开普勒守恒定律，航天器在同星之间无法通过纯弹道改变周期与相位，必须具备 1-DSM 自由度在远日点调相变轨！
+                        // 2. 所有借力后航段 (s >= 1)，均从中间借力天体双曲流形出场。赋予 1-DSM (DeepSpaceManeuver1DSM) 自由度，
+                        //    从物理几何上严格保证借力天体处为 100% 纯无动力引力偏折 (ΔV_FB = 0.00 m/s，|V_inf,out| = |V_inf,in|)；
+                        //    对于天生共振或无需机动的航段，差分进化与能量优化会自动将 DSM 冲量解析收敛至 0 m/s。
+                        bool isFirstLeg = (s == 0);
+                        bool isResonantLeg = fullChainEga[s].Equals(fullChainEga[s + 1], StringComparison.OrdinalIgnoreCase);
+                        if (isFirstLeg && !isResonantLeg)
                         {
                             strats.Add(MGALegStrategy.Ballistic);
                         }
+                        else
+                        {
+                            strats.Add(MGALegStrategy.DeepSpaceManeuver1DSM);
+                        }
                     }
                     subCfg.LegStrategies = strats;
+                }
+                else
+                {
+                    // 确保首航段若为同星共振，必须具备 1-DSM 自由度
+                    bool isFirstResonant = fullChainEga[0].Equals(fullChainEga[1], StringComparison.OrdinalIgnoreCase);
+                    if (isFirstResonant && subCfg.LegStrategies[0] == MGALegStrategy.Ballistic)
+                    {
+                        subCfg.LegStrategies[0] = MGALegStrategy.DeepSpaceManeuver1DSM;
+                    }
                 }
 
                 // 记录搜索空间与 ToF 边界
@@ -596,7 +587,8 @@ namespace KSPGMAT.MGA
 
                 float stageP0 = 0.10f + 0.70f * ((float)tIdx / totalTopos);
                 float stageP1 = 0.10f + 0.70f * ((float)(tIdx + 1) / totalTopos);
-                string topoSummary = $"{subCfg.DeparturePlanet} ➔ {string.Join(" ➔ ", subCfg.FlybySequence)} ➔ {subCfg.ArrivalPlanet}";
+                string mid = (subCfg.FlybySequence != null && subCfg.FlybySequence.Count > 0) ? $"{string.Join(" ➔ ", subCfg.FlybySequence)} ➔ " : "";
+                string topoSummary = $"{subCfg.DeparturePlanet} ➔ {mid}{subCfg.ArrivalPlanet}";
 
                 onProgress?.Invoke(stageP0, $"Stage 2/3 [{tIdx + 1}/{totalTopos}]: 拓扑 [{topoSummary}] 会合时区初筛与多岛微分进化...");
 
@@ -632,6 +624,7 @@ namespace KSPGMAT.MGA
                         {
                             double topoDv = topoBest.TotalDeltaVKms * 1000.0;
                             bool isLaunchCompliant = (subCfg.LaunchDeltaVCeilingMs <= 0 || topoBest.LaunchDeltaVKms * 1000.0 <= subCfg.LaunchDeltaVCeilingMs * 1.05);
+                            Console.WriteLine($"   [拓扑 #{tIdx + 1}/{totalTopos} 收敛] {topoSummary}: TotalΔV={topoDv:F1} m/s (始发={topoBest.LaunchDeltaVKms * 1000.0:F1} m/s, 历元={GMATClient.FormatUtcGregorian(topoBest.DepartureUT)}, 合规={isLaunchCompliant})");
                             if (isLaunchCompliant && topoDv < globalBestDvMs)
                             {
                                 globalBestDvMs = topoDv;
@@ -676,7 +669,10 @@ namespace KSPGMAT.MGA
             }
 
             var rawSolutions = allRawSolutions
-                .OrderBy(s => (config.LaunchDeltaVCeilingMs > 0 && s.LaunchDeltaVKms * 1000.0 > config.LaunchDeltaVCeilingMs * 1.05 ? 1e6 : 0.0) + s.TotalDeltaVKms)
+                .OrderBy(s => (config.LaunchDeltaVCeilingMs > 0 && s.LaunchDeltaVKms * 1000.0 > config.LaunchDeltaVCeilingMs * 1.05 ? 1e6 : 0.0)
+                            + (userSpecifiedMaxToF > 0 && s.TotalFlightDays > userSpecifiedMaxToF * 1.08 ? 1e6 : 0.0)
+                            + (!s.AllLegsFeasible ? 1e5 : 0.0)
+                            + s.TotalDeltaVKms)
                 .ToList();
 
             onProgress?.Invoke(0.85f, "Stage 4: 物理基线校验与智能数值自愈门禁...");
@@ -710,6 +706,7 @@ namespace KSPGMAT.MGA
             {
                 if (finalBudgetMs < 1e8 && sol.TotalDeltaVKms * 1000.0 > finalBudgetMs * 1.05) continue;
                 if (finalDsmBudgetMs < 1e8 && (sol.TotalDsmDeltaVKms * 1000.0 > finalDsmBudgetMs * 1.05 || (sol.Legs != null && sol.Legs.Any(l => l.DSM != null && l.DSM.DeltaVMs > finalDsmBudgetMs * 1.05)))) continue;
+                if (userSpecifiedMaxToF > 0 && sol.TotalFlightDays > userSpecifiedMaxToF * 1.15) continue;
                 // 1. 挂载 B 平面协方差分析与导航鲁棒性
                 if (config.EnableBPlaneCovarianceAnalysis && sol.Legs != null && sol.Legs.Count > 1 && sol.BPlane == null)
                 {
@@ -855,6 +852,9 @@ namespace KSPGMAT.MGA
             // 打印全流程细粒度步骤耗时排名与最大瓶颈诊断
             MGAStepProfiler.PrintSummary();
 
+            // 打印新增加速与自适应优化效能综合审计报表
+            MGAOptimizationProbe.PrintEfficiencyReport();
+
             onProgress?.Invoke(1.0f, $"自适应求解完成！输出 {finalSolutions.Count} 个 NASA 级精选方案");
             return finalSolutions;
         }
@@ -943,6 +943,10 @@ namespace KSPGMAT.MGA
                 var chain = candidateChains[cIdx];
                 var subCfg = baseConfig.Clone();
                 subCfg.FlybySequence = new List<string>(chain);
+                subCfg.EnablePermutationsAndInsertions = false;
+                subCfg.LegStrategies = null;
+                subCfg.LegToFBounds = null;
+                subCfg.AutoTuneToFBounds = true;
 
                 // 根据借力链条增加合理航时裕度
                 if (chain.Count > 1)
@@ -965,7 +969,7 @@ namespace KSPGMAT.MGA
                 {
                     foreach (var s in sols)
                     {
-                        if (s != null && !double.IsNaN(s.TotalDeltaVKms) && s.TotalDeltaVKms < 250.0)
+                        if (s != null && !double.IsNaN(s.TotalDeltaVKms) && s.TotalDeltaVKms < MGADefaults.MaxPlausibleTotalDvKms) // 过滤 >50 km/s 的动力学发散解
                         {
                             allSols.Add(s);
                         }
@@ -982,9 +986,11 @@ namespace KSPGMAT.MGA
                 }
             });
 
-            // 6. 聚合与帕累托双轨排序 (最省 vs 最快)
-            var rankedFuel = allSols.OrderBy(s => s.TotalDeltaVKms).ToList();
-            var rankedTime = allSols.OrderBy(s => s.TotalFlightDays).ToList();
+            // 6. 聚合与帕累托双轨排序 (最省 vs 最快，优先全航段可行解)
+            var feasibleSols = allSols.Where(s => s.AllLegsFeasible).ToList();
+            var candidatePool = (feasibleSols.Count > 0) ? feasibleSols : allSols.ToList();
+            var rankedFuel = candidatePool.OrderBy(s => s.TotalDeltaVKms).ToList();
+            var rankedTime = candidatePool.OrderBy(s => s.TotalFlightDays).ToList();
 
             result.AllRankedSolutions = rankedFuel;
             result.BestSolution = rankedFuel.FirstOrDefault();

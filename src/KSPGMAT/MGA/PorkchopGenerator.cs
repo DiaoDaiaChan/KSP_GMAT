@@ -210,8 +210,28 @@ namespace KSPGMAT.MGA {
                                 int idx = gy * gridW + gx;
                                 float dv = outTotDv[idx];
                                 float c3 = outC3[idx];
-                                grid.DeltaVGrid[gx, gy] = (dv < 1e7f) ? (double)dv : double.NaN;
-                                grid.C3Grid[gx, gy] = (c3 < 1e7f) ? (double)c3 : double.NaN;
+                                double totDvD = (dv < 1e7f) ? (double)dv : double.NaN;
+                                double c3D = (c3 < 1e7f) ? (double)c3 : double.NaN;
+                                double ejDV = double.NaN;
+                                double inDV = 0.0;
+
+                                if (!double.IsNaN(c3D) && c3D >= 0.0) {
+                                    double vInfDep = Math.Sqrt(c3D);
+                                    double depDvKm = fromBody.Equals(central, StringComparison.OrdinalIgnoreCase)
+                                        ? vInfDep
+                                        : PykepBridge.CalculateDepartureDeltaV(vInfDep, p1, depAltKm, depAltKm);
+                                    if (!double.IsNaN(depDvKm)) {
+                                        ejDV = depDvKm * 1000.0;
+                                        if (!flybyOnly && !double.IsNaN(totDvD) && totDvD >= ejDV) {
+                                            inDV = totDvD - ejDV;
+                                        }
+                                    }
+                                }
+
+                                grid.DeltaVGrid[gx, gy] = totDvD;
+                                grid.C3Grid[gx, gy] = c3D;
+                                grid.EjectDVGrid[gx, gy] = ejDV;
+                                grid.InsertDVGrid[gx, gy] = inDV;
                             }
                         }
                         grid.ComputeBackend = $"DirectCompute HLSL GPU ({PykepNative.GpuDeviceName})";

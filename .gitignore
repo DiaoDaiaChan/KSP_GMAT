@@ -80,6 +80,8 @@ temp_*.script
 # Native build outputs
 build_kep3/
 console_out.txt
+*_out.txt
+reports/
 
 pykep_sourcecode/
 .trae/

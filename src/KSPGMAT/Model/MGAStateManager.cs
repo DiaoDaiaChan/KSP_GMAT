@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using UnityEngine;
 using KSPGMAT.MGA;
+using KSPGMAT.MGA.Telemetry;
 
 namespace KSPGMAT.Model {
     /// <summary>
@@ -73,7 +75,7 @@ namespace KSPGMAT.Model {
         // --- 7. 霍曼与扫描动力学估算 ---
         public const double HohmannDefaultToFDays = 200.0;
         public const double HohmannMinToFFactor = 0.35;
-        public const double HohmannMaxToFFactor = 4.5;
+        public const double HohmannMaxToFFactor = 1.35;
         public const double ResonanceMinToFFactor = 0.50;
         public const double ResonanceMaxToFFactor = 3.60;
         public const double SynodicScanMultiple = 1.5;
@@ -264,6 +266,10 @@ namespace KSPGMAT.Model {
         public const double MaxPhysicalEnergyDeficitMs = 4000.0; // 单航段不可达物理速度断层剪枝硬门禁
         public const int EarlyAbortGenerationThreshold = 25;
         public const double EarlyAbortDeficitThresholdMs = 4000.0; // 早期赤字熔断门槛
+
+        // --- 16. 可行性审计与门禁裕度 (Feasibility Audit & Gate Margins) ---
+        public const double FeasibilityBudgetMarginFactor = 1.25; // 单段硬门禁与总预算软门禁统一裕度 (DE 可微调余量)
+        public const double MaxPlausibleTotalDvKms = 50.0; // 物理合理总 ΔV 上界 (km/s): 过滤动力学发散解 (真实任务 < 30 km/s)
     }
 
     /// <summary>
@@ -357,6 +363,68 @@ namespace KSPGMAT.Model {
         public double SafeMargin3SigmaKm { get; set; }
         public bool IsSafeFlyby { get; set; } = true;
         public double NavigationalTcmBudgetKms { get; set; }
+
+        /// <summary>
+        /// DirectCompute GPU 极速蒙特卡洛 6.5 万点轨道分散度与 B 平面协方差椭圆分析
+        /// </summary>
+        public static BPlaneResult ComputeMonteCarloDispersionGPU(
+            Vector3d r0Km, Vector3d v0Kms,
+            Vector3d targetRKm, Vector3d targetVKms,
+            double targetMu, double targetRadiusKm,
+            double tofSec, double centralMu,
+            double sigmaPosKm = 5.0, double sigmaVelKms = 0.001,
+            int sampleCount = 65536)
+        {
+            var res = new BPlaneResult();
+            if (!PykepNative.IsGpuComputeAvailable)
+            {
+                MGAOptimizationProbe.RecordGpuExecution("GPU B-Plane Monte Carlo", 0.0, sampleCount, false);
+                return res;
+            }
+
+            var sw = Stopwatch.StartNew();
+            double[] r0 = new double[] { r0Km.x, r0Km.y, r0Km.z };
+            double[] v0 = new double[] { v0Kms.x, v0Kms.y, v0Kms.z };
+            double[] tr = new double[] { targetRKm.x, targetRKm.y, targetRKm.z };
+            double[] tv = new double[] { targetVKms.x, targetVKms.y, targetVKms.z };
+
+            int ret = PykepNative.BPlaneMonteCarloGpuEvaluate(
+                r0, v0, tr, tv,
+                targetMu, targetRadiusKm, tofSec, centralMu,
+                sigmaPosKm, sigmaVelKms, sampleCount,
+                out float meanBR, out float meanBT,
+                out float sigRR, out float sigTT, out float sigRT,
+                out float collProb);
+
+            sw.Stop();
+            MGAOptimizationProbe.RecordGpuExecution(
+                "GPU B-Plane Monte Carlo", sw.Elapsed.TotalMilliseconds, sampleCount, ret == 0);
+
+            if (ret == 0)
+            {
+                res.BDotRKm = meanBR;
+                res.BDotTKm = meanBT;
+                res.BMagKm = Math.Sqrt(meanBR * meanBR + meanBT * meanBT);
+                res.ThetaDeg = Math.Atan2(meanBR, meanBT) * 180.0 / Math.PI;
+                res.SigmaBRKm = sigRR;
+                res.SigmaBTKm = sigTT;
+                res.CovarianceBTRKm2 = sigRT;
+
+                // 2D 协方差椭圆主轴特征值求解
+                double a = sigRR * sigRR;
+                double b = sigRT;
+                double c = sigTT * sigTT;
+                double lambda1 = 0.5 * (a + c + Math.Sqrt((a - c) * (a - c) + 4.0 * b * b));
+                double lambda2 = 0.5 * (a + c - Math.Sqrt((a - c) * (a - c) + 4.0 * b * b));
+
+                res.SemiMajorAxisSigmaKm = 3.0 * Math.Sqrt(Math.Max(0.0, lambda1));
+                res.SemiMinorAxisSigmaKm = 3.0 * Math.Sqrt(Math.Max(0.0, lambda2));
+                res.EllipseAngleDeg = 0.5 * Math.Atan2(2.0 * b, a - c) * 180.0 / Math.PI;
+                res.IsSafeFlyby = collProb < 1e-4;
+            }
+
+            return res;
+        }
     }
 
     /// <summary>
@@ -706,9 +774,33 @@ namespace KSPGMAT.Model {
     }
 
     /// <summary>
+    /// 终端到达轨道物理模式 (与 GUI 下拉菜单无缝数据绑定)
+    /// </summary>
+    public enum MGAArrivalOrbitType
+    {
+        HighlyElliptic = 0,     // 科学高偏心率捕获椭圆 (外行星/巨行星默认标配)
+        LowCircular = 1,        // 低圆轨道停泊 (内行星/环绕任务)
+        Flyby = 2,              // 纯飞掠掠过 (零捕获机动，如旅行者、新视野)
+        ParabolicThreshold = 3  // 临界抛物线捕获
+    }
+
+    /// <summary>
+    /// 航天器推进系统物理类型 (解耦化学大脉冲与低推力离子电推进)
+    /// </summary>
+    public enum MGAPropulsionType
+    {
+        ChemicalImpulsive = 0,  // 化学推进瞬时大脉冲
+        LowThrustElectric = 1   // 连续低推力离子电推进 (如黎明号 Dawn、深空1号 DS1)
+    }
+
+    /// <summary>
     /// MGA 规划配置输入 (100% 对齐 KSP-MGA-Planner 与高级动力学特性)
     /// </summary>
     public class MGAConfig {
+        public MGAArrivalOrbitType ArrivalOrbitType { get; set; } = MGAArrivalOrbitType.HighlyElliptic;
+        public bool AutoAdaptGiantPlanetEllipse { get; set; } = true;
+        public MGAPropulsionType PropulsionType { get; set; } = MGAPropulsionType.ChemicalImpulsive;
+
         public string CentralBody { get; set; } = "Sun";
         public bool IsHeliocentric => string.IsNullOrEmpty(CentralBody) || 
                                       CentralBody.Equals("Sun", StringComparison.OrdinalIgnoreCase) || 
@@ -759,6 +851,13 @@ namespace KSPGMAT.Model {
         public string DestinationBody {
             get {
                 if (string.IsNullOrEmpty(_destinationBody)) {
+                    if (FlybySequence != null && FlybySequence.Count > 0) {
+                        return FlybySequence[FlybySequence.Count - 1];
+                    }
+                    if (!string.IsNullOrEmpty(CentralBody) && !CentralBody.Equals("Sun", StringComparison.OrdinalIgnoreCase)) {
+                        var sat = SolarSystemCatalog.GetMoonsOf(CentralBody);
+                        if (sat != null && sat.Count > 0) return sat[0].Name;
+                    }
                     _destinationBody = (SolarSystemCatalog.GetPlanet("Mars") != null ? "Mars" : "Duna");
                 }
                 return _destinationBody;
@@ -788,21 +887,52 @@ namespace KSPGMAT.Model {
         public List<MGALegStrategy> LegStrategies { get; set; } = new List<MGALegStrategy>();
         public List<MGAFlybyStrategy> FlybyStrategies { get; set; } = new List<MGAFlybyStrategy>();
 
-        public void SyncStrategiesWithChain(int legCount) {
-            if (LegStrategies == null) LegStrategies = new List<MGALegStrategy>();
-            while (LegStrategies.Count < legCount) {
-                var defStrat = (EngineMode == MGAEngineMode.DeepSpaceManeuver1DSM) ? MGALegStrategy.DeepSpaceManeuver1DSM :
-                               (EngineMode == MGAEngineMode.LowThrustSimsFlanagan ? MGALegStrategy.ContinuousLowThrust : MGALegStrategy.Ballistic);
-                LegStrategies.Add(defStrat);
-            }
-            if (LegStrategies.Count > legCount) LegStrategies.RemoveRange(legCount, LegStrategies.Count - legCount);
-
+        private readonly object _syncLock = new object();
+        public void SyncStrategiesWithChain(int legCount, List<string> fullChain = null) {
             int fbCount = Math.Max(0, legCount - 1);
-            if (FlybyStrategies == null) FlybyStrategies = new List<MGAFlybyStrategy>();
-            while (FlybyStrategies.Count < fbCount) {
-                FlybyStrategies.Add(MGAFlybyStrategy.UnpoweredFlyby);
+            if (LegStrategies != null && LegStrategies.Count == legCount &&
+                FlybyStrategies != null && FlybyStrategies.Count == fbCount) {
+                if (fullChain != null && fullChain.Count > 1 && fullChain[0].Equals(fullChain[1], StringComparison.OrdinalIgnoreCase)) {
+                    if (LegStrategies[0] != MGALegStrategy.DeepSpaceManeuver1DSM) {
+                        LegStrategies[0] = MGALegStrategy.DeepSpaceManeuver1DSM;
+                    }
+                }
+                return;
             }
-            if (FlybyStrategies.Count > fbCount) FlybyStrategies.RemoveRange(fbCount, FlybyStrategies.Count - fbCount);
+            lock (_syncLock) {
+                // 构造拓扑链路以推导物理动力学策略
+                List<string> chain = fullChain;
+                if (chain == null || chain.Count < legCount + 1) {
+                    chain = new List<string>();
+                    if (!string.IsNullOrEmpty(DepartureBody)) chain.Add(DepartureBody);
+                    if (FlybySequence != null) chain.AddRange(FlybySequence);
+                    if (!string.IsNullOrEmpty(DestinationBody)) chain.Add(DestinationBody);
+                }
+
+                if (LegStrategies == null) LegStrategies = new List<MGALegStrategy>();
+                while (LegStrategies.Count < legCount) LegStrategies.Add(MGALegStrategy.Ballistic);
+                if (LegStrategies.Count > legCount) LegStrategies.RemoveRange(legCount, LegStrategies.Count - legCount);
+
+                for (int k = 0; k < legCount; k++) {
+                    bool isFirstLeg = (k == 0);
+                    bool isResonantLeg = (chain != null && k + 1 < chain.Count && chain[k].Equals(chain[k + 1], StringComparison.OrdinalIgnoreCase));
+                    MGALegStrategy strat;
+                    if (EngineMode == MGAEngineMode.LowThrustSimsFlanagan) {
+                        strat = MGALegStrategy.ContinuousLowThrust;
+                    } else if (isFirstLeg && !isResonantLeg) {
+                        strat = MGALegStrategy.Ballistic;
+                    } else {
+                        strat = MGALegStrategy.DeepSpaceManeuver1DSM;
+                    }
+                    LegStrategies[k] = strat;
+                }
+
+                if (FlybyStrategies == null) FlybyStrategies = new List<MGAFlybyStrategy>();
+                while (FlybyStrategies.Count < fbCount) {
+                    FlybyStrategies.Add(MGAFlybyStrategy.UnpoweredFlyby);
+                }
+                if (FlybyStrategies.Count > fbCount) FlybyStrategies.RemoveRange(fbCount, FlybyStrategies.Count - fbCount);
+            }
         }
 
         public double DsmEtaDefault { get; set; } = MGADefaults.DsmEtaDefault;
@@ -828,6 +958,7 @@ namespace KSPGMAT.Model {
         public double DepartureToFMinFactor { get; set; } = 0.65;
         public double DepartureToFMaxFactor { get; set; } = 1.50;
         public double ResonantMaxOffsetDays { get; set; } = 0.0;
+        public int LambertMaxRevs { get; set; } = 0;
 
         public double EarliestDepartureUT { get; set; }
         public double LatestDepartureUT { get; set; }
@@ -867,10 +998,28 @@ namespace KSPGMAT.Model {
             if (forceResetIfInvalid || DestinationPeAKm < minPeA || DestinationPeAKm > maxApA || DestinationPeAKm <= 0) {
                 DestinationPeAKm = recPeA;
             }
-            if (forceResetIfInvalid || DestinationApAKm < DestinationPeAKm) {
+
+            var destP = SolarSystemCatalog.GetPlanet(dest);
+            bool isGiant = destP != null && (destP.Mu >= 5e6 || destP.RadiusKm >= 20000.0);
+
+            if (ArrivalOrbitType == MGAArrivalOrbitType.Flyby || NoInsertionBurn) {
+                // 飞掠模式：零制动
                 DestinationApAKm = DestinationPeAKm;
-            } else if (DestinationApAKm > maxApA) {
-                DestinationApAKm = maxApA;
+            } else if (ArrivalOrbitType == MGAArrivalOrbitType.HighlyElliptic || (AutoAdaptGiantPlanetEllipse && isGiant)) {
+                // 科学高偏心率捕获椭圆: 默认预设 e=0.95，远拱点严格限制在 SOI 内 (<= maxApA)
+                if (forceResetIfInvalid || DestinationApAKm <= DestinationPeAKm) {
+                    double destR = destP != null ? destP.RadiusKm : 6000.0;
+                    double rp = destR + DestinationPeAKm;
+                    double ePreset = 0.95;
+                    double ra = rp * (1.0 + ePreset) / (1.0 - ePreset);
+                    DestinationApAKm = Math.Min(maxApA, Math.Round(ra - destR));
+                }
+            } else {
+                if (forceResetIfInvalid || DestinationApAKm < DestinationPeAKm) {
+                    DestinationApAKm = DestinationPeAKm;
+                } else if (DestinationApAKm > maxApA) {
+                    DestinationApAKm = maxApA;
+                }
             }
         }
 

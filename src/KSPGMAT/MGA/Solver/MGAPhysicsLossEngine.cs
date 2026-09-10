@@ -18,6 +18,7 @@
 using System;
 using System.Collections.Generic;
 using KSPGMAT.Model;
+using KSPGMAT.MGA.AI;
 using UnityEngine;
 
 namespace KSPGMAT.MGA
@@ -119,9 +120,12 @@ namespace KSPGMAT.MGA
                 if (config.ConstrainByVesselDeltaV && config.VesselMaxDeltaVMs > 0)
                 {
                     double vesselLimitKms = config.VesselMaxDeltaVMs / 1000.0;
-                    if (sol.TotalDeltaVKms > vesselLimitKms)
+                    double subjectDvKms = config.NoInsertionBurn 
+                        ? (sol.LaunchDeltaVKms + sol.TotalDsmDeltaVKms + sol.TotalFlybyDeltaVKms) 
+                        : sol.TotalDeltaVKms;
+                    if (subjectDvKms > vesselLimitKms)
                     {
-                        double overTotalKms = sol.TotalDeltaVKms - vesselLimitKms;
+                        double overTotalKms = subjectDvKms - vesselLimitKms;
                         loss += QuadraticBarrierScale * (overTotalKms + overTotalKms * overTotalKms);
                     }
                 }
@@ -156,9 +160,108 @@ namespace KSPGMAT.MGA
                         loss += excessInc * MGADefaults.PenaltyIncDegWeight + 0.5 * QuadraticBarrierScale * Math.Pow(excessInc / 10.0, 2.0);
                     }
                 }
+                // 9. 符号物理双曲偏折几何极限代数校验 (Symbolic Deflection Barrier)
+                if (sol.Legs != null && sol.Legs.Count > 1)
+                {
+                    for (int legIdx = 0; legIdx < sol.Legs.Count - 1; legIdx++)
+                    {
+                        var legIn = sol.Legs[legIdx];
+                        var legOut = sol.Legs[legIdx + 1];
+                        var planet = SolarSystemCatalog.GetPlanet(legIn.ToBody);
+                        if (planet != null && planet.Mu > 0)
+                        {
+                            double rpMin = planet.RadiusKm + 50.0;
+                            double maxBudgetKms = (config != null && config.ConstrainByVesselDeltaV && config.VesselMaxDeltaVMs > 0)
+                                ? (config.VesselMaxDeltaVMs / 1000.0) : 5.0;
+                            double symbolicPenalty = MGASymbolicPhysicsConstraints.EvaluateSymbolicViolationPenalty(
+                                legIn.VInfArrivalKms, legOut.VInfDepartureKms, planet.Mu, rpMin, maxBudgetKms);
+                            loss += symbolicPenalty;
+                        }
+                    }
+                }
+
+                // 10. 通用开普勒时间尺度平滑二次势垒与时间能级正则项 (Universal Kepler Time-Scale Barrier)
+                // 天体力学第一性原理：双体开普勒转移在 T -> 无穷大 时出射能量单调递减，
+                // 若目标函数无时间物理惩罚，非线性优化器在数学上必然滑向无限长周期的无界极值 (导致 80~110 年漂移)。
+                // 通过开普勒时间尺度推导各航段物理基准，施加连续二次势垒与极微小时间能级正则化，
+                // 确保在同等速度增量下优先收敛于航时最短、最具工程可行性的物理捷径。
+                double maxAllowableTofDays = -1.0;
+                if (config.EnableMaxDuration && config.MaxDurationDays > 0)
+                {
+                    maxAllowableTofDays = config.MaxDurationDays;
+                }
+                else if (config.MaxToFDays != null && config.MaxToFDays.Count > 0)
+                {
+                    double sumMax = 0.0;
+                    foreach (var d in config.MaxToFDays) sumMax += d;
+                    if (sumMax > 0) maxAllowableTofDays = sumMax;
+                }
+
+                if (maxAllowableTofDays <= 0 && sol.Legs != null && sol.Legs.Count > 0)
+                {
+                    // 若未显式指定上限，由各航段两体霍曼与共振特征尺度自动汇聚物理基准
+                    double sumNominalDays = 0.0;
+                    string centralName = config.CentralBody ?? "Sun";
+                    double muC = SolarSystemCatalog.GetCentralMu(centralName);
+                    if (muC <= 0) muC = SolarSystemCatalog.SunMu;
+                    foreach (var leg in sol.Legs)
+                    {
+                        var pF = SolarSystemCatalog.GetPlanet(leg.FromBody);
+                        var pT = SolarSystemCatalog.GetPlanet(leg.ToBody);
+                        double rF = pF != null && pF.SMA > 0 ? pF.SMA : 1.496e8;
+                        double rT = pT != null && pT.SMA > 0 ? pT.SMA : 1.496e8;
+                        if (leg.FromBody.Equals(leg.ToBody, StringComparison.OrdinalIgnoreCase))
+                        {
+                            sumNominalDays += 2.0 * Math.PI * Math.Sqrt(Math.Pow(rF, 3.0) / muC) / MGADefaults.SecondsPerDay * 2.0;
+                        }
+                        else
+                        {
+                            double aTrans = (rF + rT) * 0.5;
+                            sumNominalDays += Math.PI * Math.Sqrt(Math.Pow(aTrans, 3.0) / muC) / MGADefaults.SecondsPerDay * 1.8;
+                        }
+                    }
+                    maxAllowableTofDays = Math.Max(200.0, sumNominalDays);
+                }
+
+                if (maxAllowableTofDays > 0)
+                {
+                    if (sol.TotalFlightDays > maxAllowableTofDays)
+                    {
+                        double overDays = sol.TotalFlightDays - maxAllowableTofDays;
+                        double fracOver = overDays / maxAllowableTofDays;
+                        loss += 0.5 * QuadraticBarrierScale * fracOver * fracOver;
+                    }
+                    // 微小无量纲时间正则项 (10^-5 km/s per day, 1000天仅相当于 10 m/s)，打破平坦能量沼泽，引导最优时间收敛
+                    loss += 1e-5 * sol.TotalFlightDays;
+                }
             }
 
             return loss;
+        }
+
+        /// <summary>
+        /// 基于神经网络代理模型的极速预估损失 (Fast Surrogate Loss < 1 us)
+        /// 用于全局初筛与粗探索，过滤 >80% 无效评估
+        /// </summary>
+        public static double ComputeFastSurrogateLoss(
+            double r1Km, double r2Km, double phaseAngleDeg, 
+            double tofDays, double nomHohmannTofDays, double incDiffDeg)
+        {
+            var features = MGAPhysicsSurrogateNetwork.ExtractTransferFeatures(
+                r1Km, r2Km, phaseAngleDeg, tofDays, nomHohmannTofDays, incDiffDeg);
+
+            MGAPhysicsSurrogateNetwork.Default.Forward(
+                features, 
+                out double pFeasible, 
+                out double estDvKms);
+
+            if (pFeasible < 0.15)
+            {
+                // 可行性极低，直接施加平滑势垒惩罚
+                return 1000.0 + (1.0 - pFeasible) * 2000.0;
+            }
+
+            return estDvKms;
         }
 
         // ------------------------------------------------------------------------
