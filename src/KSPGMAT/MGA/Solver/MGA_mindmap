@@ -1,0 +1,61 @@
+┌─────────────────────────────────────────────────────────┐
+                    │                      用户任务输入                       │
+                    │   (出发天体 / 目标天体 / 时间跨度 / 允许借力天体 / C3预算) │
+                    └────────────────────────────┬────────────────────────────┘
+                                                 │
+                                                 ▼
+┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+│ 【Stage 1】离散拓扑智能决策 (Discrete Flyby Topology Selection & Pruning)                  │
+│                                                                                             │
+│  1.1 物理搜索预算推导 (MGATopologyBudget.Derive)                                            │
+│      - 结合两星半长轴比与引力势阶梯，解析确定允许借力深度 N、共振上限与搜索步长             │
+│                                                                                             │
+│  1.2 物理爬升链合成 (MGAPlanetaryAssistManager.SynthesizePhysicalClimbingChains)           │
+│      - 基于能量爬升/降轨势能阶梯（内侧借力跳板、外侧巨行星弹弓）前向生成有效拓扑序列       │
+│                                                                                             │
+│  1.3 历元双向可达性剪枝 (MGAEphemerisReachabilityAnalyzer.AnalyzeChainReachability)         │
+│      - 真实星历下反向能量/角动量几何评估，剔除转折角超限、双曲进出速度能量不守恒的死分支   │
+│                                                                                             │
+│  1.4 MCTS 蒙特卡洛树搜索拓扑优选 (MGAMCTSTopologySelector)                                  │
+│      - 结合 MGAPolicyValueGuide 策略先验，搜索高回报借力拓扑序列（如 EVEEJ、VVEJS）        │
+└────────────────────────────────────────────┬────────────────────────────────────────────────┘
+                                             │ 过滤出 Top-K 有效拓扑
+                                             ▼
+┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+│ 【Stage 2】时间窗口预筛选与几何剪枝 (Synodic Window Screening & Geometric Pre-filtering)     │
+│                                                                                             │
+│  2.1 会合周期分窗 (PykepBridge.GetSynodicPeriodDays)                                        │
+│      - 基于各段星体公转会合周期切分窗口，防止单月局部极值早熟坍缩                           │
+│                                                                                             │
+│  2.2 几何/能量走廊快速预筛选 (MGASurrogatePreFilter.FilterPromisingWindows)                 │
+│      - 霍曼基准与平动截面快速能量滤网，剔除 C3 与总 ΔV 显著超限的高能禁区                   │
+└────────────────────────────────────────────┬────────────────────────────────────────────────┘
+                                             │ 排序后的优质时间窗口
+                                             ▼
+┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+│ 【Stage 3】多岛并行自适应差分进化 (Multi-Island Adaptive Differential Evolution)           │
+│                                                                                             │
+│  3.1 环形群岛并行演化 (MGAArchipelagoOptimizer.EvolveWindows)                               │
+│      - 多岛拓扑并行调度，各窗口按独立岛屿演化，定期通过环形拓扑迁移优质基因                │
+│                                                                                             │
+│  3.2 连续空间 DSM 染色体寻优 (MGADifferentialEvolution.RunWindow)                            │
+│      - 决策变量: [t0, Vinf, η, β, T1, ..., Tn, γ1, ..., γn-1, r_p1, ..., r_pn-1, α1...]    │
+│      - 自适应多臂老虎机 (MGABanditHyperparameterTuner) 动态调整变异率 F 与交叉率 CR          │
+│      - 增强拉格朗日乘子法 (MGAAugmentedLagrangian + MGAPhysicsLossEngine) 动态收缩物理惩罚  │
+│      - 底层 100% 委托 ESA PyKEP 原生 C++ Householder-4 兰伯特求解器高速求逆                 │
+└────────────────────────────────────────────┬────────────────────────────────────────────────┘
+                                             │ 连续最优候选解
+                                             ▼
+┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+│ 【Stage 4】物理审计、智能自愈与高精抛光 (Physics Audit, Self-Healing & Polishing)           │
+│                                                                                             │
+│  4.1 物理准则与边界合规审计 (MGASelfHealingEngine.AuditAndHeal)                             │
+│      - 检验地表安全净空高度 (Pericenter Altitude > SafeAlt)                                 │
+│      - 劳登主矢量极值理论校验 (Primer Vector Norm ≤ LawdenTolerance)                        │
+│                                                                                             │
+│  4.2 违例自愈与高精抛光 (Hooke-Jeeves / MGABayesianSubspacePolisher)                         │
+│      - 对违例解进行惩罚梯度局部打靶修正；对合规解执行子空间局部收敛抛光                     │
+│                                                                                             │
+│  4.3 终解特征导出与交付 (PykepBridge.PopulateAdvancedAstrodynamics)                         │
+│      - 导出 MEE 改化根数、B 平面瞄准参数 (B·T, B·R)、TCM 修正脉冲与 Pareto 权衡曲线        │
+└─────────────────────────────────────────────────────────────────────────────────────────────┘ 根据这套结构，
