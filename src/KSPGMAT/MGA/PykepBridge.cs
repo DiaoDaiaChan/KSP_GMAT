@@ -448,11 +448,28 @@ namespace KSPGMAT.MGA {
             }
         }
 
+        /// <summary>
+        /// 原生调用 PyKEP C++ 评估出发逃逸所需的速度增量 (Departure ΔV)
+        /// </summary>
+        /// <param name="vInfDepKms">双曲过剩速度 (km/s)</param>
+        /// <param name="planet">出发中心母星 (如 Earth / Kerbin)</param>
+        /// <param name="peAKm">近地点停泊轨道高度 (km)</param>
+        /// <param name="apAKm">远地点停泊轨道高度 (km)</param>
+        /// <returns>逃逸加速机动 ΔV (km/s)</returns>
         public static double CalculateDepartureDeltaV(double vInfDepKms, SolarPlanet planet, double peAKm, double apAKm) {
             if (planet == null || planet.Mu <= 0) return 0.0;
             return PykepNative.CalculateDepartureDeltaV(vInfDepKms, planet.Mu, planet.RadiusKm, peAKm, apAKm);
         }
 
+        /// <summary>
+        /// 原生调用 PyKEP C++ 评估目标星体到达捕获所需的速度增量 (Insertion ΔV)
+        /// </summary>
+        /// <param name="vInfArrKms">双曲到达过剩速度 (km/s)</param>
+        /// <param name="planet">目标天体</param>
+        /// <param name="peAKm">捕获目标近心点高度 (km)</param>
+        /// <param name="apAKm">捕获目标远心点高度 (km)</param>
+        /// <param name="flybyOnly">若为 true 则仅做飞掠无轨道捕获机动</param>
+        /// <returns>捕获制动机动 ΔV (km/s)</returns>
         public static double CalculateArrivalInsertionDeltaV(double vInfArrKms, SolarPlanet planet, double peAKm, double apAKm, bool flybyOnly) {
             if (flybyOnly || planet == null || planet.Mu <= 0) return 0.0;
             return PykepNative.CalculateArrivalInsertionDeltaV(vInfArrKms, planet.Mu, planet.RadiusKm, peAKm, apAKm, false);
@@ -867,6 +884,9 @@ namespace KSPGMAT.MGA {
             return resultList;
         }
 
+        /// <summary>
+        /// 填充高阶航天动力学诊断与扩展特征数据 (MEE、劳登主矢量、B平面协方差、帕累托前沿等)
+        /// </summary>
         private static void PopulateAdvancedAstrodynamics(MGASolution sol, double[] genome, List<string> fullChain, MGAConfig config) {
             if (sol == null || sol.Legs == null || sol.Legs.Count == 0 || config == null) return;
 
@@ -961,6 +981,9 @@ namespace KSPGMAT.MGA {
             }
         }
 
+        /// <summary>
+        /// 将 C++ 原生导出的 NativeMGA1DSMSolution 结构体反序列化为托管 MGASolution 实体对象
+        /// </summary>
         private static MGASolution MapNative1DSMSolution(NativeMGA1DSMSolution nSol, double startUT, List<string> fullChain, MGAConfig config) {
             var sol = new MGASolution {
                 DepartureUT = startUT,
@@ -1043,6 +1066,9 @@ namespace KSPGMAT.MGA {
             return sol;
         }
 
+        /// <summary>
+        /// 将 C++ 原生导出的标准 NativeMGASolution 结构体反序列化为托管 MGASolution 实体对象
+        /// </summary>
         private static MGASolution MapNativeSolution(NativeMGASolution nSol, double startUT, List<string> fullChain, MGAConfig config) {
             var sol = new MGASolution {
                 DepartureUT = startUT,
@@ -1121,6 +1147,9 @@ namespace KSPGMAT.MGA {
         // PUBLIC ASTRODYNAMICS WRAPPER METHODS (Pure Native Callers)
         // =====================================================================
 
+        /// <summary>
+        /// 原生调用 PyKEP 计算转移段的劳登主矢量 (Lawden Primer Vector)，评估冲量机动在时间维度上的最优性
+        /// </summary>
         public static PrimerVectorResult CalculatePrimerVector(Vector3d r1, Vector3d v1, Vector3d dv1, Vector3d dv2, double tofSec, double mu = 0) {
             if (_fnCalcPrimerVector == null || tofSec <= 0) return null;
             double[] r1Arr = new double[] { r1.x, r1.y, r1.z };
@@ -1144,6 +1173,9 @@ namespace KSPGMAT.MGA {
             return res;
         }
 
+        /// <summary>
+        /// 原生调用 PyKEP 计算双曲接近轨道的 B 平面瞄准参数 (B-Plane: B·T, B·R, 偏转角与碰撞半径)
+        /// </summary>
         public static BPlaneResult CalculateBPlane(Vector3d rRel, Vector3d vRel, double bodyMu) {
             if (_fnCalcBPlane == null || bodyMu <= 0) return null;
             double[] rArr = new double[] { rRel.x, rRel.y, rRel.z };
@@ -1162,6 +1194,9 @@ namespace KSPGMAT.MGA {
             };
         }
 
+        /// <summary>
+        /// 原生调用 PyKEP 计算中途轨道修正 (TCM) 脉冲，以纠正 B 平面目标漂移
+        /// </summary>
         public static TCMResult CalculateBPlaneTCM(Vector3d rTcm, Vector3d vTcm, double dtToEncSec, Vector3d rEncCurr, Vector3d vEncCurr, double targetBDotT, double targetBDotR, double bodyMu) {
             if (_fnCalcBPlaneTCM == null || bodyMu <= 0) return null;
             double[] rTcmArr = new double[] { rTcm.x, rTcm.y, rTcm.z };
@@ -1179,6 +1214,9 @@ namespace KSPGMAT.MGA {
             };
         }
 
+        /// <summary>
+        /// 原生调用 PyKEP 计算 B 平面误差协方差传播 (B-Plane Covariance Mapping) 与碰撞概率
+        /// </summary>
         public static BPlaneResult CalculateBPlaneCovariance(
             Vector3d r0, Vector3d v0, double dtSec, double muSun,
             double posSigmaKm, double velSigmaKms,
@@ -1216,6 +1254,9 @@ namespace KSPGMAT.MGA {
             return bp;
         }
 
+        /// <summary>
+        /// 原生调用 PyKEP 计算弱稳定性边界 (WSB) 与不变流形 (Invariant Manifold) 低能捕获节约量
+        /// </summary>
         public static LowEnergyManifoldResult CalculateManifoldCapture(
             Vector3d rEnc, Vector3d vEnc,
             Vector3d rPlanet, Vector3d vPlanet,
@@ -1250,6 +1291,9 @@ namespace KSPGMAT.MGA {
             };
         }
 
+        /// <summary>
+        /// 原生调用 PyKEP 将笛卡尔状态向量 (r, v) 转换为非奇异改化等效开普勒轨道根数 (MEE: p, f, g, h, k, L)
+        /// </summary>
         public static MEEResult CartesianToMEE(Vector3d r, Vector3d v, double mu) {
             if (_fnCartesianToMEE == null || mu <= 0) return null;
             double[] rArr = new double[] { r.x, r.y, r.z };
@@ -1259,6 +1303,9 @@ namespace KSPGMAT.MGA {
             return new MEEResult { P = mee.p, F = mee.f, G = mee.g, H = mee.h, K = mee.k, L = mee.L };
         }
 
+        /// <summary>
+        /// 原生调用 PyKEP 评估 Sims-Flanagan 低推力转移轨迹段的不匹配度 (Match Point Discrepancy)
+        /// </summary>
         public static SimsFlanaganResult EvaluateSimsFlanagan(Vector3d r1, Vector3d v1, double m0Kg, Vector3d r2, Vector3d v2, double mfGuessKg, double tofSec, double maxThrustN, double ispSec, double mu, int nSeg, double[] throttles) {
             if (_fnSimsFlanaganEvaluate == null || tofSec <= 0 || nSeg <= 0) return null;
             double[] r1Arr = new double[] { r1.x, r1.y, r1.z };
@@ -1282,6 +1329,9 @@ namespace KSPGMAT.MGA {
             return res;
         }
 
+        /// <summary>
+        /// 基于当前最优染色体生成飞行时间 (ToF) vs 速度增量 (ΔV) 的帕累托前沿权衡曲线 (Pareto Trade-off Front)
+        /// </summary>
         public static List<ParetoTradeOffPoint> GenerateParetoFront(double[] bestGenome, List<string> fullChain, MGAConfig config, int count = 9) {
             var front = new List<ParetoTradeOffPoint>();
             if (bestGenome == null || fullChain == null || fullChain.Count < 2) return front;
@@ -1339,8 +1389,14 @@ namespace KSPGMAT.MGA {
         }
 
 
+        /// <summary>
+        /// 计算两颗天体之间的经典双冲量霍曼转移时间（以天为单位）
+        /// </summary>
         public static double GetHohmannTransferDays(string fromBody, string toBody) => GetHohmannTransferTimeDays(fromBody, toBody);
 
+        /// <summary>
+        /// 计算两颗天体之间的经典霍曼转移时间（以天为单位，支持同心轨道解析与 KSP 轨道实体）
+        /// </summary>
         public static double GetHohmannTransferTimeDays(string fromBody, string toBody) {
             if (string.IsNullOrEmpty(fromBody) || string.IsNullOrEmpty(toBody) ||
                 fromBody.Equals(toBody, StringComparison.OrdinalIgnoreCase)) {
@@ -1374,6 +1430,9 @@ namespace KSPGMAT.MGA {
             return 0.0;
         }
 
+        /// <summary>
+        /// 获取给定天体到其中心天体的轨道半长轴或距心距离 (km)
+        /// </summary>
         private static double GetCbDistanceToCentral(CelestialBody cb, string central, double defaultAltKm = MGADefaults.DepartureAltitudeKm) {
             double cRadius = SolarSystemCatalog.GetPlanet(central)?.RadiusKm ?? MGADefaults.EarthRadiusKm;
             if (cb == null) return cRadius + defaultAltKm;
@@ -1387,11 +1446,17 @@ namespace KSPGMAT.MGA {
             return (cb.Radius / 1000.0) + defaultAltKm;
         }
 
+        /// <summary>
+        /// 解析转移段所依赖的共同主引力中心天体 (如太阳 Kerbol/Sun)
+        /// </summary>
         private static string ResolveTransferCentralBody(SolarPlanet p1, SolarPlanet p2) {
             if (p1 == null || p2 == null) return SolarSystemCatalog.RootStarName;
             return SolarSystemCatalog.ResolveTransferCentralBody(p1.Name, p2.Name);
         }
 
+        /// <summary>
+        /// 获取天体相对于指定中心天体的等效轨道半长轴 (SMA, km)
+        /// </summary>
         public static double GetRelativeSMA(SolarPlanet body, string centralBody, double defaultAltKm = MGADefaults.DepartureAltitudeKm) {
             double cRadius = SolarSystemCatalog.GetPlanet(centralBody)?.RadiusKm ?? MGADefaults.EarthRadiusKm;
             if (body == null) return cRadius + defaultAltKm;
@@ -1401,6 +1466,10 @@ namespace KSPGMAT.MGA {
             return (body.SMA > 0) ? body.SMA : ((body.RadiusKm > 0 ? body.RadiusKm : cRadius) + defaultAltKm);
         }
 
+        /// <summary>
+        /// 计算两颗天体之间的会合周期（Synodic Period，以天为单位）
+        /// 用于多岛差分进化 (DE) 离散会合窗口的划分与跨周期搜索
+        /// </summary>
         public static double GetSynodicPeriodDays(string fromBody, string toBody) {
             if (string.IsNullOrEmpty(fromBody) || string.IsNullOrEmpty(toBody) ||
                 fromBody.Equals(toBody, StringComparison.OrdinalIgnoreCase)) {
@@ -1638,11 +1707,11 @@ namespace KSPGMAT.MGA {
                 {
                     outTotDv = dvArr;
                     outC3 = c3Arr;
-                    Telemetry.MGAOptimizationProbe.RecordGpuExecution("DirectCompute Surrogate Porkchop", sw.Elapsed.TotalMilliseconds, totalPts, true);
+                    Telemetry.MGAPipelineTelemetryProbe.RecordGpuExecution("DirectCompute Surrogate Porkchop", sw.Elapsed.TotalMilliseconds, totalPts, true);
                     MGAStepProfiler.RecordMs("GPU批处理: DirectCompute Porkchop特征面网格", sw.Elapsed.TotalMilliseconds);
                     return true;
                 }
-                Telemetry.MGAOptimizationProbe.RecordGpuExecution("DirectCompute Surrogate Porkchop", sw.Elapsed.TotalMilliseconds, totalPts, false);
+                Telemetry.MGAPipelineTelemetryProbe.RecordGpuExecution("DirectCompute Surrogate Porkchop", sw.Elapsed.TotalMilliseconds, totalPts, false);
                 return false;
             }
             catch (Exception ex)

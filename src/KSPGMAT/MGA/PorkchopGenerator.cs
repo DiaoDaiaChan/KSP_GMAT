@@ -51,6 +51,12 @@ namespace KSPGMAT.MGA {
             public bool IsValid;
         }
 
+        /// <summary>
+        /// 根据归一化的 UV 坐标提取对应的发射时间、到达时间与 ΔV 详情
+        /// </summary>
+        /// <param name="normX">归一化 X (发射历元进度, 0~1)</param>
+        /// <param name="normY">归一化 Y (飞行时间进度, 0~1)</param>
+        /// <returns>采样点的航天力学参数结构体</returns>
         public CellInfo GetCellInfo(float normX, float normY) {
             normX = Mathf.Clamp01(normX);
             normY = Mathf.Clamp01(normY);
@@ -82,6 +88,23 @@ namespace KSPGMAT.MGA {
     }
 
     public static class PorkchopGenerator {
+        /// <summary>
+        /// 同步计算双体开普勒兰伯特转移猪排图网格 (Porkchop Grid)
+        /// </summary>
+        /// <param name="fromBody">出发天体名称 (如 "Earth" / "Kerbin")</param>
+        /// <param name="toBody">到达天体名称 (如 "Mars" / "Duna")</param>
+        /// <param name="depStartUT">搜索起始历元 (KSP UT, 秒)</param>
+        /// <param name="depSpanDays">出发搜索时间跨度 (天)</param>
+        /// <param name="tofMinDays">最小飞行时间 (天)</param>
+        /// <param name="tofMaxDays">最大飞行时间 (天)</param>
+        /// <param name="depAltKm">出发轨道高度 (km)</param>
+        /// <param name="arrAltKm">目标捕获轨道高度 (km)</param>
+        /// <param name="flybyOnly">若为 true 则仅计算飞掠过剩速度, 不含目标捕获制动 ΔV</param>
+        /// <param name="gridW">水平网格分辨率 (发射历元采样数)</param>
+        /// <param name="gridH">垂直网格分辨率 (航时采样数)</param>
+        /// <param name="onProgress">进度回调 (0.0f ~ 1.0f, 描述)</param>
+        /// <param name="forceCpu">是否强制使用 CPU 进行二体兰伯特求解 (忽略 GPU 加速)</param>
+        /// <returns>计算生成的完整猪排图网格数据</returns>
         public static PorkchopGrid ComputePorkchop(
             string fromBody, string toBody, 
             double depStartUT, double depSpanDays, 
@@ -95,6 +118,9 @@ namespace KSPGMAT.MGA {
             return ComputeInternal(fromBody, toBody, depStartUT, depSpanDays, tofMinDays, tofMaxDays, depAltKm, arrAltKm, flybyOnly, gridW, gridH, onProgress, forceCpu);
         }
 
+        /// <summary>
+        /// 异步计算双体开普勒兰伯特转移猪排图网格 (Task.Run 驱动)
+        /// </summary>
         public static async Task<PorkchopGrid> ComputePorkchopAsync(
             string fromBody, string toBody, 
             double depStartUT, double depSpanDays, 
@@ -117,6 +143,10 @@ namespace KSPGMAT.MGA {
             return grid;
         }
 
+        /// <summary>
+        /// 核心内部兰伯特猪排图计算逻辑
+        /// 针对给定的发射天体与目标天体，离散化采样 (发射时间 x 飞行时间)，求解双体兰伯特问题并提取 C3/ΔV 指标
+        /// </summary>
         private static PorkchopGrid ComputeInternal(
             string fromBody, string toBody, 
             double depStartUT, double depSpanDays, 
@@ -332,6 +362,9 @@ namespace KSPGMAT.MGA {
         }
 
         private static List<Color> _twpPalette = null;
+        /// <summary>
+        /// 获取 Transfer Window Planner (TWP) 经典渐变色彩板
+        /// </summary>
         public static List<Color> GetTWPPalette() {
             if (_twpPalette != null) return _twpPalette;
             var list = new List<Color>();
@@ -344,6 +377,11 @@ namespace KSPGMAT.MGA {
             return _twpPalette;
         }
 
+        /// <summary>
+        /// 将猪排图网格渲染为 Unity Texture2D 纹理 (支持对数刻度归一化映射)
+        /// </summary>
+        /// <param name="grid">计算好的猪排图网格数据</param>
+        /// <returns>可直接在 GUI / Material 上显示的 2D 纹理</returns>
         public static Texture2D RenderPorkchopTexture(PorkchopGrid grid) {
             int w = grid.Width;
             int h = grid.Height;

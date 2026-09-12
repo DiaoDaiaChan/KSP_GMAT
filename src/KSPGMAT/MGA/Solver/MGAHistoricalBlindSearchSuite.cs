@@ -363,8 +363,10 @@ namespace KSPGMAT.MGA.Solver
             Console.WriteLine($"   • 历史拓扑: {bCase.DepartureBody} ➔ {(bCase.HistoricalFlybySequence.Count > 0 ? string.Join(" ➔ ", bCase.HistoricalFlybySequence) + " ➔ " : "")}{bCase.DestinationBody}");
             Console.WriteLine($"==========================================================================================");
 
-            double startUT = GMATClient.ParseUtcGregorian(bCase.HistoricalLaunchStr);
-            double endUT = startUT + bCase.WindowSpanDays * 86400.0;
+            double centerUT = GMATClient.ParseUtcGregorian(bCase.HistoricalLaunchStr);
+            double halfSpanSec = (bCase.WindowSpanDays * 0.5) * 86400.0;
+            double startUT = centerUT - halfSpanSec;
+            double endUT = centerUT + halfSpanSec;
 
             // 1. 严格装配自适应盲搜配置 (FlybySequence 严格为空，不提供任何中间借力天体输入)
             var config = new MGAAdaptiveSolverConfig
@@ -673,8 +675,8 @@ namespace KSPGMAT.MGA.Solver
 
             sb.AppendLine("## 1. 历史基准 vs 纯盲搜全景对比矩阵");
             sb.AppendLine();
-            sb.AppendLine("| 任务名称 | 考核场景 | 目标天体 | 历史实际拓扑 | 算法自主盲搜拓扑 | 历史总 ΔV (m/s) | 算法考核 ΔV (m/s) | ΔV 差异 (m/s) | 历史航时 (天) | 算法航时 (天) | 拓扑符合性 | 发现评估与结论 |");
-            sb.AppendLine("| :--- | :---: | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :---: | :--- |");
+            sb.AppendLine("| 任务名称 | 考核场景 | 目标天体 | 历史实际拓扑 | 算法自主盲搜拓扑 | 历史总 ΔV (m/s) | 算法考核 ΔV (m/s) | ΔV 差异 (m/s) | 历史航时 (天) | 算法航时 (天) | 拓扑符合性 | 约束合规 | 发现评估与结论 |");
+            sb.AppendLine("| :--- | :---: | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :---: | :---: | :--- |");
 
             foreach (var r in results)
             {
@@ -686,8 +688,20 @@ namespace KSPGMAT.MGA.Solver
                 string diffDv = r.BestSolution != null ? $"{(r.SubjectDvMs - r.Case.HistoricalTotalDvMs):+0;-0;0}" : "N/A";
                 string histTof = $"{r.Case.HistoricalFlightDays:F0}";
                 string algoTof = r.BestSolution != null ? $"{r.BestSolution.TotalFlightDays:F0}" : "N/A";
-                
+
                 string match;
+
+                // 合规性标注: 工质合规 + 航时合规 (历史×1.5 容差)
+                string compliance = "—";
+                if (r.BestSolution != null)
+                {
+                    bool dvOk = r.Case.VesselMaxDeltaVMs <= 0 || r.SubjectDvMs <= r.Case.VesselMaxDeltaVMs * 1.05;
+                    bool tofOk = r.Case.HistoricalFlightDays <= 0 || r.BestSolution.TotalFlightDays <= r.Case.HistoricalFlightDays * 1.5;
+                    if (dvOk && tofOk) compliance = "✅ 合规";
+                    else if (!dvOk && !tofOk) compliance = $"⚠️ 工质+航时超 (Dv×{(r.SubjectDvMs / Math.Max(r.Case.VesselMaxDeltaVMs, 1)) * 100:F0}%, Tof×{(r.BestSolution.TotalFlightDays / Math.Max(r.Case.HistoricalFlightDays, 1)) * 100:F0}%)";
+                    else if (!dvOk) compliance = $"⚠️ 工质超 (×{(r.SubjectDvMs / Math.Max(r.Case.VesselMaxDeltaVMs, 1)) * 100:F0}%)";
+                    else compliance = $"⚠️ 航时超 (×{(r.BestSolution.TotalFlightDays / Math.Max(r.Case.HistoricalFlightDays, 1)) * 100:F0}%)";
+                }
                 if (r.MatchedHistoricalTopology)
                 {
                     match = "🎯 完全吻合";
@@ -703,7 +717,7 @@ namespace KSPGMAT.MGA.Solver
 
                 string eval = r.EvaluationTag ?? "N/A";
 
-                sb.AppendLine($"| **{r.Case.MissionName}** | {scen} | {r.Case.DestinationBody} | {histTopo} | `{algoTopo}` | {histDv} | {algoDv} | {diffDv} | {histTof} | {algoTof} | {match} | **{eval}** |");
+                sb.AppendLine($"| **{r.Case.MissionName}** | {scen} | {r.Case.DestinationBody} | {histTopo} | `{algoTopo}` | {histDv} | {algoDv} | {diffDv} | {histTof} | {algoTof} | {match} | {compliance} | **{eval}** |");
             }
             sb.AppendLine();
 

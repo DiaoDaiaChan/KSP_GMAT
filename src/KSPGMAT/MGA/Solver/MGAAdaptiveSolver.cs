@@ -143,6 +143,10 @@ namespace KSPGMAT.MGA
         public double FlybySafeAtmosphereMarginKm { get; set; } = 50.0;
         public bool EnforceSafeFlybyMargin { get; set; } = true; // 强制 3-sigma 安全防撞门禁
 
+        /// <summary>
+        /// 深拷贝当前求解配置对象，以便在分阶段优化中独立修改超参数
+        /// </summary>
+        /// <returns>配置副本</returns>
         public MGAAdaptiveSolverConfig Clone()
         {
             var c = (MGAAdaptiveSolverConfig)this.MemberwiseClone();
@@ -166,7 +170,7 @@ namespace KSPGMAT.MGA
             c.DepartureToFMinFactor = this.DepartureToFMinFactor;
             c.DepartureToFMaxFactor = this.DepartureToFMaxFactor;
             c.ResonantMaxOffsetDays = this.ResonantMaxOffsetDays;
-            c.LegToFBounds = new List<(double, double)>(this.LegToFBounds);
+            c.LegToFBounds = (this.LegToFBounds != null) ? new List<(double, double)>(this.LegToFBounds) : null;   // null 防护: 避免对 null 源抛 ArgumentNullException
             c.EnableLowEnergyManifoldCapture = this.EnableLowEnergyManifoldCapture;
             c.EnableBPlaneCovarianceAnalysis = this.EnableBPlaneCovarianceAnalysis;
             c.InitialPosSigmaKm = this.InitialPosSigmaKm;
@@ -176,6 +180,11 @@ namespace KSPGMAT.MGA
             return c;
         }
 
+        /// <summary>
+        /// 从全局通用的 MGAConfig 结构构建高内聚的 MGAAdaptiveSolverConfig 实例
+        /// </summary>
+        /// <param name="cfg">全局 MGA 配置对象</param>
+        /// <returns>自适应求解器专用配置对象</returns>
         public static MGAAdaptiveSolverConfig FromMGAConfig(MGAConfig cfg)
         {
             double maxTof = (cfg.MaxToFDays != null && cfg.MaxToFDays.Count > 0) ? cfg.MaxToFDays.Sum() : -1.0;
@@ -247,7 +256,7 @@ namespace KSPGMAT.MGA
     /// </summary>
     public static class MGAAdaptiveSolver
     {
-        public static MGAMathDiagnosticReport LastDiagnosticReport { get; set; }
+        public static Telemetry.MGAPipelineTelemetryProbe.ReportData LastPipelineReport { get; set; }
 
         /// <summary>
         /// 判定是否为"深井爬升"任务: 出发内行星 → 途经显著内深势阱天体(如 Mercury) → 到达远外行星。
@@ -289,6 +298,13 @@ namespace KSPGMAT.MGA
             return false;
         }
 
+        /// <summary>
+        /// MGA 四阶段流水线同步求解核心入口 (Stage 1 拓扑选择 -> Stage 2 窗口筛选 -> Stage 3 DE寻优 -> Stage 4 物理自愈)
+        /// </summary>
+        /// <param name="config">自适应求解配置</param>
+        /// <param name="ct">异步取消令牌</param>
+        /// <param name="onProgress">进度回调委派 (进度百分比 0~100, 阶段状态文本)</param>
+        /// <returns>收敛并经过自愈校验的最优 MGA 轨迹解集合</returns>
         public static List<MGASolution> Solve(
             MGAAdaptiveSolverConfig config,
             CancellationToken ct,
@@ -296,13 +312,17 @@ namespace KSPGMAT.MGA
         {
             if (config == null) return new List<MGASolution>();
 
-            MGAStepProfiler.Reset();
-            MGAOptimizationProbe.Reset();
-            var reportSw = System.Diagnostics.Stopwatch.StartNew();
-            var mathReport = new MGAMathDiagnosticReport();
-            LastDiagnosticReport = mathReport;
+            // 代理模型权重按需加载: 未训练 (或权重文件缺失) 时推理期自动退化为解析开普勒判据,
+            // 属安全状态 —— 绝不再使用未经训练的随机权重参与任何判断。
+            KSPGMAT.MGA.AI.MGAPhysicsSurrogateNetwork.TryLoadDefaultWeights();
 
-            mathReport.Mission = new MGAMathDiagnosticReport.MissionHeader
+            MGAStepProfiler.Reset();
+            Telemetry.MGAPipelineTelemetryProbe.Reset();
+            var reportSw = System.Diagnostics.Stopwatch.StartNew();
+            var mathReport = new Telemetry.MGAPipelineTelemetryProbe.ReportData();
+            LastPipelineReport = mathReport;
+
+            mathReport.Mission = new Telemetry.MGAPipelineTelemetryProbe.MissionHeader
             {
                 DeparturePlanet = config.DeparturePlanet,
                 ArrivalPlanet = config.ArrivalPlanet,
@@ -323,7 +343,18 @@ namespace KSPGMAT.MGA
             else
             {
                 var destP = SolarSystemCatalog.GetPlanet(config.ArrivalPlanet);
-                bool isGiant = destP != null && (destP.Mu >= 5e6 || destP.RadiusKm >= 20000.0);
+                // 【重构】巨行星判别由"绝对 μ/半径阈值"改为**系统内自标定的无量纲判据**:
+                // 该天体一次无动力飞掠的日心速度增益, 是否显著高于系统内全部天体的鲁棒上界
+                // (median + 2·MAD)。原 `Mu >= 5e6 || RadiusKm >= 20000` 是以 km³/s² 与 km
+                // 标定的绝对阈值, 仅对 Sol 系成立, 换 Kerbol / JNSQ / 自建星系即失效。
+                double muCForGiant = SolarSystemCatalog.GetCentralMu(config.CentralBody ?? "Sun");
+                if (muCForGiant <= 0) muCForGiant = SolarSystemCatalog.SunMu;
+                var depPForGiant = SolarSystemCatalog.GetPlanet(config.DeparturePlanet);
+                double vInfForGiant = MGAPhysicalScales.HohmannVInfKms(muCForGiant,
+                    (depPForGiant != null && depPForGiant.SMA > 0) ? depPForGiant.SMA : 1.496e8,
+                    (destP != null && destP.SMA > 0) ? destP.SMA : 1.496e8);
+                bool isGiant = MGAPhysicalScales.ClassifyGiantBySystemDistribution(
+                    destP, vInfForGiant, muCForGiant, SolarSystemCatalog.GetAvailablePlanets());
                 if (config.ArrivalOrbitType == MGAArrivalOrbitType.HighlyElliptic || (config.AutoAdaptGiantPlanetEllipse && isGiant))
                 {
                     if (config.ArrApKm <= config.ArrPeKm)
@@ -364,12 +395,7 @@ namespace KSPGMAT.MGA
                 }
                 if (sequences != null && sequences.Count > 0)
                 {
-                    Console.WriteLine($"[DEBUG] GenerateOptimalFlybySequences returned {sequences.Count} sequences:");
-                    for (int i = 0; i < sequences.Count; i++)
-                    {
-                        Console.WriteLine($"   seq[{i}]: {(sequences[i].Count > 0 ? string.Join(" ➔ ", sequences[i]) : "(Direct)")}");
-                    }
-                    int poolCapacity = Math.Max(config.MaxCandidateTopologies > 0 ? config.MaxCandidateTopologies : 8, Math.Min(16, sequences.Count));
+                    int poolCapacity = Math.Max(config.MaxCandidateTopologies > 0 ? config.MaxCandidateTopologies : 8, Math.Min(24, sequences.Count));
                     int maxChainsToEval = Math.Min(poolCapacity, sequences.Count);
                     for (int c = 0; c < maxChainsToEval; c++)
                     {
@@ -404,7 +430,7 @@ namespace KSPGMAT.MGA
                 int rk = 1;
                 foreach (var ec in MGAEphemerisReachabilityAnalyzer.LastEvaluatedChains)
                 {
-                    var topoEntry = new MGAMathDiagnosticReport.TopologyCandidateEntry
+                    var topoEntry = new Telemetry.MGAPipelineTelemetryProbe.TopologyCandidateEntry
                     {
                         Rank = rk++,
                         SequenceSignature = string.Join("-", ec.FlybyChain),
@@ -421,7 +447,7 @@ namespace KSPGMAT.MGA
                         int legIdx = 1;
                         foreach (var lr in ec.LegReports)
                         {
-                            topoEntry.Legs.Add(new MGAMathDiagnosticReport.LegReachabilityMetric
+                            topoEntry.Legs.Add(new Telemetry.MGAPipelineTelemetryProbe.LegReachabilityMetric
                             {
                                 LegIndex = legIdx++,
                                 FromBody = lr.FromBody,
@@ -458,6 +484,15 @@ namespace KSPGMAT.MGA
             int maxOuterTopo = (Environment.ProcessorCount >= 16) ? 2 : 1;
             int topoParallel = Math.Min(totalTopos, maxOuterTopo);
             int perTopoWindowParallel = Math.Max(1, Environment.ProcessorCount / Math.Max(1, topoParallel));
+
+            // 纯解析开普勒 Vis-Viva 霍曼物理基准用于健康度门禁 (0 源码硬编码，对任意恒星系通用)。
+            // 提前至并行循环外计算一次: 逐链自愈 (Stage 4 per-topology) 需要在链内使用同一基准,
+            // 而它仅依赖 config 的出发/到达天体, 与具体拓扑无关, 无需每条链重算。
+            var (depHohmann, totHohmann) = MGAMCTSTopologySelector.CalculateUniversalHohmannBenchmark(
+                config.DeparturePlanet,
+                config.ArrivalPlanet,
+                config.DepPeKm,
+                config.ArrPeKm);
 
             Parallel.For(0, totalTopos, new ParallelOptions { MaxDegreeOfParallelism = topoParallel }, tIdx =>
             {
@@ -561,7 +596,7 @@ namespace KSPGMAT.MGA
                             // 仅首个拓扑填充一次，避免拓扑并发下重复/竞态写入
                             if (mathReport.SearchBounds.Count == 0)
                             {
-                                mathReport.SearchBounds.Add(new MGAMathDiagnosticReport.LegBoundsMetric
+                                mathReport.SearchBounds.Add(new Telemetry.MGAPipelineTelemetryProbe.LegBoundsMetric
                                 {
                                     LegIndex = lb + 1,
                                     LegName = $"{fBody} ➔ {tBody}",
@@ -613,8 +648,12 @@ namespace KSPGMAT.MGA
 
                 if (rawSols != null && rawSols.Count > 0)
                 {
+                    // 确定性次级键: 拓扑并行时 rawSols 来自多线程, 并列解顺序不定会改变 topoBest,
+                    // 进而改变全局最优历元的选取。次级键全部由解自身物理量导出。
                     var topoBest = rawSols
                         .OrderBy(x => (subCfg.LaunchDeltaVCeilingMs > 0 && x.LaunchDeltaVKms * 1000.0 > subCfg.LaunchDeltaVCeilingMs * 1.05 ? 1e6 : 0.0) + x.TotalDeltaVKms)
+                        .ThenBy(x => Math.Round(x.DepartureUT * 1000.0))
+                        .ThenBy(x => Math.Round(x.TotalFlightDays * 10000.0))
                         .FirstOrDefault();
                     // 共享聚合态 (globalBest / mathReport.IslandRecords / allRawSolutions) 统一锁保护：
                     // 拓扑层并行后这些可写集合/变量跨线程访问，必须串行化，避免竞态与 List 并发破坏。
@@ -634,9 +673,9 @@ namespace KSPGMAT.MGA
                         }
 
                         int islIdx = 1;
-                        foreach (var s in rawSols.OrderBy(x => x.TotalDeltaVKms).Take(2))
+                        foreach (var s in rawSols.Deterministic().Take(2))
                         {
-                            mathReport.IslandRecords.Add(new MGAMathDiagnosticReport.IslandConvergenceRecord
+                            mathReport.IslandRecords.Add(new Telemetry.MGAPipelineTelemetryProbe.IslandConvergenceRecord
                             {
                                 TopologyIndex = tIdx + 1,
                                 TopologyName = topoSummary,
@@ -647,6 +686,15 @@ namespace KSPGMAT.MGA
                                 DsmDvMs = s.TotalDsmDeltaVKms * 1000.0
                             });
                         }
+
+                        // [优化] 逐链自愈 (Stage 4 per-topology 阶梯化调度):
+                        // 依据: 标注端逐链 Solve() 时每条链都走一次 AuditAndHeal, 实测可将
+                        //   galileo VEEGA 由 11311.1 m/s 改善到 6430.1 m/s;
+                        // 优化阶梯: QD Top-8 席位享有完整自愈算力(Pop60, Gen120),
+                        // 9-16 席位采用快速自愈层(Pop36, Gen50), 兼顾深度打靶与耗时节省。
+                        bool fastTier = (tIdx >= 8);
+                        var healedSols = MGASelfHealingEngine.AuditAndHeal(subCfg, rawSols, depHohmann, totHohmann, ct, fastTier);
+                        if (healedSols != null && healedSols.Count > 0) rawSols = healedSols;
 
                         foreach (var s in rawSols)
                         {
@@ -677,12 +725,7 @@ namespace KSPGMAT.MGA
 
             onProgress?.Invoke(0.85f, "Stage 4: 物理基线校验与智能数值自愈门禁...");
 
-            // 纯解析开普勒 Vis-Viva 霍曼物理基准用于健康度门禁 (0 源码硬编码，对任意恒星系通用)
-            var (depHohmann, totHohmann) = MGAMCTSTopologySelector.CalculateUniversalHohmannBenchmark(
-                config.DeparturePlanet, 
-                config.ArrivalPlanet, 
-                config.DepPeKm, 
-                config.ArrPeKm);
+            // (霍曼基准已在并行循环外计算, 见上方 depHohmann/totHohmann)
 
             List<MGASolution> auditedSolutions;
             using (MGAStepProfiler.Scope("Stage 4: 物理基线校验与数值自愈"))
@@ -779,7 +822,7 @@ namespace KSPGMAT.MGA
 
             if (finalSolutions.Count == 0 && auditedSolutions.Count > 0)
             {
-                var bestAudited = auditedSolutions.OrderBy(s => s.TotalDeltaVKms).First();
+                var bestAudited = auditedSolutions.Deterministic().First();
                 finalSolutions.Add(bestAudited);
             }
 
@@ -815,7 +858,7 @@ namespace KSPGMAT.MGA
 
                         bool isPhys = l.FlybyDeltaVKms < 0.001 && l.FlybyTurningAngleDeg <= (maxTurn + 1.0) && l.FlybyPeriapsisRadiusKm >= (rSafe - 100.0);
 
-                        mathReport.BestSolutionLegs.Add(new MGAMathDiagnosticReport.LegMechanicsRecord
+                        mathReport.BestSolutionLegs.Add(new Telemetry.MGAPipelineTelemetryProbe.LegMechanicsRecord
                         {
                             LegIndex = i + 1,
                             FromBody = l.FromBody,
@@ -852,13 +895,16 @@ namespace KSPGMAT.MGA
             // 打印全流程细粒度步骤耗时排名与最大瓶颈诊断
             MGAStepProfiler.PrintSummary();
 
-            // 打印新增加速与自适应优化效能综合审计报表
-            MGAOptimizationProbe.PrintEfficiencyReport();
+            // 打印新版四阶段管线优化探针报表
+            Telemetry.MGAPipelineTelemetryProbe.PrintEfficiencyReport();
 
             onProgress?.Invoke(1.0f, $"自适应求解完成！输出 {finalSolutions.Count} 个 NASA 级精选方案");
             return finalSolutions;
         }
 
+        /// <summary>
+        /// MGA 四阶段流水线异步求解入口 (在 Task.Run 独立线程池中执行 Solve，避免阻塞 UI 线程)
+        /// </summary>
         public static Task<List<MGASolution>> SolveAsync(
             MGAAdaptiveSolverConfig config,
             CancellationToken ct,
@@ -989,8 +1035,8 @@ namespace KSPGMAT.MGA
             // 6. 聚合与帕累托双轨排序 (最省 vs 最快，优先全航段可行解)
             var feasibleSols = allSols.Where(s => s.AllLegsFeasible).ToList();
             var candidatePool = (feasibleSols.Count > 0) ? feasibleSols : allSols.ToList();
-            var rankedFuel = candidatePool.OrderBy(s => s.TotalDeltaVKms).ToList();
-            var rankedTime = candidatePool.OrderBy(s => s.TotalFlightDays).ToList();
+            var rankedFuel = candidatePool.Deterministic().ToList();
+            var rankedTime = candidatePool.DeterministicByFlightDays().ToList();
 
             result.AllRankedSolutions = rankedFuel;
             result.BestSolution = rankedFuel.FirstOrDefault();
@@ -1053,6 +1099,9 @@ namespace KSPGMAT.MGA
             return true;
         }
 
+        /// <summary>
+        /// 全自动自主求解异步门面方法 (包装 SolveAutonomous 至后台线程)
+        /// </summary>
         public static Task<MGAAutonomousResult> SolveAutonomousAsync(
             string departurePlanet,
             string arrivalPlanet,
@@ -1113,6 +1162,10 @@ namespace KSPGMAT.MGA
             return MGADifferentialEvolution.RunWindow(config, startUT, endUT, onProgress, ct);
         }
 
+        /// <summary>
+        /// 全局多段差分进化寻优器 (基于 PyKEP 原生全流程评估，自动按天体公转/会合周期分窗并发寻优，杜绝单月早熟坍缩)
+        /// 异步门面包装方法
+        /// </summary>
         public static Task<List<MGASolution>> OptimizeAsync(MGAConfig config, Action<float, string> onProgress = null, CancellationToken ct = default) {
             return Task.Run(() => Optimize(config, onProgress, ct), ct);
         }
@@ -1196,9 +1249,11 @@ namespace KSPGMAT.MGA
             await Task.WhenAll(tasks);
 
             // 结果汇总并按总 ΔV 严格升序排序 (最优解排在最前面)
+            // 确定性排序: ConcurrentBag 的枚举顺序随线程调度变化, 仅按 ΔV 排序会使
+            // 近并列解的顺序不确定, 破坏"固定种子可复现"的前提 (实测 cassini 两次差 78.7 m/s)。
             var sortedList = aggregatedSolutions
                 .Where(s => s != null && !double.IsNaN(s.TotalDeltaVKms) && s.TotalDeltaVKms < 1e7)
-                .OrderBy(s => s.TotalDeltaVKms)
+                .Deterministic()
                 .ToList();
 
             var finalSolutions = new List<MGASolution>();
@@ -1242,6 +1297,9 @@ namespace KSPGMAT.MGA
             return MGAMCTSTopologySelector.GenerateCandidateSequences(depBody, destBody, maxSwingBys, maxResonances, maxBackLegs, maxBackSpacing);
         }
 
+        /// <summary>
+        /// 基于行星轨道内外侧拓扑与物理约束自动生成候选借力序列（单序列入口包装）
+        /// </summary>
         public static List<List<string>> GenerateCandidateSequences(MGAConfig config) {
             return MGAMCTSTopologySelector.GenerateCandidateSequences(config);
         }

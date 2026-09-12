@@ -21,28 +21,59 @@ namespace KSPGMAT.MGA
     /// </summary>
     public static class MGASelfHealingEngine
     {
+        /// <summary>
+        /// 劳登引向量极值容差。理论基础: 最优脉冲布局要求 |p|max &lt;= 1 (Lawden 条件),
+        /// 故超出 1 即说明存在更省的脉冲排布。10% 为数值/建模误差留出的工程松弛。
+        /// 取代原内联的 1.25 (25% 松弛, 无依据)。
+        /// </summary>
+        public const double PrimerVectorLawdenTolerance = 1.10;
+
+        /// <summary>
+        /// 自愈候选的预算接纳松弛系数 (无量纲): 略超预算但在该系数内的解仍视为可用。
+        /// 取代原内联的 1.05。
+        /// </summary>
+        public const double BudgetAcceptanceSlack = 1.05;
+
+        /// <summary>
+        /// 执行轨迹解集的物理健康度审计与智能数值自愈 (Audit and Self-Healing)
+        /// 检验霍曼基准、近拱点净空、劳登主矢量极值与速度增量预算；对存在违例或局部次优的解触发高精打靶修复
+        /// </summary>
+        /// <param name="config">自适应求解配置</param>
+        /// <param name="candidates">DE 输出的候选解集</param>
+        /// <param name="nominalHohmannDepKms">理论基准霍曼出发速度增量 (km/s)</param>
+        /// <param name="nominalHohmannTotKms">理论基准霍曼总速度增量 (km/s)</param>
+        /// <param name="ct">异步取消令牌</param>
+        /// <param name="fastTier">是否为快速初筛层级 (若为 true 则跳过代价高昂的二次打靶)</param>
+        /// <returns>修复并排序后的高保真合规解集</returns>
         public static List<MGASolution> AuditAndHeal(
             MGAAdaptiveSolverConfig config,
             List<MGASolution> candidates,
             double nominalHohmannDepKms,
             double nominalHohmannTotKms,
-            CancellationToken ct)
+            CancellationToken ct,
+            bool fastTier = false)
         {
             if (candidates == null || candidates.Count == 0) return new List<MGASolution>();
 
             var healedList = new List<MGASolution>();
 
-            // 物理门禁警戒线
-            double depCeilingKms = (nominalHohmannDepKms > 0) 
-                ? nominalHohmannDepKms * config.HohmannEnergyCeilingFactor 
-                : 6.0;
-            double totCeilingKms = (nominalHohmannTotKms > 0) 
-                ? nominalHohmannTotKms * config.HohmannEnergyCeilingFactor 
-                : 10.0;
+            // 物理门禁警戒线: 优先以"飞船总工质预算"为基准 (任务真实约束);
+            // 未给预算时退化为霍曼基准 × 工程裕度因子 (HohmannEnergyCeilingFactor, L4 策略)。
+            // 【重构】原实现两道线均只与霍曼比较, 与任务预算脱钩; 且缺省值 6.0/10.0 为绝对 km/s。
+            double budgetKms = (config.ConstrainByVesselDeltaV && config.VesselMaxDeltaVMs > 0)
+                ? config.VesselMaxDeltaVMs / 1000.0
+                : 0.0;
+            double depCeilingKms = (budgetKms > 0)
+                ? budgetKms
+                : ((nominalHohmannDepKms > 0) ? nominalHohmannDepKms * config.HohmannEnergyCeilingFactor : nominalHohmannDepKms);
+            double totCeilingKms = (budgetKms > 0)
+                ? budgetKms
+                : ((nominalHohmannTotKms > 0) ? nominalHohmannTotKms * config.HohmannEnergyCeilingFactor : nominalHohmannTotKms);
 
             var bestSol = candidates[0];
             bool isHighEnergyTrap = (bestSol.LaunchDeltaVKms > depCeilingKms || bestSol.TotalDeltaVKms > totCeilingKms);
-            bool hasLawdenViolation = (bestSol.PrimerVector != null && !bestSol.PrimerVector.IsOptimal && bestSol.PrimerVector.MaxPMag > 1.25);
+            bool hasLawdenViolation = (bestSol.PrimerVector != null && !bestSol.PrimerVector.IsOptimal
+                                       && bestSol.PrimerVector.MaxPMag > PrimerVectorLawdenTolerance);
             
             // 检查 B 平面 3-sigma 安全防撞风险
             bool hasBPlaneSafetyViolation = false;
@@ -149,8 +180,8 @@ namespace KSPGMAT.MGA
                 MaxDsmDeltaVMs = config.MaxDsmDeltaVMs,
                 LaunchDeltaVCeilingMs = config.LaunchDeltaVCeilingMs,
                 LambertMaxRevs = config.LambertMaxRevs,
-                PopulationSize = Math.Max(60, config.PopulationSize),
-                MaxGenerations = Math.Max(120, config.MaxGenerations),
+                PopulationSize = fastTier ? Math.Max(36, config.PopulationSize / 2) : Math.Max(60, config.PopulationSize),
+                MaxGenerations = fastTier ? Math.Max(50, config.MaxGenerations / 2) : Math.Max(120, config.MaxGenerations),
                 MinToFDays = healBounds.Select(b => b.MinDays).ToList(),
                 MaxToFDays = healBounds.Select(b => b.MaxDays).ToList()
             };
@@ -167,13 +198,13 @@ namespace KSPGMAT.MGA
             var healedSols = MGADifferentialEvolution.RunWindow(fineCfg, healStartUT, healEndUT, null, ct);
             if (healedSols != null && healedSols.Count > 0)
             {
-                foreach (var hs in healedSols.OrderBy(s => s.TotalDeltaVKms))
+                foreach (var hs in healedSols.Deterministic())
                 {
                     if (hs.AllLegsFeasible)
                     {
                         bool isStrictlyBetter = (hs.TotalDeltaVKms < bestSol.TotalDeltaVKms);
-                        bool withinBudget = (auditBudgetMs >= 1e8 || hs.TotalDeltaVKms * 1000.0 <= auditBudgetMs * 1.05)
-                            && (auditDsmBudgetMs >= 1e8 || (hs.TotalDsmDeltaVKms * 1000.0 <= auditDsmBudgetMs * 1.05 && (hs.Legs == null || !hs.Legs.Any(l => l.DSM != null && l.DSM.DeltaVMs > auditDsmBudgetMs * 1.05))));
+                        bool withinBudget = (auditBudgetMs >= 1e8 || hs.TotalDeltaVKms * 1000.0 <= auditBudgetMs * BudgetAcceptanceSlack)
+                            && (auditDsmBudgetMs >= 1e8 || (hs.TotalDsmDeltaVKms * 1000.0 <= auditDsmBudgetMs * BudgetAcceptanceSlack && (hs.Legs == null || !hs.Legs.Any(l => l.DSM != null && l.DSM.DeltaVMs > auditDsmBudgetMs * BudgetAcceptanceSlack))));
                         if (withinBudget || isStrictlyBetter)
                         {
                             healedList.Add(hs);
@@ -186,7 +217,7 @@ namespace KSPGMAT.MGA
             if (healedList.Count > 0 && healedList[0].TotalDeltaVKms < bestSol.TotalDeltaVKms)
             {
                 double savedKms = bestSol.TotalDeltaVKms - healedList[0].TotalDeltaVKms;
-                MGAOptimizationProbe.AiMetrics.RecordSelfHealing(true, savedKms);
+                Telemetry.MGAPipelineTelemetryProbe.AiMetrics.RecordSelfHealing(true, savedKms);
                 KSPGMATLog.Info($"[MGASelfHealing] ✅ 自愈成功！总机动从 {bestSol.TotalDeltaVKms*1000:F0} m/s 降至 {healedList[0].TotalDeltaVKms*1000:F0} m/s");
                 foreach (var old in candidates)
                 {
@@ -198,7 +229,7 @@ namespace KSPGMAT.MGA
                 return healedList;
             }
 
-            MGAOptimizationProbe.AiMetrics.RecordSelfHealing(false, 0.0);
+            Telemetry.MGAPipelineTelemetryProbe.AiMetrics.RecordSelfHealing(false, 0.0);
             return candidates;
         }
     }

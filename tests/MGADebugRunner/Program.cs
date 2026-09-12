@@ -38,6 +38,9 @@ namespace MGADebugRunner {
             bool isScenario9Only = false;
             bool isHistoryOnly = false;
             bool isBlindSearchOnly = false;
+            bool isLabelOnly = false;
+            string labelFilter = null;
+            bool trainSurrogateOnly = false;
             string blindFilter = null;
             bool isTopoDiagOnly = false;
             string topoFilter = null;
@@ -79,6 +82,18 @@ namespace MGADebugRunner {
                         }
                         continue;
                     }
+                    if (clean == "label" || clean == "truth-label" || clean == "label-chains") {
+                        isLabelOnly = true;
+                        if (i + 1 < args.Length && !args[i + 1].StartsWith("-") && !args[i + 1].StartsWith("/")) {
+                            labelFilter = args[i + 1].Trim();
+                            i++;
+                        }
+                        continue;
+                    }
+                    if (clean == "train-surrogate" || clean == "train" || clean == "ml" || clean == "surrogate") {
+                        trainSurrogateOnly = true;
+                        continue;
+                    }
                     if (clean == "history" || clean == "historical" || clean == "hist" || clean == "h") {
                         isHistoryOnly = true;
                         continue;
@@ -118,6 +133,16 @@ namespace MGADebugRunner {
 
             if (isTopoDiagOnly) {
                 DiagnoseHistoricalTopologies(topoFilter);
+                return;
+            }
+
+            if (trainSurrogateOnly) {
+                RunSurrogateTraining();
+                return;
+            }
+
+            if (isLabelOnly) {
+                Modules.ChainTruthLabelingModule.Run(labelFilter);
                 return;
             }
 
@@ -3036,7 +3061,7 @@ Propagate Prop(Sat) {Sat.ElapsedSecs = 86400};
                     Console.WriteLine($"    • 全程历时: {exSol.TotalFlightDays:F1} 天 ({exSol.TotalFlightDays / 365.25:F2} 年) ✅");
                     PrintDetailedLegs(exSol);
                     // 打印数学层面诊断报表摘要
-                    MGAAdaptiveSolver.LastDiagnosticReport?.PrintConsoleSummary();
+                    MGAAdaptiveSolver.LastPipelineReport?.PrintConsoleSummary();
 
                     bool launchBudgetOk = exSol.LaunchDeltaVKms * 1000.0 <= 3800.0;
                     bool totalBudgetOk = exSol.TotalDeltaVKms * 1000.0 <= 4000.0;
@@ -3058,7 +3083,7 @@ Propagate Prop(Sat) {Sat.ElapsedSecs = 86400};
                         Console.WriteLine($"      MeetsHardDvGate={resBest.MeetsHardDvGate} | 发射超支={resBest.LaunchOverBudgetMs:F1} m/s | DSM超支={resBest.DsmOverBudgetMs:F1} m/s | 总ΔV超支={resBest.TotalOverBudgetMs:F1} m/s");
                         PrintDetailedLegs(resBest);
                     }
-                    MGAAdaptiveSolver.LastDiagnosticReport?.PrintConsoleSummary();
+                    MGAAdaptiveSolver.LastPipelineReport?.PrintConsoleSummary();
                     Console.WriteLine("        ❌ 求解未找到可行解（未落入 4000 m/s 硬门禁）！");
                     return false;
                 }
@@ -3175,6 +3200,54 @@ Propagate Prop(Sat) {Sat.ElapsedSecs = 86400};
             }
 
             Console.WriteLine($"\n🏛️ 历史任务力学调试器运行完毕: {passed}/{total} 任务力学验证完成！\n");
+        }
+
+        /// <summary>
+        /// 机器学习代理模型训练入口: 用原生 kep3 Lambert 求解器生成监督数据并训练双头网络。
+        /// 质量门禁: AUC >= 0.65 且 准确率 >= 0.60 且 R^2 >= 0.50; 未达门禁则权重标记 trained=0,
+        /// 推理期自动退回解析开普勒判据 (安全状态)。
+        /// </summary>
+        public static void RunSurrogateTraining() {
+            Console.WriteLine("==========================================================================================");
+            Console.WriteLine("  机器学习代理模型训练管线 (MGASurrogateTrainer)");
+            Console.WriteLine("  数据标签 100% 由原生 ESA kep3 Lambert 求解器生成 (零托管拟合)");
+            Console.WriteLine("==========================================================================================");
+
+            string weightPath = KSPGMAT.MGA.AI.MGASurrogateTrainer.DefaultWeightPath;
+            string csvPath = System.IO.Path.ChangeExtension(weightPath, ".csv");
+
+            var samples = KSPGMAT.MGA.AI.MGASurrogateTrainer.GenerateSamples(4000, 20260910,
+                (prog, msg) => { if (!string.IsNullOrEmpty(msg)) Console.WriteLine("  " + msg); });
+
+            if (samples == null || samples.Count < 64) {
+                Console.WriteLine("样本不足 (需原生 kep3 可用)。");
+                return;
+            }
+
+            int pos = 0;
+            foreach (var smp in samples) if (smp.Feasibility > 0.5) pos++;
+            Console.WriteLine($"  样本 {samples.Count} 条 | 正类(可行) {pos} ({100.0 * pos / samples.Count:F1}%) | 负类 {samples.Count - pos}");
+
+            if (KSPGMAT.MGA.AI.MGASurrogateTrainer.ExportSamplesCsv(samples, csvPath)) {
+                Console.WriteLine($"  样本已导出 CSV: {csvPath}");
+            }
+
+            var net = KSPGMAT.MGA.AI.MGAPhysicsSurrogateNetwork.Default;
+            bool accepted = net.Train(samples, out var report);
+
+            Console.WriteLine();
+            Console.WriteLine("------------------------------ 训练结果 ------------------------------");
+            Console.WriteLine($"  训练集 {report.TrainCount} / 验证集 {report.ValCount} | 迭代 {report.EpochsRun} 轮");
+            Console.WriteLine($"  可行分类: 准确率 {report.FeasibilityAccuracy:P1} | ROC-AUC {report.FeasibilityAuc:F3}");
+            Console.WriteLine($"  dV 回归 : MAE {report.DvMaeKms:F3} km/s | R^2 {report.DvR2:F4}");
+            Console.WriteLine($"  可行性头门禁: AUC>=0.65 & Acc>=0.60  =>  {(report.FeasibilityAccepted ? "PASS" : "FAIL")}");
+            Console.WriteLine($"  dV 回归头   : R^2>=0.15 (粗筛可用)   =>  {(report.DvHeadUsable ? "PASS" : "FAIL")}");
+
+            if (net.Save(weightPath)) {
+                Console.WriteLine($"  权重已保存: {weightPath}");
+                Console.WriteLine($"  IsTrained = {net.IsTrained} (false 时代理推理自动退回解析开普勒判据)");
+            }
+            Console.WriteLine("==========================================================================================");
         }
 
         public static void RunHistoricalBlindSearchSuite(string filter = null) {

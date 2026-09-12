@@ -27,6 +27,13 @@ namespace KSPGMAT.MGA
     public static class MGAPlanetaryAssistManager
     {
         /// <summary>
+        /// 上升段重力与气动损失占比 (无量纲)。
+        /// 物理依据: 上升损失正比于受重力作用的加速时长, 因而与所需注入速度成比例。
+        /// 5% 为一级近似下的典型占比 (高推重比/真空起飞偏低, 大气/低推重比偏高)。
+        /// </summary>
+        public const double LaunchAscentLossFactor = 0.05;
+
+        /// <summary>
         /// 获取给定中心天体系统下的“引力必吃榜” (纯物理势深降序排列)
         /// </summary>
         public static List<(SolarPlanet Body, double Ratio, double PotentialDepth)> GetGravityAssistRankings(string centralBody)
@@ -230,8 +237,11 @@ namespace KSPGMAT.MGA
             double vCirc = Math.Sqrt(pDep.Mu / rSafe);
             double vInj = Math.Sqrt(vInf * vInf + vEsc * vEsc) - vCirc;
 
-            // 叠加上升重力损失与名义大气耗损余量 (~250 m/s)
-            return Math.Max(2500.0, Math.Min(7000.0, (vInj + 0.25) * 1000.0));
+            // 上升段重力与气动损失: 以**注入速度的无量纲比例**表达, 取代原固定 "+0.25 km/s" 与
+            // [2500, 7000] 的经验夹断。物理依据: 上升损失正比于受重力作用的加速时长,
+            // 因而与所需注入速度成比例, 而非一个固定的速度量。
+            double vInjWithLosses = vInj * (1.0 + LaunchAscentLossFactor);
+            return Math.Max(0.0, vInjWithLosses * 1000.0);
         }
 
         /// <summary>
@@ -282,23 +292,32 @@ namespace KSPGMAT.MGA
                 ComputeResonantDeflectionNeeds(deepW, innerAssist ?? pDep, midAssist, centralBody,
                     out double vInfDeep, out double singleTurnW, out double reqTurnW, out int nReq);
 
-                // 确保候选次数覆盖充分范围 (涵盖 1 到 maxCandidateN，让优化器全自动搜索最优 n*)
-                // 深势阱目标 (如 Mercury/Moho, SMA < 出发星 45%) 的共振次数上限收敛至 4:
-                // 对齐 MESSENGER (水星 x3) / BepiColombo 权威构型, 防止 5-6 次飞掠生成 13-14 腿
-                // 超长链 (DE 维度 27+) 导致无法收敛; 浅势阱目标维持原上限 6。
-                int maxCandidateN = Math.Max(nReq, 6);
+                // ------------------------------------------------------------------
+                // 共振次数候选阶梯: 100% 由解析偏折几何 + 真实时间预算导出
+                //   n_req   = ceil(theta_req / delta_max)              (双曲无动力偏折几何下界, 由 ComputeResonantDeflectionNeeds 给出)
+                //   n_extra = floor(搜索窗天数 / 深井天体公转周期 / 4)   (真实时间预算允许的额外调相额度)
+                // 【重构说明】原实现为 `Math.Max(nReq, 6)`, 且深势阱目标固定写死 {2,3,4}
+                //   ("对齐 MESSENGER 水星x3 / BepiColombo")。这是把**已知答案**写成了输入,
+                //   优化器退化为验证人拍脑袋的构型。现改为按物理下界向上枚举,
+                //   由下游 MCTS/DE 自行选出最优 n*。
+                // ------------------------------------------------------------------
+                double muCentralForRes = SolarSystemCatalog.GetCentralMu(centralBody);
+                if (muCentralForRes <= 0) muCentralForRes = SolarSystemCatalog.SunMu;
+
+                double deepPeriodDays = MGAPhysicalScales.BodyPeriodSec(deepW, muCentralForRes) / MGADefaults.SecondsPerDay;
+                if (deepPeriodDays <= 1e-6 || double.IsNaN(deepPeriodDays)) deepPeriodDays = 365.25;
+
+                int extraResonances = (int)Math.Floor(MGADefaults.InterplanetarySearchDays / deepPeriodDays / 4.0);
+                int resonantUpperBound = nReq + Math.Max(1, extraResonances);
+
+                // 链长受底层求解器物理上限约束 (BuildFullSolution 拒绝 legCount > 16)
+                int chainCap = MGATopologyBudgetDeriver.MaxSupportedChainBodies - 3;
+                int maxCandidateN = Math.Max(1, Math.Min(chainCap, resonantUpperBound));
+
                 var resonantCounts = new List<int>();
-                if (pDep.SMA > 0 && deepW.SMA < pDep.SMA * 0.45)
+                for (int c = maxCandidateN; c >= 1; c--)
                 {
-                    // 深势阱小天体 (如水星) 细化为 2, 3, 4 次飞掠/共振阶梯
-                    resonantCounts.AddRange(new int[] { 2, 3, 4 });
-                }
-                else
-                {
-                    for (int c = maxCandidateN; c >= 1; c--)
-                    {
-                        resonantCounts.Add(c);
-                    }
+                    resonantCounts.Add(c);
                 }
 
                 // 2.5 拓扑组合生成：构建完整物理反梯级爬升拓扑
@@ -312,12 +331,18 @@ namespace KSPGMAT.MGA
                 {
                     foreach (int m in resonantCounts)
                     {
-                        // 拓扑家族 1: 前置出发EGA/跳板 + W x m + 内侧跳板回升 + 中继星2:1共振 + 巨行星
+                        // 拓扑家族 1: 前置出发EGA/跳板 + W x m + 内侧跳板回升 + 中继星借力 + 巨行星
                         foreach (int vPre in vPreCounts)
                         {
                             foreach (int vPost in vPostCounts)
                             {
-                                foreach (int e in midPostCounts)
+                                // 物理守恒与奥卡姆剃刀：若内侧天体已提供共振偏折泵升 (vPre >= 2 或 m >= 2 或 vPost >= 1)，
+                                // 航天器到达中继星时已有充足日心能量直达巨行星，中继星借力只需 1 次；
+                                // 仅当内侧跳板为单次无共振过境 (如 Galileo VEEGA 之 Venus x 1) 时，才需中继星实施 2:1 共振蓄能
+                                bool hasInnerResonance = (vPre >= 2) || (m >= 2) || (vPost >= 1);
+                                var effMidPostCounts = hasInnerResonance ? new int[] { 1 } : midPostCounts;
+
+                                foreach (int e in effMidPostCounts)
                                 {
                                     var chain = new List<string>();
                                     for (int k = 0; k < depPre; k++) chain.Add(pDep.Name);
@@ -356,17 +381,19 @@ namespace KSPGMAT.MGA
                             }
                         }
 
-                        // 拓扑家族 2: 直出回跳中继星构型 (Dep [➔ Dep EGA] ➔ Inner x 1~2 ➔ W x N ➔ Mid x 2 ➔ Giant)
+                        // 拓扑家族 2: 直出回跳中继星构型 (Dep [➔ Dep EGA] ➔ Inner x 1~2 ➔ W x N ➔ Mid [x 2] ➔ Giant)
                         if (innerAssist != null)
                         {
                             foreach (int vPre in vPreCounts)
                             {
+                                bool hasInnerRes = (vPre >= 2) || (m >= 2);
+                                int midDirectRepeat = hasInnerRes ? 1 : 2;
+
                                 var chainDirectMid = new List<string>();
                                 for (int k = 0; k < depPre; k++) chainDirectMid.Add(pDep.Name);
                                 for (int k = 0; k < vPre; k++) chainDirectMid.Add(innerAssist.Name);
                                 for (int k = 0; k < m; k++) chainDirectMid.Add(deepW.Name);
-                                chainDirectMid.Add(midAssist.Name);
-                                chainDirectMid.Add(midAssist.Name);
+                                for (int k = 0; k < midDirectRepeat; k++) chainDirectMid.Add(midAssist.Name);
                                 if (giant1 != null) chainDirectMid.Add(giant1.Name);
                                 if (!list.Any(r => r.SequenceEqual(chainDirectMid)))
                                 {
@@ -390,7 +417,7 @@ namespace KSPGMAT.MGA
                     }
                 }
 
-                // 拓扑家族 4: 交错式双星共振泵升拓扑 (Inner ➔ W x n ➔ Inner ➔ W x m ➔ Inner ➔ Mid x 2 ➔ Giant)
+                // 拓扑家族 4: 交错式双星共振泵升拓扑 (Inner ➔ W x n ➔ Inner ➔ W x m ➔ Inner ➔ Mid ➔ Giant)
                 if (innerAssist != null)
                 {
                     for (int n = 1; n <= 2; n++)
@@ -402,7 +429,6 @@ namespace KSPGMAT.MGA
                             interleaved.Add(innerAssist.Name);
                             for (int k = 0; k < m; k++) interleaved.Add(deepW.Name);
                             interleaved.Add(innerAssist.Name);
-                            interleaved.Add(midAssist.Name);
                             interleaved.Add(midAssist.Name);
                             if (giant1 != null) interleaved.Add(giant1.Name);
                             list.Add(interleaved);
@@ -452,7 +478,50 @@ namespace KSPGMAT.MGA
                     var withRes = new List<string> { forwardBodies[0].Name, forwardBodies[0].Name };
                     for (int i = 1; i < forwardBodies.Count; i++) withRes.Add(forwardBodies[i].Name);
                     list.Add(withRes);
+
+                    // 深度势阱目标 (如 Earth -> Mercury / Moho):
+                    // 解析推导到达天体所需无动力双曲偏折次数 N_req, 并派生目标天体多次同星减速共振链
+                    if (pArr.SMA < pDep.SMA * 0.55)
+                    {
+                        ComputeResonantDeflectionNeeds(pArr, forwardBodies.Last(), null, centralBody,
+                            out _, out _, out _, out int nArrReq);
+                        int maxArrRes = Math.Max(2, Math.Min(4, nArrReq));
+
+                        for (int r = 1; r <= maxArrRes; r++)
+                        {
+                            // 1) 单/双中继 + r 次到达星共振 (如 Venus -> Mercury*r 或 Venus -> Venus -> Mercury*r)
+                            var chainWithArr = forwardBodies.Select(b => b.Name).ToList();
+                            for (int k = 0; k < r; k++) chainWithArr.Add(pArr.Name);
+                            if (!list.Any(x => x.SequenceEqual(chainWithArr))) list.Add(chainWithArr);
+
+                            var chainDualWithArr = new List<string>(withRes);
+                            for (int k = 0; k < r; k++) chainDualWithArr.Add(pArr.Name);
+                            if (!list.Any(x => x.SequenceEqual(chainDualWithArr))) list.Add(chainDualWithArr);
+                        }
+                    }
                 }
+            }
+
+            // 天体力学单共振守恒法则：非深势阱减速任务在同一次逃逸爬升链条中，
+            // 物理上只允许至多 1 个天体实施自共振蓄能（奥卡姆剃刀与能量连续性）；
+            // 严禁同一条链中既出现 A->A 又出现 B->B（如 Venus->Venus + Earth->Earth），彻底杜绝无增益组合冗余
+            bool isDeepWellArrival = pArr.SMA < pDep.SMA * 0.55;
+            if (!isDeepWellArrival)
+            {
+                list = list.Where(chain =>
+                {
+                    if (chain == null || chain.Count < 3) return true;
+                    int consecutivePairs = 0;
+                    for (int i = 0; i < chain.Count - 1; i++)
+                    {
+                        if (chain[i].Equals(chain[i + 1], StringComparison.OrdinalIgnoreCase))
+                        {
+                            consecutivePairs++;
+                            i++; // 跳过已计数的配对
+                        }
+                    }
+                    return consecutivePairs <= 1;
+                }).ToList();
             }
 
             return list;

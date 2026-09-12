@@ -21,6 +21,15 @@ namespace KSPGMAT.MGA
     /// </summary>
     public static class MGAArchipelagoOptimizer
     {
+        /// <summary>
+        /// 针对多个候选会合时间窗口，并行分发差分进化群岛演化 (Multi-Island DE Evolution across Synodic Windows)
+        /// </summary>
+        /// <param name="config">自适应求解配置</param>
+        /// <param name="windows">预筛选出的候选会合时间窗口列表</param>
+        /// <param name="ct">异步取消令牌</param>
+        /// <param name="onProgress">进度汇报委托</param>
+        /// <param name="maxWindowParallelism">最大窗口并发度 (-1 自动根据 CPU 核心与负载推导)</param>
+        /// <returns>跨窗口演化产出的优质轨迹解集</returns>
         public static List<MGASolution> EvolveWindows(
             MGAAdaptiveSolverConfig config,
             List<MGASurrogatePreFilter.SynodicWindowCandidate> windows,
@@ -32,8 +41,37 @@ namespace KSPGMAT.MGA
             if (windows == null || windows.Count == 0) return new List<MGASolution>();
 
             // 落地 PaGMO (Izzo 2010) 多保真度漏斗思想：按估算发射能量排序，聚焦最具潜力的前 K 个黄金窗口
+            // 基础 2 个窗口；若任务覆盖时段超过 2 个会合周期且未显式指定，动态提升至 3-4 个窗口，兼顾长周期任务解完整性
             int maxEvalWindows = (config != null && config.MaxWindows > 0) ? config.MaxWindows : 2;
-            var prioritizedWindows = windows.OrderBy(w => w.EstimatedMinDvKms).Take(maxEvalWindows).ToList();
+            if (config != null && config.MaxWindows <= 0 && windows.Count > 2)
+            {
+                var depP = SolarSystemCatalog.GetPlanet(config.DeparturePlanet);
+                var arrP = SolarSystemCatalog.GetPlanet(config.ArrivalPlanet);
+                if (depP != null && arrP != null)
+                {
+                    double sma1 = PykepBridge.GetRelativeSMA(depP, config.CentralBody, 0.0);
+                    double sma2 = PykepBridge.GetRelativeSMA(arrP, config.CentralBody, 0.0);
+                    double muSun = SolarSystemCatalog.GetCentralMu(config.CentralBody ?? "Sun");
+                    double t1 = PykepBridge.CalcOrbitPeriodSec(sma1, muSun);
+                    double t2 = PykepBridge.CalcOrbitPeriodSec(sma2, muSun);
+                    if (t1 > 0 && t2 > 0 && Math.Abs(t1 - t2) > 1.0)
+                    {
+                        double tSynSec = Math.Abs(t1 * t2 / (t1 - t2));
+                        double searchSpanSec = config.SearchEndUT - config.SearchStartUT;
+                        if (searchSpanSec > 2.5 * tSynSec)
+                        {
+                            maxEvalWindows = Math.Min(4, windows.Count);
+                        }
+                    }
+                }
+            }
+            // 确定性次级键: 窗口候选集由并行粗筛产生, 估算能量并列时选取哪 K 个窗口
+            // 会随线程时序变化 —— 这是影响最大的一处不可复现点 (决定进入 DE 的搜索区间)。
+            var prioritizedWindows = windows
+                .OrderBy(w => w.EstimatedMinDvKms)
+                .ThenBy(w => Math.Round(w.WindowStartUT * 1000.0))
+                .ThenBy(w => Math.Round(w.WindowEndUT * 1000.0))
+                .Take(maxEvalWindows).ToList();
             int totalWindows = prioritizedWindows.Count;
             int finishedCount = 0;
             var lockObj = new object();
@@ -134,7 +172,7 @@ namespace KSPGMAT.MGA
                 }
             });
 
-            return allSolutions.OrderBy(s => s.TotalDeltaVKms).ToList();
+            return allSolutions.Deterministic().ToList();
         }
     }
 }

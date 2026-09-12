@@ -225,29 +225,31 @@ namespace KSPGMAT.Model {
         public const double PenaltyIncToleranceDeg = 0.05;
         public const double PenaltyPerDsmLeg = 300.0; // 每一条携带 DSM(>100m/s) 的腿固定惩罚, 强化纯弹道引力弹弓链偏好
 
-        // --- 12. 引力势阱与梯级爬升常数 (Gravity Potential & Climbing Network) ---
-        public const double GiantAssistDistanceRatio = 3.0;   // 触发巨引力弹弓的外轨半长轴倍率门槛
-        public const double GravityClimbingDistanceRatio = 2.0;  // 触发梯级爬升插序的跨越倍率
-        public static double InnerSystemMaxSmaKm => 4.0 * AU_KM; // 内太阳系天体半长轴上限 (4 AU)
-        public const double MinAssistPowerIndexInner = 35.0; // 内行星显著借力效能下限 μ/r_safe ≥ 35 km²/s²
-        public const double GiantPlanetMinMu = 1.0e7; // 巨行星 μ ≥ 1e7 km³/s²
-        public const double MinSteppingStoneMu = 500.0; // 梯级跳板最小 μ 门槛
-        public const double NeighborBodyMaxLogSmaRatio = 1.5; // 交错共振桥中介天体 log(Sma) 邻近上限
+        // --- 12. 引力势阱与梯级爬升常数 (已由 MGAPhysicalScales 与 KeplerAdjacencyGraph 连续物理取代) ---
+        [Obsolete("Use MGAPhysicalScales or KeplerAdjacencyGraph instead")]
+        public const double GiantAssistDistanceRatio = 3.0;
+        [Obsolete("Use MGAPhysicalScales or KeplerAdjacencyGraph instead")]
+        public const double GravityClimbingDistanceRatio = 2.0;
+        public static double InnerSystemMaxSmaKm => 4.0 * AU_KM;
+        [Obsolete("Use MGAPhysicalScales.TransferDifficultyRatio instead")]
+        public const double MinAssistPowerIndexInner = 35.0;
+        [Obsolete("Use Node.IsGiant instead")]
+        public const double GiantPlanetMinMu = 1.0e7;
+        [Obsolete("Use KeplerAdjacencyGraph instead")]
+        public const double MinSteppingStoneMu = 500.0;
+        [Obsolete("Use KeplerAdjacencyGraph instead")]
+        public const double NeighborBodyMaxLogSmaRatio = 1.5;
 
-        // --- 13. 开普勒共振与转角动力学常数 (Resonance & Turn Dynamics) ---
-        public const double FlybyPowerWeakThreshold = 15.0; // 浅势阱（自适应 4~5 次共振）
-        public const double FlybyPowerMediumThreshold = 60.0; // 中势阱（自适应 3 次共振）
-        public const double ResonantOrbitVelocityBonusKms = 1.5; // 同星共振出射日心极值能量拓宽 +1.5 km/s
-        public const double MinEffectiveVInfKms = 2.5; // 借力有效双曲过剩速度底限
-        public const double NominalInitialVInfKms = 5.0; // 初始标称入轨/出场速度基准
-        public const double DeparturePhaseAngleToleranceDeg = 45.0; // 始发星历相位角容差门禁
-        public const double DeparturePhaseSoftPenaltyFactorMsPerDeg = 5.0; // 相位偏差软罚 5 m/s/deg
-        public const double MinGeometryTurnAngleDeg = 25.0; // 异星转移基础偏折角门禁
-        public const double ApsidalTurnaroundAngleDeg = 30.0; // 拱点折返自然过渡偏折角门禁
-        public const double ResonantReverseTurnAngleDeg = 75.0; // 同星共振蓄能时大逆转航向角收窄门禁
-        public const double DirectInwardOutwardTurnAngleDeg = 120.0; // 无共振大跨度航向角门禁
-        public const double InnerOrbitBoundaryRatio = 0.95; // 内轨道跨越判定比值
-        public const double OuterOrbitBoundaryRatio = 1.5; // 外轨道跨越判定比值
+        // --- 13. 开普勒共振与转角动力学常数 ---
+        public const double ResonantOrbitVelocityBonusKms = 1.5;
+        public const double MinEffectiveVInfKms = 2.5;
+        public const double NominalInitialVInfKms = 5.0;
+        public const double DeparturePhaseAngleToleranceDeg = 45.0;
+        public const double DeparturePhaseSoftPenaltyFactorMsPerDeg = 5.0;
+        public const double MinGeometryTurnAngleDeg = 25.0;
+        public const double ApsidalTurnaroundAngleDeg = 30.0;
+        public const double ResonantReverseTurnAngleDeg = 75.0;
+        public const double DirectInwardOutwardTurnAngleDeg = 120.0;
 
         // --- 14. 航时与搜索空间缩放常数 (ToF & Search Bounds) ---
         public const double NearTransferToFMinFactor = 0.68;
@@ -269,6 +271,15 @@ namespace KSPGMAT.Model {
 
         // --- 16. 可行性审计与门禁裕度 (Feasibility Audit & Gate Margins) ---
         public const double FeasibilityBudgetMarginFactor = 1.25; // 单段硬门禁与总预算软门禁统一裕度 (DE 可微调余量)
+
+        // ⚠️ [实验归档 2026-09-11] 曾在此处引入 SupervisedTotalDeficitCeilingMs = 1521.0
+        // (ROC Youden J 最优, F1 0.159 -> 0.282, 候选池缩小 ~85%), 但 13 任务 A/B 实测:
+        //   结果 13/13 逐位一致 (零收益) + 求解耗时 +125% (68.2s -> 153.4s, 显著劣化).
+        // 根因: 门禁变严 -> 可行链奖励信号稀疏 -> MCTS 需探索更多节点补偿,
+        //       省下的 DE 精优化开销远小于 MCTS 探索膨胀开销。
+        // 结论: 已回退。保留此注释作为"中间指标改善 != 端到端收益"的反例警示。
+        // 详见 docs/reports/硬编码与经验公式审计报告.md §22。
+
         public const double MaxPlausibleTotalDvKms = 50.0; // 物理合理总 ΔV 上界 (km/s): 过滤动力学发散解 (真实任务 < 30 km/s)
     }
 
@@ -378,7 +389,7 @@ namespace KSPGMAT.Model {
             var res = new BPlaneResult();
             if (!PykepNative.IsGpuComputeAvailable)
             {
-                MGAOptimizationProbe.RecordGpuExecution("GPU B-Plane Monte Carlo", 0.0, sampleCount, false);
+                MGA.Telemetry.MGAPipelineTelemetryProbe.RecordGpuExecution("GPU B-Plane Monte Carlo", 0.0, sampleCount, false);
                 return res;
             }
 
@@ -397,7 +408,7 @@ namespace KSPGMAT.Model {
                 out float collProb);
 
             sw.Stop();
-            MGAOptimizationProbe.RecordGpuExecution(
+            MGA.Telemetry.MGAPipelineTelemetryProbe.RecordGpuExecution(
                 "GPU B-Plane Monte Carlo", sw.Elapsed.TotalMilliseconds, sampleCount, ret == 0);
 
             if (ret == 0)

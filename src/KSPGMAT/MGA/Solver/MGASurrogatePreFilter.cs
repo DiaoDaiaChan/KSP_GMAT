@@ -31,6 +31,13 @@ namespace KSPGMAT.MGA
             public double EstimatedMinDvKms;
         }
 
+        /// <summary>
+        /// 筛选最具潜力的候选会合时间窗口 (Filter Promising Synodic Windows)
+        /// 通过轻量级解析与几何/能量评估快速遍历全时域，剔除高能禁区，按预估 ΔV 升序排序输出
+        /// </summary>
+        /// <param name="config">自适应求解配置</param>
+        /// <param name="synodicPeriodDays">行星间会合周期（天）</param>
+        /// <returns>排序后的候选会合窗口集合</returns>
         public static List<SynodicWindowCandidate> FilterPromisingWindows(
             MGAAdaptiveSolverConfig config, 
             double synodicPeriodDays)
@@ -142,7 +149,7 @@ namespace KSPGMAT.MGA
                 }
 
                 int totalEstimatedWindows = cycleIntervals.Count * 12;
-                MGAOptimizationProbe.AiMetrics.RecordSurrogate(totalEstimatedWindows, candidates.Count);
+                Telemetry.MGAPipelineTelemetryProbe.AiMetrics.RecordSurrogate(totalEstimatedWindows, candidates.Count);
                 return candidates.OrderBy(c => c.EstimatedMinDvKms > 0 ? c.EstimatedMinDvKms : double.MaxValue).ToList();
             }
 
@@ -261,7 +268,7 @@ namespace KSPGMAT.MGA
             }
 
             int totalCpuEstimatedWindows = cycleIntervals.Count * 12;
-            MGAOptimizationProbe.AiMetrics.RecordSurrogate(totalCpuEstimatedWindows, candidates.Count);
+            Telemetry.MGAPipelineTelemetryProbe.AiMetrics.RecordSurrogate(totalCpuEstimatedWindows, candidates.Count);
             return candidates.OrderBy(c => c.EstimatedMinDvKms > 0 ? c.EstimatedMinDvKms : double.MaxValue).ToList();
         }
 
@@ -289,7 +296,7 @@ namespace KSPGMAT.MGA
             long totalItems = (long)gridDep * gridTof1 * gridTof2;
             if (!PykepNative.IsGpuComputeAvailable || p1 == null || p2 == null || p3 == null)
             {
-                MGAOptimizationProbe.RecordGpuExecution("GPU 3D Multi-Leg Corridor", 0.0, totalItems, false);
+                Telemetry.MGAPipelineTelemetryProbe.RecordGpuExecution("GPU 3D Multi-Leg Corridor", 0.0, totalItems, false);
                 return false;
             }
 
@@ -332,7 +339,7 @@ namespace KSPGMAT.MGA
 
                 sw.Stop();
                 bool isSuccess = (ret == 0);
-                MGAOptimizationProbe.RecordGpuExecution(
+                Telemetry.MGAPipelineTelemetryProbe.RecordGpuExecution(
                     "GPU 3D Multi-Leg Corridor", sw.Elapsed.TotalMilliseconds, totalItems, isSuccess);
 
                 return isSuccess;
@@ -340,7 +347,7 @@ namespace KSPGMAT.MGA
             catch (Exception ex)
             {
                 sw.Stop();
-                MGAOptimizationProbe.RecordGpuExecution("GPU 3D Multi-Leg Corridor", sw.Elapsed.TotalMilliseconds, totalItems, false);
+                Telemetry.MGAPipelineTelemetryProbe.RecordGpuExecution("GPU 3D Multi-Leg Corridor", sw.Elapsed.TotalMilliseconds, totalItems, false);
                 KSPGMATLog.Warn($"[MGASurrogatePreFilter] GPU 多腿张量初筛异常，自动降级至 CPU: {ex.Message}");
                 return false;
             }

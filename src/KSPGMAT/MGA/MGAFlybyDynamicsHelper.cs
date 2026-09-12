@@ -191,7 +191,7 @@ namespace KSPGMAT.MGA {
         /// 彻底取代按 SMA 硬编码带挑选 {1,2} 或 {1,2,3} 的经验分支。
         /// </summary>
         public static readonly double[] ResonanceRatioCandidates = new double[] {
-            0.5, 1.0, 1.25, 4.0 / 3.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0
+            0.5, 0.90, 0.95, 1.0, 1.05, 1.10, 1.15, 1.25, 4.0 / 3.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0
         };
 
         /// <summary>
