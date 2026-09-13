@@ -345,13 +345,10 @@ static inline double calc_vis_viva_arr(double v_inf, double mu, double radius, d
     if (mu <= 0.0 || radius <= 0.0) return v_inf;
     double rp = radius + std::max(0.0, pe_km);
     double effective_ap_km = ap_km;
-    // 天体力学第一性原理：对于木星/土星等巨行星 (radius >= 20000 km 或 mu >= 5e6 km^3/s^2)，
-    // 若未显式配置高远拱点 (ap_km <= pe_km)，物理上航天器必采用高偏心率科学椭圆捕获 (e = 0.96)，
-    // 杜绝将巨行星当做近行星低圆轨道评估所产生的十几千米/秒非物理虚假冲量
-    if ((radius >= 20000.0 || mu >= 5e6) && effective_ap_km <= pe_km) {
-        double e_preset = 0.96;
-        double ra_calc = rp * (1.0 + e_preset) / (1.0 - e_preset);
-        effective_ap_km = ra_calc - radius;
+    // 天体力学第一性原理：若调用方明确指定了到达远拱点 (ap_km > pe_km) 或明确指定了圆形捕获 (ap_km > 0 且 ap_km <= pe_km)，
+    // 严格遵循用户/调用方动力学输入；仅在未指定远拱点 (ap_km <= 0) 时，根据引力球/开普勒能量物理下限推导
+    if (effective_ap_km <= 0.0) {
+        effective_ap_km = pe_km;
     }
     double ra = radius + std::max(pe_km, effective_ap_km);
     double a = (rp + ra) * 0.5;
@@ -448,13 +445,15 @@ static inline void synthesize_parking_boundary_state(
         h_park[0] * u_r[1] - h_park[1] * u_r[0]
     };
 
-    // 3. 动力学开普勒转移相角 (消除 180° 退化奇异，基于实际相遇真实真近点角)
-    double a_hoh = (r_park_km + r_dest_km) * 0.5;
-    double a_trans = a_hoh * 1.05;
-    double p_orb = 2.0 * r_park_km - (r_park_km * r_park_km) / a_trans;
-    double e_orb = 1.0 - r_park_km / a_trans;
-    double cos_nu = (p_orb / r_dest_km - 1.0) / std::max(1e-4, e_orb);
-    cos_nu = std::max(-0.996, std::min(-0.85, cos_nu)); // 限制在 ~148° ~ 175° 区间，彻底远离 180° 反共线奇异
+    // 3. 动力学开普勒转移相角推导 (基于开普勒几何与真实相角关系)
+    double a_trans = (r_park_km + r_dest_km) * 0.5;
+    double p_orb = 2.0 * r_park_km - (r_park_km * r_park_km) / std::max(1e-4, a_trans);
+    double e_orb = std::abs(1.0 - r_park_km / std::max(1e-4, a_trans));
+    double cos_nu = -1.0;
+    if (e_orb > 1e-6) {
+        cos_nu = (p_orb / std::max(1.0, r_dest_km) - 1.0) / e_orb;
+        cos_nu = std::max(-1.0, std::min(1.0, cos_nu));
+    }
     double nu_arr = std::acos(cos_nu);
 
     double cos_dth = std::cos(nu_arr);
@@ -686,6 +685,18 @@ EXPORT_API inline int kep3_hohmann_transfer(
         if (out_tof_sec) *out_tof_sec = tof;
         if (out_dv1) *out_dv1 = dvs[0];
         if (out_dv2) *out_dv2 = dvs[1];
+        return 0;
+    } catch (...) {
+        return -1;
+    }
+}
+
+EXPORT_API inline int kep3_orbit_period(double sma_km, double mu, double* out_period_sec) {
+    if (sma_km <= 0.0 || mu <= 0.0 || !out_period_sec) return -1;
+    try {
+        // 直接开普勒第三定律周期求解 T = 2*pi * sqrt(a^3 / mu)
+        const double pi = 3.14159265358979323846;
+        *out_period_sec = 2.0 * pi * std::sqrt((sma_km * sma_km * sma_km) / mu);
         return 0;
     } catch (...) {
         return -1;

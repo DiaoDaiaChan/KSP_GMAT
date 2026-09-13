@@ -1615,18 +1615,17 @@ namespace KSPGMAT.MGA {
 
         /// <summary>
         /// 100% 委派原生 kep3 引擎计算开普勒二体轨道周期 (单位: 秒, 输入 sma 单位: km, mu 单位: km^3/s^2)
-        /// 严格杜绝托管层手写 2*pi*sqrt(a^3/mu)
+        /// 严格杜绝托管层手写公式，直接调用原生 C++ 导出的 kep3_orbit_period
         /// </summary>
         public static double CalcOrbitPeriodSec(double smaKm, double muKms) {
             if (smaKm <= 0 || muKms <= 0) return 0.0;
-            if (CalcHohmannTransfer(smaKm, smaKm, muKms, out _, out double halfPeriodSec, out _, out _)) {
-                // 合规论证 (baseline §0.2/§0.4/§11)：
-                // 轨道周期 = 2 × (原生 hohmann 从 r=a→r=a 的半周期)。这只是对原生返回值的恒等缩放 (T = 2·(T/2))，
-                // 绝非托管自算开普勒公式；原生 dll 当前未导出 orbit_period，故用原生 hohmann 结果派生，
-                // 且严禁手写 2π√(a³/μ)。若日后原生新增 orbit_period，应改走原生。
+            if (PykepNative.CalcOrbitPeriodSec(smaKm, muKms, out double periodSec) && periodSec > 0) {
+                return periodSec;
+            }
+            if (CalcHohmannTransfer(smaKm, smaKm, muKms, out _, out double halfPeriodSec, out _, out _) && halfPeriodSec > 0) {
                 return 2.0 * halfPeriodSec;
             }
-            KSPGMATLog.Warn($"[PykepBridge] CalcOrbitPeriodSec: 原生 kep3 转移周期评估失败 (sma={smaKm}, mu={muKms})，拒绝托管自算公式，返回 0.0");
+            KSPGMATLog.Warn($"[PykepBridge] CalcOrbitPeriodSec: 原生 kep3 周期评估失败 (sma={smaKm}, mu={muKms})，拒绝托管自算公式，返回 0.0");
             return 0.0;
         }
 

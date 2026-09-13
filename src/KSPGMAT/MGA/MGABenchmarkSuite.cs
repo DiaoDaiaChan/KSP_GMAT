@@ -38,6 +38,10 @@ namespace KSPGMAT.MGA {
             public bool LockDepartureInclination { get; set; } = false;
             public bool NoInsertionBurn { get; set; } = false;
             public double DepartureWindowDays { get; set; } = 0.0;
+            /// <summary>
+            /// 是否为完全无先验盲搜评测模式 (true: 禁止向求解器注入历史实际飞行时间/染色体先验；false: 历史真值标定回放核验)
+            /// </summary>
+            public bool BlindSearchEvaluationMode { get; set; } = false;
 
             // Advanced Engine Modes & Multi-Strategy
             public MGAEngineMode EngineMode { get; set; } = MGAEngineMode.BallisticImpulsive;
@@ -457,14 +461,6 @@ namespace KSPGMAT.MGA {
             fullChain.AddRange(testCase.FlybySequence);
             int legCount = fullChain.Count - 1;
 
-            double[] genome = new double[1 + legCount];
-            double launchUT = GMATClient.ParseUtcGregorian(testCase.HistoricLaunchDateStr);
-            if (launchUT <= 0) launchUT = testCase.HistoricLaunchUT;
-            genome[0] = launchUT;
-            for (int k = 0; k < legCount; k++) {
-                genome[1 + k] = (k < testCase.HistoricToFDays.Count ? testCase.HistoricToFDays[k] : 200.0) * 86400.0;
-            }
-
             var config = new MGAConfig {
                 DepartureBody = testCase.DepartureBody,
                 FlybySequence = testCase.FlybySequence,
@@ -485,23 +481,41 @@ namespace KSPGMAT.MGA {
                 FlybyStrategies = (testCase.FlybyStrategies != null) ? new List<MGAFlybyStrategy>(testCase.FlybyStrategies) : null
             };
 
-            // 2. 调用新架构求解器 (PyKEP 官方原生 MGA 求解)
-            MGASolution sol = PykepBridge.BuildFullSolution(genome, fullChain, config);
+            // 1. 确定运行模式：真值标定核验 (Replay Mode) 还是真实盲搜优化 (Blind Search Mode)
+            MGASolution sol = null;
+            if (!testCase.BlindSearchEvaluationMode) {
+                // 模式 A: 真实历史先验单点物理标定核验 (用于验证开普勒与星历回放准确性)
+                double[] genome = new double[1 + legCount];
+                double launchUT = GMATClient.ParseUtcGregorian(testCase.HistoricLaunchDateStr);
+                if (launchUT <= 0) launchUT = testCase.HistoricLaunchUT;
+                genome[0] = launchUT;
+                for (int k = 0; k < legCount; k++) {
+                    genome[1 + k] = (k < testCase.HistoricToFDays.Count ? testCase.HistoricToFDays[k] : 200.0) * 86400.0;
+                }
+                sol = PykepBridge.BuildFullSolution(genome, fullChain, config);
+            }
 
-            // 若单点历史先验未能收敛于工程容差或借力未闭合，调用官方差分寻优在发射窗口内完成自适应寻优收敛
-            if (sol == null || !sol.AllLegsFeasible || sol.TotalDeltaVKms * 1000.0 > testCase.HistoricTotalDeltaVMaxMs * 1.05) {
-                double winSpan = (testCase.DepartureWindowDays > 0) ? testCase.DepartureWindowDays * 86400.0 * 0.5 : 86400.0 * 20.0;
+            // 模式 B: 若处于盲搜模式或历史单点先验未达标，启动 100% 动力学自适应全域寻优 (杜绝答案注入与 ±10% 航时夹逼)
+            if (sol == null || !sol.AllLegsFeasible || sol.TotalDeltaVKms * 1000.0 > testCase.HistoricTotalDeltaVMaxMs) {
+                double launchUT = GMATClient.ParseUtcGregorian(testCase.HistoricLaunchDateStr);
+                if (launchUT <= 0) launchUT = testCase.HistoricLaunchUT;
+                double winSpan = (testCase.DepartureWindowDays > 0) ? testCase.DepartureWindowDays * 86400.0 * 0.5 : 86400.0 * 30.0;
                 config.EarliestDepartureUT = (launchUT >= 0) ? Math.Max(0, launchUT - winSpan) : (launchUT - winSpan);
                 config.LatestDepartureUT = launchUT + winSpan;
-                if (testCase.HistoricToFDays != null && testCase.HistoricToFDays.Count > 0) {
-                    config.MinToFDays = testCase.HistoricToFDays.Select(d => (d < 15.0) ? Math.Max(0.5, d * 0.5) : Math.Max(10.0, d * 0.9)).ToList();
-                    config.MaxToFDays = testCase.HistoricToFDays.Select(d => (d < 15.0) ? Math.Max(d * 1.5, 5.0) : (d * 1.1)).ToList();
-                }
-                config.PopulationSize = 40;
-                config.MaxGenerations = 30;
+
+                // 物理自适应航时推导：完全由开普勒天体力学自动推导航段边界，严禁拿历史真值 ±10% 夹逼
+                var (dynMin, dynMax) = MGAMCTSTopologySelector.CalculateAdaptiveToFBounds(
+                    testCase.DepartureBody, testCase.FlybySequence.Last(), testCase.FlybySequence, config.CentralBody);
+                var legBounds = MGAMCTSTopologySelector.AutoDeriveResonantLegBounds(
+                    testCase.DepartureBody, testCase.FlybySequence.Last(), testCase.FlybySequence, config.CentralBody);
+
+                config.MinToFDays = legBounds.Select(b => b.MinDays).ToList();
+                config.MaxToFDays = legBounds.Select(b => b.MaxDays).ToList();
+                config.PopulationSize = 60;
+                config.MaxGenerations = 50;
                 var reporter = new MGADebugReporter(testCase.MissionName);
                 var optSols = MGAAdaptiveSolver.Optimize(config, reporter.AsProgressCallback());
-                reporter.Complete("自适应微调寻优完成");
+                reporter.Complete("动力学全局自适应寻优完成");
                 if (optSols != null && optSols.Count > 0) {
                     sol = optSols[0];
                 }

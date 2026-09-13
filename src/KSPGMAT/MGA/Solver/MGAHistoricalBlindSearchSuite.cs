@@ -392,7 +392,7 @@ namespace KSPGMAT.MGA.Solver
                 PopulationSize = bCase.PopulationSize,
                 MaxGenerations = bCase.MaxGenerations,
                 AutoTuneToFBounds = true,
-                TotalToFMaxDays = bCase.HistoricalFlightDays > 0 ? bCase.HistoricalFlightDays * 1.5 : -1.0
+                TotalToFMaxDays = -1.0 // 严禁拿历史航时乘以 1.5 锁死搜索空间，完全由 AutoTuneToFBounds 与开普勒动力学自主推导
             };
 
             // 2. 调用自适应双向求解器

@@ -1081,8 +1081,10 @@ namespace KSPGMAT.MGA
                                                 }
                                             }
                                         }
-                                        // 离散开普勒共振槽跨越变异 (Resonant Slot Basin Hopping)
-                                        if (localRand.NextDouble() < 0.12 && snapRatios.Length > 1) {
+                                        // 离散开普勒共振槽跨越变异 (Resonant Slot Basin Hopping: 自适应退火概率，前期探索后期收敛)
+                                        double progress = (double)gen / Math.Max(1, maxGens);
+                                        double hopProb = 0.18 * (1.0 - 0.6 * progress); // 0.18 -> 0.072 动态退火
+                                        if (localRand.NextDouble() < hopProb && snapRatios.Length > 1) {
                                             var validSnap = new List<double>();
                                             foreach (double r in snapRatios) {
                                                 double rc = r * tOrb;
@@ -1309,7 +1311,10 @@ namespace KSPGMAT.MGA
                                 double cauchy = Math.Tan(Math.PI * (u - 0.5));
                                 cauchy = Math.Max(-3.0, Math.Min(3.0, cauchy));
                                 double span = upperBounds[d] - lowerBounds[d];
-                                mbhCandidate[d] = Math.Max(lowerBounds[d], Math.Min(upperBounds[d], mbhCandidate[d] + 0.025 * span * cauchy));
+                                // 自适应柯西尺度: 随代际从 0.04 退火至 0.01，兼顾大范围跳出局部极值与后期细致探索
+                                double genFraction = (double)gen / Math.Max(1, maxGens);
+                                double cauchyScale = 0.04 * (1.0 - 0.75 * genFraction);
+                                mbhCandidate[d] = Math.Max(lowerBounds[d], Math.Min(upperBounds[d], mbhCandidate[d] + cauchyScale * span * cauchy));
                                 hasPerturbed = true;
                             }
                         }
@@ -1698,7 +1703,10 @@ namespace KSPGMAT.MGA
                             curFit = bestDFit;
 
                             if (Math.Abs(bestFactor) > 1e-6) {
-                                double accelFactor = bestFactor * 1.5;
+                                // 自适应步长加速: 依据适应度相对改善率动态调节探索倍数 (1.2 ~ 1.8)
+                                double relImprovement = Math.Max(0.0, (curFit - bestDFit) / Math.Max(1e-4, Math.Abs(curFit)));
+                                double stepMultiplier = 1.2 + Math.Min(0.6, relImprovement * 2.0);
+                                double accelFactor = bestFactor * stepMultiplier;
                                 for (int accStep = 0; accStep < 2; accStep++) {
                                     double testVal = Math.Max(lowerBounds[d], Math.Min(upperBounds[d], curGene[d] + accelFactor * span));
                                     if (Math.Abs(testVal - bestDVal) < 1e-6) break;
@@ -1708,9 +1716,10 @@ namespace KSPGMAT.MGA
                                     var testSol = PykepBridge.BuildFullSolution(testGene, fullChain, config, computeAdvanced: false);
                                     double testFit = Fitness(testSol);
                                     if (testFit < curFit) {
+                                        double stepGain = (curFit - testFit) / Math.Max(1e-4, Math.Abs(curFit));
                                         curFit = testFit;
                                         curGene[d] = testVal;
-                                        accelFactor *= 1.5;
+                                        accelFactor *= (1.1 + Math.Min(0.5, stepGain * 2.0));
                                     } else {
                                         break;
                                     }

@@ -28,6 +28,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using KSPGMAT.Model;
 
 namespace KSPGMAT.MGA.AI
 {
@@ -125,8 +126,8 @@ namespace KSPGMAT.MGA.AI
         /// <summary>可行性分类头的准确率门禁</summary>
         public const double FeasibilityGateAccuracy = 0.60;
 
-        /// <summary>ΔV 回归头的"粗筛可用"R^2 门禁</summary>
-        public const double DvHeadUsableR2 = 0.15;
+        /// <summary>ΔV 回归头的"粗筛可用"R^2 门禁 (至少解释 50% 方差)</summary>
+        public const double DvHeadUsableR2 = 0.50;
 
         /// <summary>累计训练样本数 (用于遥测)</summary>
         public int TrainedSampleCount { get; private set; }
@@ -286,10 +287,19 @@ namespace KSPGMAT.MGA.AI
             if (double.IsNaN(aRatio) || double.IsInfinity(aRatio)) aRatio = 0.0;
             if (double.IsNaN(tofRatio) || double.IsInfinity(tofRatio)) tofRatio = 0.0;
 
-            // 开普勒形状因子: 最短能量转移的等效速度尺度
-            double shape = Math.Exp(Math.Abs(aRatio) * 0.5) + Math.Exp(-Math.Abs(aRatio) * 0.5);
+            // 开普勒形状因子与局部圆轨道速度尺度:
+            // 使用太阳系/中央主恒星权威特征速度比例 (v_circ ~ 30 km/s at 1 AU) 进行有量纲物理映射
+            double muCentral = (SolarSystemCatalog.SunMu > 0 ? SolarSystemCatalog.SunMu : MGADefaults.FallbackSunMu);
+            double rRefKm = MGADefaults.AU_KM;
+            double vRef = Math.Sqrt(muCentral / rRefKm); // ~29.78 km/s
 
-            // 相位失配与倾角差以无量纲方式削弱可行性
+            // 经典霍曼无量纲速度差比例: deltaV / v_ref = |sqrt(2*r2/(r1+r2)) - 1| + |1 - sqrt(2*r1/(r1+r2))|
+            // 利用 aRatio = ln(r2/r1) => ratio = exp(aRatio)
+            double rRatio = Math.Exp(Math.Max(-5.0, Math.Min(5.0, aRatio)));
+            double vHohmannNorm = Math.Abs(Math.Sqrt(2.0 * rRatio / (1.0 + rRatio)) - 1.0) +
+                                  Math.Abs(1.0 - Math.Sqrt(2.0 / (1.0 + rRatio))) / Math.Sqrt(rRatio);
+
+            // 相位失配与倾角差以无量纲方式削弱可行性并增加非共面/相位机动速度需求
             double penalty = Math.Abs(phaseNorm) * 0.35 + Math.Min(1.0, Math.Abs(incNorm)) * 0.25;
 
             // 飞行时间偏离 1 (即偏离霍曼) 越多越不可行
@@ -300,7 +310,8 @@ namespace KSPGMAT.MGA.AI
             if (score > 1.0) score = 1.0;
 
             feasibilityProbability = score;
-            estimatedDvKms = shape; // 无量纲形状因子, 与训练标签同量级的粗估
+            // 严谨物理量纲: 标称霍曼转移速度差加上偏角/相位机动附加速度，乘以系统特征速度尺度 vRef (km/s)
+            estimatedDvKms = (vHohmannNorm + penalty * 0.5 + tofPenalty * 0.3) * vRef;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

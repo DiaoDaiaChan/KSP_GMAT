@@ -173,9 +173,14 @@ namespace KSPGMAT.MGA {
             out double outAlignedUt,
             [Out] double[] outAlignedDvFrenet,
             [Out] double[] outAlignedDvCart);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate int Kep3HohmannTransferDelegate(
             double r1_km, double r2_km, double mu,
             out double outTotalDv, out double outTofSec, out double outDv1, out double outDv2);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int Kep3OrbitPeriodDelegate(
+            double sma_km, double mu, out double outPeriodSec);
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate int Kep3BiellipticTransferDelegate(
@@ -270,6 +275,7 @@ namespace KSPGMAT.MGA {
 
         // kep3 new algorithm hooks
         private static Kep3HohmannTransferDelegate _fnKep3Hohmann;
+        private static Kep3OrbitPeriodDelegate _fnKep3OrbitPeriod;
         private static Kep3BiellipticTransferDelegate _fnKep3Bielliptic;
         private static Kep3CalcReynoldsStmDelegate _fnKep3ReynoldsStm;
         private static Kep3FlybyVoutDelegate _fnKep3FlybyVout;
@@ -555,6 +561,8 @@ namespace KSPGMAT.MGA {
 
                             IntPtr pHohmann = GetProcAddress(_dllHandle, "kep3_hohmann_transfer");
                             if (pHohmann != IntPtr.Zero) _fnKep3Hohmann = (Kep3HohmannTransferDelegate)Marshal.GetDelegateForFunctionPointer(pHohmann, typeof(Kep3HohmannTransferDelegate));
+                            IntPtr pOrbitPeriod = GetProcAddress(_dllHandle, "kep3_orbit_period");
+                            if (pOrbitPeriod != IntPtr.Zero) _fnKep3OrbitPeriod = (Kep3OrbitPeriodDelegate)Marshal.GetDelegateForFunctionPointer(pOrbitPeriod, typeof(Kep3OrbitPeriodDelegate));
                             IntPtr pBielliptic = GetProcAddress(_dllHandle, "kep3_bielliptic_transfer");
                             if (pBielliptic != IntPtr.Zero) _fnKep3Bielliptic = (Kep3BiellipticTransferDelegate)Marshal.GetDelegateForFunctionPointer(pBielliptic, typeof(Kep3BiellipticTransferDelegate));
                             IntPtr pReynolds = GetProcAddress(_dllHandle, "kep3_calc_reynolds_stm");
@@ -1262,6 +1270,20 @@ namespace KSPGMAT.MGA {
             if (_isAvailable && _fnKep3Hohmann != null) {
                 try {
                     return _fnKep3Hohmann(r1_km, r2_km, mu, out totalDv, out tofSec, out dv1, out dv2) == 0;
+                } catch { }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 原生计算开普勒二体轨道周期 (100% 原生 kep3_orbit_period)
+        /// </summary>
+        public static bool CalcOrbitPeriodSec(double smaKm, double mu, out double periodSec) {
+            EnsureLoaded();
+            periodSec = 0.0;
+            if (_isAvailable && _fnKep3OrbitPeriod != null) {
+                try {
+                    return _fnKep3OrbitPeriod(smaKm, mu, out periodSec) == 0;
                 } catch { }
             }
             return false;

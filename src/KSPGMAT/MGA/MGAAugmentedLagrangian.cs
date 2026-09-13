@@ -80,9 +80,9 @@ namespace KSPGMAT.MGA
 
         /// <summary>
         /// 收缩判据: 若本代违背量未降至上一代的 (1 - Contraction) 倍以下, 即认为约束未被有效压制。
-        /// 0.25 表示"至少下降 25% 才算有效进展"。
+        /// 在差分进化等随机全局探索中，放宽为 0.10 (下降 10% 即视为有效进展)，避免过早惩罚爆炸压制全局探索多样性。
         /// </summary>
-        public double Contraction { get; set; } = 0.25;
+        public double Contraction { get; set; } = 0.10;
 
         /// <summary>可行判定阈值 (无量纲)。纯数值下溢容差, 非调参旋钮。</summary>
         public const double FeasibilityEpsilon = 1.0e-9;

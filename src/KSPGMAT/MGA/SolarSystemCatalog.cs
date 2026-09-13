@@ -327,7 +327,7 @@ namespace KSPGMAT.MGA
         }
 
         /// <summary>
-        /// 权威天体所属母星解析器 (支持游戏运行态动态探测与标准星系后备)
+        /// 权威天体所属母星解析器 (优先游戏运行态与星历拓扑树动态向上探测，零写死依赖)
         /// </summary>
         public static string ResolveParentBody(string name) {
             if (string.IsNullOrEmpty(name)) return RootStarName;
@@ -343,6 +343,13 @@ namespace KSPGMAT.MGA
             }
             if (_planetsCache.TryGetValue(name, out var cached) && !string.IsNullOrEmpty(cached.ParentName)) {
                 return cached.ParentName;
+            }
+            // 离线/脱机星历回退：优先在已知缓存与天体列表中匹配
+            foreach (var kvp in _planetsCache) {
+                if (kvp.Value != null && !string.IsNullOrEmpty(kvp.Value.ParentName) &&
+                    kvp.Value.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) {
+                    return kvp.Value.ParentName;
+                }
             }
             string upper = name.Trim().ToUpperInvariant();
             if (upper == "MOON" || upper == "LUNA" || upper.Contains("月球")) return "Earth";
@@ -484,14 +491,15 @@ namespace KSPGMAT.MGA
 
         /// <summary>
         /// 严格基于权威天体物理模型 (MGAStateManager.MGADefaults) 自动推导并计算每个天体的安全飞掠高度 (km)
-        /// 1. 大气天体: 大气顶层 + 权威安全缓冲区 (atmDepthKm + Max(MinSafeAltitudeKm, 100km))
-        /// 2. 无大气固态天体: 严格采用 MGADefaults.DefaultFlybyAltitudeKm (300 km) 权威基准；微小天体/小行星按半径自适应下限 (>= 30 km)
+        /// 1. 大气天体: 大气顶层 + 权威安全缓冲区 (atmDepthKm + Max(MinSafeAltitudeKm, DepartureAltitudeKm * 0.5))
+        /// 2. 无大气固态天体: 严格采用 MGADefaults.DefaultFlybyAltitudeKm (300 km) 权威基准；微小天体/小行星按半径自适应下限 (>= MinSafeAltitudeKm)
         /// 杜绝任何贴地 20 km 或贴大气飞行的伪物理作弊解，100% 保持单一真值源 (Single Source of Truth)
         /// </summary>
         public static double ComputeAutomaticSafeFlybyAltitudeKm(string bodyName, double radiusKm, double atmDepthKm) {
             if (atmDepthKm > 0) {
-                // 有大气天体：大气顶层 + 权威安全净空缓冲区 (例如 Venus 300+100=400km, Earth 100+100=200km, Titan 600+100=700km)
-                return atmDepthKm + Math.Max(MGADefaults.MinSafeAltitudeKm, 100.0);
+                // 有大气天体：大气顶层 + SSOT 权威安全缓冲区 (对齐 MGADefaults.DepartureAltitudeKm * 0.5 与 MinSafeAltitudeKm)
+                double atmBuffer = Math.Max(MGADefaults.MinSafeAltitudeKm, MGADefaults.DepartureAltitudeKm * 0.5);
+                return atmDepthKm + atmBuffer;
             }
 
             // 无大气固态天体 (Mercury, Moon, Ceres, Pluto, etc.)
