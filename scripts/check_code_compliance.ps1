@@ -315,6 +315,24 @@ foreach ($f in $allCsFiles) {
                 -Snippet $trimmed `
                 -Suggestion "极值事件只能作为 Propagate 停机条件；Achieve 必须使用可微物理量并接入 GMATSchemaRegistry"
         }
+
+        # 检查 4.3: 游离日志与控制台裸写 (UnityEngine.Debug.* / Console.Write*)
+        if ($fileName -ne "KSPGMATLog.cs") {
+            if ($line -match '\b(?:UnityEngine\.)?Debug\.(?:Log|LogWarning|LogError|LogException|LogAssertion|LogFormat)\b') {
+                Add-Issue -Severity "ERROR" -Category "ORPHAN-LOG" `
+                    -File $fileName -Line $lineNum `
+                    -Message "检测到游离原生日志调用 '$trimmed'，违反统一日志系统规范" `
+                    -Snippet $trimmed `
+                    -Suggestion "请统一通过 KSPGMATLog (如 KSPGMATLog.Info / Warn / Error 或 ILogger) 记录日志"
+            }
+            if ($line -match '\b(?:System\.)?Console\.(?:Error\.)?(?:WriteLine|Write)\b') {
+                Add-Issue -Severity "ERROR" -Category "ORPHAN-LOG" `
+                    -File $fileName -Line $lineNum `
+                    -Message "检测到游离控制台裸写调用 '$trimmed'，违反统一日志系统规范" `
+                    -Snippet $trimmed `
+                    -Suggestion "请统一通过 KSPGMATLog (如 KSPGMATLog.Info / Debug / Warn / Error) 记录日志"
+            }
+        }
     }
 }
 

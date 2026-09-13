@@ -722,11 +722,13 @@ flowchart TD
    - 彻底废除脆弱且易受注释/多行字符串干扰的纯正则文本扫描，建立基于 `Microsoft.CodeAnalysis.CSharp` 的控制台分析工具 `tools/ComplianceChecker`；
    - 每次运行 `pwsh -File deploy.ps1` 编译部署时，在 Step 4 自动毫秒级触发 Roslyn 深度语法分析；
    - 严格把控退出码（Strict 模式下阻断性违规自动中断部署流程），确保架构规范零人工审查负担；
-2. **四大编译级审计维度**：
-   - **SSOT 状态一致性**：遍历 `MemberAccessExpressionSyntax` 与 `FieldDeclarationSyntax`，自动拦截跳过 `GMATStateManager` / `MGAStateManager` 读写飞船物理量（如 `FlightGlobals.ActiveVessel.mainBody`）或在 Tab 中私设非常量 `public static` 状态的行为；
-   - **UI 控件与样式规范**：遍历 `ObjectCreationExpressionSyntax` 拦截渲染方法内局部动态 `new GUIStyle`（彻底清零每帧 GC 内存抖动），遍历 `InvocationExpression` 引导使用 `GMATMainWindow.Widgets` 统一标准控件库（如 `DelayedFloatField`）；
-   - **多语言与游离文本**：遍历 `LiteralExpressionSyntax` 字符串字面量，结合父节点语法判定（自动剥离注释与日志），零误报识别未包裹 `I18n.T()` 的硬编码中文，并使用 `System.Text.Json` 100% 比对 4 国语言字典键对称性；
-   - **天体动力学解耦**：审计二元等值条件，严禁天体白名单硬编码或在 Achieve 中误用极值事件；
+2. **六大编译级审计维度**：
+   - **SSOT 状态一致性** (`StateComplianceAnalyzer`)：遍历 `MemberAccessExpressionSyntax` 与 `FieldDeclarationSyntax`，自动拦截跳过 `GMATStateManager` / `MGAStateManager` 读写飞船物理量（如 `FlightGlobals.ActiveVessel.mainBody`）或在 Tab 中私设非常量 `public static` 状态的行为；
+   - **UI 控件与样式规范** (`UIComplianceAnalyzer`)：遍历 `ObjectCreationExpressionSyntax` 拦截渲染方法内局部动态 `new GUIStyle`（彻底清零每帧 GC 内存抖动），遍历 `InvocationExpression` 引导使用 `GMATMainWindow.Widgets` 统一标准控件库（如 `DelayedFloatField`）；
+   - **多语言与游离文本** (`I18nComplianceAnalyzer`)：遍历 `LiteralExpressionSyntax` 字符串字面量，结合父节点语法判定（自动剥离注释与日志），零误报识别未包裹 `I18n.T()` 的硬编码中文，并使用 `System.Text.Json` 100% 比对 4 国语言字典键对称性；
+   - **天体动力学解耦** (`DynamicsComplianceAnalyzer`)：审计二元等值条件，严禁天体白名单硬编码或在 Achieve 中误用极值事件；
+   - **MGA 唯一真值源与物理常数合规** (`MGAStateComplianceAnalyzer`)：拦截裸写天文单位 AU、太阳引力常数 Mu 或私设 UI 状态字段；
+   - **统一日志与游离日志自查** (`LogComplianceAnalyzer`)：遍历 `InvocationExpressionSyntax` 深度排查裸写 `UnityEngine.Debug.*`（如 `Debug.Log`, `LogError`）、`Console.Write*` 以及 `MonoBehaviour.print`，强制全工程收敛至统一日志系统 `KSPGMATLog`（违规标记为 `ORPHAN-LOG`，阻断性错误 0 容忍）；
 3. **结构化分级报告**：
    - 自动生成太空暗黑科技风格 ANSI 彩色报表，精确展示文件、行号、语法节点摘录与规范整改指引。
 
@@ -832,3 +834,13 @@ flowchart TD
      - 当前日志绝对路径展示与输入
      - 一键“打开日志文件/目录 (`OpenLogFileOrFolder`)”按钮（Windows Explorer 快速选中）
      - 一键“立即刷新写入缓冲区 (`Flush`)”按钮
+
+## 12.4 编译器级游离日志自查门禁 (`LogComplianceAnalyzer`)
+1. **自动化 AST 审查与阻断门禁**：
+   - 在 `tools/ComplianceChecker` 中集成 `LogComplianceAnalyzer`（继承 `CSharpSyntaxWalker`），对全工程代码进行编译级 AST 语法树穿透遍历；
+   - 自动排查所有方法调用表达式 (`InvocationExpressionSyntax`)：
+     - 拦截 `UnityEngine.Debug` 静态方法调用 (`Log`, `LogWarning`, `LogError`, `LogException`, `LogAssertion`, `LogFormat`)；
+     - 拦截控制台静态裸写调用 (`Console.WriteLine`, `Console.Write`, `Console.Error.WriteLine`, `Console.Error.Write`)；
+     - 拦截 `MonoBehaviour.print` 裸写调用；
+   - 违规项归类为 `[ORPHAN-LOG]`，严重级别定义为 **阻断性错误 (`IssueSeverity.ERROR`)**，在 `deploy.ps1` 编译部署时严禁通过，保持 0 违规。
+   - 仅统一日志系统实现本体 `KSPGMATLog.cs` 列入白名单豁免，其余任何模块严禁私自绕过。

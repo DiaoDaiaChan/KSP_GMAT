@@ -100,3 +100,4 @@
   - `Success` / `Section`：关键收敛与分段横幅标记。
 - **上下文记录器推荐**：模块内推荐声明上下文记录器 `private static readonly ILogger Log = KSPGMATLog.ForContext("ModuleName");`，通过 `Log.Info(...)` / `Log.Warn(...)` 结构化输出。
 - **UI 交互支持**：UI 设置面板或主界面底部提供一键“打开日志文件夹 (`OpenLogFileOrFolder`)”与“立即刷新刷盘 (`Flush`)”功能。
+- **编译器级游离日志门禁**：`tools/ComplianceChecker` (Roslyn AST) 内置 `LogComplianceAnalyzer`，全量扫描拦截任何散落的 `UnityEngine.Debug.*`、`Console.Write*` 或 `MonoBehaviour.print`。违规标记为 `[ORPHAN-LOG]` 阻断性错误 (CRITICAL ERROR)，每次构建部署必须确保 0 违规。

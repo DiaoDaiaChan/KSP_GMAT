@@ -87,6 +87,14 @@ namespace KSPGMAT.Tools.ComplianceChecker {
                 // Analyzer 4: 动力学解耦
                 var dynAnalyzer = new DynamicsComplianceAnalyzer(file);
                 allIssues.AddRange(dynAnalyzer.Analyze(tree));
+
+                // Analyzer 5: MGA 唯一真值源与物理常数合规
+                var mgaAnalyzer = new MGAStateComplianceAnalyzer(file);
+                allIssues.AddRange(mgaAnalyzer.Analyze(tree));
+
+                // Analyzer 6: 统一日志系统与游离日志自查 (Orphan Log Compliance)
+                var logAnalyzer = new LogComplianceAnalyzer(file);
+                allIssues.AddRange(logAnalyzer.Analyze(tree));
             }
 
             // 3. 检测本地化字典完整性
