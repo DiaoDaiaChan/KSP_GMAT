@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using UnityEngine;
+using KSPGMAT;
 
 namespace KSPGMAT.UI {
     public partial class GMATMainWindow {
@@ -61,6 +62,33 @@ namespace KSPGMAT.UI {
                     ScreenMessages.PostScreenMessage(I18n.Format(ok ? "settings_engine_ok" : "settings_engine_fail", msg), 4.0f, ScreenMessageStyle.UPPER_CENTER);
                 });
             }
+            GUILayout.EndVertical();
+
+            GUILayout.Space(6);
+            GUILayout.BeginVertical(cardBoxStyle);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(I18n.T("settings_log_header", "系统运行日志与诊断 (System Logs & Diagnostics)"), headerStyle);
+            GUILayout.FlexibleSpace();
+            string logBadgeColor = KSPGMATLog.IsFileLoggingEnabled ? "#34d399" : "#f59e0b";
+            GUILayout.Label($"<color={logBadgeColor}><b>[● {KSPGMATLog.CurrentLogLevel} | {(KSPGMATLog.IsFileLoggingEnabled ? "Active" : "Disabled")}]</b></color>", labelValueStyle);
+            GUILayout.EndHorizontal();
+
+            string currentLogPath = KSPGMATLog.GetLogFilePath();
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(I18n.T("settings_log_path", "当前日志文件:"), labelValueStyle, GUILayout.Width(110));
+            GUILayout.TextField(currentLogPath, stepLabelInputStyle ?? GUI.skin.textField, GUILayout.ExpandWidth(true));
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(4);
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button(I18n.T("settings_btn_open_log_folder", "📂 打开日志所在目录 (Open in Explorer)"), secondaryButtonStyle, GUILayout.Height(26))) {
+                OpenLogFileOrFolder();
+            }
+            if (GUILayout.Button(I18n.T("settings_btn_flush_log", "💾 立即刷新写入缓冲区 (Flush)"), secondaryButtonStyle, GUILayout.Width(220), GUILayout.Height(26))) {
+                KSPGMATLog.Flush();
+                ScreenMessages.PostScreenMessage(I18n.T("log_flushed_msg", "日志缓冲区已立即刷新写入磁盘"), 3.0f, ScreenMessageStyle.UPPER_CENTER);
+            }
+            GUILayout.EndHorizontal();
             GUILayout.EndVertical();
         }
     }

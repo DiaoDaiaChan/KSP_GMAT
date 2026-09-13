@@ -90,8 +90,8 @@ EXPORT_API int pykep_mga_hybrid_evaluate_mu(
                 double t_orb_b = 2.0 * 3.14159265358979323846 * std::sqrt((r_avg_b * r_avg_b * r_avg_b) / effective_mu);
                 int nmax = (t_orb_b > 10.0) ? (int)std::floor(tof / t_orb_b + 0.25) : 0;
                 bool is_res_b = (std::abs(p1.mu - p2.mu) < 1e-4 && std::abs(p1.radius - p2.radius) < 1e-4 && !is_central_body(p1, effective_mu));
-                if (is_res_b && nmax < 1) nmax = 1;
-                nmax = std::max(0, std::min(4, nmax));
+                int max_b = is_res_b ? 8 : 4;
+                nmax = std::max(0, std::min(max_b, nmax));
                 try {
                     kep3::lambert_problem lp(r1_arr, r2_arr, tof, effective_mu, false, nmax);
                     const auto& v0_list = lp.get_v0();
@@ -169,20 +169,20 @@ EXPORT_API int pykep_mga_hybrid_evaluate_mu(
 
                         out_sol->launch_dv_kms = calc_central_departure_dv(p1.mu, p1.radius, dep_pe_km, dep_ap_km, r_dest_km, beta_rad, nullptr);
 
-                        double hx = p1.ry * cur_v_dep[2] - p1.rz * cur_v_dep[1];
-                        double hy = p1.rz * cur_v_dep[0] - p1.rx * cur_v_dep[2];
-                        double hz = p1.rx * cur_v_dep[1] - p1.ry * cur_v_dep[0];
-                        double h_mag = std::sqrt(hx * hx + hy * hy + hz * hz);
-                        if (h_mag < 1e-6) {
-                            hx = p1.ry * p2.rz - p1.rz * p2.ry;
-                            hy = p1.rz * p2.rx - p1.rx * p2.rz;
-                            hz = p1.rx * p2.ry - p1.ry * p2.rx;
-                            h_mag = std::sqrt(hx * hx + hy * hy + hz * hz);
+                        double h_eff_x = (h_park_mag > 1e-6) ? h_park_x : (r1_arr[1] * cur_v_dep[2] - r1_arr[2] * cur_v_dep[1]);
+                        double h_eff_y = (h_park_mag > 1e-6) ? h_park_y : (r1_arr[2] * cur_v_dep[0] - r1_arr[0] * cur_v_dep[2]);
+                        double h_eff_z = (h_park_mag > 1e-6) ? h_park_z : (r1_arr[0] * cur_v_dep[1] - r1_arr[1] * cur_v_dep[0]);
+                        double h_eff_mag = std::sqrt(h_eff_x * h_eff_x + h_eff_y * h_eff_y + h_eff_z * h_eff_z);
+                        if (h_eff_mag < 1e-6) {
+                            h_eff_x = r1_arr[1] * p2.rz - r1_arr[2] * p2.ry;
+                            h_eff_y = r1_arr[2] * p2.rx - r1_arr[0] * p2.rz;
+                            h_eff_z = r1_arr[0] * p2.ry - r1_arr[1] * p2.rx;
+                            h_eff_mag = std::sqrt(h_eff_x * h_eff_x + h_eff_y * h_eff_y + h_eff_z * h_eff_z);
                         }
-                        if (h_mag > 1e-6) {
-                            out_sol->ejection_inc_deg = std::acos(std::max(-1.0, std::min(1.0, hz / h_mag))) * RAD2DEG;
-                            double nx = -hy;
-                            double ny = hx;
+                        if (h_eff_mag > 1e-6) {
+                            out_sol->ejection_inc_deg = std::acos(std::max(-1.0, std::min(1.0, h_eff_z / h_eff_mag))) * RAD2DEG;
+                            double nx = -h_eff_y;
+                            double ny = h_eff_x;
                             double n_mag = std::sqrt(nx * nx + ny * ny);
                             if (n_mag > 1e-6) {
                                 double lan = std::atan2(ny, nx) * RAD2DEG;
@@ -293,16 +293,50 @@ EXPORT_API int pykep_mga_hybrid_evaluate_mu(
                         u_v[0]*u_h[1] - u_v[1]*u_h[0]
                     };
 
-                    // 下游天体势能跨越所需双曲超速估算 (用于同星共振调相 ΔV-EGA 的出场能级闭环)
+                    // 下游天体势能跨越所需双曲超速精确推导 (用于同星共振调相 ΔV-EGA 的无动力飞掠能级闭环)
+                    // 纯天体力学第一性原理: 无动力借力两体相对能量守恒 ||v_inf,arr|| = ||v_inf,dep||
                     double v_inf_needed = 0.0;
+                    std::array<double, 3> u_needed = { 0.0, 0.0, 0.0 };
+                    bool has_u_needed = false;
                     if (is_res_init && leg_count > 1) {
                         const NativePlanetState& p_down = arr_planets[1];
-                        double r_down = std::sqrt(p_down.rx*p_down.rx + p_down.ry*p_down.ry + p_down.rz*p_down.rz);
-                        if (r_down > 1e-4) {
-                            double a_down = (r1_len_i + r_down) * 0.5;
-                            double v_down_req = std::sqrt(std::max(1e-4, effective_mu * (2.0 / std::max(1.0, r1_len_i) - 1.0 / std::max(1.0, a_down))));
-                            // 考虑引力助推双曲转向顺向增能系数 (物理极限泵升因子 ~0.60)
-                            v_inf_needed = std::abs(v_down_req - v_p1_mag) * 0.60;
+                        std::array<double, 3> r_down = { p_down.rx, p_down.ry, p_down.rz };
+                        double tof_down = tofs_sec[1];
+                        if (tof_down > 10.0) {
+                            try {
+                                double r_down_len = std::sqrt(r_down[0]*r_down[0] + r_down[1]*r_down[1] + r_down[2]*r_down[2]);
+                                double r_avg_down = (r2_len_i + r_down_len) * 0.5;
+                                double t_orb_down = 2.0 * PI * std::sqrt((r_avg_down * r_avg_down * r_avg_down) / effective_mu);
+                                int nmax_down = (t_orb_down > 10.0) ? (int)std::floor(tof_down / t_orb_down + 0.25) : 0;
+                                nmax_down = std::max(0, std::min(6, nmax_down));
+                                kep3::lambert_problem lp_down(r2_arr, r_down, tof_down, effective_mu, false, nmax_down);
+                                const auto& v0_down = lp_down.get_v0();
+                                double best_v_inf_down = 1e9;
+                                for (const auto& v0_cand : v0_down) {
+                                    double vx_inf = v0_cand[0] - p2.vx;
+                                    double vy_inf = v0_cand[1] - p2.vy;
+                                    double vz_inf = v0_cand[2] - p2.vz;
+                                    double v_inf_cand = std::sqrt(vx_inf * vx_inf + vy_inf * vy_inf + vz_inf * vz_inf);
+                                    if (v_inf_cand < best_v_inf_down) {
+                                        best_v_inf_down = v_inf_cand;
+                                        if (v_inf_cand > 1e-5) {
+                                            u_needed = { vx_inf / v_inf_cand, vy_inf / v_inf_cand, vz_inf / v_inf_cand };
+                                            has_u_needed = true;
+                                        }
+                                    }
+                                }
+                                if (best_v_inf_down < 1e8) {
+                                    v_inf_needed = best_v_inf_down;
+                                }
+                            } catch (...) {}
+                        }
+                        if (v_inf_needed < 1e-4) {
+                            double r_down_len = std::sqrt(r_down[0]*r_down[0] + r_down[1]*r_down[1] + r_down[2]*r_down[2]);
+                            if (r_down_len > 1e-4) {
+                                double a_down = (r2_len_i + r_down_len) * 0.5;
+                                double v_down_req = std::sqrt(std::max(1e-4, effective_mu * (2.0 / std::max(1.0, r2_len_i) - 1.0 / std::max(1.0, a_down))));
+                                v_inf_needed = std::abs(v_down_req - v_p1_mag);
+                            }
                         }
                     }
 
@@ -340,7 +374,7 @@ EXPORT_API int pykep_mga_hybrid_evaluate_mu(
                         double r_avg_dsm = (r_prop_len + r2_len_dsm) * 0.5;
                         double t_orb_dsm = 2.0 * PI * std::sqrt((r_avg_dsm * r_avg_dsm * r_avg_dsm) / effective_mu);
                         int nmax = (t_orb_dsm > 10.0) ? (int)std::floor(dt2 / t_orb_dsm + 0.25) : 0;
-                        nmax = std::max(0, std::min(4, nmax));
+                        nmax = std::max(0, std::min(6, nmax));
 
                         try {
                             kep3::lambert_problem lp(r_prop, r2_arr, dt2, effective_mu, false, nmax);
@@ -384,9 +418,21 @@ EXPORT_API int pykep_mga_hybrid_evaluate_mu(
                                     double vay = out_v2[1] - p2.vy;
                                     double vaz = out_v2[2] - p2.vz;
                                     double v_inf_arr = std::sqrt(vax*vax + vay*vay + vaz*vaz);
-                                    if (v_inf_arr < v_inf_needed) {
-                                        cand_cost += 1.5 * (v_inf_needed - v_inf_arr);
+                                    double energy_mismatch = std::abs(v_inf_arr - v_inf_needed);
+                                    double dv_turn_excess = 0.0;
+                                    if (has_u_needed && v_inf_arr > 1e-5) {
+                                        double cos_d = (vax * u_needed[0] + vay * u_needed[1] + vaz * u_needed[2]) / v_inf_arr;
+                                        cos_d = std::max(-1.0, std::min(1.0, cos_d));
+                                        double turn_req = std::acos(cos_d);
+                                        double safe_rp = p2.radius + 300.0;
+                                        double e_min = 1.0 + (safe_rp * v_inf_arr * v_inf_arr) / std::max(1e-6, p2.mu);
+                                        double delta_max = 2.0 * std::asin(1.0 / std::max(1.0001, e_min));
+                                        if (turn_req > delta_max) {
+                                            double turn_excess = turn_req - delta_max;
+                                            dv_turn_excess = 2.0 * std::max(v_inf_arr, v_inf_needed) * std::sin(turn_excess * 0.5);
+                                        }
                                     }
+                                    cand_cost += 1.5 * (energy_mismatch + dv_turn_excess);
                                 }
                                 return cand_cost;
                             }
@@ -405,51 +451,17 @@ EXPORT_API int pykep_mga_hybrid_evaluate_mu(
                         }
                     } catch (...) {}
 
-                    // 2. 共振初速候选 (针对同星共振蓄能 ΔV-EGA)
+                    // 2. 共振初速候选 (针对同星共振蓄能 ΔV-EGA，100% 纯天体力学公式解析推导)
                     if (is_res_init) {
-                        int max_m = std::max(1, std::min(4, nmax_init + 1));
-                        for (int m = 1; m <= max_m; ++m) {
-                            double t_sc = tof / (double)m;
-                            double a_res = std::cbrt(effective_mu * (t_sc / (2.0 * PI)) * (t_sc / (2.0 * PI)));
-                            double v_sq = effective_mu * (2.0 / std::max(1.0, r1_len_i) - 1.0 / std::max(1.0, a_res));
-                            if (v_sq <= 1e-4) continue;
-                            double v_req = std::sqrt(v_sq);
-
-                            double angles_deg[] = { 0.0, -6.0, 6.0, -12.0, 12.0, -20.0, 20.0, -30.0, 30.0 };
-                            for (double ang : angles_deg) {
-                                double rad = ang * DEG2RAD;
-                                double c_v = std::cos(rad);
-                                double s_r = std::sin(rad);
-                                init_v_candidates.push_back({
-                                    v_req * (c_v * u_v[0] + s_r * u_r[0]),
-                                    v_req * (c_v * u_v[1] + s_r * u_r[1]),
-                                    v_req * (c_v * u_v[2] + s_r * u_r[2])
-                                });
-                            }
-                        }
-
-                        // 天体自然有理数共振比候选 (1:1, 4:3, 3:2, 2:1, 5:2, 3:1 等)
-                        double t_orb_body = 2.0 * PI * std::sqrt((r1_len_i * r1_len_i * r1_len_i) / effective_mu);
-                        double res_ratios[] = { 1.0, 1.25, 1.333333, 1.5, 1.75, 2.0, 2.25, 2.5, 3.0 };
-                        for (double rr : res_ratios) {
-                            double t_res = t_orb_body * rr;
-                            double a_res = std::cbrt(effective_mu * (t_res / (2.0 * PI)) * (t_res / (2.0 * PI)));
-                            double v_sq = effective_mu * (2.0 / std::max(1.0, r1_len_i) - 1.0 / std::max(1.0, a_res));
-                            if (v_sq <= 1e-4) continue;
-                            double v_req = std::sqrt(v_sq);
-
-                            double angles_deg[] = { 0.0, -8.0, 8.0, -16.0, 16.0, -25.0, 25.0 };
-                            for (double ang : angles_deg) {
-                                double rad = ang * DEG2RAD;
-                                double c_v = std::cos(rad);
-                                double s_r = std::sin(rad);
-                                init_v_candidates.push_back({
-                                    v_req * (c_v * u_v[0] + s_r * u_r[0]),
-                                    v_req * (c_v * u_v[1] + s_r * u_r[1]),
-                                    v_req * (c_v * u_v[2] + s_r * u_r[2])
-                                });
-                            }
-                        }
+                        pykep_synthesize_resonant_departure_candidates(
+                            p1.mu, p1.radius, dep_pe_km,
+                            p1.vx, p1.vy, p1.vz,
+                            r1_len_i, v_p1_mag,
+                            u_v, u_r, u_h,
+                            effective_mu,
+                            tof,
+                            init_v_candidates,
+                            v_inf_needed);
                     } else {
                         // 异星霍曼初速候选
                         double a_hoh = (r1_len_i + r2_len_i) * 0.5;
@@ -485,10 +497,10 @@ EXPORT_API int pykep_mga_hybrid_evaluate_mu(
                         }
                     }
 
-                    // 3. 极速 2D 坐标下降微调 (Coordinate Descent Refinement)
+                    // 3. 极速 3D 局部坐标下降微调 (Coordinate Descent Refinement)
                     if (lam_ok) {
-                        double step_v = 0.20; // km/s
-                        for (int iter = 0; iter < 3; ++iter) {
+                        double step_v = 0.40; // km/s
+                        for (int iter = 0; iter < 4; ++iter) {
                             bool improved = false;
                             double test_steps[] = { -step_v, step_v };
                             for (double ds : test_steps) {
@@ -522,6 +534,24 @@ EXPORT_API int pykep_mga_hybrid_evaluate_mu(
                                 if (c < best_cost) {
                                     best_cost = c;
                                     best_v_dep = try_v_r;
+                                    best_r_dsm = t_r_d;
+                                    best_v_dsm_m = t_vm;
+                                    best_v_dsm_p = t_vp;
+                                    best_v2 = t_v2;
+                                    best_dsm_val = t_dsm;
+                                    improved = true;
+                                }
+
+                                // 沿法向微调
+                                std::array<double, 3> try_v_h = {
+                                    best_v_dep[0] + ds * u_h[0],
+                                    best_v_dep[1] + ds * u_h[1],
+                                    best_v_dep[2] + ds * u_h[2]
+                                };
+                                c = eval_init_dep_candidate(try_v_h, t_r_d, t_vm, t_vp, t_v2, t_dsm);
+                                if (c < best_cost) {
+                                    best_cost = c;
+                                    best_v_dep = try_v_h;
                                     best_r_dsm = t_r_d;
                                     best_v_dsm_m = t_vm;
                                     best_v_dsm_p = t_vp;
@@ -587,20 +617,20 @@ EXPORT_API int pykep_mga_hybrid_evaluate_mu(
 
                         out_sol->launch_dv_kms = calc_central_departure_dv(p1.mu, p1.radius, dep_pe_km, dep_ap_km, r_dest_km, beta_rad, nullptr);
 
-                        double hx = p1.ry * cur_v_dep[2] - p1.rz * cur_v_dep[1];
-                        double hy = p1.rz * cur_v_dep[0] - p1.rx * cur_v_dep[2];
-                        double hz = p1.rx * cur_v_dep[1] - p1.ry * cur_v_dep[0];
-                        double h_mag = std::sqrt(hx * hx + hy * hy + hz * hz);
-                        if (h_mag < 1e-6) {
-                            hx = p1.ry * p2.rz - p1.rz * p2.ry;
-                            hy = p1.rz * p2.rx - p1.rx * p2.rz;
-                            hz = p1.rx * p2.ry - p1.ry * p2.rx;
-                            h_mag = std::sqrt(hx * hx + hy * hy + hz * hz);
+                        double h_eff_x = (h_park_mag > 1e-6) ? h_park_x : (r1_arr[1] * cur_v_dep[2] - r1_arr[2] * cur_v_dep[1]);
+                        double h_eff_y = (h_park_mag > 1e-6) ? h_park_y : (r1_arr[2] * cur_v_dep[0] - r1_arr[0] * cur_v_dep[2]);
+                        double h_eff_z = (h_park_mag > 1e-6) ? h_park_z : (r1_arr[0] * cur_v_dep[1] - r1_arr[1] * cur_v_dep[0]);
+                        double h_eff_mag = std::sqrt(h_eff_x * h_eff_x + h_eff_y * h_eff_y + h_eff_z * h_eff_z);
+                        if (h_eff_mag < 1e-6) {
+                            h_eff_x = r1_arr[1] * p2.rz - r1_arr[2] * p2.ry;
+                            h_eff_y = r1_arr[2] * p2.rx - r1_arr[0] * p2.rz;
+                            h_eff_z = r1_arr[0] * p2.ry - r1_arr[1] * p2.rx;
+                            h_eff_mag = std::sqrt(h_eff_x * h_eff_x + h_eff_y * h_eff_y + h_eff_z * h_eff_z);
                         }
-                        if (h_mag > 1e-6) {
-                            out_sol->ejection_inc_deg = std::acos(std::max(-1.0, std::min(1.0, hz / h_mag))) * RAD2DEG;
-                            double nx = -hy;
-                            double ny = hx;
+                        if (h_eff_mag > 1e-6) {
+                            out_sol->ejection_inc_deg = std::acos(std::max(-1.0, std::min(1.0, h_eff_z / h_eff_mag))) * RAD2DEG;
+                            double nx = -h_eff_y;
+                            double ny = h_eff_x;
                             double n_mag = std::sqrt(nx * nx + ny * ny);
                             if (n_mag > 1e-6) {
                                 double lan = std::atan2(ny, nx) * RAD2DEG;
@@ -725,6 +755,8 @@ EXPORT_API int pykep_mga_hybrid_evaluate_mu(
                         };
                     };
 
+                    bool is_res = (std::abs(p1.mu - p2.mu) < 1e-4 && std::abs(p1.radius - p2.radius) < 1e-4 && !is_central_body(p1, effective_mu));
+
                     auto eval_dsm_candidate = [&](const std::array<double, 3>& v_dep_cand,
                                                   std::array<double, 3>& out_r_dsm,
                                                   std::array<double, 3>& out_v_dsm_m,
@@ -742,7 +774,8 @@ EXPORT_API int pykep_mga_hybrid_evaluate_mu(
                         double r_avg_dsm = (r_dsm_len + r2_len_dsm) * 0.5;
                         double t_orb_dsm = 2.0 * 3.14159265358979323846 * std::sqrt((r_avg_dsm * r_avg_dsm * r_avg_dsm) / effective_mu);
                         int nmax = (t_orb_dsm > 10.0) ? (int)std::floor(dt2 / t_orb_dsm + 0.25) : 0;
-                        nmax = std::max(0, std::min(4, nmax));
+                        int max_nmax = is_res ? 8 : 4;
+                        nmax = std::max(0, std::min(max_nmax, nmax));
 
                         try {
                             kep3::lambert_problem lp_dsm(r_d, r2_arr, dt2, effective_mu, false, nmax);
@@ -757,10 +790,33 @@ EXPORT_API int pykep_mga_hybrid_evaluate_mu(
                                 double dv_z = v0_dsm_list[b][2] - v_d[2];
                                 double dsm_mag = std::sqrt(dv_x*dv_x + dv_y*dv_y + dv_z*dv_z);
                                 double v0_mag = std::sqrt(v0_dsm_list[b][0]*v0_dsm_list[b][0] + v0_dsm_list[b][1]*v0_dsm_list[b][1] + v0_dsm_list[b][2]*v0_dsm_list[b][2]);
-                                if (!std::isnan(dsm_mag) && !std::isinf(dsm_mag) && v0_mag < 90.0 && dsm_mag < best_cost) {
-                                    best_cost = dsm_mag;
-                                    best_idx = b;
-                                    found = true;
+                                if (!std::isnan(dsm_mag) && !std::isinf(dsm_mag) && v0_mag < 90.0) {
+                                    double cand_cost = dsm_mag;
+
+                                    if (is_res) {
+                                        double vax = v1_dsm_list[b][0] - p2.vx;
+                                        double vay = v1_dsm_list[b][1] - p2.vy;
+                                        double vaz = v1_dsm_list[b][2] - p2.vz;
+                                        double v_inf_arr = std::sqrt(vax*vax + vay*vay + vaz*vaz);
+                                        if (v_inf_arr > v_in_mag + 0.05) {
+                                            cand_cost += 1.5 * (v_inf_arr - v_in_mag);
+                                        }
+                                    }
+
+                                    if (k == leg_count - 1 && !no_insertion) {
+                                        double vax = v1_dsm_list[b][0] - p2.vx;
+                                        double vay = v1_dsm_list[b][1] - p2.vy;
+                                        double vaz = v1_dsm_list[b][2] - p2.vz;
+                                        double v_inf_arr = std::sqrt(vax*vax + vay*vay + vaz*vaz);
+                                        bool is_central_arr = is_central_body(p2, effective_mu);
+                                        double ins_dv = is_central_arr ? v_inf_arr : calc_vis_viva_arr(v_inf_arr, p2.mu, p2.radius, arr_pe_km, arr_ap_km);
+                                        cand_cost += ins_dv;
+                                    }
+                                    if (cand_cost < best_cost) {
+                                        best_cost = cand_cost;
+                                        best_idx = b;
+                                        found = true;
+                                    }
                                 }
                             }
                             if (found) {
@@ -785,14 +841,17 @@ EXPORT_API int pykep_mga_hybrid_evaluate_mu(
                         angle_candidates.push_back({ std::min(delta_in, delta_max), beta_in });
                     }
 
-                    // B. 开普勒活力公式能级匹配转移候选 (Keplerian Energy-Matched Tangent Transfers)
-                    bool is_res = (std::abs(p1.mu - p2.mu) < 1e-4 && std::abs(p1.radius - p2.radius) < 1e-4 && !is_central_body(p1, effective_mu));
                     std::vector<double> a_candidates;
                     if (is_res) {
-                        double a_res = std::cbrt((effective_mu * tof * tof) / (4.0 * 3.14159265358979323846 * 3.14159265358979323846));
-                        a_candidates.push_back(a_res);
-                        a_candidates.push_back(a_res * 0.95);
-                        a_candidates.push_back(a_res * 1.05);
+                        double t_p = 2.0 * 3.14159265358979323846 * std::sqrt((r1_len_f * r1_len_f * r1_len_f) / effective_mu);
+                        int max_q = std::max(1, std::min(8, (int)std::floor(tof / (0.35 * t_p))));
+                        for (int q = 1; q <= max_q; ++q) {
+                            double t_sc = tof / q;
+                            double a_q = std::cbrt((effective_mu * t_sc * t_sc) / (4.0 * 3.14159265358979323846 * 3.14159265358979323846));
+                            a_candidates.push_back(a_q);
+                            a_candidates.push_back(a_q * 0.95);
+                            a_candidates.push_back(a_q * 1.05);
+                        }
                     } else {
                         double a_hoh = (r1_len_f + r2_len_f) * 0.5;
                         a_candidates.push_back(a_hoh * 0.90);
@@ -835,7 +894,8 @@ EXPORT_API int pykep_mga_hybrid_evaluate_mu(
                         double r_avg_f = (r1_len_f + r2_len_f) * 0.5;
                         double t_orb_f = 2.0 * 3.14159265358979323846 * std::sqrt((r_avg_f * r_avg_f * r_avg_f) / effective_mu);
                         int nmax_full = (t_orb_f > 10.0) ? (int)std::floor(tof / t_orb_f + 0.25) : 0;
-                        nmax_full = std::max(0, std::min(2, nmax_full));
+                        int full_cap = is_res ? 8 : 4;
+                        nmax_full = std::max(0, std::min(full_cap, nmax_full));
                         kep3::lambert_problem lp_full(r1_arr, r2_arr, tof, effective_mu, false, nmax_full);
                         const auto& v0_raw = lp_full.get_v0();
                         for (size_t b = 0; b < v0_raw.size(); ++b) {

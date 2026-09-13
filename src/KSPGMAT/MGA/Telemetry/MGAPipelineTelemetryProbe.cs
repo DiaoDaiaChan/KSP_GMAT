@@ -317,11 +317,11 @@ namespace KSPGMAT.MGA.Telemetry
             // 记录 GPU 计算开销
             if (succeeded)
             {
-                KSPGMATLog.Info($"[GPU Telemetry] {kernelName}: {itemsProcessed:N0} items in {elapsedMs:F2} ms");
+                KSPGMATLog.Info("Telemetry", $"[GPU Telemetry] {kernelName}: {itemsProcessed:N0} items in {elapsedMs:F2} ms");
             }
             else
             {
-                KSPGMATLog.Warn($"[GPU Telemetry] {kernelName} fallback/skipped: {itemsProcessed:N0} items");
+                KSPGMATLog.Warn("Telemetry", $"[GPU Telemetry] {kernelName} fallback/skipped: {itemsProcessed:N0} items");
             }
         }
 
@@ -711,11 +711,11 @@ namespace KSPGMAT.MGA.Telemetry
                 }
 
                 File.WriteAllText(fullPath, md, Encoding.UTF8);
-                KSPGMATLog.Info($"[MGAPipelineTelemetryProbe] 诊断报表成功写入: {fullPath}");
+                KSPGMATLog.Info("Telemetry", $"[MGAPipelineTelemetryProbe] 诊断报表成功写入: {fullPath}");
             }
             catch (Exception ex)
             {
-                KSPGMATLog.Warn($"[MGAPipelineTelemetryProbe] 写入诊断报表失败: {ex.Message}");
+                KSPGMATLog.Error("Telemetry", $"[MGAPipelineTelemetryProbe] 写入诊断报表失败: {ex.Message}", ex);
             }
         }
 
@@ -893,7 +893,7 @@ namespace KSPGMAT.MGA.Telemetry
 
         public static void PrintConsoleSummary()
         {
-            Console.WriteLine("\n" + Instance.GenerateMarkdownReport());
+            KSPGMATLog.Info("Telemetry", Instance.GenerateMarkdownReport());
         }
     }
 }

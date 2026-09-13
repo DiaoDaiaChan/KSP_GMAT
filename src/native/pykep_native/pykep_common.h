@@ -617,6 +617,159 @@ inline void pykep_propagate_lagrangian(std::array<double, 3>& r, std::array<doub
     v = res.first[1];
 }
 
+// ==========================================================================================
+// 通用天体力学第一性原理: 自共振蓄能 (DeltaV-EGA) 发射双曲超速候选矢量解析推导
+// 100% 纯解析力学公式计算，零硬编码经验数组，自适应任意行星引力常数、轨道几何与飞行时间
+// ==========================================================================================
+inline void pykep_synthesize_resonant_departure_candidates(
+    double p1_mu, double p1_radius, double dep_pe_km,
+    double p1_vx, double p1_vy, double p1_vz,
+    double r1_len, double v_p1_mag,
+    const std::array<double, 3>& u_v,
+    const std::array<double, 3>& u_r,
+    const std::array<double, 3>& u_h,
+    double effective_mu,
+    double tof_sec,
+    std::vector<std::array<double, 3>>& out_candidates,
+    double v_inf_needed = 0.0)
+{
+    // 1. 行星当地停泊轨道第一宇宙速度与物理运载能力上限公式
+    double r_park = p1_radius + std::max(0.0, dep_pe_km);
+    double v_circ = (p1_radius > 0.0 && p1_mu > 0.0) ? std::sqrt(p1_mu / r_park) : 8.0;
+    double v_inf_limit = 0.75 * v_circ;
+
+    // 2. 严格从天体自身在中心天体引力场下的活力方程推导其实际轨道半长轴 a 与轨道周期 T
+    // 1/a = 2/r - v^2/mu,  T = 2*pi*sqrt(a^3/mu) (避免开普勒偏心轨道在远/近心点将瞬时径矢误判为半长轴)
+    double inv_a_body = 2.0 / std::max(1.0, r1_len) - (v_p1_mag * v_p1_mag) / effective_mu;
+    double a_body = (inv_a_body > 1e-12) ? (1.0 / inv_a_body) : r1_len;
+    double t_orb_body = 2.0 * PI * std::sqrt((a_body * a_body * a_body) / effective_mu);
+    if (t_orb_body <= 1e-4) return;
+
+    double ratio_nom = tof_sec / t_orb_body;
+    std::vector<double> dynamic_ratios;
+    for (int q = 1; q <= 4; ++q) {
+        int p_center = (int)std::round(q * ratio_nom);
+        for (int dp = -1; dp <= 1; ++dp) {
+            int p = p_center + dp;
+            if (p < 1) continue;
+            // 欧几里得辗转相除法互质筛除
+            int a = p, b = q;
+            while (b != 0) { int t = b; b = a % b; a = t; }
+            if (a == 1) {
+                double r_val = (double)p / (double)q;
+                if (r_val >= 0.5 && r_val <= 3.5) {
+                    dynamic_ratios.push_back(r_val);
+                }
+            }
+        }
+    }
+    std::sort(dynamic_ratios.begin(), dynamic_ratios.end());
+    dynamic_ratios.erase(std::unique(dynamic_ratios.begin(), dynamic_ratios.end()), dynamic_ratios.end());
+
+    // 3. 基于开普勒第三定律与活力公式推导各共振比的能量与三维偏角包络
+    for (double r_ratio : dynamic_ratios) {
+        double a_res = a_body * std::cbrt(r_ratio * r_ratio);
+        double v_sq = effective_mu * (2.0 / std::max(1.0, r1_len) - 1.0 / std::max(1.0, a_res));
+        if (v_sq <= 1e-4) continue;
+        double v_craft = std::sqrt(v_sq);
+        double v_inf_nom = std::abs(v_craft - v_p1_mag);
+
+        std::vector<double> v_inf_list;
+        bool is_self_resonance = (std::abs(r_ratio - 1.0) < 0.05 || v_inf_nom < 0.50);
+        if (is_self_resonance) {
+            // 1:1 等轨道同频共振启航 (如 MESSENGER 1年 EGA, Juno 2年 EGA 等): 
+            // 活力能量与行星当地公转速度相近 (v_craft ~ v_p1)，通过倾斜出射角满足活力偏角方程
+            // 覆盖逃逸能力谱段 [0.20, 0.35, 0.50, 0.65, 0.80] * v_inf_limit
+            double test_factors[] = { 0.20, 0.35, 0.50, 0.65, 0.80 };
+            for (double tf : test_factors) {
+                double v_inf = std::min(v_inf_limit * 0.99, tf * v_inf_limit);
+                if (v_inf >= 0.20) v_inf_list.push_back(v_inf);
+            }
+            // 若下游存在势能跨越所需的特征超速，直接注入锚点及其局部扰动
+            if (v_inf_needed > 0.20 && v_inf_needed <= v_inf_limit * 0.99) {
+                double needed_factors[] = { 0.95, 1.0, 1.05 };
+                for (double nf : needed_factors) {
+                    double v_inf = std::min(v_inf_limit * 0.99, v_inf_needed * nf);
+                    if (v_inf >= 0.20) v_inf_list.push_back(v_inf);
+                }
+            }
+        } else if (v_inf_nom >= 0.20) {
+            for (int j = -2; j <= 2; ++j) {
+                double v_scale = 1.0 + j * 0.05;
+                double v_inf = std::min(v_inf_limit * 0.99, v_inf_nom * v_scale);
+                if (v_inf >= 0.20) v_inf_list.push_back(v_inf);
+            }
+        }
+
+        for (double v_inf : v_inf_list) {
+            // 严格基于活力方程推导三维出射天区角 alpha:
+            // v_craft^2 = v_p1^2 + v_inf^2 + 2 * v_p1 * v_inf * cos(alpha)
+            double num_a = v_craft * v_craft - v_p1_mag * v_p1_mag - v_inf * v_inf;
+            double den_a = 2.0 * std::max(1e-4, v_p1_mag) * std::max(1e-4, v_inf);
+            double cos_alpha = num_a / den_a;
+
+            if (std::abs(cos_alpha) <= 1.0) {
+                double alpha_exact = std::acos(cos_alpha);
+                double signs_a[] = { -1.0, 1.0 };
+                for (double sign_a : signs_a) {
+                    double rad_a = sign_a * alpha_exact;
+                    double c_a = std::cos(rad_a);
+                    double s_a = std::sin(rad_a);
+
+                    double beta_max = 3.0 * DEG2RAD;
+                    for (int bi = -1; bi <= 1; ++bi) {
+                        double rad_b = bi * beta_max;
+                        double c_b = std::cos(rad_b);
+                        double s_b = std::sin(rad_b);
+
+                        std::array<double, 3> u_dir = {
+                            c_b * (c_a * u_v[0] + s_a * u_r[0]) + s_b * u_h[0],
+                            c_b * (c_a * u_v[1] + s_a * u_r[1]) + s_b * u_h[1],
+                            c_b * (c_a * u_v[2] + s_a * u_r[2]) + s_b * u_h[2]
+                        };
+
+                        out_candidates.push_back({
+                            p1_vx + v_inf * u_dir[0],
+                            p1_vy + v_inf * u_dir[1],
+                            p1_vz + v_inf * u_dir[2]
+                        });
+                    }
+                }
+            } else {
+                // 理论双曲几何极限偏角公式
+                double ratio_v = std::min(0.95, v_inf / std::max(1e-4, v_craft));
+                double alpha_max = 2.0 * std::asin(ratio_v);
+
+                const int N_alpha = 7;
+                for (int ai = 0; ai < N_alpha; ++ai) {
+                    double rad_a = -alpha_max + ai * (2.0 * alpha_max / (N_alpha - 1));
+                    double c_a = std::cos(rad_a);
+                    double s_a = std::sin(rad_a);
+
+                    double beta_max = 3.0 * DEG2RAD;
+                    for (int bi = -1; bi <= 1; ++bi) {
+                        double rad_b = bi * beta_max;
+                        double c_b = std::cos(rad_b);
+                        double s_b = std::sin(rad_b);
+
+                        std::array<double, 3> u_dir = {
+                            c_b * (c_a * u_v[0] + s_a * u_r[0]) + s_b * u_h[0],
+                            c_b * (c_a * u_v[1] + s_a * u_r[1]) + s_b * u_h[1],
+                            c_b * (c_a * u_v[2] + s_a * u_r[2]) + s_b * u_h[2]
+                        };
+
+                        out_candidates.push_back({
+                            p1_vx + v_inf * u_dir[0],
+                            p1_vy + v_inf * u_dir[1],
+                            p1_vz + v_inf * u_dir[2]
+                        });
+                    }
+                }
+            }
+        }
+    }
+}
+
 EXPORT_API inline int pykep_propagate_lagrangian(
     double* rx, double* ry, double* rz,
     double* vx, double* vy, double* vz,

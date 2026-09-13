@@ -532,7 +532,7 @@ namespace KSPGMAT.MGA
                             }
 
                             // 根节点出发若第一步即自环，允许深势阱内行星或外行星任务实施 ΔV-EGA 共振调相 (如 Juno)
-                            bool allowDepRes = isDeepInner || (arrNode.SMA >= depNode.SMA * 1.35);
+                            bool allowDepRes = isDeepInner || (arrNode.SMA > depNode.SMA && depNode.AssistPowerIndex >= MGAPhysicalScales.DefaultMinAssistPowerIndex);
                             if (currPath.Count == 1 && !allowDepRes) continue;
                         }
 
@@ -551,39 +551,32 @@ namespace KSPGMAT.MGA
                                 && arcVInf > maxBudgetKms * effectiveArcMultiple) continue;
                         }
 
-                        // 剪枝规则 3: 无收益死循环剪枝 (禁止 A->B->A->B 等非共振重复循环，且禁止重访已经自共振过的天体)
-                        if (!isResonance && currPath.Count >= 3)
+                        // 剪枝规则 3: 无收益死循环剪枝 (天体力学势梯单向递进，杜绝非共振重复循环)
+                        if (!isResonance && currPath.Count >= 2)
                         {
-                            // 若某天体已在链中完成了自共振 (A->A)，则代表该天体的共振相位与能量泵已完全释放，禁止离开后再重访 A
-                            for (int vi = 0; vi < currPath.Count - 1; vi++)
+                            if (!nextNode.Name.Equals(depNode.Name, StringComparison.OrdinalIgnoreCase))
                             {
-                                if (currPath[vi].Name.Equals(nextNode.Name, StringComparison.OrdinalIgnoreCase) &&
-                                    currPath[vi + 1].Name.Equals(nextNode.Name, StringComparison.OrdinalIgnoreCase))
+                                // 任何非始发中继天体 (如金星/火星/木星)，一旦离开后严禁再次重访 (杜绝 A->B->A 能量回退死循环)
+                                if (currPath.Any(n => n.Name.Equals(nextNode.Name, StringComparison.OrdinalIgnoreCase)))
                                 {
-                                    // 已经自共振过，后续禁止再次重访该天体
                                     goto NEXT_NODE_PRUNED;
                                 }
                             }
-
-                            var last2 = currPath[currPath.Count - 2];
-                            if (nextNode.Name.Equals(last2.Name, StringComparison.OrdinalIgnoreCase))
+                            else
                             {
-                                // 统计非连续重访的独立访问波次 (Distinct Visits):
-                                // 同星连续自共振 (如 Earth->Earth) 属于同一波次，不重复计为异星往返;
-                                // 允许天体间实施一次重访回弹 (如 Earth->Mars->Earth 或 Venus->Earth->Venus: distinctVisits=2),
-                                // 仅拦截 3 次及以上死循环 (如 A->B->A->B->A)
-                                int distinctVisits = 0;
+                                // 始发天体 (如 Earth): 仅允许在经过内/外潜借力后重访 1 次 (如 Earth->Venus->Earth 或 Earth->Mars->Earth, 即至多 2 个独立访问波次)
+                                int depWaves = 0;
                                 for (int vi = 0; vi < currPath.Count; vi++)
                                 {
-                                    if (currPath[vi].Name.Equals(nextNode.Name, StringComparison.OrdinalIgnoreCase))
+                                    if (currPath[vi].Name.Equals(depNode.Name, StringComparison.OrdinalIgnoreCase))
                                     {
-                                        if (vi == 0 || !currPath[vi - 1].Name.Equals(nextNode.Name, StringComparison.OrdinalIgnoreCase))
+                                        if (vi == 0 || !currPath[vi - 1].Name.Equals(depNode.Name, StringComparison.OrdinalIgnoreCase))
                                         {
-                                            distinctVisits++;
+                                            depWaves++;
                                         }
                                     }
                                 }
-                                if (distinctVisits >= 2) continue;
+                                if (depWaves >= 2) goto NEXT_NODE_PRUNED;
                             }
                         }
                         goto NEXT_NODE_OK;
@@ -1141,11 +1134,11 @@ namespace KSPGMAT.MGA
                             continue;
 
                         // 机器学习物理约束 1: 始发节点第一步自环 (发射共振 ΔV-EGA 如 Juno，或深势阱内行星任务)
-                        // 出发天体自环 (ΔV-EGA) 的物理前提 (取代 SMA 比 0.55 / 1.35 分档):
+                        // 出发天体自环 (ΔV-EGA) 的物理前提:
                         //  (a) 目标处于深势阱 (需先在出发星轨道共振调相/减速), 或
-                        //  (b) 目标向外且单调梯级能量闭合比 gap > 1 (梯级不足以闭合缺口, 需先蓄能)
+                        //  (b) 目标向外且出发星具备显著借力效能 (或梯级能量闭合比 gap > 1)
                         bool allowDepRes = arrNode.IsDeepWell
-                            || (arrNode.SMA > depNode.SMA && mctsBudget.EnergyGapRatio > 1.0);
+                            || (arrNode.SMA > depNode.SMA && (depNode.AssistPowerIndex >= MGAPhysicalScales.DefaultMinAssistPowerIndex || mctsBudget.EnergyGapRatio > 1.0));
                         if (node.Depth == 0 && n.Name.Equals(depNode.Name, StringComparison.OrdinalIgnoreCase) && !allowDepRes)
                             continue;
 
@@ -1155,6 +1148,45 @@ namespace KSPGMAT.MGA
                         {
                             int allowedRes = (n.IsDeepWell || n.Name.Equals(arrNode.Name, StringComparison.OrdinalIgnoreCase)) ? 6 : 1;
                             if (node.ResonancesCount >= allowedRes) continue;
+                        }
+
+                        // 机器学习物理约束 2.5: 无收益死循环剪枝 (禁止非始发天体离开后再重访)
+                        if (!isRes)
+                        {
+                            if (!n.Name.Equals(depNode.Name, StringComparison.OrdinalIgnoreCase))
+                            {
+                                bool alreadyVisited = false;
+                                for (var p = node; p != null; p = p.Parent)
+                                {
+                                    if (p.BodyName.Equals(n.Name, StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        alreadyVisited = true;
+                                        break;
+                                    }
+                                }
+                                if (alreadyVisited) continue;
+                            }
+                            else
+                            {
+                                int depWaves = 0;
+                                var ancestors = new List<string>();
+                                for (var p = node; p != null; p = p.Parent)
+                                {
+                                    ancestors.Add(p.BodyName);
+                                }
+                                ancestors.Reverse();
+                                for (int vi = 0; vi < ancestors.Count; vi++)
+                                {
+                                    if (ancestors[vi].Equals(depNode.Name, StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        if (vi == 0 || !ancestors[vi - 1].Equals(depNode.Name, StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            depWaves++;
+                                        }
+                                    }
+                                }
+                                if (depWaves >= 2) continue;
+                            }
                         }
 
                         // 机器学习物理约束 3: 两体半长轴跨越霍曼可达性几何粗筛
@@ -1592,9 +1624,15 @@ namespace KSPGMAT.MGA
                 double dsmBudgetMs = (config.PropulsionType == MGAPropulsionType.LowThrustElectric)
                     ? Math.Max(config.MaxDsmDeltaVMs, budgetMs)
                     : ((config.MaxDsmDeltaVMs > 0) ? config.MaxDsmDeltaVMs : budgetMs);
+                double windowDays = (config.SearchEndUT > config.SearchStartUT)
+                    ? (config.SearchEndUT - config.SearchStartUT) / MGADefaults.SecondsPerDay
+                    : 0.0;
+                double evalEpochUT = (windowDays > 0)
+                    ? (config.SearchStartUT + config.SearchEndUT) * 0.5
+                    : config.SearchStartUT;
                 bool noBurn = config != null && config.NoInsertionBurn;
                 var filtered = MGAEphemerisReachabilityAnalyzer.FilterAndPrioritizeReachableSequences(
-                    config.DeparturePlanet, config.ArrivalPlanet, sequences, config.SearchStartUT, budgetMs, dsmBudgetMs, config.FlybySequence, noBurn);
+                    config.DeparturePlanet, config.ArrivalPlanet, sequences, evalEpochUT, budgetMs, dsmBudgetMs, config.FlybySequence, noBurn, windowDays);
                 if (filtered != null && filtered.Count > 0)
                 {
                     sequences = filtered.Select(f => f.FlybyChain).ToList();
@@ -1814,13 +1852,20 @@ namespace KSPGMAT.MGA
             double depMaxFactor = 1.50)
         {
             var fullChain = new List<string> { departure };
-            if (flybyChain != null) fullChain.AddRange(flybyChain);
+            if (flybyChain != null)
+            {
+                if (flybyChain.Count == 1 && flybyChain[0].Equals(arrival, StringComparison.OrdinalIgnoreCase))
+                {
+                    // 纯直达航段 (用户未指定中间借力)
+                }
+                else
+                {
+                    fullChain.AddRange(flybyChain);
+                }
+            }
             if (!string.IsNullOrEmpty(arrival))
             {
-                if (fullChain.Count == 0 || !fullChain[fullChain.Count - 1].Equals(arrival, StringComparison.OrdinalIgnoreCase))
-                {
-                    fullChain.Add(arrival);
-                }
+                fullChain.Add(arrival);
             }
 
             var bounds = new List<(double MinDays, double MaxDays)>();

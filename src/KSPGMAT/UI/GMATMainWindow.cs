@@ -5,6 +5,7 @@ using System.Text;
 using UnityEngine;
 using KSPGMAT.Model;
 using KSPGMAT.MGA;
+using KSPGMAT;
 
 namespace KSPGMAT.UI {
     public partial class GMATMainWindow : MonoBehaviour {
@@ -163,35 +164,35 @@ namespace KSPGMAT.UI {
         private bool showCsAxesPicker = false;
         private bool showCsPrimaryPicker = false;
 
-        // Sub-Window 5: Celestial Body / Planet Picker Modal (MGA 行星际天体弹出选择器)
-        private bool showPlanetPickerModal = false;
-        private Rect planetPickerWindowRect = new Rect(Screen.width * 0.3f, Screen.height * 0.2f, 520, 480);
-        private int planetPickerTargetType = 0; // 0: Departure, 1: Destination, 2: Replace Flyby, 3: Append Flyby
-        private int planetPickerFlybyIndex = -1;
-        private string planetPickerTitle = "";
-        private Vector2 planetPickerScrollPos = Vector2.zero;
-        private string planetPickerSearch = "";
+        // Sub-Window 5: Celestial Body / Planet Picker Modal (SSOT: MGAStateManager.Current.UI)
+        private bool showPlanetPickerModal { get => MGAStateManager.Current.UI.ShowPlanetPickerModal; set => MGAStateManager.Current.UI.ShowPlanetPickerModal = value; }
+        private Rect planetPickerWindowRect { get => MGAStateManager.Current.UI.PlanetPickerWindowRect; set => MGAStateManager.Current.UI.PlanetPickerWindowRect = value; }
+        private int planetPickerTargetType { get => MGAStateManager.Current.UI.PlanetPickerTargetType; set => MGAStateManager.Current.UI.PlanetPickerTargetType = value; } // 0: Departure, 1: Destination, 2: Replace Flyby, 3: Append Flyby
+        private int planetPickerFlybyIndex { get => MGAStateManager.Current.UI.PlanetPickerFlybyIndex; set => MGAStateManager.Current.UI.PlanetPickerFlybyIndex = value; }
+        private string planetPickerTitle { get => MGAStateManager.Current.UI.PlanetPickerTitle; set => MGAStateManager.Current.UI.PlanetPickerTitle = value; }
+        private Vector2 planetPickerScrollPos { get => MGAStateManager.Current.UI.PlanetPickerScrollPos; set => MGAStateManager.Current.UI.PlanetPickerScrollPos = value; }
+        private string planetPickerSearch { get => MGAStateManager.Current.UI.PlanetPickerSearch; set => MGAStateManager.Current.UI.PlanetPickerSearch = value; }
         private bool showCsSecondaryPicker = false;
         private bool showCsHelpTooltip = false;
 
-        // Sub-Window 8: Flight Telemetry Details Modal (航段动力学遥测明细弹窗)
-        private bool showTelemetryModal = false;
-        private Rect telemetryWindowRect = new Rect(Screen.width * 0.25f, Screen.height * 0.15f, 780, 560);
-        private int telemetrySelectedStepIndex = 0;
-        private Vector2 telemetryScrollPos = Vector2.zero;
+        // Sub-Window 8: Flight Telemetry Details Modal (SSOT: MGAStateManager.Current.UI)
+        private bool showTelemetryModal { get => MGAStateManager.Current.UI.ShowTelemetryModal; set => MGAStateManager.Current.UI.ShowTelemetryModal = value; }
+        private Rect telemetryWindowRect { get => MGAStateManager.Current.UI.TelemetryWindowRect; set => MGAStateManager.Current.UI.TelemetryWindowRect = value; }
+        private int telemetrySelectedStepIndex { get => MGAStateManager.Current.UI.TelemetrySelectedStepIndex; set => MGAStateManager.Current.UI.TelemetrySelectedStepIndex = value; }
+        private Vector2 telemetryScrollPos { get => MGAStateManager.Current.UI.TelemetryScrollPos; set => MGAStateManager.Current.UI.TelemetryScrollPos = value; }
 
-        // Sub-Window 9: Solution Astrodynamics Details Modal (转移方案全量动力学明细独立弹窗)
-        private bool showSolutionDetailModal = false;
-        private MGASolution detailModalSolution = null;
-        private Rect solutionDetailWindowRect = new Rect(Screen.width * 0.18f, Screen.height * 0.12f, 880, 620);
-        private Vector2 solutionDetailScrollPos = Vector2.zero;
+        // Sub-Window 9: Solution Astrodynamics Details Modal (SSOT: MGAStateManager.Current.UI)
+        private bool showSolutionDetailModal { get => MGAStateManager.Current.UI.ShowSolutionDetailModal; set => MGAStateManager.Current.UI.ShowSolutionDetailModal = value; }
+        private MGASolution detailModalSolution { get => MGAStateManager.Current.UI.DetailModalSolution; set => MGAStateManager.Current.UI.DetailModalSolution = value; }
+        private Rect solutionDetailWindowRect { get => MGAStateManager.Current.UI.SolutionDetailWindowRect; set => MGAStateManager.Current.UI.SolutionDetailWindowRect = value; }
+        private Vector2 solutionDetailScrollPos { get => MGAStateManager.Current.UI.SolutionDetailScrollPos; set => MGAStateManager.Current.UI.SolutionDetailScrollPos = value; }
 
-        // Sub-Window 6: MGA 历史任务与统一配置库弹出选择器 (History Mission Picker Modal)
-        private bool showHistoryMissionPickerModal = false;
-        private Rect historyMissionPickerWindowRect = new Rect(Screen.width * 0.25f, Screen.height * 0.15f, 660, 560);
-        private string historyMissionSearch = "";
-        private string historyMissionCategory = "全部";
-        private Vector2 historyMissionScrollPos = Vector2.zero;
+        // Sub-Window 6: MGA 历史任务与统一配置库弹出选择器 (SSOT: MGAStateManager.Current.UI)
+        private bool showHistoryMissionPickerModal { get => MGAStateManager.Current.UI.ShowHistoryMissionPickerModal; set => MGAStateManager.Current.UI.ShowHistoryMissionPickerModal = value; }
+        private Rect historyMissionPickerWindowRect { get => MGAStateManager.Current.UI.HistoryMissionPickerWindowRect; set => MGAStateManager.Current.UI.HistoryMissionPickerWindowRect = value; }
+        private string historyMissionSearch { get => MGAStateManager.Current.UI.HistoryMissionSearch; set => MGAStateManager.Current.UI.HistoryMissionSearch = value; }
+        private string historyMissionCategory { get => MGAStateManager.Current.UI.HistoryMissionCategory; set => MGAStateManager.Current.UI.HistoryMissionCategory = value; }
+        private Vector2 historyMissionScrollPos { get => MGAStateManager.Current.UI.HistoryMissionScrollPos; set => MGAStateManager.Current.UI.HistoryMissionScrollPos = value; }
         private Rect targeterSetupWindowRect;
         private int editingTargetStepIndex = -1;
         private string wizardDcName = "DefaultDC";
@@ -385,7 +386,7 @@ namespace KSPGMAT.UI {
                     try {
                         mainThreadQueue.Dequeue()?.Invoke();
                     } catch (Exception ex) {
-                        Debug.LogError("[KSPGMAT] Main thread dispatch error: " + ex);
+                        KSPGMATLog.Error("UI", "Main thread dispatch error", ex);
                     }
                 }
             }
@@ -483,7 +484,7 @@ namespace KSPGMAT.UI {
                     selectedEngineIndex = GMATStateManager.Current.SelectedEngineIndex;
                 }
             } catch (Exception ex) {
-                Debug.LogWarning("[KSPGMAT] Error in RefreshCraftData: " + ex.Message);
+                KSPGMATLog.Warn("UI", "Error in RefreshCraftData: " + ex.Message);
             }
         }
 
@@ -807,8 +808,67 @@ namespace KSPGMAT.UI {
                     break;
             }
 
+            DrawStatusBar();
             DrawResizeHandle(ref windowRect, 980f, 680f);
             GUI.DragWindow(new Rect(0, 0, windowRect.width - 150, 32));
+        }
+
+        private void DrawStatusBar() {
+            GUILayout.Space(4);
+            GUILayout.BeginHorizontal(cardBoxStyle, GUILayout.Height(24));
+
+            string statusColor = GMATClient.IsConnected ? "#34d399" : "#f87171";
+            string statusText = GMATClient.IsConnected ? I18n.T("status_online", "在线") : I18n.T("status_offline", "离线");
+            GUILayout.Label($"<color={statusColor}>●</color> <color=#94a3b8>GMAT {statusText}</color>", labelValueStyle);
+
+            GUILayout.Space(12);
+            string spiceTag = GMATClient.HasFullSpiceEphemeris ? GMATClient.DetectedSpiceKernelName : "Keplerian";
+            GUILayout.Label($"<color=#38bdf8>🪐 {spiceTag}</color>", labelValueStyle);
+
+            GUILayout.Space(12);
+            string logPath = KSPGMATLog.GetLogFilePath();
+            string logName = string.IsNullOrEmpty(logPath) ? "KSPGMAT.log" : Path.GetFileName(logPath);
+            GUILayout.Label($"<color=#94a3b8>📝 {logName}</color>", labelValueStyle);
+
+            GUILayout.FlexibleSpace();
+
+            if (GUILayout.Button(I18n.T("btn_open_logs", "📁 打开日志文件夹"), secondaryButtonStyle, GUILayout.Height(20))) {
+                OpenLogFileOrFolder();
+            }
+            GUILayout.EndHorizontal();
+        }
+
+        public static void OpenLogFileOrFolder() {
+            try {
+                string logPath = KSPGMATLog.GetLogFilePath();
+                if (string.IsNullOrEmpty(logPath)) {
+                    KSPGMATLog.Warn("UI", "日志文件路径为空");
+                    ScreenMessages.PostScreenMessage(I18n.T("log_path_empty", "未找到日志文件路径"), 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                    return;
+                }
+
+                string fullPath = Path.GetFullPath(logPath);
+                string dir = Path.GetDirectoryName(fullPath);
+                if (File.Exists(fullPath)) {
+                    if (Application.platform == RuntimePlatform.WindowsPlayer || Application.platform == RuntimePlatform.WindowsEditor || Environment.OSVersion.Platform == PlatformID.Win32NT) {
+                        System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{fullPath}\"");
+                    } else if (Directory.Exists(dir)) {
+                        System.Diagnostics.Process.Start(dir);
+                    }
+                    KSPGMATLog.Info("UI", $"已在文件管理器中定位日志文件: {fullPath}");
+                    ScreenMessages.PostScreenMessage(I18n.Format("log_opened_file", Path.GetFileName(fullPath)), 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                } else if (Directory.Exists(dir)) {
+                    System.Diagnostics.Process.Start(dir);
+                    KSPGMATLog.Info("UI", $"已打开日志目录: {dir}");
+                    ScreenMessages.PostScreenMessage(I18n.Format("log_opened_dir", dir), 3.0f, ScreenMessageStyle.UPPER_CENTER);
+                } else {
+                    KSPGMATLog.Warn("UI", $"日志目录不存在: {dir}");
+                    ScreenMessages.PostScreenMessage(I18n.Format("log_not_found", fullPath), 4.0f, ScreenMessageStyle.UPPER_CENTER);
+                }
+            } catch (Exception ex) {
+                KSPGMATLog.Error("UI", "打开日志目录失败", ex);
+                ScreenMessages.PostScreenMessage(I18n.Format("log_open_error", ex.Message), 4.0f, ScreenMessageStyle.UPPER_CENTER);
+            }
         }
 
         private void DrawTopBar() {
@@ -844,6 +904,11 @@ namespace KSPGMAT.UI {
             GUILayout.Space(8);
             if (GUILayout.Button(I18n.T("btn_api_inspector"), secondaryButtonStyle, GUILayout.Height(22))) {
                 OpenApiInspector();
+            }
+
+            GUILayout.Space(6);
+            if (GUILayout.Button(I18n.T("btn_open_logs", "📁 日志"), secondaryButtonStyle, GUILayout.Height(22))) {
+                OpenLogFileOrFolder();
             }
 
             GUILayout.Space(6);

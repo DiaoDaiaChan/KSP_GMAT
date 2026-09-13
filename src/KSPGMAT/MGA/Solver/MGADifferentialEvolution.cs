@@ -19,6 +19,7 @@ using System.Threading.Tasks;
 using KSPGMAT.Model;
 using KSPGMAT.MGA.AI;
 using KSPGMAT.MGA.Telemetry;
+using KSPGMAT.MGA.GPU;
 using UnityEngine;
 
 namespace KSPGMAT.MGA
@@ -29,8 +30,6 @@ namespace KSPGMAT.MGA
     /// </summary>
     public static class MGADifferentialEvolution
     {
-        private static int _gpuFailLogCount = 0;
-
         /// <summary>
         /// 默认随机种子。固定值使同一配置的求解结果可逐位复现, 便于基准 A/B 回归对比。
         /// </summary>
@@ -94,12 +93,14 @@ namespace KSPGMAT.MGA
         /// 通过笛卡尔积扫描所有有效有理周期比组合，以开普勒守恒与出口兰伯特转向角残差优选出最佳共振组合，
         /// 确保停留总时间严格贴合出口天体的会合周期 (T_syn)，彻底消除出口航段天文级 DSM 赤字！
         /// </summary>
-        private static List<Tuple<double[], double>> FindAndRankResonantCombos(
+        public static List<Tuple<double[], double>> FindAndRankResonantCombos(
             string bodyName, string exitBodyName, int blockLen,
             double curUT, Vector3d prevArrVinf,
             double[] lowerBounds, double[] upperBounds, int resStart,
             string central, double centralMu,
-            double nominalExitToFSec = 0.0)
+            double nominalExitToFSec = 0.0,
+            bool isExitDestination = false,
+            string downstreamBodyName = null)
         {
             var rankedCombos = new List<Tuple<double, double[], double>>();
             var pBody = SolarSystemCatalog.GetPlanet(bodyName);
@@ -109,8 +110,9 @@ namespace KSPGMAT.MGA
             double tOrb = PykepBridge.CalcOrbitPeriodSec(sma, centralMu);
             if (tOrb <= 0 || double.IsNaN(tOrb)) return new List<Tuple<double[], double>>();
 
-            // 全部低阶有理共振槽候选, 具体可用性由下方 ToF 边界过滤 (多圈数档位在长周期天体上自然被排除)
-            double[] availRatios = MGAFlybyDynamicsHelper.ResonanceRatioCandidates;
+            // 全部低阶有理共振槽候选: 同星自共振重遇段 (无论是启航共振、中间调相还是终点自减速)
+            // 物理公理: 航天器重遇同一开普勒偏心天体，该天体必须公转整数圈才能回到同一空间几何点，故重遇航时比必须为整数阶 p in {1, 2, 3, 4, 5, 6}
+            double[] availRatios = new double[] { 1.0, 2.0, 3.0, 4.0, 5.0, 6.0 };
 
             var validRatiosPerLeg = new List<List<double>>();
             for (int i = 0; i < blockLen; i++) {
@@ -128,6 +130,7 @@ namespace KSPGMAT.MGA
                 validRatiosPerLeg.Add(valid);
             }
 
+            int maxCombosCap = (string.IsNullOrEmpty(exitBodyName)) ? 256 : 64;
             var allCombos = new List<double[]>();
             Action<int, double[]> buildCombos = null;
             buildCombos = (legIdx, cur) => {
@@ -138,12 +141,16 @@ namespace KSPGMAT.MGA
                 foreach (double r in validRatiosPerLeg[legIdx]) {
                     cur[legIdx] = r;
                     buildCombos(legIdx + 1, cur);
-                    if (allCombos.Count >= 512) return;
+                    if (allCombos.Count >= maxCombosCap) return;
                 }
             };
             buildCombos(0, new double[blockLen]);
 
             var pExit = !string.IsNullOrEmpty(exitBodyName) ? SolarSystemCatalog.GetPlanet(exitBodyName) : null;
+            var pDown = (!isExitDestination && !string.IsNullOrEmpty(downstreamBodyName)) ? SolarSystemCatalog.GetPlanet(downstreamBodyName) : null;
+            if (pExit != null && pDown != null && pDown.Name.Equals(pExit.Name, StringComparison.OrdinalIgnoreCase)) {
+                pDown = null;
+            }
             double approxTofSec = (nominalExitToFSec > 10.0 * 86400.0) ? nominalExitToFSec : 100.0 * 86400.0;
             double synDays = 0.0;
             if (pExit != null) {
@@ -173,51 +180,203 @@ namespace KSPGMAT.MGA
                 double bestExitToF = approxTofSec;
                 if (pExit != null) {
                     pBody.GetRelativeState(central, depUT, out Vector3d rDep, out Vector3d vDepPlanet);
-                    // 出口霍曼/快速切向转移的测试航时区间: 覆盖自快飞掠转移 (t_H * 0.25, 如 Cassini 55天) 至慢转移 (t_H * 2.80)
+                    // 出口霍曼/快速切向转移的测试航时区间: 覆盖自极速飞掠转移 (0.35) 至慢外向转移 (3.00)
                     double[] testExitToFs = new double[] {
-                        approxTofSec * 0.25, approxTofSec * 0.40, approxTofSec * 0.55,
-                        approxTofSec * 0.70, approxTofSec * 0.85, approxTofSec * 0.95,
-                        approxTofSec, approxTofSec * 1.05, approxTofSec * 1.20,
-                        approxTofSec * 1.45, approxTofSec * 1.80, approxTofSec * 2.25, approxTofSec * 2.80
+                        approxTofSec * 0.35, approxTofSec * 0.50, approxTofSec * 0.70,
+                        approxTofSec * 0.85, approxTofSec * 1.00, approxTofSec * 1.20,
+                        approxTofSec * 1.50, approxTofSec * 2.00, approxTofSec * 3.00
                     };
                     double bestExitScore = double.MaxValue;
+                    double bestVTurn = 0.0, bestArrPen = 0.0, bestDownDef = 0.0;
 
                     foreach (double exitTof in testExitToFs) {
-                        pExit.GetRelativeState(central, depUT + exitTof, out Vector3d rArrNext, out _);
-                        if (PykepNative.SolveLambert(rDep, rArrNext, exitTof, centralMu, false, out Vector3d vDepLambert, out _)) {
+                        pExit.GetRelativeState(central, depUT + exitTof, out Vector3d rArrNext, out Vector3d vArrPlanet);
+                        double rExitAvg = (rDep.magnitude + rArrNext.magnitude) * 0.5;
+                        double tOrbExitAvg = 2.0 * Math.PI * Math.Sqrt(Math.Pow(rExitAvg * 1000.0, 3.0) / (centralMu * 1e9));
+                        int nmax = (tOrbExitAvg > 10.0) ? (int)Math.Floor(exitTof / tOrbExitAvg + 0.25) : 0;
+                        nmax = Math.Max(0, Math.Min(3, nmax));
+                        if (PykepNative.SolveLambert(rDep, rArrNext, exitTof, centralMu, false, nmax, out Vector3d vDepLambert, out Vector3d vArrLambert)) {
                             Vector3d vInfDesired = vDepLambert - vDepPlanet;
+                            double outMag = vInfDesired.magnitude;
+                            Vector3d effectiveInVinf = prevArrVinf;
                             double effInMag = inMag;
-                            if (effInMag < 1.0) {
-                                double aRes = sma * Math.Pow(combo[0], 2.0 / 3.0);
-                                double vCraft = Math.Sqrt(Math.Max(1e-4, centralMu * (2.0 / rDep.magnitude - 1.0 / Math.Max(1.0, aRes))));
-                                effInMag = Math.Max(1.0, Math.Abs(vCraft - vDepPlanet.magnitude));
+                            bool isSelfResonantDeparture = (effectiveInVinf.sqrMagnitude < 1e-4 || effInMag < 1.0);
+                            double reqTurnRad = 0.0;
+                            double totalTurnCapability = 0.0;
+                            if (isSelfResonantDeparture) {
+                                double lastR = (combo != null && combo.Length > 0) ? combo[combo.Length - 1] : 1.0;
+                                // 自共振启航段 (如 MESSENGER 1年 EGA 或 Juno 2年 EGA: Earth ➔ Earth ➔ NextPlanet):
+                                // 航天器首段通过发射入轨能量与深空微调，在重遇借力行星时满足 |v_inf,in| = |v_inf,out| = outMag，
+                                // 以实现无动力双曲偏折 (Flyby DeltaV = 0)。
+                                effInMag = outMag;
+
+                                // 开普勒活力方程解析推导自共振发射天区角 alpha:
+                                // cos(alpha) = [ mu_central * (1/r_dep - 1/a_res) - v_inf^2 ] / (2 * v_planet * v_inf)
+                                double aRes = sma * Math.Pow(lastR, 2.0 / 3.0);
+                                double vPlanetMag = vDepPlanet.magnitude;
+                                double rMag = rDep.magnitude;
+                                double aPlanet = (sma > 0) ? sma : rMag;
+                                double vPlanetSq = centralMu * (2.0 / Math.Max(1.0, rMag) - 1.0 / Math.Max(1.0, aPlanet));
+                                double vCraftSq = centralMu * (2.0 / Math.Max(1.0, rMag) - 1.0 / Math.Max(1.0, aRes));
+                                double numEnergy = vCraftSq - vPlanetSq - effInMag * effInMag;
+                                double denomEnergy = 2.0 * Math.Max(1e-4, vPlanetMag) * Math.Max(1e-4, effInMag);
+                                double cosAlpha = Math.Max(-1.0, Math.Min(1.0, numEnergy / denomEnergy));
+                                double alpha = Math.Acos(cosAlpha);
+
+                                // 目标出口渐近线相对行星速度夹角 theta_desired:
+                                double dotPlanet = (vPlanetMag > 1e-4 && outMag > 1e-4)
+                                    ? Vector3d.Dot(vDepPlanet.normalized, vInfDesired.normalized)
+                                    : 1.0;
+                                dotPlanet = Math.Max(-1.0, Math.Min(1.0, dotPlanet));
+                                double thetaDesired = Math.Acos(dotPlanet);
+
+                                // 发射入轨能量与方位在三维圆锥自由度上的最小物理折角:
+                                reqTurnRad = Math.Abs(thetaDesired - alpha);
+
+                                double eMin = 1.0 + (safeR * effInMag * effInMag) / Math.Max(1.0, pBody.Mu);
+                                double maxTurnRadPerFlyby = 2.0 * Math.Asin(1.0 / Math.Max(1.0001, eMin));
+                                totalTurnCapability = maxTurnRadPerFlyby * blockLen;
+                            } else {
+                                double eMin = 1.0 + (safeR * effInMag * effInMag) / Math.Max(1.0, pBody.Mu);
+                                double maxTurnRadPerFlyby = 2.0 * Math.Asin(1.0 / Math.Max(1.0001, eMin));
+                                totalTurnCapability = maxTurnRadPerFlyby * (blockLen + 1);
+
+                                double dot = (effInMag > 1e-4 && outMag > 1e-4 && effectiveInVinf.sqrMagnitude > 1e-4)
+                                    ? Vector3d.Dot(effectiveInVinf.normalized, vInfDesired.normalized)
+                                    : 1.0;
+                                dot = Math.Max(-1.0, Math.Min(1.0, dot));
+                                reqTurnRad = Math.Acos(dot);
                             }
 
-                            double eMin = 1.0 + (safeR * effInMag * effInMag) / Math.Max(1.0, pBody.Mu);
-                            double maxTurnRadPerFlyby = 2.0 * Math.Asin(1.0 / Math.Max(1.0001, eMin));
-                            // 在共振区段两端，航天器共经历 (blockLen + 1) 次飞掠相遇 (入场借力 + 各次共振重逢飞掠)，
-                            // 双曲转向能力由所有相遇飞掠共同分担
-                            double totalTurnCapability = maxTurnRadPerFlyby * (blockLen + 1);
-
-                            double outMag = vInfDesired.magnitude;
-                            double dot = (effInMag > 1e-4 && outMag > 1e-4) ? Vector3d.Dot(prevArrVinf.normalized, vInfDesired.normalized) : 1.0;
-                            dot = Math.Max(-1.0, Math.Min(1.0, dot));
-                            double reqTurnRad = Math.Acos(dot);
-
                             double turnExcess = Math.Max(0.0, reqTurnRad - totalTurnCapability);
-                            double vDiff = Math.Abs(effInMag - outMag);
                             // 物理深空机动脉冲估算: 无法通过双曲偏转吸收的转角转化为向量差脉冲 DeltaV_turn = 2 * v_inf * sin(turnExcess/2)
                             double vTurnLoss = 2.0 * Math.Max(effInMag, outMag) * Math.Sin(turnExcess * 0.5);
-                            double s = vTurnLoss + vDiff;
+                            double vPumpLoss = isSelfResonantDeparture ? 0.0 : Math.Abs(effInMag - outMag);
+                            double vArrInf = (vArrLambert - vArrPlanet).magnitude;
+                            // 物理发射与制动能耗: 
+                            // 1. 自共振启航段计入初始注入轨道速度 (发射 DeltaV);
+                            // 2. 中继/终点飞掠计入到达超速势能 (为后续借力保留高偏折窗口)
+                            double depLaunchDv = 0.0;
+                            if (isSelfResonantDeparture) {
+                                double rpDep = pBody.RadiusKm + 200.0;
+                                double vHypDep = Math.Sqrt(outMag * outMag + 2.0 * pBody.Mu / Math.Max(1.0, rpDep));
+                                double vParkDep = Math.Sqrt(pBody.Mu / Math.Max(1.0, rpDep));
+                                depLaunchDv = (vHypDep - vParkDep);
+                            }
+                            double arrPenalty = isExitDestination ? (0.25 * vArrInf) : 0.0;
+
+                            // 普适下游天体开普勒活力能量与偏折连续性校验 (Vis-Viva Downstream Linkage):
+                            // 若出口星为中间跳板且后续存在借力/目标天体，出口星到达超速必须满足下游转移的能量底线
+                            double downstreamDeficit = 0.0;
+                            if (pDown != null && pDown.SMA > 0 && pExit.SMA > 0) {
+                                double aTransDown = (pExit.SMA + pDown.SMA) * 0.5;
+                                double vTransExit = Math.Sqrt(Math.Max(1e-4, centralMu * (2.0 / pExit.SMA - 1.0 / aTransDown)));
+                                double vCircExit = Math.Sqrt(Math.Max(1e-4, centralMu / pExit.SMA));
+                                double vInfReqDown = Math.Abs(vTransExit - vCircExit);
+
+                                // 动能亏空: 到达出口星的双曲超速如果低于前往下游天体所需的最低超速, 必然导致刚性工质赤字
+                                double energyDeficit = Math.Max(0.0, vInfReqDown - vArrInf);
+
+                                // 物理转向赤字: 计算在出口星处将入射渐近线偏折至下游转移弧所需的双曲偏转角
+                                double tNomDown = Math.PI * Math.Sqrt(Math.Pow(aTransDown * 1000.0, 3.0) / (centralMu * 1e9));
+                                double arrExitUT = depUT + exitTof;
+                                double[] testDownFactors = new double[] { 0.85, 1.00, 1.25, 1.50 };
+                                double bestDownDeficit = double.MaxValue;
+
+                                foreach (double factor in testDownFactors) {
+                                    double tDownTest = tNomDown * factor;
+                                    pDown.GetRelativeState(central, arrExitUT + tDownTest, out Vector3d rDown, out _);
+                                    double turnDeficit = 0.0;
+                                    double rDownAvg = (rArrNext.magnitude + rDown.magnitude) * 0.5;
+                                    double tOrbDownAvg = 2.0 * Math.PI * Math.Sqrt(Math.Pow(rDownAvg * 1000.0, 3.0) / (centralMu * 1e9));
+                                    int nmaxDown = (tOrbDownAvg > 10.0) ? (int)Math.Floor(tDownTest / tOrbDownAvg + 0.25) : 0;
+                                    nmaxDown = Math.Max(0, Math.Min(3, nmaxDown));
+                                    if (PykepNative.SolveLambert(rArrNext, rDown, tDownTest, centralMu, false, nmaxDown, out Vector3d vDepToDown, out _)) {
+                                        Vector3d vDepExitInf = vDepToDown - vArrPlanet;
+                                        double exitSafeR = (pExit.SafeRadiusKm > 0) ? pExit.SafeRadiusKm : MGADefaults.GetBodySafeRadiusKm(exitBodyName);
+                                        double eExit = 1.0 + (exitSafeR * vArrInf * vArrInf) / Math.Max(1.0, pExit.Mu);
+                                        double maxTurnExit = 2.0 * Math.Asin(1.0 / Math.Max(1.0001, eExit));
+                                        double dotDown = Vector3d.Dot(vArrLambert - vArrPlanet, vDepExitInf);
+                                        if (vArrInf > 1e-4 && vDepExitInf.magnitude > 1e-4) {
+                                            dotDown /= (vArrInf * vDepExitInf.magnitude);
+                                        }
+                                        dotDown = Math.Max(-1.0, Math.Min(1.0, dotDown));
+                                        double reqTurnDown = Math.Acos(dotDown);
+                                        double excessTurnDown = Math.Max(0.0, reqTurnDown - maxTurnExit);
+                                        turnDeficit = 2.0 * Math.Max(vArrInf, vDepExitInf.magnitude) * Math.Sin(excessTurnDown * 0.5);
+                                        double diffDown = Math.Abs(vArrInf - vDepExitInf.magnitude);
+                                        double dDef = turnDeficit + diffDown;
+                                        if (dDef < bestDownDeficit) bestDownDeficit = dDef;
+                                    } else {
+                                        double dDef = energyDeficit * 2.0;
+                                        if (dDef < bestDownDeficit) bestDownDeficit = dDef;
+                                    }
+                                }
+                                downstreamDeficit = (bestDownDeficit < 1e5 ? bestDownDeficit : energyDeficit * 2.0);
+                            }
+
+                            double s = vTurnLoss + depLaunchDv + 0.5 * vPumpLoss + arrPenalty + downstreamDeficit;
                             if (s < bestExitScore) {
                                 bestExitScore = s;
                                 bestExitToF = exitTof;
+                                bestVTurn = vTurnLoss;
+                                bestArrPen = arrPenalty;
+                                bestDownDef = downstreamDeficit;
                             }
                         }
                     }
                     score = (bestExitScore < 1e5 ? bestExitScore : 1e6);
+                    if (string.Equals(bodyName, "Earth", StringComparison.OrdinalIgnoreCase) && string.Equals(exitBodyName, "Venus", StringComparison.OrdinalIgnoreCase)) {
+                        KSPGMATLog.Debug("Solver", $"   [ResCombDiag] r={combo[0]:F2} ({combo[0]*365.25:F0}d) -> score={score:F2}, exitToF={bestExitToF/86400.0:F1}d (vTurn={bestVTurn:F2}, arrPen={bestArrPen:F2}, downDef={bestDownDef:F2})");
+                    }
                 } else {
-                    score = combo.Sum();
+                    // 出口天体为空：此共振块位于任务终点目标天体 (如 MESSENGER / BepiColombo 在水星连续共振自减速入轨)
+                    // 物理目标：严格满足各次飞掠双曲偏折角限制，通过逐级共振将到达双曲超速 v_inf 削减至极小，
+                    // 彻底最小化终点泊入捕获脉冲 (Orbit Insertion DeltaV)!
+                    pBody.GetRelativeState(central, depUT, out Vector3d rDep, out Vector3d vDepPlanet);
+                    double curEffVinf = (prevArrVinf.sqrMagnitude > 1e-4) ? prevArrVinf.magnitude : (vDepPlanet.magnitude * 0.18);
+                    double vTransPenalty = 0.0;
+                    for (int i = 0; i < blockLen; i++) {
+                        double pRatio = (i < combo.Length) ? combo[i] : 1.0;
+                        int maxQ = Math.Min(8, Math.Max(1, (int)Math.Floor(2.8 * pRatio)));
+                        double bestDiff = double.MaxValue;
+                        double bestVInf = curEffVinf;
+
+                        double eHyp = 1.0 + (safeR * curEffVinf * curEffVinf) / Math.Max(1.0, pBody.Mu);
+                        double deltaMax = 2.0 * Math.Asin(1.0 / Math.Max(1.0001, eHyp));
+                        double maxTurnDv = 2.0 * curEffVinf * Math.Sin(deltaMax * 0.5);
+
+                        for (int q = 1; q <= maxQ; q++) {
+                            double tSc = (pRatio / q) * tOrb;
+                            double aRes = Math.Pow((tSc / (2.0 * Math.PI)) * (tSc / (2.0 * Math.PI)) * centralMu, 1.0 / 3.0);
+                            double vSq = centralMu * (2.0 / rDep.magnitude - 1.0 / Math.Max(1.0, aRes));
+                            if (vSq <= 0) continue;
+                            double vCraft = Math.Sqrt(vSq);
+                            double vInfCand = Math.Abs(vCraft - vDepPlanet.magnitude);
+
+                            double diff = Math.Abs(curEffVinf - vInfCand);
+                            double excessTurn = Math.Max(0.0, diff - maxTurnDv);
+                            double penalty = excessTurn * 3.0 + diff * 0.5;
+
+                            if (penalty < bestDiff) {
+                                bestDiff = penalty;
+                                bestVInf = vInfCand;
+                            }
+                        }
+
+                        vTransPenalty += bestDiff;
+                        curEffVinf = bestVInf;
+                    }
+
+                    // 目标椭圆轨道捕获脉冲估算 (高偏心率捕获)
+                    double rpCap = pBody.RadiusKm + 200.0;
+                    double raCap = pBody.RadiusKm + 15000.0;
+                    double aCap = (rpCap + raCap) * 0.5;
+                    double vCap = Math.Sqrt(Math.Max(1e-4, pBody.Mu * (2.0 / rpCap - 1.0 / aCap)));
+                    double vHypArr = Math.Sqrt(curEffVinf * curEffVinf + 2.0 * pBody.Mu / rpCap);
+                    double dvCap = Math.Max(0.0, vHypArr - vCap);
+
+                    score = vTransPenalty + dvCap;
                 }
                 rankedCombos.Add(Tuple.Create(score, combo, bestExitToF));
             }
@@ -237,12 +396,14 @@ namespace KSPGMAT.MGA
             var solutions = new List<MGASolution>();
             var fullChain = new List<string> { config.DepartureBody };
             if (config.FlybySequence != null && config.FlybySequence.Count > 0) {
-                fullChain.AddRange(config.FlybySequence);
+                if (config.FlybySequence.Count == 1 && config.FlybySequence[0].Equals(config.DestinationBody, StringComparison.OrdinalIgnoreCase)) {
+                    // 纯直达航段
+                } else {
+                    fullChain.AddRange(config.FlybySequence);
+                }
             }
             if (!string.IsNullOrEmpty(config.DestinationBody)) {
-                if (fullChain.Count == 0 || !fullChain[fullChain.Count - 1].Equals(config.DestinationBody, StringComparison.OrdinalIgnoreCase)) {
-                    fullChain.Add(config.DestinationBody);
-                }
+                fullChain.Add(config.DestinationBody);
             }
             if (fullChain.Count < 2) return solutions;
             int legCount = fullChain.Count - 1;
@@ -306,6 +467,42 @@ namespace KSPGMAT.MGA
                 nominalLegToFSec[k] = Math.Max(lowerBounds[1 + k], Math.Min(upperBounds[1 + k], nominalLegToFSec[k]));
             }
 
+            // 若某航段紧随同星共振块之后 (如 Earth->Earth 出口前往 Venus, 或 Venus->Venus 出口前往 Mercury),
+            // 由开普勒会合相位与共振解算器优先推导出最优物理出口航时，校准标称航时 nominalLegToFSec
+            for (int k = 1; k < legCount; k++) {
+                if (fullChain[k - 1].Equals(fullChain[k], StringComparison.OrdinalIgnoreCase) &&
+                    !fullChain[k].Equals(fullChain[k + 1], StringComparison.OrdinalIgnoreCase)) {
+                    int rStart = k - 1;
+                    while (rStart > 0 && fullChain[rStart - 1].Equals(fullChain[rStart], StringComparison.OrdinalIgnoreCase)) {
+                        rStart--;
+                    }
+                    int bLen = k - rStart;
+                    string rBody = fullChain[rStart];
+                    string exitBody = fullChain[k + 1];
+                    double midUT = (winStartUT + winEndUT) * 0.5;
+                    double estResUT = midUT;
+                    for (int preK = 0; preK < rStart; preK++) estResUT += nominalLegToFSec[preK];
+
+                    var rCombos = FindAndRankResonantCombos(
+                        rBody, exitBody, bLen, estResUT, Vector3d.zero,
+                        lowerBounds, upperBounds, rStart, central, centralMu, 0.0, false, null);
+                    if (rCombos != null && rCombos.Count > 0 && rCombos[0].Item2 > 10.0 * 86400.0) {
+                        double exitToF = rCombos[0].Item2;
+                        if (exitToF >= lowerBounds[1 + k] && exitToF <= upperBounds[1 + k]) {
+                            nominalLegToFSec[k] = exitToF;
+                        }
+                    }
+                }
+            }
+
+            bool hasResonantBlock = false;
+            for (int rk = 0; rk < legCount; rk++) {
+                if (fullChain[rk].Equals(fullChain[rk + 1], StringComparison.OrdinalIgnoreCase)) {
+                    hasResonantBlock = true;
+                    break;
+                }
+            }
+
             if (optDsmEta) {
                 for (int k = 0; k < legCount; k++) {
                     int d = 1 + legCount + k;
@@ -360,12 +557,14 @@ namespace KSPGMAT.MGA
                 && config.DeparturePeAKm > 0 && Math.Abs(config.DeparturePeAKm - config.DepartureApAKm) < 100.0) {
                 double scanSpanSec = Math.Min(30.0 * 86400.0, winEndUT - winStartUT);
                 if (PykepNative.FindNodalCrossing(fullChain[1], central, winStartUT, scanSpanSec, config.DepartureInclinationDeg, config.DepartureRAANDeg, out double tNode, out _)) {
-                    double nomTofSec = (lowerBounds[1] + upperBounds[1]) * 0.5;
+                    double nomTofSec = (nominalLegToFSec != null && nominalLegToFSec.Length > 0 && nominalLegToFSec[0] > 0) ? nominalLegToFSec[0] : (lowerBounds[1] + upperBounds[1]) * 0.5;
                     double depSeedUT = tNode - nomTofSec;
+                    KSPGMATLog.Debug("Solver", $"       [DEBUG NodalCrossing] tNode={GMATClient.FormatUtcGregorian(tNode)}, nomTofSec={nomTofSec/86400.0:F2}d, depSeedUT={GMATClient.FormatUtcGregorian(depSeedUT)}, inBounds={depSeedUT >= lowerBounds[0] && depSeedUT <= upperBounds[0]}");
                     if (depSeedUT < lowerBounds[0] || depSeedUT > upperBounds[0]) {
                         // 寻找下一个升降交点 (~13.6 天后)
                         if (PykepNative.FindNodalCrossing(fullChain[1], central, tNode + 1.0 * 86400.0, scanSpanSec, config.DepartureInclinationDeg, config.DepartureRAANDeg, out double nextNode, out _)) {
                             depSeedUT = nextNode - nomTofSec;
+                            KSPGMATLog.Debug("Solver", $"       [DEBUG NextNode] nextNode={GMATClient.FormatUtcGregorian(nextNode)}, depSeedUT={GMATClient.FormatUtcGregorian(depSeedUT)}, inBounds={depSeedUT >= lowerBounds[0] && depSeedUT <= upperBounds[0]}");
                         }
                     }
                     if (depSeedUT >= lowerBounds[0] && depSeedUT <= upperBounds[0]) {
@@ -386,6 +585,11 @@ namespace KSPGMAT.MGA
                                         : (config != null ? config.DsmEtaDefault : 0.5);
                                 }
                             }
+                            var testSol = PykepBridge.BuildFullSolution(g, fullChain, config, false);
+                            double testFit = testSol != null ? Fitness(testSol) : 1e9;
+                            double testInc = (testSol != null && testSol.Legs != null && testSol.Legs.Count > 0) ? testSol.Legs[0].EjectionInclinationDeg : -1;
+                            double testDv = testSol != null ? testSol.LaunchDeltaVKms * 1000.0 : -1;
+                            KSPGMATLog.Debug("Solver", $"       [DEBUG Nodal Seed] dep={GMATClient.FormatUtcGregorian(depCand)}, tof={tofCand/86400.0:F2}d, EjectionInc={testInc:F2}°, LaunchDv={testDv:F1} m/s, Fit={testFit:F1}");
                             seedGenomes.Add(g);
                         }
                     }
@@ -463,35 +667,134 @@ namespace KSPGMAT.MGA
                         ratioOptionsPerLeg.Add(opts);
                     }
 
-                    var comboSeeds = new List<Tuple<double, double[]>>();
-                    var currentCombo = new List<double>();
+                    // 1. 将链路中所有同星共振腿按天体连续性划分为独立的物理共振块 (Contiguous Resonant Blocks)
+                    // 例如: 地球×1 为块 0, 金星×1 为块 1, 水星×3 为块 2 (MESSENGER EVVMMM)
+                    var blocks = new List<List<int>>();
+                    int curBlockStart = 0;
+                    for (int si = 0; si < sameBodyLegs.Count; si++) {
+                        if (si > 0) {
+                            int prevLeg = sameBodyLegs[si - 1];
+                            int curLeg = sameBodyLegs[si];
+                            bool isConsecutive = (curLeg == prevLeg + 1) &&
+                                fullChain[curLeg].Equals(fullChain[prevLeg], StringComparison.OrdinalIgnoreCase);
+                            if (!isConsecutive) {
+                                var b = new List<int>();
+                                for (int bi = curBlockStart; bi < si; bi++) b.Add(bi);
+                                blocks.Add(b);
+                                curBlockStart = si;
+                            }
+                        }
+                    }
+                    var lastB = new List<int>();
+                    for (int bi = curBlockStart; bi < sameBodyLegs.Count; bi++) lastB.Add(bi);
+                    blocks.Add(lastB);
+
+                    // 2. 为每个物理共振块独立生成高质量天体力学共振候选组合:
+                    var blockCandidates = new List<List<double[]>>();
+                    foreach (var b in blocks) {
+                        var bCands = new List<double[]>();
+                        if (b.Count == 1) {
+                            int si = b[0];
+                            var opts = ratioOptionsPerLeg[si];
+                            // 优先锚定 1:1 基础开普勒无偏折物理共振槽 (以 |r - 1.0| 排序)
+                            var sortedOpts = opts.OrderBy(r => Math.Abs(r - 1.0)).ToList();
+                            int takeN = (blocks.Count == 1) ? Math.Min(32, sortedOpts.Count) : Math.Min(4, sortedOpts.Count);
+                            foreach (double r in sortedOpts.Take(takeN)) {
+                                bCands.Add(new double[] { r });
+                            }
+                        } else {
+                            // 多级连续同星自共振减速/调相块 (如水星 M×3 / 木卫多重借力):
+                            // 依据开普勒两体动力学，多级自共振通过单调阶梯减速 (p1 <= p2 <= p3, 如 MESSENGER 3:3 ➔ 4:4 ➔ 6:6)
+                            // 或均等调相 (1:1, 2:2) 逐步削减双曲超速。
+                            var localCombos = new List<double[]>();
+                            Action<int, double[]> buildLocal = null;
+                            buildLocal = (legIdx, cur) => {
+                                if (legIdx == b.Count) {
+                                    localCombos.Add((double[])cur.Clone());
+                                    return;
+                                }
+                                int si = b[legIdx];
+                                foreach (double r in ratioOptionsPerLeg[si]) {
+                                    cur[legIdx] = r;
+                                    buildLocal(legIdx + 1, cur);
+                                    if (localCombos.Count >= 2048) return;
+                                }
+                            };
+                            buildLocal(0, new double[b.Count]);
+
+                            // 筛选最具代表性的天体力学序列:
+                            // a) 单调非降序列 (自减速连续泵升): MESSENGER 典型轨迹 [3, 4, 6] 即属于此
+                            var monoInc = localCombos.Where(c => {
+                                for (int i = 1; i < c.Length; i++) if (c[i] < c[i - 1]) return false;
+                                return true;
+                            }).ToList();
+
+                            // b) 单调非增序列 (加速阶段)
+                            var monoDec = localCombos.Where(c => {
+                                for (int i = 1; i < c.Length; i++) if (c[i] > c[i - 1]) return false;
+                                return true;
+                            }).ToList();
+
+                            // c) 等周期调相序列
+                            var equalSeq = localCombos.Where(c => {
+                                for (int i = 1; i < c.Length; i++) if (Math.Abs(c[i] - c[0]) > 1e-4) return false;
+                                return true;
+                            }).ToList();
+
+                            // 优先保留关键的整数阶跃序列 (例如 1..6 范围内的单调组合, 如 [3,4,6], [2,3,4] 等)
+                            var intMonoInc = monoInc.Where(c => c.All(r => Math.Abs(r - Math.Round(r)) < 1e-4)).ToList();
+                            var otherMono = monoInc.Except(intMonoInc).ToList();
+
+                            var selected = new List<double[]>();
+                            selected.AddRange(intMonoInc);
+                            selected.AddRange(equalSeq);
+                            selected.AddRange(otherMono.Take(20));
+                            selected.AddRange(monoDec.Take(15));
+                            selected.AddRange(localCombos.OrderBy(c => c.Sum()).Take(15));
+
+                            var distinctCands = new List<double[]>();
+                            foreach (var sc in selected) {
+                                bool exists = false;
+                                foreach (var dc in distinctCands) {
+                                    if (dc.Length == sc.Length) {
+                                        bool eq = true;
+                                        for (int ei = 0; ei < dc.Length; ei++) {
+                                            if (Math.Abs(dc[ei] - sc[ei]) > 1e-4) { eq = false; break; }
+                                        }
+                                        if (eq) { exists = true; break; }
+                                    }
+                                }
+                                if (!exists) distinctCands.Add(sc);
+                                if (distinctCands.Count >= 64) break;
+                            }
+                            bCands.AddRange(distinctCands);
+                        }
+                        blockCandidates.Add(bCands);
+                    }
+
+                    // 3. 跨块组装全局共振组合 (Cartesian assembly across blocks, 杜绝单腿深度穷举引发的截断饥饿):
                     var combos = new List<List<double>>();
-                    // 递归生成共振比例组合 (上限 1024 组后按会合相位相干性优选)
-                    Action<int> buildCombos = null;
-                    buildCombos = (si) => {
-                        if (si >= sameBodyLegs.Count) {
-                            combos.Add(new List<double>(currentCombo));
+                    Action<int, List<double>> assembleBlocks = null;
+                    assembleBlocks = (bIdx, cur) => {
+                        if (bIdx == blocks.Count) {
+                            combos.Add(new List<double>(cur));
                             return;
                         }
-                        foreach (double r in ratioOptionsPerLeg[si]) {
-                            currentCombo.Add(r);
-                            buildCombos(si + 1);
-                            currentCombo.RemoveAt(currentCombo.Count - 1);
+                        foreach (var cand in blockCandidates[bIdx]) {
+                            cur.AddRange(cand);
+                            assembleBlocks(bIdx + 1, cur);
+                            cur.RemoveRange(cur.Count - cand.Length, cand.Length);
                             if (combos.Count >= 1024) return;
                         }
                     };
-                    if (ratioOptionsPerLeg.All(o => o.Count > 0)) {
-                        buildCombos(0);
-                    }
+                    assembleBlocks(0, new List<double>());
 
-                    // 优先保留低阶物理共振与紧凑能量组合，交由下方原生动力学校验
-                    combos = combos.OrderBy(c => c.Sum()).Take(48).ToList();
-
-                    double[] comboEpochs = new double[] { -0.5, -0.4, -0.3, -0.2, -0.1, 0.0, 0.1, 0.2, 0.3, 0.4, 0.5 };
+                    var comboSeeds = new List<Tuple<double, double[]>>();
+                    double[] comboEpochs = new double[] { 0.0, -0.2, 0.2, -0.4, 0.4 };
                     int comboEvalCount = 0;
                     foreach (var combo in combos) {
                         foreach (double epochFrac in comboEpochs) {
-                            if (comboEvalCount >= 350) break;
+                            if (comboEvalCount >= 2500) break;
                             comboEvalCount++;
                             var g = new double[dim];
                             g[0] = (lowerBounds[0] + upperBounds[0]) * 0.5 + epochFrac * (upperBounds[0] - lowerBounds[0]);
@@ -528,21 +831,17 @@ namespace KSPGMAT.MGA
             List<Tuple<int, double[]>>[] perEpochCombos = null;
             using (MGAStepProfiler.Scope("DE注种: 前向步进引力偏折动力学合成"))
             {
-            // 特征稀疏采样：聚焦高价值历元与霍曼分段，注种评估从 400+ 次压缩至 24~48 次，耗时降幅 >80%
-            int sampleEpochCount = Math.Max(4, Math.Min(8, (int)((winEndUT - winStartUT) / (15.0 * 86400.0)) + 1));
+            // 特征稀疏采样：聚焦高价值历元与霍曼分段，步长依据行星际窗口特征(约20天)自适应设定
+            // 采用奇数个采样点以保证窗口两端与正中心对齐 (Window Center Symmetry)
+            int sampleEpochCount = Math.Max(5, Math.Min(7, (int)Math.Ceiling((winEndUT - winStartUT) / (20.0 * 86400.0)) + 1));
+            if (sampleEpochCount % 2 == 0) sampleEpochCount++;
             double epochStep = (sampleEpochCount > 1) ? ((winEndUT - winStartUT) / (sampleEpochCount - 1)) : 0.0;
 
-            // 覆盖短霍曼、标称霍曼、扩展 Type-II 借力切向弧等具代表性的开普勒物理分支
-            double[] leg0Fractions = new double[] { 0.35, 0.45, 0.55, 0.60, 0.65, 0.75, 0.85 };
+            // 覆盖极速高能出射、短霍曼、标称霍曼、扩展 Type-II 借力切向弧等具代表性的开普勒物理分支
+            double[] leg0Fractions = new double[] { 0.05, 0.20, 0.40, 0.65, 0.85 };
             var stagedSeeds = new System.Collections.Concurrent.ConcurrentBag<Tuple<double, double[]>>();
 
-            bool hasResonantBlock = false;
-            for (int rk = 0; rk < legCount; rk++) {
-                if (fullChain[rk].Equals(fullChain[rk + 1], StringComparison.OrdinalIgnoreCase)) {
-                    hasResonantBlock = true;
-                    break;
-                }
-            }
+
 
             perEpochCombos = new List<Tuple<int, double[]>>[sampleEpochCount];
 
@@ -550,9 +849,10 @@ namespace KSPGMAT.MGA
                 double tDep = winStartUT + epIdx * epochStep;
                 var localCombos = new List<Tuple<int, double[]>>();
                 var resonantCombosCache = new Dictionary<string, List<Tuple<double[], double>>>(StringComparer.Ordinal);
+                var epochSeeds = new List<Tuple<double, double[]>>();
 
                 foreach (double leg0Frac in leg0Fractions) {
-                    int numVariants = hasResonantBlock ? 16 : 1;
+                    int numVariants = hasResonantBlock ? 4 : 1;
                     for (int seedVariant = 0; seedVariant < numVariants; seedVariant++) {
                         var genome = new double[dim];
                         genome[0] = tDep;
@@ -579,6 +879,14 @@ namespace KSPGMAT.MGA
                                 }
                                 int blockLen = resEnd - resStart + 1;
                                 string exitTarget = (resEnd + 2 < fullChain.Count) ? fullChain[resEnd + 2] : null;
+                                string downstreamTarget = null;
+                                if (resEnd + 3 < fullChain.Count && !string.IsNullOrEmpty(exitTarget)) {
+                                    // 仅当下一步是前往另一个不同的天体时，才存在跨天体下游活力亏空校验
+                                    // 若下一步仍为同一天体 (如 Venus ➔ Venus 同星自共振调相)，则出口星自身即为共振跳板，严禁跨级强加直飞下游的虚假亏空
+                                    if (!fullChain[resEnd + 3].Equals(exitTarget, StringComparison.OrdinalIgnoreCase)) {
+                                        downstreamTarget = fullChain[resEnd + 3];
+                                    }
+                                }
 
                                 double nominalExitToFSec = 0.0;
                                 int enterLeg = resStart - 1;
@@ -589,13 +897,15 @@ namespace KSPGMAT.MGA
                                     nominalExitToFSec = genome[1 + enterLeg];
                                 }
 
-                                string rCacheKey = $"{fromN}->{exitTarget ?? "NONE"}#{blockLen}#{resStart}#{Math.Round(curUT / 60.0)}#{Math.Round(prevArrVinf.magnitude, 2)}#{Math.Round(nominalExitToFSec / 3600.0)}";
+                                bool isExitDestination = (resEnd + 2 >= fullChain.Count - 1);
+                                string rCacheKey = $"{fromN}->{exitTarget ?? "NONE"}->{downstreamTarget ?? "NONE"}#{blockLen}#{resStart}#{Math.Round(curUT / 43200.0)}#{Math.Round(prevArrVinf.magnitude * 5.0)}#{Math.Round(nominalExitToFSec / 86400.0)}#{isExitDestination}";
                                 if (!resonantCombosCache.TryGetValue(rCacheKey, out var rankedCombos)) {
                                     rankedCombos = FindAndRankResonantCombos(
                                         fromN, exitTarget, blockLen,
                                         curUT, prevArrVinf,
                                         lowerBounds, upperBounds, resStart,
-                                        central, centralMu, nominalExitToFSec);
+                                        central, centralMu, nominalExitToFSec,
+                                        isExitDestination, downstreamTarget);
                                     resonantCombosCache[rCacheKey] = rankedCombos;
                                 }
 
@@ -606,7 +916,7 @@ namespace KSPGMAT.MGA
                                 }
 
                                 int comboIdx = (rankedCombos != null && rankedCombos.Count > 0)
-                                    ? (seedVariant / 4) % rankedCombos.Count
+                                    ? seedVariant % rankedCombos.Count
                                     : 0;
                                 var chosenTuple = (rankedCombos != null && rankedCombos.Count > comboIdx)
                                     ? rankedCombos[comboIdx]
@@ -618,7 +928,7 @@ namespace KSPGMAT.MGA
                                 double sma = PykepBridge.GetRelativeSMA(pBody, central, 0.0);
                                 double tOrb = PykepBridge.CalcOrbitPeriodSec(sma, centralMu);
 
-                                double[] phasePerturbations = new double[] { 1.0, 1.05, 1.09, 0.95 };
+                                double[] phasePerturbations = new double[] { 1.0, 1.005, 1.01, 0.995 };
                                 double phaseScale = phasePerturbations[seedVariant % 4];
 
                                 double dwellSec = 0.0;
@@ -644,7 +954,14 @@ namespace KSPGMAT.MGA
                                 // 针对共振段内部各腿，采用低差异序列均匀铺开 DSM eta 分布
                                 if (optDsmEta) {
                                     for (int bi = 0; bi < blockLen; bi++) {
-                                        double quasiResEta = 0.2 + 0.6 * (((seedVariant + bi * 3 + 1) * 0.618033988749895) % 1.0);
+                                        double rRatio = (chosen != null && bi < chosen.Length) ? chosen[bi] : 1.0;
+                                        int qEst = (rRatio > 2.2) ? (int)Math.Round(rRatio * 0.8) : 1;
+                                        if (qEst < 1) qEst = 1;
+                                        int apoIdx = seedVariant % qEst;
+                                        double apoEta = (2.0 * apoIdx + 1.0) / (2.0 * qEst);
+                                        double quasiResEta = (seedVariant % 3 == 0)
+                                            ? Math.Max(0.10, Math.Min(0.90, apoEta))
+                                            : (0.15 + 0.70 * (((seedVariant + bi * 3 + 1) * 0.618033988749895) % 1.0));
                                         int geneIdx = 1 + legCount + resStart + bi;
                                         genome[geneIdx] = Math.Max(lowerBounds[geneIdx], Math.Min(upperBounds[geneIdx], quasiResEta));
                                     }
@@ -657,15 +974,17 @@ namespace KSPGMAT.MGA
                                         double smaNext = PykepBridge.GetRelativeSMA(pExit, central, 0.0);
                                         double aH = (sma + smaNext) * 0.5;
                                         double approxTofSec = (chosenExitToF > 10.0 * 86400.0) ? chosenExitToF : Math.PI * Math.Sqrt(Math.Pow(aH * 1000.0, 3.0) / (centralMu * 1e9));
-                                        pBody.GetRelativeState(central, curUT, out Vector3d rDep, out Vector3d vDepPlanet);
-                                        pExit.GetRelativeState(central, curUT + approxTofSec, out Vector3d rArrNext, out _);
-                                        if (PykepNative.SolveLambert(rDep, rArrNext, approxTofSec, centralMu, false, out Vector3d vDepLambert, out _)) {
+                                        pBody.GetRelativeState(central, curUT, out Vector3d rDep, out Vector3d vDepPlanet);
+                                        pExit.GetRelativeState(central, curUT + approxTofSec, out Vector3d rArrNext, out _);
+                                        double rExitAvg = (rDep.magnitude + rArrNext.magnitude) * 0.5;
+                                        double tOrbExitAvg = 2.0 * Math.PI * Math.Sqrt(Math.Pow(rExitAvg * 1000.0, 3.0) / (centralMu * 1e9));
+                                        int nmaxExit = (tOrbExitAvg > 10.0) ? (int)Math.Floor(approxTofSec / tOrbExitAvg + 0.25) : 0;
+                                        nmaxExit = Math.Max(0, Math.Min(3, nmaxExit));
+                                        if (PykepNative.SolveLambert(rDep, rArrNext, approxTofSec, centralMu, false, nmaxExit, out Vector3d vDepLambert, out _)) {
                                             Vector3d vExitInf = vDepLambert - vDepPlanet;
-                                            double rLead = (chosen != null && chosen.Length > 0) ? chosen[chosen.Length - 1] : 1.0;
-                                            double aResCraft = sma * Math.Pow(rLead, 2.0 / 3.0);
-                                            double vCraft = Math.Sqrt(Math.Max(1.0, centralMu * (2.0 / rDep.magnitude - 1.0 / Math.Max(1.0, aResCraft))));
-                                            double effResInf = Math.Max(1.0, Math.Abs(vCraft - vDepPlanet.magnitude));
-                                            prevArrVinf = vExitInf.normalized * effResInf;
+                                            // 航天器经由自共振 DeltaV-EGA (或中间借力) 离场时，其能量已与出口轨道匹配:
+                                            // 满足无动力飞掠守恒公理: |v_inf,in| = |v_inf,out| = vExitInf.magnitude
+                                            prevArrVinf = vExitInf;
                                         }
                                     }
                                 }
@@ -692,54 +1011,53 @@ namespace KSPGMAT.MGA
 
                                 if (hasPreExit) {
                                     // 共振出口锁定优先：若本段已由会合周期与物理共振段精准求解出出口航时，
-                                    // 重点探索该出口点附近的物理微调候选，禁止被粗网格或霍曼基准冲垮
+                                    // 重点探索该出口点附近的物理微调候选 (严格收敛在共振吸引盆内)
                                     candToFs.Add(preExitToF);
-                                    candToFs.Add(preExitToF * 0.95);
-                                    candToFs.Add(preExitToF * 1.05);
-                                    candToFs.Add(preExitToF * 0.90);
-                                    candToFs.Add(preExitToF * 1.10);
                                     candToFs.Add(preExitToF * 0.98);
                                     candToFs.Add(preExitToF * 1.02);
+                                    candToFs.Add(preExitToF * 0.95);
+                                    candToFs.Add(preExitToF * 1.05);
+                                }
+
+                                // 开普勒物理特征自适应稀疏网格采样 (Adaptive Kepler Feature Mesh)
+                                // 依据天体动力学能量曲率与霍曼骨干自适应取样，完整覆盖极速双曲飞掠弧至慢外向转移
+                                double sma1 = PykepBridge.GetRelativeSMA(p1, central, 0.0);
+                                double sma2 = PykepBridge.GetRelativeSMA(p2, central, 0.0);
+                                double tHohmann = 0.0;
+                                if (sma1 > 0 && sma2 > 0) {
+                                    double aH = (sma1 + sma2) * 0.5;
+                                    tHohmann = Math.PI * Math.Sqrt(Math.Pow(aH * 1000.0, 3.0) / (centralMu * 1e9));
+                                }
+
+                                candToFs.Add(minToF);
+                                candToFs.Add(maxToF);
+                                candToFs.Add((minToF + maxToF) * 0.5);
+
+                                if (tHohmann > 0) {
+                                    // 涵盖极速双曲飞掠弧 (0.15~0.38 如外行星双曲逃逸快弧、金星-地球55天、水星48~52天)、标称霍曼、及外向慢弧
+                                    double[] hohmannScales = new double[] { 0.15, 0.25, 0.38, 0.50, 0.65, 0.85, 1.00, 1.30, 1.80, 2.50, 3.30 };
+                                    foreach (double sc in hohmannScales) {
+                                        double tH = tHohmann * sc;
+                                        if (tH >= minToF && tH <= maxToF) candToFs.Add(tH);
+                                    }
                                 } else {
-                                    // 开普勒物理特征自适应稀疏网格采样 (Adaptive Kepler Feature Mesh Thinning)
-                                    // 替代等步长密集盲目平铺，依据天体动力学能量曲率与霍曼骨干自适应取样
-                                    double sma1 = PykepBridge.GetRelativeSMA(p1, central, 0.0);
-                                    double sma2 = PykepBridge.GetRelativeSMA(p2, central, 0.0);
-                                    double tHohmann = 0.0;
-                                    if (sma1 > 0 && sma2 > 0) {
-                                        double aH = (sma1 + sma2) * 0.5;
-                                        tHohmann = Math.PI * Math.Sqrt(Math.Pow(aH * 1000.0, 3.0) / (centralMu * 1e9));
+                                    int coarseSteps = 8;
+                                    for (int s = 1; s < coarseSteps; s++) {
+                                        candToFs.Add(minToF + s * (maxToF - minToF) / coarseSteps);
                                     }
+                                }
 
-                                    candToFs.Add(minToF);
-                                    candToFs.Add(maxToF);
-                                    candToFs.Add((minToF + maxToF) * 0.5);
-
-                                    if (tHohmann > 0) {
-                                        double[] hohmannScales = new double[] { 0.65, 0.85, 1.00, 1.15, 1.40, 1.80 };
-                                        foreach (double sc in hohmannScales) {
-                                            double tH = tHohmann * sc;
-                                            if (tH >= minToF && tH <= maxToF) candToFs.Add(tH);
-                                        }
-                                    } else {
-                                        int coarseSteps = 8;
-                                        for (int s = 1; s < coarseSteps; s++) {
-                                            candToFs.Add(minToF + s * (maxToF - minToF) / coarseSteps);
-                                        }
-                                    }
-
-                                    // 普适对称返回航段动力学注种: 若此前存在反向航段 (如 Venus->Mercury，当前为 Mercury->Venus)
-                                    int prevSymLeg = k - 1;
-                                    while (prevSymLeg >= 0 && fullChain[prevSymLeg].Equals(fromN, StringComparison.OrdinalIgnoreCase)) {
-                                        prevSymLeg--;
-                                    }
-                                    if (prevSymLeg >= 0 && fullChain[prevSymLeg].Equals(toN, StringComparison.OrdinalIgnoreCase)) {
-                                        double symToF = genome[1 + prevSymLeg];
-                                        if (symToF >= minToF && symToF <= maxToF) {
-                                            candToFs.Add(symToF);
-                                            candToFs.Add(symToF * 0.95);
-                                            candToFs.Add(symToF * 1.05);
-                                        }
+                                // 普适对称返回航段动力学注种: 若此前存在反向航段 (如 Venus->Mercury，当前为 Mercury->Venus)
+                                int prevSymLeg = k - 1;
+                                while (prevSymLeg >= 0 && fullChain[prevSymLeg].Equals(fromN, StringComparison.OrdinalIgnoreCase)) {
+                                    prevSymLeg--;
+                                }
+                                if (prevSymLeg >= 0 && fullChain[prevSymLeg].Equals(toN, StringComparison.OrdinalIgnoreCase)) {
+                                    double symToF = genome[1 + prevSymLeg];
+                                    if (symToF >= minToF && symToF <= maxToF) {
+                                        candToFs.Add(symToF);
+                                        candToFs.Add(symToF * 0.95);
+                                        candToFs.Add(symToF * 1.05);
                                     }
                                 }
                             }
@@ -753,7 +1071,11 @@ namespace KSPGMAT.MGA
                                 //   本循环的原生 Lambert 探针总耗时仅 155 ms, 占"DE注种"阶段 11.09 s 的 1.4%;
                                 //   代理门自身 100 ms (2.1 us/次) 与之同量级, 且筛除会改变搜索路径分支,
                                 //   净效果为负。故粗筛在此位置无收益, 恢复原始直调。
-                                if (PykepNative.SolveLambert(r1, r2, testToF, centralMu, false, out Vector3d vDep, out Vector3d vArr)) {
+                                double rTestAvg = (r1.magnitude + r2.magnitude) * 0.5;
+                                double tOrbTestAvg = 2.0 * Math.PI * Math.Sqrt(Math.Pow(rTestAvg * 1000.0, 3.0) / (centralMu * 1e9));
+                                int nmaxTest = (tOrbTestAvg > 10.0) ? (int)Math.Floor(testToF / tOrbTestAvg + 0.25) : 0;
+                                nmaxTest = Math.Max(0, Math.Min(3, nmaxTest));
+                                if (PykepNative.SolveLambert(r1, r2, testToF, centralMu, false, nmaxTest, out Vector3d vDep, out Vector3d vArr)) {
                                     Vector3d vInfDep = vDep - v1;
                                     double score = 0.0;
                                     if (k == 0) {
@@ -783,13 +1105,17 @@ namespace KSPGMAT.MGA
 
                             // 围绕最佳物理骨干候选执行两步自适应轻量微调 (Localized Gradient Refinement)
                             if (k > 0 && bestLegScore < 1e5) {
-                                double stepSpan = (maxToF - minToF) * 0.03;
+                                double stepSpan = Math.Min((maxToF - minToF) * 0.03, bestLegToF * 0.03);
                                 double[] refineToFs = new double[] { bestLegToF - stepSpan, bestLegToF + stepSpan };
                                 foreach (double refToF in refineToFs) {
                                     if (refToF >= minToF && refToF <= maxToF) {
-                                        double arrUT = curUT + refToF;
-                                        p2.GetRelativeState(central, arrUT, out Vector3d r2Ref, out _);
-                                        if (PykepNative.SolveLambert(r1, r2Ref, refToF, centralMu, false, out Vector3d vDepRef, out _)) {
+                                        double arrUT = curUT + refToF;
+                                        p2.GetRelativeState(central, arrUT, out Vector3d r2Ref, out _);
+                                        double rRefAvg = (r1.magnitude + r2Ref.magnitude) * 0.5;
+                                        double tOrbRefAvg = 2.0 * Math.PI * Math.Sqrt(Math.Pow(rRefAvg * 1000.0, 3.0) / (centralMu * 1e9));
+                                        int nmaxRef = (tOrbRefAvg > 10.0) ? (int)Math.Floor(refToF / tOrbRefAvg + 0.25) : 0;
+                                        nmaxRef = Math.Max(0, Math.Min(3, nmaxRef));
+                                        if (PykepNative.SolveLambert(r1, r2Ref, refToF, centralMu, false, nmaxRef, out Vector3d vDepRef, out _)) {
                                             Vector3d vInfDep = vDepRef - v1;
                                             double vDiff = Math.Abs(vInfDep.magnitude - prevArrVinf.magnitude);
                                             double dot = Vector3d.Dot(vInfDep.normalized, prevArrVinf.normalized);
@@ -815,7 +1141,11 @@ namespace KSPGMAT.MGA
                             p2.GetRelativeState(central, curUT, out _, out Vector3d v2Final);
                             p1.GetRelativeState(central, curUT - bestLegToF, out Vector3d r1Final, out _);
                             p2.GetRelativeState(central, curUT, out Vector3d r2Final, out _);
-                            if (PykepNative.SolveLambert(r1Final, r2Final, bestLegToF, centralMu, false, out _, out Vector3d vArrFinal)) {
+                            double rFinalAvg = (r1Final.magnitude + r2Final.magnitude) * 0.5;
+                            double tOrbFinalAvg = 2.0 * Math.PI * Math.Sqrt(Math.Pow(rFinalAvg * 1000.0, 3.0) / (centralMu * 1e9));
+                            int nmaxFinal = (tOrbFinalAvg > 10.0) ? (int)Math.Floor(bestLegToF / tOrbFinalAvg + 0.25) : 0;
+                            nmaxFinal = Math.Max(0, Math.Min(3, nmaxFinal));
+                            if (PykepNative.SolveLambert(r1Final, r2Final, bestLegToF, centralMu, false, nmaxFinal, out _, out Vector3d vArrFinal)) {
                                 prevArrVinf = vArrFinal - v2Final;
                             }
                             k++;
@@ -823,11 +1153,11 @@ namespace KSPGMAT.MGA
 
                         var fSol = PykepBridge.BuildFullSolution(genome, fullChain, config, false);
                         if (fSol != null && !double.IsNaN(fSol.TotalDeltaVKms) && fSol.TotalDeltaVKms < MGADefaults.MaxPlausibleTotalDvKms) {
-                            stagedSeeds.Add(Tuple.Create(Fitness(fSol), genome));
+                            epochSeeds.Add(Tuple.Create(Fitness(fSol), genome));
                         }
 
-                        // 派生微扰变体
-                        double[] perturbations = new double[] { -0.12, -0.05, 0.05, 0.12 };
+                        // 派生微扰变体 (高轻量化探索)
+                        double[] perturbations = new double[] { -0.05, 0.05 };
                         foreach (double factor in perturbations) {
                             var pGene = (double[])genome.Clone();
                             for (int d = 1; d <= legCount; d++) {
@@ -839,9 +1169,77 @@ namespace KSPGMAT.MGA
                             }
                             var pSol = PykepBridge.BuildFullSolution(pGene, fullChain, config, false);
                             if (pSol != null && !double.IsNaN(pSol.TotalDeltaVKms) && pSol.TotalDeltaVKms < MGADefaults.MaxPlausibleTotalDvKms) {
-                                stagedSeeds.Add(Tuple.Create(Fitness(pSol), pGene));
+                                epochSeeds.Add(Tuple.Create(Fitness(pSol), pGene));
                             }
                         }
+                    }
+                }
+
+                // 普适动力学历元内多天体借力微步抛光 (Per-Epoch Memetic Polish):
+                // 前向步进合成的候选已锁定物理共振槽与借力几何，轻量对 top 候选执行极速坐标微调
+                if (epochSeeds.Count > 0) {
+                    var topEpoch = epochSeeds
+                        .OrderBy(t => t.Item1)
+                        .ThenBy(t => t.Item2, MGASolutionOrdering.GenomeComparer.Instance)
+                        .Take(Math.Min(3, epochSeeds.Count))
+                        .ToList();
+
+                    foreach (var seedTuple in topEpoch) {
+                        var curG = (double[])seedTuple.Item2.Clone();
+                        double bestF = seedTuple.Item1;
+                        int passes = 1;
+
+                        for (int pass = 0; pass < passes; pass++) {
+                            bool improved = false;
+                            for (int d = 1; d <= legCount; d++) {
+                                double step = Math.Max(0.1 * 86400.0, curG[d] * 0.005);
+                                double origVal = curG[d];
+                                double[] signs = new double[] { -1.0, 1.0 };
+                                for (int sIdx = 0; sIdx < signs.Length; sIdx++) {
+                                    double candVal = origVal + signs[sIdx] * step;
+                                    if (candVal < lowerBounds[d] || candVal > upperBounds[d]) continue;
+                                    curG[d] = candVal;
+                                    var candSol = PykepBridge.BuildFullSolution(curG, fullChain, config, false);
+                                    if (candSol != null && !double.IsNaN(candSol.TotalDeltaVKms)) {
+                                        double candF = Fitness(candSol);
+                                        if (candF < bestF) {
+                                            bestF = candF;
+                                            origVal = candVal;
+                                            improved = true;
+                                        }
+                                    }
+                                }
+                                curG[d] = origVal;
+                            }
+
+                            if (optDsmEta) {
+                                for (int ek = 0; ek < legCount; ek++) {
+                                    int geneD = 1 + legCount + ek;
+                                    double stepEta = 0.05;
+                                    double origEta = curG[geneD];
+                                    double[] signsEta = new double[] { -1.0, 1.0 };
+                                    for (int sIdx = 0; sIdx < signsEta.Length; sIdx++) {
+                                        double candEta = origEta + signsEta[sIdx] * stepEta;
+                                        if (candEta < lowerBounds[geneD] || candEta > upperBounds[geneD]) continue;
+                                        curG[geneD] = candEta;
+                                        var candSol = PykepBridge.BuildFullSolution(curG, fullChain, config, false);
+                                        if (candSol != null && !double.IsNaN(candSol.TotalDeltaVKms)) {
+                                            double candF = Fitness(candSol);
+                                            if (candF < bestF) {
+                                                bestF = candF;
+                                                origEta = candEta;
+                                                improved = true;
+                                            }
+                                        }
+                                    }
+                                    curG[geneD] = origEta;
+                                }
+                            }
+
+                            if (!improved) break;
+                        }
+
+                        stagedSeeds.Add(Tuple.Create(bestF, curG));
                     }
                 }
 
@@ -864,13 +1262,48 @@ namespace KSPGMAT.MGA
                 }
             }
 
-            // 种子按 (适应度 -> 基因组字典序) 排序。后者的必要性: ConcurrentBag 枚举顺序随
-            // 线程调度变化, 稳定排序在"适应度并列"时仍会保留不确定的输入顺序。
-            foreach (var ss in stagedSeeds
+            // 种子去重与多历元空间分散覆盖:
+            // 避免单一历元的微扰变体占据全部种子槽, 保证发射窗口各代表性开普勒几何分支均衡入选种群
+            var sortedStaged = stagedSeeds
                 .OrderBy(t => t.Item1)
                 .ThenBy(t => t.Item2, MGASolutionOrdering.GenomeComparer.Instance)
-                .Take(48)) {
-                seedGenomes.Add(ss.Item2);
+                .ToList();
+
+            var selectedKeys = new HashSet<string>(StringComparer.Ordinal);
+            var epochSeedCount = new Dictionary<long, int>();
+            int maxPerEpoch = Math.Max(3, 48 / Math.Max(1, sampleEpochCount));
+
+            // 第一轮: 各历元均衡择优录取 (基于历元 1.0天与各段航时 2.0天离散网格去重)
+            foreach (var ss in sortedStaged) {
+                var g = ss.Item2;
+                if (g == null || g.Length == 0) continue;
+
+                long epochBucket = (long)Math.Round(g[0] / (86400.0 * 1.0));
+                string key = $"{epochBucket}_" + string.Join("_", g.Skip(1).Take(legCount).Select(v => Math.Round(v / (86400.0 * 2.0)).ToString()));
+                if (selectedKeys.Contains(key)) continue;
+
+                epochSeedCount.TryGetValue(epochBucket, out int cnt);
+                if (cnt < maxPerEpoch) {
+                    selectedKeys.Add(key);
+                    seedGenomes.Add(g);
+                    epochSeedCount[epochBucket] = cnt + 1;
+                    if (seedGenomes.Count >= 48) break;
+                }
+            }
+
+            // 第二轮: 若尚未填满 48 槽，由全局最优且未去重的其余种子补齐
+            if (seedGenomes.Count < 48) {
+                foreach (var ss in sortedStaged) {
+                    var g = ss.Item2;
+                    if (g == null || g.Length == 0) continue;
+                    long epochBucket = (long)Math.Round(g[0] / (86400.0 * 1.0));
+                    string key = $"{epochBucket}_" + string.Join("_", g.Skip(1).Take(legCount).Select(v => Math.Round(v / (86400.0 * 2.0)).ToString()));
+                    if (!selectedKeys.Contains(key)) {
+                        selectedKeys.Add(key);
+                        seedGenomes.Add(g);
+                        if (seedGenomes.Count >= 48) break;
+                    }
+                }
             }
             } // end Scope 前向步进引力偏折动力学合成
 
@@ -894,14 +1327,22 @@ namespace KSPGMAT.MGA
             }
 
             if (seedGenomes.Count > 0) {
-                var topSeedSol = PykepBridge.BuildFullSolution(seedGenomes[0], fullChain, config, false);
-                if (topSeedSol != null) {
-                    Console.WriteLine($"     [种子全局优选] 注入最强精英: 发射={GMATClient.FormatUtcGregorian(topSeedSol.DepartureUT)}, 始发={topSeedSol.LaunchDeltaVKms * 1000.0:F1} m/s, DSM={topSeedSol.TotalDsmDeltaVKms * 1000.0:F1} m/s, 总ΔV={topSeedSol.TotalDeltaVKms * 1000.0:F1} m/s");
-                    if (topSeedSol.Legs != null) {
-                        for (int li = 0; li < topSeedSol.Legs.Count; li++) {
-                            var l = topSeedSol.Legs[li];
-                            double dsm = (l.DSM != null) ? l.DSM.DeltaVMs : 0.0;
-                            Console.WriteLine($"       -> Leg #{li+1}: {l.FromBody} -> {l.ToBody}, ToF={l.ToFDays:F1}d, DSM={dsm:F1} m/s, FB_dv={l.FlybyDeltaVKms*1000.0:F1} m/s");
+                for (int si = 0; si < Math.Min(3, seedGenomes.Count); si++) {
+                    var sSol = PykepBridge.BuildFullSolution(seedGenomes[si], fullChain, config, false);
+                    if (sSol != null) {
+                        KSPGMATLog.Debug("Solver", $"     [种子 #{si+1}] 发射={GMATClient.FormatUtcGregorian(sSol.DepartureUT)}, 始发={sSol.LaunchDeltaVKms * 1000.0:F1} m/s, DSM={sSol.TotalDsmDeltaVKms * 1000.0:F1} m/s, 总ΔV={sSol.TotalDeltaVKms * 1000.0:F1} m/s, 适应度={Fitness(sSol):F1}");
+                        if (sSol.Legs != null && sSol.Legs.Count > 0) {
+                            var l0 = sSol.Legs[0];
+                            KSPGMATLog.Debug("Solver", $"       [DEBUG 种子 #{si+1}] EjectionInc={l0.EjectionInclinationDeg:F2}°, EjectionLAN={l0.EjectionLANDeg:F2}°, TargetInc={config?.DepartureInclinationDeg:F2}°, Feasible={sSol.AllLegsFeasible}");
+                            KSPGMATLog.Debug("Solver", $"         r1=({l0.DeparturePosKm.x:F1}, {l0.DeparturePosKm.y:F1}, {l0.DeparturePosKm.z:F1}), v1=({l0.DepartureVelKms.x:F3}, {l0.DepartureVelKms.y:F3}, {l0.DepartureVelKms.z:F3})");
+                            KSPGMATLog.Debug("Solver", $"         r2=({l0.ArrivalPosKm.x:F1}, {l0.ArrivalPosKm.y:F1}, {l0.ArrivalPosKm.z:F1}), v2=({l0.ArrivalVelKms.x:F3}, {l0.ArrivalVelKms.y:F3}, {l0.ArrivalVelKms.z:F3})");
+                        }
+                        if (sSol.Legs != null) {
+                            for (int li = 0; li < sSol.Legs.Count; li++) {
+                                var l = sSol.Legs[li];
+                                double dsm = (l.DSM != null) ? l.DSM.DeltaVMs : 0.0;
+                                KSPGMATLog.Debug("Solver", $"       -> Leg #{li+1}: {l.FromBody} -> {l.ToBody}, ToF={l.ToFDays:F1}d, DSM={dsm:F1} m/s, FB_dv={l.FlybyDeltaVKms*1000.0:F1} m/s");
+                            }
                         }
                     }
                 }
@@ -965,8 +1406,21 @@ namespace KSPGMAT.MGA
                         d++;
                     }
                 }
-                var sol = PykepBridge.BuildFullSolution(pop[i], fullChain, config, computeAdvanced: false);
-                fitness[i] = Fitness(sol);
+            }
+
+            // 初始种群批量动力学评估 (支持 GPU DirectCompute CS 5.0 与多核 CPU 弹性加速)
+            float[] initLosses = null;
+            if (!hasResonantBlock && MGAGpuAccelerationManager.EvaluateDePopulationGpu(pop.ToList(), fullChain, config, centralMu, optDsmEta, out initLosses)) {
+                for (int i = 0; i < popSize; i++) {
+                    fitness[i] = initLosses[i];
+                }
+            } else {
+                var initSols = PykepBridge.BuildBatchSolutions(pop.ToList(), fullChain, config);
+                for (int i = 0; i < popSize; i++) {
+                    fitness[i] = (initSols != null && i < initSols.Count && initSols[i] != null && !double.IsNaN(initSols[i].TotalDeltaVKms))
+                        ? Fitness(initSols[i])
+                        : 1e9;
+                }
             }
             CPUMonitor.RecordEvaluation(popSize);
             } // end Scope 初始染色体分配与初评
@@ -1156,62 +1610,11 @@ namespace KSPGMAT.MGA
                         candidates.Add(candidate);
                     }
 
-                    // 2. DirectCompute HLSL GPU 硬件加速 (原生支持纯 Lambert 飞掠与 1DSM 两段式开普勒复合边值机动求解)
+                    // 2. DirectCompute HLSL GPU 硬件加速 (统一由 MGAGpuAccelerationManager 全生命周期管理)
                     float[] gpuLosses = null;
-                    if (PykepNative.IsGpuComputeAvailable && fullChain != null && fullChain.Count >= 2) {
-                        try {
-                            var bodyElements = new List<PykepNative.GpuPlanetElements>(fullChain.Count);
-                            for (int bc = 0; bc < fullChain.Count; bc++) {
-                                var pB = SolarSystemCatalog.GetPlanet(fullChain[bc]);
-                                if (pB != null) {
-                                    bodyElements.Add(new PykepNative.GpuPlanetElements {
-                                        sma_km = pB.SMA, ecc = pB.ECC, inc_rad = pB.INC * Math.PI / 180.0,
-                                        raan_rad = pB.RAAN * Math.PI / 180.0, aop_rad = pB.AOP * Math.PI / 180.0,
-                                        ma0_rad = pB.MA0 * Math.PI / 180.0, epoch_ut = pB.EpochJ2000,
-                                        mu_self = pB.Mu, radius_km = pB.RadiusKm, park_alt_km = 100.0
-                                    });
-                                }
-                            }
-                            if (bodyElements.Count == fullChain.Count) {
-                                int gpuDim = optDsmEta ? (1 + 2 * legCount) : fullChain.Count;
-                                float[] flatGenes = new float[popSize * gpuDim];
-                                for (int ci = 0; ci < popSize; ci++) {
-                                    flatGenes[ci * gpuDim + 0] = (float)candidates[ci][0];
-                                    for (int cd = 1; cd < gpuDim; cd++) {
-                                        flatGenes[ci * gpuDim + cd] = (cd < candidates[ci].Length) ? (float)candidates[ci][cd] : (optDsmEta && cd > legCount ? 0.5f : 0f);
-                                    }
-                                }
-                                float[] outL = new float[popSize];
-                                var gpuWatch = System.Diagnostics.Stopwatch.StartNew();
-                                int flybyOnly = (config != null && config.NoInsertionBurn) ? 1 : 0;
-                                float launchCeilKms = (config != null && config.LaunchDeltaVCeilingMs > 0) ? (float)(config.LaunchDeltaVCeilingMs / 1000.0) : 0f;
-                                float vesselLimitKms = (config != null && config.ConstrainByVesselDeltaV && config.VesselMaxDeltaVMs > 0) ? (float)(config.VesselMaxDeltaVMs / 1000.0) : 0f;
-                                float dsmBudgetKms = (config != null && config.MaxDsmDeltaVMs > 0) ? (float)(config.MaxDsmDeltaVMs / 1000.0) : (vesselLimitKms > 0 ? vesselLimitKms : 0f);
-                                float depMinUT = (config != null && config.EarliestDepartureUT > 0) ? (float)config.EarliestDepartureUT : 0f;
-                                float depMaxUT = (config != null && config.LatestDepartureUT > config.EarliestDepartureUT) ? (float)config.LatestDepartureUT : 0f;
-
-                                int gRet = PykepNative.EvaluatePopulationGpu(
-                                    bodyElements.ToArray(), bodyElements.Count,
-                                    flatGenes, popSize, gpuDim, centralMu, flybyOnly,
-                                    launchCeilKms, vesselLimitKms, dsmBudgetKms,
-                                    depMinUT, depMaxUT,
-                                    outL);
-                                gpuWatch.Stop();
-                                if (gRet == 0) {
-                                    gpuLosses = outL;
-                                    Telemetry.MGAPipelineTelemetryProbe.RecordGpuExecution("DirectCompute DE Mega-Pop", gpuWatch.Elapsed.TotalMilliseconds, popSize, true);
-                                    MGAStepProfiler.RecordMs("GPU批处理: DirectCompute种群动力学评估", gpuWatch.Elapsed.TotalMilliseconds);
-                                } else {
-                                    if (_gpuFailLogCount < 2) {
-                                        _gpuFailLogCount++;
-                                        KSPGMATLog.Warn($"[MGADifferentialEvolution] GPU Mega-Pop 返回非零错误码: {gRet}");
-                                    }
-                                    Telemetry.MGAPipelineTelemetryProbe.RecordGpuExecution("DirectCompute DE Mega-Pop", gpuWatch.Elapsed.TotalMilliseconds, popSize, false);
-                                }
-                            }
-                        } catch (Exception ex) {
-                            KSPGMATLog.Warn($"[MGADifferentialEvolution] GPU Mega-Pop 评估异常: {ex.Message}");
-                        }
+                    float[] gLosses = null;
+                    if (!hasResonantBlock && MGAGpuAccelerationManager.EvaluateDePopulationGpu(candidates, fullChain, config, centralMu, optDsmEta, out gLosses)) {
+                        gpuLosses = gLosses;
                     }
 
                     List<MGASolution> candSols = null;
@@ -1347,7 +1750,7 @@ namespace KSPGMAT.MGA
                     double bTot = bestSol != null ? bestSol.TotalDeltaVKms * 1000.0 : 0.0;
                     bool feasible = bestSol != null && bestSol.AllLegsFeasible;
                     string epStr = bestSol != null ? GMATClient.FormatUtcGregorian(bestSol.DepartureUT) : "N/A";
-                    Console.WriteLine($"       [DE 代数 {gen + 1,3}/{maxGens}] 始发={bLaunch,6:F1} m/s | DSM={bDsm,7:F1} m/s | 总ΔV={bTot,7:F1} m/s | 历元={epStr} | 闭环={feasible}");
+                    KSPGMATLog.Info("Solver", $"       [DE 代数 {gen + 1,3}/{maxGens}] 始发={bLaunch,6:F1} m/s | DSM={bDsm,7:F1} m/s | 总ΔV={bTot,7:F1} m/s | 历元={epStr} | 闭环={feasible}");
                 }
 
                 // 目标达标极速提前收敛刹车 (Target Reached Early Exit):
@@ -1372,8 +1775,10 @@ namespace KSPGMAT.MGA
                                 ? (curBestSol.TotalDsmDeltaVKms * 1000.0 <= config.MaxDsmDeltaVMs)
                                 : true;
                             bool meetFb = (curBestSol.TotalFlybyDeltaVKms < 1e-4);
-                            if (meetTotal && meetLaunch && meetDsm && meetFb) {
-                                Console.WriteLine($"       [DE 极速达标提前收敛] 第 {gen + 1} 代已完美达成硬门禁 (总ΔV={curBestSol.TotalDeltaVKms*1000.0:F1} m/s, 始发={curBestSol.LaunchDeltaVKms*1000.0:F1} m/s, DSM={curBestSol.TotalDsmDeltaVKms*1000.0:F1} m/s, 飞掠脉冲=0 m/s)，提前刹车进入极值抛光！");
+                            double nomTof = MGAPhysicsLossEngine.ResolveNominalTofDays(config, curBestSol);
+                            bool meetTof = (nomTof <= 0 || curBestSol.TotalFlightDays <= nomTof * 1.5);
+                            if (meetTotal && meetLaunch && meetDsm && meetFb && meetTof) {
+                                KSPGMATLog.Success("Solver", $"       [DE 极速达标提前收敛] 第 {gen + 1} 代已完美达成硬门禁 (总ΔV={curBestSol.TotalDeltaVKms*1000.0:F1} m/s, 始发={curBestSol.LaunchDeltaVKms*1000.0:F1} m/s, DSM={curBestSol.TotalDsmDeltaVKms*1000.0:F1} m/s, 航时={curBestSol.TotalFlightDays:F0}d, 飞掠脉冲=0 m/s)，提前刹车进入极值抛光！");
                                 break;
                             }
                         }
@@ -1417,7 +1822,7 @@ namespace KSPGMAT.MGA
                         int breakerGen = Math.Max(4, (int)Math.Round(CircuitBreakerGenFraction * maxGens));
                         int breakerStag = Math.Max(3, (int)Math.Round(CircuitBreakerStagFraction * maxGens));
                         if (gen >= breakerGen && MGAPhysicsLossEngine.IsDeeplyInfeasible(curGenBest) && stagGens >= breakerStag) {
-                            Console.WriteLine($"       [DE 拓扑不可行敏捷熔断] 第 {gen + 1} 代检测到深层动力学受罚 (Loss={curGenBest:E2}, 连续 {stagGens} 代无进展)，提前熔断剪枝！");
+                            KSPGMATLog.Warn("Solver", $"       [DE 拓扑不可行敏捷熔断] 第 {gen + 1} 代检测到深层动力学受罚 (Loss={curGenBest:E2}, 连续 {stagGens} 代无进展)，提前熔断剪枝！");
                             break;
                         }
 
@@ -1476,10 +1881,10 @@ namespace KSPGMAT.MGA
 
                                 stagGens = 0;
                                 lastStagFit = curGenBest;
-                                Console.WriteLine($"       [DE IDEA 引导重启 #{ideaRestartCount}] 归档第 {inflationArchive.Count} 个局部吸引子超球禁区 (半径 r_infl={rInfl:F3})，保留前 {eliteKeep} 个精英个体，在禁区外重新采样重启！");
+                                KSPGMATLog.Warn("Solver", $"       [DE IDEA 引导重启 #{ideaRestartCount}] 归档第 {inflationArchive.Count} 个局部吸引子超球禁区 (半径 r_infl={rInfl:F3})，保留前 {eliteKeep} 个精英个体，在禁区外重新采样重启！");
                                 continue;
                             } else {
-                                Console.WriteLine($"       [DE IDEA 停滞收敛] 经历 {ideaRestartCount} 轮膨胀引导后锁定全局不动点 (连续 {stagGens} 代无改善, 离差半径={dispersion:F3}), 提前刹车转入模式抛光！");
+                                KSPGMATLog.Info("Solver", $"       [DE IDEA 停滞收敛] 经历 {ideaRestartCount} 轮膨胀引导后锁定全局不动点 (连续 {stagGens} 代无改善, 离差半径={dispersion:F3}), 提前刹车转入模式抛光！");
                                 break;
                             }
                         }
@@ -1556,7 +1961,9 @@ namespace KSPGMAT.MGA
                         curFit = bayesFit;
                         curGene = polishedBayesGene;
                     }
-                } catch { }
+                } catch (Exception ex) {
+                    KSPGMATLog.Debug("Solver", $"Bayesian polishing fallback: {ex.Message}");
+                }
 
                 int maxPolishIter = (pIdx == 0) ? 2 : 1;
 

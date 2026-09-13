@@ -114,15 +114,15 @@ namespace KSPGMAT.MGA
             // 触发数值自愈: 围绕最佳时间节点展开精细网格打靶重构 (0.5天步长)
             if (hasLawdenViolation && config.EngineMode == MGAEngineMode.BallisticImpulsive)
             {
-                KSPGMATLog.Info($"[MGASelfHealing] 检测到劳登引向量极大值超标 (|p|={bestSol.PrimerVector.MaxPMag:F2} > 1.0)，自动闭环激活深空机动 (1DSM) 并插入最优脉冲...");
+                KSPGMATLog.Warn("Solver", $"[MGASelfHealing] 检测到劳登引向量极大值超标 (|p|={bestSol.PrimerVector.MaxPMag:F2} > 1.0)，自动闭环激活深空机动 (1DSM) 并插入最优脉冲...");
             }
             else if (hasBPlaneSafetyViolation)
             {
-                KSPGMATLog.Info($"[MGASelfHealing] 检测到 B 平面 3-sigma 弥散穿透行星安全边界 (裕度 < 0)，自动启动安全规避微调自愈...");
+                KSPGMATLog.Warn("Solver", "[MGASelfHealing] 检测到 B 平面 3-sigma 弥散穿透行星安全边界 (裕度 < 0)，自动启动安全规避微调自愈...");
             }
             else
             {
-                KSPGMATLog.Info($"[MGASelfHealing] 检测到候选解 ΔV 偏高 ({bestSol.LaunchDeltaVKms:F1} km/s > 门禁 {depCeilingKms:F1} km/s)，自动启动逆向打靶自愈...");
+                KSPGMATLog.Warn("Solver", $"[MGASelfHealing] 检测到候选解 ΔV 偏高 ({bestSol.LaunchDeltaVKms:F1} km/s > 门禁 {depCeilingKms:F1} km/s)，自动启动逆向打靶自愈...");
             }
 
             double healCenterUT = bestSol.DepartureUT;
@@ -182,6 +182,7 @@ namespace KSPGMAT.MGA
                 VesselMaxDeltaVMs = config.VesselMaxDeltaVMs,
                 MaxDsmDeltaVMs = config.MaxDsmDeltaVMs,
                 LaunchDeltaVCeilingMs = config.LaunchDeltaVCeilingMs,
+                ConstraintProfile = config.ConstraintProfile,
                 LambertMaxRevs = config.LambertMaxRevs,
                 PopulationSize = fastTier ? Math.Max(36, config.PopulationSize / 2) : Math.Max(60, config.PopulationSize),
                 MaxGenerations = fastTier ? Math.Max(50, config.MaxGenerations / 2) : Math.Max(120, config.MaxGenerations),
@@ -222,7 +223,7 @@ namespace KSPGMAT.MGA
             {
                 double savedKms = bestSol.TotalDeltaVKms - healedList[0].TotalDeltaVKms;
                 Telemetry.MGAPipelineTelemetryProbe.AiMetrics.RecordSelfHealing(true, savedKms);
-                KSPGMATLog.Info($"[MGASelfHealing] ✅ 自愈成功！总机动从 {bestSol.TotalDeltaVKms*1000:F0} m/s 降至 {healedList[0].TotalDeltaVKms*1000:F0} m/s");
+                KSPGMATLog.Success("Solver", $"[MGASelfHealing] ✅ 自愈成功！总机动从 {bestSol.TotalDeltaVKms*1000:F0} m/s 降至 {healedList[0].TotalDeltaVKms*1000:F0} m/s");
                 foreach (var old in candidates)
                 {
                     if (!healedList.Any(h => Math.Abs(h.DepartureUT - old.DepartureUT) < 86400.0))

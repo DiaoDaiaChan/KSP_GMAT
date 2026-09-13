@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using UnityEngine;
+using KSPGMAT;
 using KSPGMAT.MGA;
 using KSPGMAT.Model;
 
@@ -49,7 +50,7 @@ namespace KSPGMAT.Service {
                 try {
                     Directory.CreateDirectory(baseDir);
                 } catch (Exception ex) {
-                    Debug.LogWarning($"[MGAMissionRepository] CreateDirectory error: {ex.Message}");
+                    KSPGMATLog.Error("MissionRepo", "CreateDirectory error", ex);
                 }
             }
             return baseDir;
@@ -219,7 +220,7 @@ namespace KSPGMAT.Service {
                             }
                         }
                     } catch (Exception ex) {
-                        Debug.LogWarning($"[MGAMissionRepository] Failed to read {f}: {ex.Message}");
+                        KSPGMATLog.Error("MissionRepo", $"Failed to read {f}", ex);
                     }
                 }
             }

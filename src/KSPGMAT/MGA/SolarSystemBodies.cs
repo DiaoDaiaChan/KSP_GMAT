@@ -150,7 +150,7 @@ namespace KSPGMAT.MGA {
                         out posKm, out velKms)) {
                     return;
                 }
-                KSPGMATLog.Warn($"PykepNative 原生根数外推失败, 返回零状态: {Name}");
+                KSPGMATLog.Warn("Ephemeris", $"PykepNative 原生根数外推失败, 返回零状态: {Name}");
             }
 
             // 4. 原生不可用: 返回零状态降级 (严禁托管开普勒推导)
@@ -194,6 +194,23 @@ namespace KSPGMAT.MGA {
                         }
                     }
                 } catch { }
+            }
+
+            // 1.2 方案 1 (第二优先级): 若已加载 SPICE DE440 且天体为真实太阳系标准天体
+            if (PykepNative.HasSpiceLoaded && SolarSystemCatalog.StandardSolarBodyNames.Any(s => s.Equals(Name, StringComparison.OrdinalIgnoreCase))) {
+                string pName = !string.IsNullOrEmpty(ParentName) ? ParentName : "Earth";
+                if (PykepNative.GetSpicePlanetState(Name, ut, "J2000", out Vector3d pChild, out Vector3d vChild)) {
+                    Vector3d pParent = Vector3d.zero, vParent = Vector3d.zero;
+                    bool parentOk = true;
+                    if (!string.IsNullOrEmpty(pName) && !pName.Equals("Sun", StringComparison.OrdinalIgnoreCase) && !pName.Equals("Sol", StringComparison.OrdinalIgnoreCase)) {
+                        parentOk = PykepNative.GetSpicePlanetState(pName, ut, "J2000", out pParent, out vParent);
+                    }
+                    if (parentOk) {
+                        posKm = SolarSystemCatalog.AlignSpiceJ2000ToPrincipia(pChild - pParent);
+                        velKms = SolarSystemCatalog.AlignSpiceJ2000ToPrincipia(vChild - vParent);
+                        return;
+                    }
+                }
             }
 
             // 2. 方案 1/离线兜底: 依据天体自身相对于父天体的开普勒根数，由 PyKEP 原生 C++ 解算

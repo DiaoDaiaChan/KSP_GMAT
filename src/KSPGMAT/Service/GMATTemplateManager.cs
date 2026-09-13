@@ -89,14 +89,14 @@ namespace KSPGMAT {
                         }
                     }
                 } catch (Exception ex) {
-                    KSPGMATLog.Warn($"[GMATTemplateManager] Error scanning templates in {dir}: {ex.Message}");
+                    KSPGMATLog.Error("TemplateManager", $"Error scanning templates in {dir}", ex);
                 }
             }
 
             // Sort templates naturally by name
             _cachedTemplates = list.OrderBy(t => t.FileName).ToList();
             _lastScanTime = Time.realtimeSinceStartup;
-            KSPGMATLog.Info($"[GMATTemplateManager] Discovered {_cachedTemplates.Count} dynamic script templates across search paths.");
+            KSPGMATLog.Info("TemplateManager", $"Discovered {_cachedTemplates.Count} dynamic script templates across search paths.");
         }
 
         private static GMATTemplateInfo ParseTemplateHeader(string filePath) {
@@ -178,6 +178,7 @@ namespace KSPGMAT {
                     System.Diagnostics.Process.Start("explorer.exe", dir);
                 }
             } catch (Exception ex) {
+                KSPGMATLog.Error("TemplateManager", "Failed to open templates folder", ex);
                 ScreenMessages.PostScreenMessage($"打开文件夹失败: {ex.Message}", 3.0f, ScreenMessageStyle.UPPER_CENTER);
             }
         }

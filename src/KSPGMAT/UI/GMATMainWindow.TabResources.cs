@@ -4,6 +4,7 @@ using System.IO;
 using UnityEngine;
 using KSPGMAT.Model;
 using KSPGMAT.Service;
+using KSPGMAT;
 
 namespace KSPGMAT.UI {
     public partial class GMATMainWindow {
@@ -1103,6 +1104,7 @@ namespace KSPGMAT.UI {
                     File.WriteAllText(Path.Combine(outputDir, "mission_run.script"), sanitized, new System.Text.UTF8Encoding(false));
                     ScreenMessages.PostScreenMessage(I18n.Format("res_export_ok", expPath), 3.0f, ScreenMessageStyle.UPPER_CENTER);
                 } catch (Exception ex) {
+                    KSPGMATLog.Error("UI", "导出 GMAT 脚本失败", ex);
                     ScreenMessages.PostScreenMessage(I18n.Format("res_export_fail", ex.Message), 3.0f, ScreenMessageStyle.UPPER_CENTER);
                 }
             }
@@ -1120,6 +1122,7 @@ namespace KSPGMAT.UI {
                     GMATClient.OpenGmatDesktop(expPath);
                     ScreenMessages.PostScreenMessage(I18n.Format("res_push_ok", Path.GetFileName(expPath)), 3.0f, ScreenMessageStyle.UPPER_CENTER);
                 } catch (Exception ex) {
+                    KSPGMATLog.Error("UI", "推送并打开 GMAT 桌面端失败", ex);
                     ScreenMessages.PostScreenMessage(I18n.Format("res_push_fail", ex.Message), 3.0f, ScreenMessageStyle.UPPER_CENTER);
                 }
             }
@@ -1320,11 +1323,13 @@ namespace KSPGMAT.UI {
                 System.Diagnostics.Process.Start(psi);
                 ScreenMessages.PostScreenMessage(I18n.Format("res_external_opened", Path.GetFileName(scriptPath)), 3.5f, ScreenMessageStyle.UPPER_CENTER);
             } catch (Exception ex) {
+                KSPGMATLog.Warn("UI", "使用默认文本编辑器打开脚本失败，尝试回退定位文件: " + ex.Message);
                 try {
                     string scriptPath = Path.Combine(GMATClient.GetOutputDir(), "user_custom_edit.script");
                     System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{scriptPath}\"");
                     ScreenMessages.PostScreenMessage(I18n.T("res_external_located"), 3.0f, ScreenMessageStyle.UPPER_CENTER);
-                } catch (Exception) {
+                } catch (Exception exSelect) {
+                    KSPGMATLog.Error("UI", "在资源管理器中定位脚本失败", exSelect);
                     ScreenMessages.PostScreenMessage(I18n.Format("res_external_fail", ex.Message), 3.5f, ScreenMessageStyle.UPPER_CENTER);
                 }
             }
@@ -1342,6 +1347,7 @@ namespace KSPGMAT.UI {
                     ScreenMessages.PostScreenMessage(I18n.T("res_reload_missing"), 3.0f, ScreenMessageStyle.UPPER_CENTER);
                 }
             } catch (Exception ex) {
+                KSPGMATLog.Error("UI", "从外部文件重载脚本失败", ex);
                 ScreenMessages.PostScreenMessage(I18n.Format("res_reload_fail", ex.Message), 3.0f, ScreenMessageStyle.UPPER_CENTER);
             }
         }
@@ -1382,6 +1388,7 @@ namespace KSPGMAT.UI {
                 });
             } catch (Exception ex) {
                 isSavingAndSyncing = false;
+                KSPGMATLog.Error("UI", "保存并同步 IDE 脚本至任务序列失败", ex);
                 ScreenMessages.PostScreenMessage(I18n.Format("res_save_fail", ex.Message), 3.0f, ScreenMessageStyle.UPPER_CENTER);
             }
         }

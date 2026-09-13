@@ -8,6 +8,7 @@ using UnityEngine;
 using KSPGMAT.MGA;
 using KSPGMAT.Model;
 using KSPGMAT.Service;
+using KSPGMAT;
 
 namespace KSPGMAT.UI {
     public partial class GMATMainWindow {
@@ -17,12 +18,12 @@ namespace KSPGMAT.UI {
         // =========================================================================
         private Vector2 mgaSeqScrollPos { get => MGAStateManager.Current.SeqScrollPos; set => MGAStateManager.Current.SeqScrollPos = value; }
         private Vector2 mgaSeqRightScrollPos { get => MGAStateManager.Current.SeqRightScrollPos; set => MGAStateManager.Current.SeqRightScrollPos = value; }
-        private int mgaSeqDraggedIndex = -1;
-        private int mgaSeqStepToMoveUp = -1;
-        private int mgaSeqStepToMoveDown = -1;
-        private int mgaSeqStepToDelete = -1;
-        private int mgaSeqHoveredIndex = -1;
-        private int mgaSeqNextHoveredIndex = -1;
+        private int mgaSeqDraggedIndex { get => MGAStateManager.Current.UI.SeqDraggedIndex; set => MGAStateManager.Current.UI.SeqDraggedIndex = value; }
+        private int mgaSeqStepToMoveUp { get => MGAStateManager.Current.UI.SeqStepToMoveUp; set => MGAStateManager.Current.UI.SeqStepToMoveUp = value; }
+        private int mgaSeqStepToMoveDown { get => MGAStateManager.Current.UI.SeqStepToMoveDown; set => MGAStateManager.Current.UI.SeqStepToMoveDown = value; }
+        private int mgaSeqStepToDelete { get => MGAStateManager.Current.UI.SeqStepToDelete; set => MGAStateManager.Current.UI.SeqStepToDelete = value; }
+        private int mgaSeqHoveredIndex { get => MGAStateManager.Current.UI.SeqHoveredIndex; set => MGAStateManager.Current.UI.SeqHoveredIndex = value; }
+        private int mgaSeqNextHoveredIndex { get => MGAStateManager.Current.UI.SeqNextHoveredIndex; set => MGAStateManager.Current.UI.SeqNextHoveredIndex = value; }
         private bool mgaSeqTemplatesFoldout { get => MGAStateManager.Current.SeqTemplatesFoldout; set => MGAStateManager.Current.SeqTemplatesFoldout = value; }
         private string mgaSeqSearchQuery { get => MGAStateManager.Current.SeqSearchQuery; set => MGAStateManager.Current.SeqSearchQuery = value; }
         private string mgaSeqSelectedCategory { get => MGAStateManager.Current.SeqSelectedCategory; set => MGAStateManager.Current.SeqSelectedCategory = value; }
@@ -31,200 +32,6 @@ namespace KSPGMAT.UI {
 
         // 顶层全局序列模式切换器: 0 = NearBody 经典序列, 1 = MGA 行星际引力助推序列 (SSOT 托管在 MGAStateManager)
         private int activeSequenceMode { get => MGAStateManager.Current.ActiveSequenceMode; set => MGAStateManager.Current.ActiveSequenceMode = value; }
-
-        /// <summary>
-        /// MGA 经典行星际转移构型模版库定义
-        /// </summary>
-        private class MGATemplatePreset {
-            public string Key;
-            public string DisplayTitle;
-            public string Category;
-            public string Description;
-            public string Icon;
-            public string DepartureBody;
-            public List<string> Flybys;
-            public string DestinationBody;
-            public double DeparturePeAKm;
-            public double DestinationPeAKm;
-            public List<double> ToFs;
-            public List<MGALegStrategy> Strategies;
-        }
-
-        private static readonly List<MGATemplatePreset> MGAPresets = new List<MGATemplatePreset> {
-            new MGATemplatePreset {
-                Key = "EarthMars",
-                DisplayTitle = "地球-火星霍曼/朗伯直飞",
-                Category = "直达/内行星",
-                Description = "经典火星直接转移窗口，双脉冲脱离与捕获，单次朗伯转移",
-                Icon = "🚀",
-                DepartureBody = "Earth",
-                Flybys = new List<string>(),
-                DestinationBody = "Mars",
-                DeparturePeAKm = 200.0,
-                DestinationPeAKm = 250.0,
-                ToFs = new List<double> { 210.0 },
-                Strategies = new List<MGALegStrategy> { MGALegStrategy.Ballistic }
-            },
-            new MGATemplatePreset {
-                Key = "Cassini",
-                DisplayTitle = "卡西尼 VEEGA 引力助推",
-                Category = "深空/外行星",
-                Description = "地球-金星-金星-地球-木星-土星 5段借力，深空探测经典架构",
-                Icon = "🪐",
-                DepartureBody = "Earth",
-                Flybys = new List<string> { "Venus", "Venus", "Earth", "Jupiter" },
-                DestinationBody = "Saturn",
-                DeparturePeAKm = 200.0,
-                DestinationPeAKm = 1000.0,
-                ToFs = new List<double> { 145.0, 425.0, 55.0, 600.0, 1100.0 },
-                Strategies = new List<MGALegStrategy> { MGALegStrategy.Ballistic, MGALegStrategy.Ballistic, MGALegStrategy.Ballistic, MGALegStrategy.Ballistic, MGALegStrategy.Ballistic }
-            },
-            new MGATemplatePreset {
-                Key = "NewHorizons",
-                DisplayTitle = "新视野号木星快速借力 (JGA)",
-                Category = "深空/外行星",
-                Description = "地球极速脱离-木星重力加速-冥王星飞掠，高C3直接逃逸",
-                Icon = "🛸",
-                DepartureBody = "Earth",
-                Flybys = new List<string> { "Jupiter" },
-                DestinationBody = "Pluto",
-                DeparturePeAKm = 200.0,
-                DestinationPeAKm = 10000.0,
-                ToFs = new List<double> { 400.0, 3100.0 },
-                Strategies = new List<MGALegStrategy> { MGALegStrategy.Ballistic, MGALegStrategy.Ballistic }
-            },
-            new MGATemplatePreset {
-                Key = "BepiColombo",
-                DisplayTitle = "贝皮可伦坡水星引力助推 (VVME)",
-                Category = "直达/内行星",
-                Description = "地球-金星-金星-水星多重借力，逐步减速降低轨道能量进入水星捕获",
-                Icon = "☄️",
-                DepartureBody = "Earth",
-                Flybys = new List<string> { "Venus", "Venus" },
-                DestinationBody = "Mercury",
-                DeparturePeAKm = 200.0,
-                DestinationPeAKm = 400.0,
-                ToFs = new List<double> { 160.0, 220.0, 180.0 },
-                Strategies = new List<MGALegStrategy> { MGALegStrategy.Ballistic, MGALegStrategy.Ballistic, MGALegStrategy.Ballistic }
-            },
-            new MGATemplatePreset {
-                Key = "KerbinGrandTour",
-                DisplayTitle = "坎巴拉星系绿星-宿命大巡游",
-                Category = "坎巴拉/原版",
-                Description = "Kerbin-Eve-Kerbin-Jool 坎系经典行星际引力跳板架构",
-                Icon = "✨",
-                DepartureBody = "Kerbin",
-                Flybys = new List<string> { "Eve", "Kerbin" },
-                DestinationBody = "Jool",
-                DeparturePeAKm = 100.0,
-                DestinationPeAKm = 500.0,
-                ToFs = new List<double> { 60.0, 90.0, 240.0 },
-                Strategies = new List<MGALegStrategy> { MGALegStrategy.Ballistic, MGALegStrategy.Ballistic, MGALegStrategy.Ballistic }
-            }
-        };
-
-        /// <summary>
-        /// 加载指定行星际模版到 MGA 任务序列中
-        /// </summary>
-        private void LoadMGAPreset(MGATemplatePreset preset) {
-            if (preset == null) return;
-            var seq = new List<MGAMissionStep>();
-            double curEpochUt = mgaConfig.EarliestDepartureUT > 0 ? mgaConfig.EarliestDepartureUT : Planetarium.GetUniversalTime();
-
-            // 1. 始发脱离步骤
-            seq.Add(new MGAMissionStep {
-                type = MGAStepType.Departure,
-                body_name = preset.DepartureBody,
-                epoch_ut = curEpochUt,
-                epoch_utc_str = GMATClient.FormatUtcGregorian(curEpochUt),
-                periapsis_alt_km = preset.DeparturePeAKm,
-                apoapsis_alt_km = preset.DeparturePeAKm,
-                label = $"{preset.DepartureBody} Departure",
-                is_solved = false
-            });
-
-            // 2. 中间巡航与借力步骤
-            string prevBody = preset.DepartureBody;
-            for (int i = 0; i < preset.Flybys.Count; i++) {
-                string nextBody = preset.Flybys[i];
-                double tof = (i < preset.ToFs.Count) ? preset.ToFs[i] : 150.0;
-                var strat = (i < preset.Strategies.Count) ? preset.Strategies[i] : MGALegStrategy.Ballistic;
-
-                // 2.1 转移巡航
-                seq.Add(new MGAMissionStep {
-                    type = MGAStepType.Transfer,
-                    body_name = $"{prevBody} ➔ {nextBody}",
-                    epoch_ut = curEpochUt,
-                    epoch_utc_str = GMATClient.FormatUtcGregorian(curEpochUt),
-                    tof_days = tof,
-                    min_tof_days = Math.Max(5.0, tof * 0.6),
-                    max_tof_days = tof * 1.5,
-                    strategy = strat,
-                    label = $"Cruise: {prevBody} ➔ {nextBody}",
-                    is_solved = false
-                });
-                curEpochUt += tof * 86400.0;
-
-                // 2.2 行星助推
-                seq.Add(new MGAMissionStep {
-                    type = MGAStepType.Flyby,
-                    body_name = nextBody,
-                    epoch_ut = curEpochUt,
-                    epoch_utc_str = GMATClient.FormatUtcGregorian(curEpochUt),
-                    periapsis_alt_km = 300.0,
-                    flyby_strategy = MGAFlybyStrategy.UnpoweredFlyby,
-                    label = $"{nextBody} Flyby",
-                    is_solved = false
-                });
-
-                prevBody = nextBody;
-            }
-
-            // 3. 最终航段与目标交会
-            double finalTof = (preset.Flybys.Count < preset.ToFs.Count) ? preset.ToFs[preset.Flybys.Count] : 180.0;
-            var finalStrat = (preset.Flybys.Count < preset.Strategies.Count) ? preset.Strategies[preset.Flybys.Count] : MGALegStrategy.Ballistic;
-
-            seq.Add(new MGAMissionStep {
-                type = MGAStepType.Transfer,
-                body_name = $"{prevBody} ➔ {preset.DestinationBody}",
-                epoch_ut = curEpochUt,
-                epoch_utc_str = GMATClient.FormatUtcGregorian(curEpochUt),
-                tof_days = finalTof,
-                min_tof_days = Math.Max(5.0, finalTof * 0.6),
-                max_tof_days = finalTof * 1.5,
-                strategy = finalStrat,
-                label = $"Final Cruise: {prevBody} ➔ {preset.DestinationBody}",
-                is_solved = false
-            });
-            curEpochUt += finalTof * 86400.0;
-
-            // 4. 目标到达捕获
-            seq.Add(new MGAMissionStep {
-                type = MGAStepType.Arrival,
-                body_name = preset.DestinationBody,
-                epoch_ut = curEpochUt,
-                epoch_utc_str = GMATClient.FormatUtcGregorian(curEpochUt),
-                periapsis_alt_km = preset.DestinationPeAKm,
-                apoapsis_alt_km = preset.DestinationPeAKm,
-                label = $"{preset.DestinationBody} Capture",
-                is_solved = false
-            });
-
-            MGAStateManager.Current.MissionSequence = seq;
-            var newCfg = MGAStateManager.Current.ExtractConfigFromSequence();
-            mgaConfig.DepartureBody = newCfg.DepartureBody;
-            mgaConfig.DestinationBody = newCfg.DestinationBody;
-            mgaConfig.FlybySequence = newCfg.FlybySequence;
-            mgaConfig.MinToFDays = newCfg.MinToFDays;
-            mgaConfig.MaxToFDays = newCfg.MaxToFDays;
-            mgaConfig.LegStrategies = newCfg.LegStrategies;
-            mgaConfig.FlybyStrategies = newCfg.FlybyStrategies;
-            customChainInput = string.Join(",", mgaConfig.FlybySequence);
-
-            MGAStateManager.Current.NotifyStateChanged();
-            RefreshMgaCanvas();
-            ScreenMessages.PostScreenMessage($"已成功载入模版: {preset.DisplayTitle} ({seq.Count} 步骤)", 3.0f, ScreenMessageStyle.UPPER_CENTER);
-        }
 
         /// <summary>
         /// 在 MGA 序列指定索引处插入新步骤
@@ -294,18 +101,7 @@ namespace KSPGMAT.UI {
                 return;
             }
 
-            var cfg = MGAStateManager.Current.ExtractConfigFromSequence();
-            mgaConfig.DepartureBody = cfg.DepartureBody;
-            mgaConfig.DestinationBody = cfg.DestinationBody;
-            mgaConfig.FlybySequence = cfg.FlybySequence;
-            mgaConfig.MinToFDays = cfg.MinToFDays;
-            mgaConfig.MaxToFDays = cfg.MaxToFDays;
-            mgaConfig.LegStrategies = cfg.LegStrategies;
-            mgaConfig.FlybyStrategies = cfg.FlybyStrategies;
-            mgaConfig.DeparturePeAKm = cfg.DeparturePeAKm;
-            mgaConfig.DepartureApAKm = cfg.DepartureApAKm;
-            mgaConfig.DestinationPeAKm = cfg.DestinationPeAKm;
-            mgaConfig.DestinationApAKm = cfg.DestinationApAKm;
+            MGAStateManager.Current.ApplySequenceToConfig();
 
             isMgaSeqSolving = true;
             mgaSeqSolveStatus = "正在调用底层 PyKEP 原生天体力学求解引擎...";
@@ -318,6 +114,7 @@ namespace KSPGMAT.UI {
                     }, cts.Token);
 
                     if (res != null && res.Count > 0) {
+                        MGAStateManager.Current.Solutions = res;
                         selectedMgaSolution = res[0];
                         MGAStateManager.Current.NotifySolutionChanged(selectedMgaSolution);
                         mgaSeqSolveStatus = $"解算收敛! 总 ΔV = {selectedMgaSolution.TotalDeltaVKms * 1000.0:F1} m/s, 飞行 = {selectedMgaSolution.TotalFlightDays:F1} 天";
@@ -330,7 +127,7 @@ namespace KSPGMAT.UI {
                 }
             } catch (Exception ex) {
                 mgaSeqSolveStatus = $"求解异常: {ex.Message}";
-                Debug.LogError($"[KSPGMAT-MGASeq] 求解异常: {ex}");
+                KSPGMATLog.Error("UI", "[MGASeq] 求解异常", ex);
             } finally {
                 isMgaSeqSolving = false;
             }
@@ -808,6 +605,7 @@ namespace KSPGMAT.UI {
                     string path = MGAMissionRepository.SaveMission(mCfg);
                     ScreenMessages.PostScreenMessage($"任务序列已保存至: {Path.GetFileName(path)}", 3.5f, ScreenMessageStyle.UPPER_CENTER);
                 } catch (Exception ex) {
+                    KSPGMATLog.Error("UI", "保存任务序列失败", ex);
                     ScreenMessages.PostScreenMessage($"保存失败: {ex.Message}", 3.5f, ScreenMessageStyle.UPPER_CENTER);
                 }
             }
@@ -821,6 +619,7 @@ namespace KSPGMAT.UI {
                         ScreenMessages.PostScreenMessage($"已加载任务配置: {latest.mission_name}", 3.5f, ScreenMessageStyle.UPPER_CENTER);
                     }
                 } catch (Exception ex) {
+                    KSPGMATLog.Error("UI", "打开任务配置失败", ex);
                     ScreenMessages.PostScreenMessage($"打开配置失败: {ex.Message}", 3.5f, ScreenMessageStyle.UPPER_CENTER);
                 }
             }

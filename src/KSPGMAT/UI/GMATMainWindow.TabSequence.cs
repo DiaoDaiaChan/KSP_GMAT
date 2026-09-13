@@ -1281,7 +1281,7 @@ namespace KSPGMAT.UI {
                     GUILayout.EndVertical();
                     layoutOpenCount--;
                 }
-                KSPGMATLog.Error($"[TabSequence] UI auto-repaired layout exception: {ex}");
+                KSPGMATLog.Error("UI", "[TabSequence] UI auto-repaired layout exception", ex);
                 RepairSequenceGroupIntegrity(missionSequence);
                 GUILayout.BeginVertical(nestedCardBoxStyle);
                 GUILayout.Label($"<color=#facc15><b>⚠️ {I18n.T("seq_integrity_repaired")}</b></color>", labelValueStyle);
@@ -3303,6 +3303,7 @@ namespace KSPGMAT.UI {
                 File.WriteAllText(outPath, scriptContent, new System.Text.UTF8Encoding(false));
                 ScreenMessages.PostScreenMessage(I18n.Format("seq_template_exported", cleanName), 3.5f, ScreenMessageStyle.UPPER_CENTER);
             } catch (Exception ex) {
+                KSPGMATLog.Error("UI", "导出任务模板失败", ex);
                 ScreenMessages.PostScreenMessage(I18n.Format("seq_template_export_fail", ex.Message), 3.5f, ScreenMessageStyle.UPPER_CENTER);
             }
         }

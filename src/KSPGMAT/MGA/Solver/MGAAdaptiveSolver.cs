@@ -19,6 +19,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using KSPGMAT.Model;
+using KSPGMAT.MGA.Solver;
 using KSPGMAT.MGA.Telemetry;
 
 namespace KSPGMAT.MGA
@@ -81,6 +82,7 @@ namespace KSPGMAT.MGA
         public double MaxDsmDeltaVMs { get; set; } = 0.0; // 权威 DSM 机动上限约束 (m/s)，不可超过总任务 ΔV 或用户指定预算
         public double LaunchDeltaVCeilingMs { get; set; } = 3800.0; // 权威始发 TVI 出射速度增量门禁 (m/s)
         public double VinfFreeKmS { get; set; } = 0.0;
+        public MGAConstraintProfile ConstraintProfile { get; set; }
         public bool AddVinfDep { get; set; } = true;
         public bool AddVinfArr { get; set; } = true;
         public bool EnablePermutationsAndInsertions { get; set; } = true; // 自动乱序排列与中继天体插序尝试
@@ -360,13 +362,17 @@ namespace KSPGMAT.MGA
                     destP, vInfForGiant, muCForGiant, SolarSystemCatalog.GetAvailablePlanets());
                 if (config.ArrivalOrbitType == MGAArrivalOrbitType.HighlyElliptic || (config.AutoAdaptGiantPlanetEllipse && isGiant))
                 {
+                    MGADefaults.GetBodyCaptureAltitudeBounds(config.ArrivalPlanet, out double minPeA, out double recPeA, out double maxApA);
+                    if (config.ArrPeKm < minPeA || config.ArrPeKm <= 0)
+                    {
+                        config.ArrPeKm = recPeA;
+                    }
                     if (config.ArrApKm <= config.ArrPeKm)
                     {
-                        MGADefaults.GetBodyCaptureAltitudeBounds(config.ArrivalPlanet, out _, out _, out double maxApA);
                         double destR = destP != null && destP.RadiusKm > 0 ? destP.RadiusKm : MGADefaults.FallbackEarthRadiusKm;
                         double rp = destR + config.ArrPeKm;
-                        double ePreset = 0.95;
-                        double ra = rp * (1.0 + ePreset) / (1.0 - ePreset);
+                        double soiKm = (destP != null && destP.SoiKm > 0) ? destP.SoiKm : destR * 100.0;
+                        double ra = Math.Min(soiKm * 0.20, rp * 100.0);
                         config.ArrApKm = Math.Min(maxApA, Math.Round(ra - destR));
                     }
                 }
@@ -404,9 +410,9 @@ namespace KSPGMAT.MGA
                     {
                         var chain = sequences[c];
                         var newFlybys = new List<string>(chain);
-                        if (newFlybys.Count > 0 && newFlybys[newFlybys.Count - 1].Equals(config.ArrivalPlanet, StringComparison.OrdinalIgnoreCase))
+                        if (newFlybys.Count == 1 && newFlybys[0].Equals(config.ArrivalPlanet, StringComparison.OrdinalIgnoreCase))
                         {
-                            newFlybys.RemoveAt(newFlybys.Count - 1);
+                            newFlybys.Clear();
                         }
                         if (!candidateChains.Any(cand => cand.SequenceEqual(newFlybys)))
                         {
@@ -414,11 +420,11 @@ namespace KSPGMAT.MGA
                         }
                     }
 
-                    Console.WriteLine($"\n[MGAAdaptiveSolver] 🎯 共筛选出 {candidateChains.Count} 组最优物理借力拓扑进入 DE 演化池:");
+                    KSPGMATLog.Info("Solver", $"🎯 共筛选出 {candidateChains.Count} 组最优物理借力拓扑进入 DE 演化池:");
                     for (int i = 0; i < candidateChains.Count; i++)
                     {
                         string mid = (candidateChains[i].Count > 0) ? (string.Join(" ➔ ", candidateChains[i]) + " ➔ ") : "";
-                        Console.WriteLine($"   #{i + 1}: {config.DeparturePlanet} ➔ {mid}{config.ArrivalPlanet}");
+                        KSPGMATLog.Info("Solver", $"   #{i + 1}: {config.DeparturePlanet} ➔ {mid}{config.ArrivalPlanet}");
                     }
                 }
                 else
@@ -502,7 +508,7 @@ namespace KSPGMAT.MGA
                 if (ct.IsCancellationRequested) return;
 
                 var topoFlybys = candidateChains[tIdx];
-                Console.WriteLine($"\n>>> [MGAAdaptiveSolver] 正在演化拓扑 #{tIdx + 1}/{totalTopos}: {config.DeparturePlanet} ➔ {string.Join(" ➔ ", topoFlybys)} ➔ {config.ArrivalPlanet} <<<");
+                KSPGMATLog.Info("Solver", $">>> 正在演化拓扑 #{tIdx + 1}/{totalTopos}: {config.DeparturePlanet} ➔ {string.Join(" ➔ ", topoFlybys)} ➔ {config.ArrivalPlanet} <<<");
                 var subCfg = config.Clone();
                 subCfg.FlybySequence = topoFlybys;
                 subCfg.EnablePermutationsAndInsertions = false;
@@ -653,8 +659,9 @@ namespace KSPGMAT.MGA
                 {
                     // 确定性次级键: 拓扑并行时 rawSols 来自多线程, 并列解顺序不定会改变 topoBest,
                     // 进而改变全局最优历元的选取。次级键全部由解自身物理量导出。
+                    double subLaunchTol = subCfg.ConstraintProfile?.GetSpec(MGAConstraintType.LaunchC3Ceiling)?.ToleranceValue ?? 10.0;
                     var topoBest = rawSols
-                        .OrderBy(x => (subCfg.LaunchDeltaVCeilingMs > 0 && x.LaunchDeltaVKms * 1000.0 > subCfg.LaunchDeltaVCeilingMs * 1.05 ? 1e6 : 0.0) + x.TotalDeltaVKms)
+                        .OrderBy(x => (subCfg.LaunchDeltaVCeilingMs > 0 && x.LaunchDeltaVKms * 1000.0 > (subCfg.LaunchDeltaVCeilingMs + subLaunchTol) ? 1e6 : 0.0) + x.TotalDeltaVKms)
                         .ThenBy(x => Math.Round(x.DepartureUT * 1000.0))
                         .ThenBy(x => Math.Round(x.TotalFlightDays * 10000.0))
                         .FirstOrDefault();
@@ -665,13 +672,13 @@ namespace KSPGMAT.MGA
                         if (topoBest != null)
                         {
                             double topoDv = topoBest.TotalDeltaVKms * 1000.0;
-                            bool isLaunchCompliant = (subCfg.LaunchDeltaVCeilingMs <= 0 || topoBest.LaunchDeltaVKms * 1000.0 <= subCfg.LaunchDeltaVCeilingMs * 1.05);
-                            Console.WriteLine($"   [拓扑 #{tIdx + 1}/{totalTopos} 收敛] {topoSummary}: TotalΔV={topoDv:F1} m/s (始发={topoBest.LaunchDeltaVKms * 1000.0:F1} m/s, 历元={GMATClient.FormatUtcGregorian(topoBest.DepartureUT)}, 合规={isLaunchCompliant})");
+                            bool isLaunchCompliant = (subCfg.LaunchDeltaVCeilingMs <= 0 || topoBest.LaunchDeltaVKms * 1000.0 <= (subCfg.LaunchDeltaVCeilingMs + subLaunchTol));
+                            KSPGMATLog.Info("Solver", $"   [拓扑 #{tIdx + 1}/{totalTopos} 收敛] {topoSummary}: TotalΔV={topoDv:F1} m/s (始发={topoBest.LaunchDeltaVKms * 1000.0:F1} m/s, 历元={GMATClient.FormatUtcGregorian(topoBest.DepartureUT)}, 合规={isLaunchCompliant})");
                             if (isLaunchCompliant && topoDv < globalBestDvMs)
                             {
                                 globalBestDvMs = topoDv;
                                 globalBestEpochUT = topoBest.DepartureUT;
-                                Console.WriteLine($"   ★ [双向联动] 拓扑 #{tIdx + 1} 刷新全局最优: TotalΔV={globalBestDvMs:F1} m/s (始发={topoBest.LaunchDeltaVKms * 1000.0:F1} m/s), 最优历元={GMATClient.FormatUtcGregorian(globalBestEpochUT)}");
+                                KSPGMATLog.Success("Solver", $"   ★ [双向联动] 拓扑 #{tIdx + 1} 刷新全局最优: TotalΔV={globalBestDvMs:F1} m/s (始发={topoBest.LaunchDeltaVKms * 1000.0:F1} m/s), 最优历元={GMATClient.FormatUtcGregorian(globalBestEpochUT)}");
                             }
                         }
 
@@ -718,9 +725,12 @@ namespace KSPGMAT.MGA
                 return allRawSolutions;
             }
 
+            double launchTol = config.ConstraintProfile?.GetSpec(MGAConstraintType.LaunchC3Ceiling)?.ToleranceValue ?? 10.0;
+            double tofTolOrdering = config.ConstraintProfile?.GetSpec(MGAConstraintType.MaxMissionDuration)?.ToleranceValue ?? 10.0;
+
             var rawSolutions = allRawSolutions
-                .OrderBy(s => (config.LaunchDeltaVCeilingMs > 0 && s.LaunchDeltaVKms * 1000.0 > config.LaunchDeltaVCeilingMs * 1.05 ? 1e6 : 0.0)
-                            + (userSpecifiedMaxToF > 0 && s.TotalFlightDays > userSpecifiedMaxToF * 1.08 ? 1e6 : 0.0)
+                .OrderBy(s => (config.LaunchDeltaVCeilingMs > 0 && s.LaunchDeltaVKms * 1000.0 > (config.LaunchDeltaVCeilingMs + launchTol) ? 1e6 : 0.0)
+                            + (userSpecifiedMaxToF > 0 && s.TotalFlightDays > (userSpecifiedMaxToF + tofTolOrdering) ? 1e6 : 0.0)
                             + (!s.AllLegsFeasible ? 1e5 : 0.0)
                             + s.TotalDeltaVKms)
                 .ToList();
@@ -747,11 +757,15 @@ namespace KSPGMAT.MGA
             double finalBudgetMs = (config.ConstrainByVesselDeltaV && config.VesselMaxDeltaVMs > 0) ? config.VesselMaxDeltaVMs : double.MaxValue;
             double finalDsmBudgetMs = (config.MaxDsmDeltaVMs > 0) ? config.MaxDsmDeltaVMs : finalBudgetMs;
 
+            double dvTol = config.ConstraintProfile?.GetSpec(MGAConstraintType.TotalVesselDeltaV)?.ToleranceValue ?? 10.0;
+            double dsmTol = config.ConstraintProfile?.GetSpec(MGAConstraintType.MaxDsmDeltaV)?.ToleranceValue ?? 5.0;
+            double tofTol = config.ConstraintProfile?.GetSpec(MGAConstraintType.MaxMissionDuration)?.ToleranceValue ?? 10.0;
+
             foreach (var sol in auditedSolutions)
             {
-                if (finalBudgetMs < 1e8 && sol.TotalDeltaVKms * 1000.0 > finalBudgetMs * 1.05) continue;
-                if (finalDsmBudgetMs < 1e8 && (sol.TotalDsmDeltaVKms * 1000.0 > finalDsmBudgetMs * 1.05 || (sol.Legs != null && sol.Legs.Any(l => l.DSM != null && l.DSM.DeltaVMs > finalDsmBudgetMs * 1.05)))) continue;
-                if (userSpecifiedMaxToF > 0 && sol.TotalFlightDays > userSpecifiedMaxToF * 1.15) continue;
+                if (finalBudgetMs < 1e8 && sol.TotalDeltaVKms * 1000.0 > (finalBudgetMs + dvTol)) continue;
+                if (finalDsmBudgetMs < 1e8 && (sol.TotalDsmDeltaVKms * 1000.0 > (finalDsmBudgetMs + dsmTol) || (sol.Legs != null && sol.Legs.Any(l => l.DSM != null && l.DSM.DeltaVMs > (finalDsmBudgetMs + dsmTol))))) continue;
+                if (userSpecifiedMaxToF > 0 && sol.TotalFlightDays > (userSpecifiedMaxToF + tofTol)) continue;
                 // 1. 挂载 B 平面协方差分析与导航鲁棒性
                 if (config.EnableBPlaneCovarianceAnalysis && sol.Legs != null && sol.Legs.Count > 1 && sol.BPlane == null)
                 {
@@ -1057,6 +1071,7 @@ namespace KSPGMAT.MGA
                 }
             }
             result.ParetoFrontSolutions = pareto;
+            result.BestSolution = MGASolutionOrdering.SelectParetoKneeSolution(pareto, baseConfig?.CentralBody ?? "Sun") ?? rankedFuel.FirstOrDefault();
 
             sw.Stop();
             result.TotalElapsedMs = sw.ElapsedMilliseconds;
@@ -1237,7 +1252,7 @@ namespace KSPGMAT.MGA
                             foreach (var s in res) aggregatedSolutions.Add(s);
                         }
                     } catch (Exception ex) {
-                        KSPGMATLog.Warn($"[PykepBridge] Multi-chain sequence note: {ex.Message}");
+                        KSPGMATLog.Error("Solver", $"Multi-chain sequence note: {ex.Message}", ex);
                     } finally {
                         lock (lockObj) {
                             completedCount++;

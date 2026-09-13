@@ -40,6 +40,16 @@
   - [9.5 静态分析门禁与容差自愈规范 (GMATScriptLinter)](#95-静态分析门禁与容差自愈规范-gmatscriptlinter)
   - [9.6 深空多重引力助推导出规范 (GMATMGAScriptGenerator)](#96-深空多重引力助推导出规范-gmatmgascriptgenerator)
   - [9.7 官方 API 与参数字典速查规范 (GMATDynamicInspectorModal)](#97-官方-api-与参数字典速查规范-gmatdynamicinspectormodal)
+- [10. 自动化代码合规与健康自查规范 (tools/ComplianceChecker)](#10-自动化代码合规与健康自查规范-toolscompliancechecker)
+- [11. MGA 深空多重引力助推全局唯一真值源与 UI 控件规范 (MGA Master Specification)](#11-mga-深空多重引力助推全局唯一真值源与-ui-控件规范-mga-master-specification)
+  - [11.1 MGAStateManager 唯一真值源 (SSOT) 核心架构](#111-mgastatemanager-唯一真值源-ssot-核心架构)
+  - [11.2 UI 控件中心化托管规范 (GMATMainWindow.Widgets.cs)](#112-ui-控件中心化托管规范-gmatmainwindowwidgetscs)
+  - [11.3 物理常数与超参数零硬编码规范 (MGADefaults)](#113-物理常数与超参数零硬编码规范-mgadefaults)
+  - [11.4 Roslyn AST 编译树级智能合规门禁 (MGAStateComplianceAnalyzer)](#114-roslyn-ast-编译树级智能合规门禁-mgastatecomplianceanalyzer)
+- [12. 统一日志系统架构与全工程规范 (Unified Logging System Master Specification)](#12-统一日志系统架构与全工程规范-unified-logging-system-master-specification)
+  - [12.1 架构设计与四大输出通道 (Log Sinks)](#121-架构设计与四大输出通道-log-sinks)
+  - [12.2 上下文记录器与工程调用标准 (ILogger & Usage)](#122-上下文记录器与工程调用标准-ilogger--usage)
+  - [12.3 状态持久化与 UI 交互支持](#123-状态持久化与-ui-交互支持)
 
 ---
 
@@ -720,3 +730,105 @@ flowchart TD
 3. **结构化分级报告**：
    - 自动生成太空暗黑科技风格 ANSI 彩色报表，精确展示文件、行号、语法节点摘录与规范整改指引。
 
+---
+
+# 11. MGA 深空多重引力助推全局唯一真值源与 UI 控件规范 (MGA Master Specification)
+
+## 11.1 MGAStateManager 唯一真值源 (SSOT) 核心架构
+1. **单一数据真值源 (SSOT)**：
+   - 所有多重引力助推 (MGA) 相关的任务配置 (`Config`)、任务序列 (`MissionSequence`)、计算收敛方案池 (`Solutions`)、当前激活解 (`ActiveSolution`)、3D 视口相机状态 (`Viewport`) 及全部 UI 模态交互状态 (`UI`) **必须且只能由 `MGAStateManager` 统一管理**。
+   - 严禁在 `GMATMainWindow.TabMGA.cs`、`GMATMainWindow.TabMGASequence.cs` 或 `GMATMainWindow.Modals.cs` 等表现层中声明私有业务字段或游离状态。
+   - UI 层的状态访问一律使用单向/双向包装属性，例如：
+     ```csharp
+     private Vector2 mgaLeftScroll { get => MGAStateManager.Current.UI.LeftScroll; set => MGAStateManager.Current.UI.LeftScroll = value; }
+     private bool isDraggingCanvas { get => MGAStateManager.Current.Viewport.IsDraggingCanvas; set => MGAStateManager.Current.Viewport.IsDraggingCanvas = value; }
+     ```
+2. **状态通知闭环**：
+   - 状态变更统一调用 `MGAStateManager.Current.NotifyStateChanged()`、`NotifySolutionChanged()` 与 `NotifyViewportChanged()`，实现跨 Tab、跨模态窗口与 3D 渲染视口之间的实时响应式刷新。
+   - 模版与序列导入导出统一通过 `ApplySequenceToConfig()` 与 `UpdateFlybySequence()` 进行双向同步，杜绝序列编辑与物理求解配置脱节。
+3. **任务配置持久化一致性 (`MGAMissionConfigFile`)**：
+   - 磁盘保存格式 (`.mga.json`) 必须完整涵盖中心天体、出发模式、倾角/升交点锁相状态、到达捕获类型、多圈兰伯特及推力器能耗天花板等全量字段，严禁在读写过程中丢失关键物理决策参数。
+
+## 11.2 UI 控件中心化托管规范 (`GMATMainWindow.Widgets.cs`)
+1. **控件中心化归口**：
+   - **所有 MGA UI 控件与公用交互组件必须集中在 `GMATMainWindow.Widgets.cs` 中实现与维护**。
+   - 包括但不限于：
+     - 出发轨道模式选择器 (`DrawMGADepartureModeSelector`)
+     - 候选转移方案决策池与表格渲染 (`DrawMGASolutionTable`)
+     - 延迟数值输入家族 (`DrawDelayedNumericField`, `DrawDelayedIntField`, `DrawDelayedTextField`)
+     - 步骤卡片与内嵌物理遥测抽屉组件
+2. **表现层轻量化原则**：
+   - `TabMGA.cs` 与 `TabMGASequence.cs` 仅保留面板高层布局流（Layout Flow）与用户事件派发逻辑，严禁在 Tab 文件内直接堆砌繁重的底层绘制逻辑或局部 GUIStyle 分配。
+3. **零动态分配与防抖缓存**：
+   - 所有的延迟输入控件均通过 `inputStringCache` 统一维护聚焦态编辑缓存，避免每帧触发字符串解析与焦点丢失；当切换任务或重新载入配置时，由 `MGAStateManager.OnClearInputCacheRequested` 统一触发缓存清空。
+
+## 11.3 物理常数与超参数零硬编码规范 (`MGADefaults`)
+1. **全局缺省与物理常数集中注册**：
+   - 严禁在任何 MGA 求解器、服务类、AI 引导网络或 UI 渲染代码中硬编码物理常数（如 `1.496e8`、`1.3271244e11`、`86400.0` 等）或经验阈值。
+   - 所有常数必须引用 `MGADefaults` 中的标准常量，例如：
+     - 天文单位：`MGADefaults.AU_KM`
+     - 太阳引力参数保底：`MGADefaults.FallbackSunMu`
+     - 天体安全规避半径：`MGADefaults.GetBodySafeRadiusKm(bodyName)`
+     - 算法超参数与种群代数：`MGADefaults.DefaultPopulationSize` / `MGADefaults.DefaultMaxGenerations`
+2. **单位规范化**：
+   - 全局严格统一单位标准：
+     - 方案与总机动 ΔV：**km/s** (`MGASolution.TotalDeltaVKms`, `LaunchDeltaVKms`, `InsertionDeltaVKms`)
+     - 单步冲量与分量：**m/s** (`MGALeg.ProgradeMs`, `DSM.DeltaVMs`)
+     - 严禁在脚本生成器或求解链路中发生 1000 倍单位错配。
+
+## 11.4 Roslyn AST 编译树级智能合规门禁 (`MGAStateComplianceAnalyzer`)
+1. **自动化 AST 审查**：
+   - 在 `tools/ComplianceChecker` 中集成专用 `MGAStateComplianceAnalyzer`（基于 `CSharpSyntaxWalker`），对工程全部源码进行 AST 深度遍历：
+     - **拦截硬编码常数** (`MGA-HARDCODED-CONST` / `MGA-HARDCODED-MU`)：自动捕获散落在代码中的裸写天文单位数值与引力常数。
+     - **拦截散落 UI 状态** (`MGA-SCATTERED-UI-FIELD`)：严格排查 `TabMGA` 与 `TabMGASequence` 中的未托管字段，确保所有状态变量 100% 委托至 `MGAStateManager`。
+2. **集成与持续验证**：
+   - `ComplianceChecker` 作为每次构建与部署的必备检查项，阻断性违规 (Critical Errors) 必须为 0 才能完成构建。
+
+# 12. 统一日志系统架构与全工程规范 (Unified Logging System Master Specification)
+
+## 12.1 架构设计与四大输出通道 (Log Sinks)
+为彻底杜绝控制台散落裸写、后台多线程求解日志冲突丢失及游戏内难以排错的问题，KSP_GMAT 确立全工程统一日志中枢架构 (`KSPGMATLog`)：
+1. **Unity / KSP 原生日志通道**：
+   - 自动映射到 `UnityEngine.Debug.Log/LogWarning/LogError`，与 KSP 游戏内 Alt+F12 调试控制台及根目录 `KSP.log` 无缝打通。
+   - 采用 `[MethodImpl(MethodImplOptions.NoInlining)]` 隔离 Unity 引擎依赖，在无头或离线环境平滑无感降级。
+2. **独立文件导出通道 (`Logs/KSPGMAT.log`)**：
+   - 路径解析策略：优先写入 `<KSP_Root>/GameData/KSPGMAT/Logs/KSPGMAT.log`；离线测试套件回退至 `<BaseDirectory>/Logs/` 或当前仓库目录。
+   - 会话自动轮转：每次新会话启动时，自动将历史日志备份为 `KSPGMAT.previous.log`，杜绝文件无限膨胀并完整保留前次崩溃现场。
+   - 会话元数据横幅 (Session Banner)：每次启动自动记录系统架构、进程 PID、CLR 运行时、日志路径及激活级别。
+   - 线程安全保障：多岛并行差分进化 (DE)、MCTS 与 MAB 超参数调优多线程环境下，通过 `lock (_fileLock)` 实现 100% 线程安全并发写入。
+   - 结构化行格式：`[yyyy-MM-dd HH:mm:ss.fff] [LEVEL,-5] [TID:xx] [Tag] Message`。
+   - 动态刷新策略：普通信息后台缓冲，`Warn`/`Error`/`Fatal` 级别自动触发即时 `Flush()`。
+3. **CLI / 无头控制台通道**：
+   - `Console.WriteLine` / `Console.Error.WriteLine` 分流输出，满足 `MGADebugRunner`、`MGABenchmarkRunner` 与自动化脚本的管道捕获。
+4. **游戏内屏幕提示通道 (ScreenMessage)**：
+   - `KSPGMATLog.Screen(msg, duration)` 在飞行和空间站场景弹出居中提示，非游戏状态自动安全降级。
+
+## 12.2 上下文记录器与工程调用标准 (ILogger & Usage)
+1. **模块上下文记录器**：
+   - 各业务类推荐声明静态上下文记录器：
+     ```csharp
+     private static readonly ILogger Log = KSPGMATLog.ForContext<MyService>();
+     // 或
+     private static readonly ILogger Log = KSPGMATLog.ForContext("MyService");
+     ```
+   - 支持子上下文扩展：`ILogger subLog = Log.ForContext("SubTask");`
+2. **分级调用准则**：
+   - `Log.Trace(msg)` / `Log.Debug(msg)`：算法中间代数、局部变异率、矩阵步进详情。
+   - `Log.Info(msg)`：模块就绪、任务序列加载、外部进程握手。
+   - `Log.Success(msg)`：优化收敛、打靶命中、合规自愈通过。
+   - `Log.Warn(msg)`：非致命降级、容差松弛、安全净空惩罚。
+   - `Log.Error(msg, ex)` / `Log.Fatal(msg, ex)`：**必须传入异常对象**保留完整调用栈。
+   - `KSPGMATLog.Section(title)`：模块初始化或主阶段分段横幅。
+
+## 12.3 状态持久化与 UI 交互支持
+1. **配置持久化 (`KSPGMATSettings`)**：
+   - 配置保存在 `GameData/KSPGMAT/Config/backend.cfg`：
+     - `log_level=INFO` (支持 `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`)
+     - `log_file_enabled=true`
+     - `log_file_path=` (自定义导出路径，留空为标准相对路径)
+2. **UI 交互支持**：
+   - UI 设置面板 (`TabSettings.cs`) 与主视窗底栏 (`GMATMainWindow.cs`) 提供：
+     - 当前日志文件状态角标（Active / Disabled 及日志级别）
+     - 当前日志绝对路径展示与输入
+     - 一键“打开日志文件/目录 (`OpenLogFileOrFolder`)”按钮（Windows Explorer 快速选中）
+     - 一键“立即刷新写入缓冲区 (`Flush`)”按钮

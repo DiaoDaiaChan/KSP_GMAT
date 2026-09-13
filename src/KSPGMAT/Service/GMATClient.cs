@@ -711,6 +711,7 @@ namespace KSPGMAT {
                                  $"\"status\": \"Calibrated\"}}";
                     KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(true, res));
                 } catch (Exception ex) {
+                    KSPGMATLog.Error("GMATClient", "CalibrateEphem failed", ex);
                     KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(false, ex.Message));
                 }
             });
@@ -741,7 +742,7 @@ namespace KSPGMAT {
             ThreadPool.QueueUserWorkItem(_ => {
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 try {
-                    KSPGMATLog.Section("GMAT NATIVE MISSION PROPAGATION STARTED");
+                    KSPGMATLog.Section("GMATClient", "GMAT NATIVE MISSION PROPAGATION STARTED");
                     if (vessel != null) {
                         GMATStateManager.Current.SyncFromVessel(vessel);
                     }
@@ -759,24 +760,24 @@ namespace KSPGMAT {
                             result.solve_ut = Planetarium.GetUniversalTime();
                             result.solve_principia_time = PrincipiaInterop.GetCurrentPrincipiaTime();
                             if (result.success) {
-                                KSPGMATLog.Success($"GMAT execution succeeded in {sw.ElapsedMilliseconds} ms!");
-                                KSPGMATLog.Success($"Final Orbit: SMA={result.final_sma:F2}km, ECC={result.final_ecc:F5}, INC={result.final_inc:F2}°");
-                                KSPGMATLog.Success($"Solved Burns ({result.solved_burns.Count}):");
+                                KSPGMATLog.Success("GMATClient", $"GMAT execution succeeded in {sw.ElapsedMilliseconds} ms!");
+                                KSPGMATLog.Success("GMATClient", $"Final Orbit: SMA={result.final_sma:F2}km, ECC={result.final_ecc:F5}, INC={result.final_inc:F2}°");
+                                KSPGMATLog.Success("GMATClient", $"Solved Burns ({result.solved_burns.Count}):");
                                 for (int b = 0; b < result.solved_burns.Count; b++) {
                                     var bn = result.solved_burns[b];
-                                    KSPGMATLog.Success($"  [Burn {b+1}] {bn.name} ({bn.type}): ΔV=({bn.dv_v:F1}, {bn.dv_n:F1}, {bn.dv_b:F1}) m/s, Mag={bn.magnitude:F1} m/s, Dur={bn.duration:F1}s");
+                                    KSPGMATLog.Success("GMATClient", $"  [Burn {b+1}] {bn.name} ({bn.type}): ΔV=({bn.dv_v:F1}, {bn.dv_n:F1}, {bn.dv_b:F1}) m/s, Mag={bn.magnitude:F1} m/s, Dur={bn.duration:F1}s");
                                 }
                             } else {
-                                KSPGMATLog.Error($"GMAT execution failed in {sw.ElapsedMilliseconds} ms: {result.error}");
+                                KSPGMATLog.Error("GMATClient", $"GMAT execution failed in {sw.ElapsedMilliseconds} ms: {result.error}");
                             }
                         }
-                        KSPGMATLog.Section("GMAT MISSION PROPAGATION COMPLETED");
+                        KSPGMATLog.Section("GMATClient", "GMAT MISSION PROPAGATION COMPLETED");
                         KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(success, result));
                     });
                 } catch (Exception ex) {
                     sw.Stop();
-                    KSPGMATLog.Error($"GMAT PropagateMission Exception in {sw.ElapsedMilliseconds} ms: {ex}");
-                    KSPGMATLog.Section("GMAT MISSION PROPAGATION FAILED");
+                    KSPGMATLog.Error("GMATClient", $"GMAT PropagateMission Exception in {sw.ElapsedMilliseconds} ms", ex);
+                    KSPGMATLog.Section("GMATClient", "GMAT MISSION PROPAGATION FAILED");
                     MissionResult err = new MissionResult {
                         success = false,
                         error = ex.Message
@@ -800,12 +801,12 @@ namespace KSPGMAT {
                             psi.Arguments = $"\"{scriptPath}\"";
                         }
                         Process.Start(psi);
-                        UnityEngine.Debug.Log("[KSPGMAT] GMAT GUI launched.");
+                        KSPGMATLog.Info("GMATClient", "GMAT GUI launched.");
                     } else {
-                        UnityEngine.Debug.LogWarning("[KSPGMAT] GMAT.exe not found at " + gmatExe);
+                        KSPGMATLog.Warn("GMATClient", "GMAT.exe not found at " + gmatExe);
                     }
                 } catch (Exception ex) {
-                    UnityEngine.Debug.LogWarning("[KSPGMAT] Error opening GMAT desktop: " + ex.Message);
+                    KSPGMATLog.Error("GMATClient", "Error opening GMAT desktop", ex);
                 }
             });
         }
@@ -824,6 +825,7 @@ namespace KSPGMAT {
                     File.WriteAllText(targetPath, sanitized, Utf8NoBom);
                     KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(true, $"成功导出高保真 GMAT 脚本至: {targetPath}"));
                 } catch (Exception ex) {
+                    KSPGMATLog.Error("GMATClient", "ExportScript failed", ex);
                     KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(false, "导出异常: " + ex.Message));
                 }
             });
@@ -835,6 +837,7 @@ namespace KSPGMAT {
                     var result = GMATScriptParser.ParseScriptFile(scriptPath, vessel);
                     KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(result.success, result, result.message ?? (result.success ? "成功" : "解析失败")));
                 } catch (Exception ex) {
+                    KSPGMATLog.Error("GMATClient", "ImportScript failed", ex);
                     KSPGMAT.UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(false, null, ex.Message));
                 }
             });
@@ -859,6 +862,7 @@ namespace KSPGMAT {
                         UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(false, "比较数据不可用，请先执行 Principia 同步"));
                     }
                 } catch (Exception ex) {
+                    KSPGMATLog.Error("GMATClient", "FetchComparison failed", ex);
                     UI.GMATMainWindow.RunOnMainThread(() => callback?.Invoke(false, ex.Message));
                 }
             });
@@ -1015,6 +1019,7 @@ namespace KSPGMAT {
 
                 res.render_image_path = ExtractString(json, "render_image_path");
             } catch (Exception ex) {
+                KSPGMATLog.Error("GMATClient", "JSON parse error in ParseMissionResult", ex);
                 res.success = false;
                 res.error = "JSON 解析异常: " + ex.Message;
             }

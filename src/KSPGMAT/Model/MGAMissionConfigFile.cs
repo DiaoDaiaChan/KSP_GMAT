@@ -17,13 +17,26 @@ namespace KSPGMAT.Model {
         public string icon = "🪐";
         public string departure_body = "Earth";
         public string destination_body = "Mars";
+        public string central_body = "Sun";
         public List<string> flyby_sequence = new List<string>();
         public double departure_pe_km = 200.0;
         public double departure_ap_km = 200.0;
         public double destination_pe_km = 200.0;
         public double destination_ap_km = 200.0;
         public bool no_insertion_burn = false;
-        public int engine_mode = 0; // 0: Ballistic, 1: 1-DSM, 2: HeterogeneousHybrid, 3: LowThrust
+        public int arrival_orbit_type = 1; // 0: Circular, 1: HighlyElliptic
+        public int engine_mode = 0; // 0: BallisticImpulsive, 1: DeepSpaceManeuver1DSM, 2: LowThrustSimsFlanagan, 3: HeterogeneousHybrid
+        public int departure_mode = 0; // 0: PreLaunchFreeOrbit, 1: InOrbitLockedOrbit
+        public double departure_inc_deg = 28.5;
+        public double departure_raan_deg = 0.0;
+        public bool lock_departure_inc = false;
+        public bool lock_departure_raan = false;
+        public int lambert_max_revs = 0;
+        public double vessel_max_dv_ms = 0.0;
+        public double max_dsm_dv_ms = 500.0;
+        public double launch_dv_ceiling_ms = 0.0;
+        public bool allow_powered_flyby = true;
+        public bool enable_phase_alignment = false;
         public List<int> leg_strategies = new List<int>();
         public List<int> flyby_strategies = new List<int>();
         public string earliest_departure_date = "";
@@ -129,13 +142,26 @@ namespace KSPGMAT.Model {
                 icon = icon,
                 departure_body = cfg.DepartureBody,
                 destination_body = cfg.DestinationBody,
+                central_body = cfg.CentralBody,
                 flyby_sequence = new List<string>(cfg.FlybySequence ?? new List<string>()),
                 departure_pe_km = cfg.DeparturePeAKm,
                 departure_ap_km = cfg.DepartureApAKm,
                 destination_pe_km = cfg.DestinationPeAKm,
                 destination_ap_km = cfg.DestinationApAKm,
                 no_insertion_burn = cfg.NoInsertionBurn,
+                arrival_orbit_type = (int)cfg.ArrivalOrbitType,
                 engine_mode = (int)cfg.EngineMode,
+                departure_mode = (int)cfg.DepartureMode,
+                departure_inc_deg = cfg.DepartureInclinationDeg,
+                departure_raan_deg = cfg.DepartureRAANDeg,
+                lock_departure_inc = cfg.LockDepartureInclination,
+                lock_departure_raan = cfg.LockDepartureRAAN,
+                lambert_max_revs = cfg.LambertMaxRevs,
+                vessel_max_dv_ms = cfg.VesselMaxDeltaVMs,
+                max_dsm_dv_ms = cfg.MaxDsmDeltaVMs,
+                launch_dv_ceiling_ms = cfg.LaunchDeltaVCeilingMs,
+                allow_powered_flyby = cfg.AllowPoweredFlyby,
+                enable_phase_alignment = cfg.EnableParkingOrbitPhaseAlignment,
                 earliest_departure_date = GMATClient.FormatUtcGregorian(cfg.EarliestDepartureUT),
                 latest_departure_date = GMATClient.FormatUtcGregorian(cfg.LatestDepartureUT),
                 dsm_eta_default = cfg.DsmEtaDefault,
@@ -152,6 +178,60 @@ namespace KSPGMAT.Model {
             if (cfg.LegStrategies != null) file.leg_strategies = cfg.LegStrategies.Select(s => (int)s).ToList();
             if (cfg.FlybyStrategies != null) file.flyby_strategies = cfg.FlybyStrategies.Select(s => (int)s).ToList();
             return file;
+        }
+
+        /// <summary>
+        /// 将当前持久化配置完整对称地还原注入到 MGAConfig 中 (SSOT 对称还原)
+        /// </summary>
+        public void ApplyToMGAConfig(MGAConfig cfg) {
+            if (cfg == null) return;
+            if (!string.IsNullOrEmpty(departure_body)) cfg.DepartureBody = departure_body;
+            if (!string.IsNullOrEmpty(destination_body)) cfg.DestinationBody = destination_body;
+            if (!string.IsNullOrEmpty(central_body)) cfg.CentralBody = central_body;
+            if (departure_pe_km > 0) cfg.DeparturePeAKm = departure_pe_km;
+            if (departure_ap_km > 0) cfg.DepartureApAKm = departure_ap_km;
+            if (destination_pe_km > 0) cfg.DestinationPeAKm = destination_pe_km;
+            if (destination_ap_km > 0) cfg.DestinationApAKm = destination_ap_km;
+            cfg.NoInsertionBurn = no_insertion_burn;
+            cfg.ArrivalOrbitType = (MGAArrivalOrbitType)arrival_orbit_type;
+            cfg.EngineMode = (MGAEngineMode)engine_mode;
+            cfg.DepartureMode = (MGADepartureMode)departure_mode;
+            cfg.DepartureInclinationDeg = departure_inc_deg;
+            cfg.DepartureRAANDeg = departure_raan_deg;
+            cfg.LockDepartureInclination = lock_departure_inc;
+            cfg.LockDepartureRAAN = lock_departure_raan;
+            cfg.LambertMaxRevs = lambert_max_revs;
+            cfg.VesselMaxDeltaVMs = vessel_max_dv_ms;
+            cfg.MaxDsmDeltaVMs = max_dsm_dv_ms;
+            cfg.LaunchDeltaVCeilingMs = launch_dv_ceiling_ms;
+            cfg.AllowPoweredFlyby = allow_powered_flyby;
+            cfg.EnableParkingOrbitPhaseAlignment = enable_phase_alignment;
+
+            if (flyby_sequence != null && flyby_sequence.Count > 0) {
+                cfg.FlybySequence = new List<string>(flyby_sequence);
+            }
+            if (min_tof_days != null && min_tof_days.Count > 0) {
+                cfg.MinToFDays = new List<double>(min_tof_days);
+            }
+            if (max_tof_days != null && max_tof_days.Count > 0) {
+                cfg.MaxToFDays = new List<double>(max_tof_days);
+            }
+            if (leg_strategies != null && leg_strategies.Count > 0) {
+                cfg.LegStrategies = leg_strategies.Select(s => (MGALegStrategy)s).ToList();
+            }
+            if (flyby_strategies != null && flyby_strategies.Count > 0) {
+                cfg.FlybyStrategies = flyby_strategies.Select(s => (MGAFlybyStrategy)s).ToList();
+            }
+
+            double depUt = GMATClient.ParseUtcGregorian(earliest_departure_date);
+            if (depUt > 0) cfg.EarliestDepartureUT = depUt;
+            else if (historic_launch_ut > 0) cfg.EarliestDepartureUT = historic_launch_ut;
+
+            double endUt = GMATClient.ParseUtcGregorian(latest_departure_date);
+            if (endUt > 0) cfg.LatestDepartureUT = endUt;
+            else if (cfg.EarliestDepartureUT > 0) {
+                cfg.LatestDepartureUT = cfg.EarliestDepartureUT + MGADefaults.SecondsPerDay * MGADefaults.DefaultSearchWindowDays;
+            }
         }
     }
 }

@@ -356,12 +356,12 @@ namespace KSPGMAT.MGA.Solver
             var sw = System.Diagnostics.Stopwatch.StartNew();
             var res = new BlindSearchResult { Case = bCase };
 
-            Console.WriteLine($"\n==========================================================================================");
-            Console.WriteLine($"🔭 [纯盲搜探索] 任务: {bCase.MissionName}");
-            Console.WriteLine($"   • 盲搜输入: 始发 [{bCase.DepartureBody}] ➔ 终点 [{bCase.DestinationBody}] (0 中间天体提示，完全由算法自主推导)");
-            Console.WriteLine($"   • 历史基准: 发射参考历元 {bCase.HistoricalLaunchStr} (±{bCase.WindowSpanDays:F0}天), 历史航时: {bCase.HistoricalFlightDays:F0}天, 历史ΔV: {bCase.HistoricalTotalDvMs:F0} m/s");
-            Console.WriteLine($"   • 历史拓扑: {bCase.DepartureBody} ➔ {(bCase.HistoricalFlybySequence.Count > 0 ? string.Join(" ➔ ", bCase.HistoricalFlybySequence) + " ➔ " : "")}{bCase.DestinationBody}");
-            Console.WriteLine($"==========================================================================================");
+            KSPGMATLog.Info("Solver", "==========================================================================================");
+            KSPGMATLog.Info("Solver", $"🔭 [纯盲搜探索] 任务: {bCase.MissionName}");
+            KSPGMATLog.Info("Solver", $"   • 盲搜输入: 始发 [{bCase.DepartureBody}] ➔ 终点 [{bCase.DestinationBody}] (0 中间天体提示，完全由算法自主推导)");
+            KSPGMATLog.Info("Solver", $"   • 历史基准: 发射参考历元 {bCase.HistoricalLaunchStr} (±{bCase.WindowSpanDays:F0}天), 历史航时: {bCase.HistoricalFlightDays:F0}天, 历史ΔV: {bCase.HistoricalTotalDvMs:F0} m/s");
+            KSPGMATLog.Info("Solver", $"   • 历史拓扑: {bCase.DepartureBody} ➔ {(bCase.HistoricalFlybySequence.Count > 0 ? string.Join(" ➔ ", bCase.HistoricalFlybySequence) + " ➔ " : "")}{bCase.DestinationBody}");
+            KSPGMATLog.Info("Solver", "==========================================================================================");
 
             double centerUT = GMATClient.ParseUtcGregorian(bCase.HistoricalLaunchStr);
             double halfSpanSec = (bCase.WindowSpanDays * 0.5) * 86400.0;
@@ -408,7 +408,7 @@ namespace KSPGMAT.MGA.Solver
             {
                 res.Success = false;
                 res.StatusMessage = $"求解器异常: {ex.Message}";
-                Console.WriteLine($"❌ 求解异常: {ex.Message}");
+                KSPGMATLog.Error("Solver", $"求解异常: {ex.Message}", ex);
                 sw.Stop();
                 res.ElapsedMs = sw.ElapsedMilliseconds;
                 return res;
@@ -430,7 +430,7 @@ namespace KSPGMAT.MGA.Solver
                 res.Success = false;
                 res.StatusMessage = "在指定搜索时间窗与工质预算内未收敛出可行物理闭环解";
                 res.EvaluationTag = "⚠️ 未收敛通过";
-                Console.WriteLine($"⚠️ 未收敛出可行解。耗时: {res.ElapsedMs} ms");
+                KSPGMATLog.Warn("Solver", $"未收敛出可行解。耗时: {res.ElapsedMs} ms");
                 return res;
             }
 
@@ -439,12 +439,34 @@ namespace KSPGMAT.MGA.Solver
                 ? (s.LaunchDeltaVKms + s.TotalDsmDeltaVKms + s.TotalFlybyDeltaVKms) 
                 : s.TotalDeltaVKms) * 1000.0;
 
-            var best = solutions
-                .OrderBy(s => (bCase.LaunchCeilingMs > 0 && s.LaunchDeltaVKms * 1000.0 > bCase.LaunchCeilingMs * 1.05 ? 1e6 : 0.0)
-                            + (bCase.VesselMaxDeltaVMs > 0 && getSubjectDvMs(s) > bCase.VesselMaxDeltaVMs * 1.05 ? 1e6 : 0.0)
-                            + (!s.AllLegsFeasible ? 1e5 : 0.0)
-                            + getSubjectDvMs(s))
-                .First();
+            Func<MGASolution, double> calcScore = s =>
+            {
+                double score = 0.0;
+                if (bCase.LaunchCeilingMs > 0 && s.LaunchDeltaVKms * 1000.0 > bCase.LaunchCeilingMs * 1.05) score += 1e6;
+                if (bCase.VesselMaxDeltaVMs > 0 && getSubjectDvMs(s) > bCase.VesselMaxDeltaVMs * 1.05) score += 1e6;
+                if (!s.AllLegsFeasible) score += 1e5;
+
+                double dvMs = getSubjectDvMs(s);
+                score += dvMs;
+
+                // 航时敏感性弹性塑形 (Time-Biased Pareto Shaping)
+                // 若航时超过历史任务基准 1.20 倍以上，按连续软界弹性公式增加等效工质惩罚，杜绝以极度拖延换取微小ΔV降低
+                double refDays = bCase.HistoricalFlightDays;
+                if (refDays <= 0)
+                {
+                    refDays = MGAPhysicsLossEngine.ResolveNominalTofDays(s, "Sun");
+                }
+                if (refDays > 0 && s.TotalFlightDays > refDays * 1.20)
+                {
+                    double excessFrac = (s.TotalFlightDays - refDays * 1.20) / refDays;
+                    double refDv = (bCase.HistoricalTotalDvMs > 0) ? bCase.HistoricalTotalDvMs : dvMs;
+                    score += (0.15 * excessFrac + 0.15 * excessFrac * excessFrac) * refDv;
+                }
+
+                return score;
+            };
+
+            var best = solutions.OrderBy(calcScore).First();
             res.BestSolution = best;
             res.Success = true;
 
@@ -546,29 +568,29 @@ namespace KSPGMAT.MGA.Solver
 
             // 控制台打印精简报告
             string algoTopoStr = $"{bCase.DepartureBody} ➔ {(res.BestTopology.Count > 0 ? string.Join(" ➔ ", res.BestTopology) + " ➔ " : "")}{bCase.DestinationBody}";
-            Console.WriteLine($"\n  ★ [盲搜推导演化结果]");
-            Console.WriteLine($"    • 考核场景: {bCase.ScenarioDescription}");
-            Console.WriteLine($"    • 最优拓扑: {algoTopoStr}");
-            Console.WriteLine($"    • 发射历元: {GMATClient.FormatUtcGregorian(best.DepartureUT)}");
-            Console.WriteLine($"    • 始发出射: {best.LaunchDeltaVKms * 1000.0:F1} m/s, 终点捕获: {best.InsertionDeltaVKms * 1000.0:F1} m/s, 深空机动DSM: {best.TotalDsmDeltaVKms * 1000.0:F1} m/s");
-            Console.WriteLine($"    • 考核总ΔV: {algoSubjectDv:F1} m/s  (历史: {bCase.HistoricalTotalDvMs:F0} m/s, 差异: {(algoSubjectDv - bCase.HistoricalTotalDvMs):+0.0;-0.0;0.0} m/s)");
-            Console.WriteLine($"    • 算法航时: {algoTof:F1} 天  (历史: {bCase.HistoricalFlightDays:F0} 天, 差异: {(algoTof - bCase.HistoricalFlightDays):+0.0;-0.0;0.0} 天)");
-            Console.WriteLine($"    • 综合评价: {res.EvaluationTag}");
+            KSPGMATLog.Info("Solver", "  ★ [盲搜推导演化结果]");
+            KSPGMATLog.Info("Solver", $"    • 考核场景: {bCase.ScenarioDescription}");
+            KSPGMATLog.Info("Solver", $"    • 最优拓扑: {algoTopoStr}");
+            KSPGMATLog.Info("Solver", $"    • 发射历元: {GMATClient.FormatUtcGregorian(best.DepartureUT)}");
+            KSPGMATLog.Info("Solver", $"    • 始发出射: {best.LaunchDeltaVKms * 1000.0:F1} m/s, 终点捕获: {best.InsertionDeltaVKms * 1000.0:F1} m/s, 深空机动DSM: {best.TotalDsmDeltaVKms * 1000.0:F1} m/s");
+            KSPGMATLog.Info("Solver", $"    • 考核总ΔV: {algoSubjectDv:F1} m/s  (历史: {bCase.HistoricalTotalDvMs:F0} m/s, 差异: {(algoSubjectDv - bCase.HistoricalTotalDvMs):+0.0;-0.0;0.0} m/s)");
+            KSPGMATLog.Info("Solver", $"    • 算法航时: {algoTof:F1} 天  (历史: {bCase.HistoricalFlightDays:F0} 天, 差异: {(algoTof - bCase.HistoricalFlightDays):+0.0;-0.0;0.0} 天)");
+            KSPGMATLog.Info("Solver", $"    • 综合评价: {res.EvaluationTag}");
             if (res.IsSuperHistorical)
             {
-                Console.WriteLine($"    🏆 超越历史: {res.SuperHistoricalReason}");
+                KSPGMATLog.Success("Solver", $"    🏆 超越历史: {res.SuperHistoricalReason}");
             }
             if (best.Legs != null)
             {
-                Console.WriteLine("    • 逐航段动力学明细:");
+                KSPGMATLog.Info("Solver", "    • 逐航段动力学明细:");
                 for (int li = 0; li < best.Legs.Count; ++li)
                 {
                     var l = best.Legs[li];
                     string dsmStr = l.HasDSM && l.DSM != null ? $"DSM={l.DSM.DeltaVMs:F1} m/s (pro={l.DSM.ProgradeMs:F1}, nml={l.DSM.NormalMs:F1}, rad={l.DSM.RadialMs:F1})" : "无DSM";
-                    Console.WriteLine($"       [{li}] {l.FromBody} ➔ {l.ToBody}: ToF={l.ToFDays:F1}天, 偏折={l.FlybyTurningAngleDeg:F1}°, 飞掠ΔV={l.FlybyDeltaVKms*1000.0:F1} m/s, {dsmStr}, 可行={l.IsFeasible}");
+                    KSPGMATLog.Info("Solver", $"       [{li}] {l.FromBody} ➔ {l.ToBody}: ToF={l.ToFDays:F1}天, 偏折={l.FlybyTurningAngleDeg:F1}°, 飞掠ΔV={l.FlybyDeltaVKms*1000.0:F1} m/s, {dsmStr}, 可行={l.IsFeasible}");
                 }
             }
-            Console.WriteLine($"    • 求解耗时: {res.ElapsedMs} ms");
+            KSPGMATLog.Info("Solver", $"    • 求解耗时: {res.ElapsedMs} ms");
 
             return res;
         }
@@ -579,11 +601,11 @@ namespace KSPGMAT.MGA.Solver
         public static List<BlindSearchResult> RunAllMissions(string reportOutputPath = null, CancellationToken ct = default)
         {
             var results = new List<BlindSearchResult>();
-            Console.WriteLine("==========================================================================================");
-            Console.WriteLine("🚀 [MGAHistoricalBlindSearchSuite] 人类历史所有 MGA 任务纯盲搜与自主涌现发现测试套件");
-            Console.WriteLine("   原则: 100% 仅输入 Earth ➔ 目的地, 0 中间借力天体提示, 全由通用天体动力学自主推导！");
-            Console.WriteLine($"   覆盖任务数: {HistoricalCatalog.Count} 个经典深空任务");
-            Console.WriteLine("==========================================================================================");
+            KSPGMATLog.Info("Solver", "==========================================================================================");
+            KSPGMATLog.Info("Solver", "🚀 [MGAHistoricalBlindSearchSuite] 人类历史所有 MGA 任务纯盲搜与自主涌现发现测试套件");
+            KSPGMATLog.Info("Solver", "   原则: 100% 仅输入 Earth ➔ 目的地, 0 中间借力天体提示, 全由通用天体动力学自主推导！");
+            KSPGMATLog.Info("Solver", $"   覆盖任务数: {HistoricalCatalog.Count} 个经典深空任务");
+            KSPGMATLog.Info("Solver", "==========================================================================================");
 
             foreach (var bCase in HistoricalCatalog)
             {
@@ -603,7 +625,7 @@ namespace KSPGMAT.MGA.Solver
                 reportOutputPath = Path.Combine(dir, "mga_historical_discovery_report.md");
             }
             GenerateMarkdownReport(results, reportOutputPath);
-            Console.WriteLine($"\n📄 完整对比与物理机理剖析报表已保存至: {reportOutputPath}\n");
+            KSPGMATLog.Info("Solver", $"📄 完整对比与物理机理剖析报表已保存至: {reportOutputPath}");
 
             return results;
         }
@@ -613,12 +635,12 @@ namespace KSPGMAT.MGA.Solver
         /// </summary>
         private static void PrintSummaryTable(List<BlindSearchResult> results)
         {
-            Console.WriteLine("\n========================================================================================================================================");
-            Console.WriteLine("📊 人类历史深空 MGA 任务纯盲搜全景对比汇总矩阵 (仅输入 Earth ➔ 目标)");
-            Console.WriteLine("========================================================================================================================================");
-            Console.WriteLine(string.Format("{0,-22} | {1,-6} | {2,-8} | {3,-18} | {4,-18} | {5,-12} | {6,-12} | {7,-24}",
+            KSPGMATLog.Info("Solver", "========================================================================================================================================");
+            KSPGMATLog.Info("Solver", "📊 人类历史深空 MGA 任务纯盲搜全景对比汇总矩阵 (仅输入 Earth ➔ 目标)");
+            KSPGMATLog.Info("Solver", "========================================================================================================================================");
+            KSPGMATLog.Info("Solver", string.Format("{0,-22} | {1,-6} | {2,-8} | {3,-18} | {4,-18} | {5,-12} | {6,-12} | {7,-24}",
                 "任务名称", "场景", "目的地", "历史真实拓扑", "算法盲搜拓扑", "考核ΔV (算/史)", "航时 (算/史)", "拓扑吻合与发现结论"));
-            Console.WriteLine(new string('-', 138));
+            KSPGMATLog.Info("Solver", new string('-', 138));
 
             int exactMatchCount = 0;
             int poolMatchCount = 0;
@@ -645,12 +667,12 @@ namespace KSPGMAT.MGA.Solver
                 if (r.MatchedHistoricalTopology) exactMatchCount++;
                 else if (r.DiscoveredInTopCandidates) poolMatchCount++;
 
-                Console.WriteLine(string.Format("{0,-22} | {1,-6} | {2,-8} | {3,-18} | {4,-18} | {5,-12} | {6,-12} | {7,-24}",
+                KSPGMATLog.Info("Solver", string.Format("{0,-22} | {1,-6} | {2,-8} | {3,-18} | {4,-18} | {5,-12} | {6,-12} | {7,-24}",
                     name, scen, dest, histTopo, algoTopo, dvStr, tofStr, eval));
             }
-            Console.WriteLine(new string('-', 138));
-            Console.WriteLine($"🏆 统计概览: 共测试 {results.Count} 个历史任务 | 🎯 最优解拓扑完全吻合: {exactMatchCount} | 🔍 仅候选池命中(最优解偏离): {poolMatchCount} | ★ 同拓扑超越历史解: {superCount} | 物理闭环收敛: {passCount}");
-            Console.WriteLine("========================================================================================================================================\n");
+            KSPGMATLog.Info("Solver", new string('-', 138));
+            KSPGMATLog.Info("Solver", $"🏆 统计概览: 共测试 {results.Count} 个历史任务 | 🎯 最优解拓扑完全吻合: {exactMatchCount} | 🔍 仅候选池命中(最优解偏离): {poolMatchCount} | ★ 同拓扑超越历史解: {superCount} | 物理闭环收敛: {passCount}");
+            KSPGMATLog.Info("Solver", "========================================================================================================================================");
         }
 
         /// <summary>

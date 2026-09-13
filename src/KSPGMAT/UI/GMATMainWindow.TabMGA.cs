@@ -8,6 +8,7 @@ using UnityEngine;
 using KSPGMAT.MGA;
 using KSPGMAT.Service;
 using KSPGMAT.Model;
+using KSPGMAT;
 
 namespace KSPGMAT.UI {
     public partial class GMATMainWindow {
@@ -30,23 +31,23 @@ namespace KSPGMAT.UI {
         private Vector2 mgaCanvasPan { get => MGAStateManager.Current.Viewport.CanvasPan; set => MGAStateManager.Current.Viewport.CanvasPan = value; }
         private bool mgaShowSois { get => MGAStateManager.Current.Viewport.ShowSois; set => MGAStateManager.Current.Viewport.ShowSois = value; }
         private bool mgaShowMetDates { get => MGAStateManager.Current.Viewport.ShowMET; set => MGAStateManager.Current.Viewport.ShowMET = value; }
-        private bool isDraggingCanvas = false;
-        private Vector2 lastMouseCanvasPos = Vector2.zero;
+        private bool isDraggingCanvas { get => MGAStateManager.Current.Viewport.IsDraggingCanvas; set => MGAStateManager.Current.Viewport.IsDraggingCanvas = value; }
+        private Vector2 lastMouseCanvasPos { get => MGAStateManager.Current.Viewport.LastMouseCanvasPos; set => MGAStateManager.Current.Viewport.LastMouseCanvasPos = value; }
 
         // Async Search State (SSOT 托管在 MGAStateManager)
         private bool isMgaOptimizing { get => MGAStateManager.Current.IsOptimizing; set => MGAStateManager.Current.IsOptimizing = value; }
         private float mgaProgress { get => MGAStateManager.Current.OptimizeProgress; set => MGAStateManager.Current.OptimizeProgress = value; }
         private string mgaStatusText { get => MGAStateManager.Current.OptimizeStatusText; set => MGAStateManager.Current.OptimizeStatusText = value; }
-        private CancellationTokenSource mgaCts = null;
+        private CancellationTokenSource mgaCts { get => MGAStateManager.Current.CurrentCts; set => MGAStateManager.Current.CurrentCts = value; }
         private GUIStyle cachedReticleStyle = null;
-        private Vector2 mgaLeftScroll = Vector2.zero;
-        private Vector2 mgaTabScroll = Vector2.zero;
-        private Vector2 mgaSolutionScroll = Vector2.zero;
+        private Vector2 mgaLeftScroll { get => MGAStateManager.Current.UI.LeftScroll; set => MGAStateManager.Current.UI.LeftScroll = value; }
+        private Vector2 mgaTabScroll { get => MGAStateManager.Current.UI.TabScroll; set => MGAStateManager.Current.UI.TabScroll = value; }
+        private Vector2 mgaSolutionScroll { get => MGAStateManager.Current.UI.SolutionScroll; set => MGAStateManager.Current.UI.SolutionScroll = value; }
         private string mgaDepDateInput { get => MGAStateManager.Current.DepDateInput; set => MGAStateManager.Current.DepDateInput = value; }
         private string mgaEndDateInput { get => MGAStateManager.Current.EndDateInput; set => MGAStateManager.Current.EndDateInput = value; }
         private bool mgaDatesInitialized { get => MGAStateManager.Current.DatesInitialized; set => MGAStateManager.Current.DatesInitialized = value; }
         private int mgaWorkflowMode { get => MGAStateManager.Current.WorkflowMode; set => MGAStateManager.Current.WorkflowMode = value; } // 0 = Trajectory Planner, 2 = Sequence Workbench
-        private bool showChainSuggestions = false;
+        private bool showChainSuggestions { get => MGAStateManager.Current.UI.ShowChainSuggestions; set => MGAStateManager.Current.UI.ShowChainSuggestions = value; }
 
         // Pareto Front Tradeoff Slider State (SSOT 托管在 MGAStateManager)
         private float mgaParetoSliderVal { get => MGAStateManager.Current.ParetoSliderVal; set => MGAStateManager.Current.ParetoSliderVal = value; }
@@ -250,7 +251,7 @@ namespace KSPGMAT.UI {
 
             double startUT = GMATClient.ParseUtcGregorian(mgaDepDateInput);
             if (startUT <= 0) startUT = Planetarium.GetUniversalTime() > 0 ? Planetarium.GetUniversalTime() : 0.0;
-            UnityEngine.Debug.Log($"[KSPGMAT-MGA] >>> 点击 [自动求解]: {mgaConfig.DepartureBody} -> {target} | 输入历元: '{mgaDepDateInput}' (startUT={startUT:F1})");
+            KSPGMATLog.Info("UI", $"[MGA] >>> 点击 [自动求解]: {mgaConfig.DepartureBody} -> {target} | 输入历元: '{mgaDepDateInput}' (startUT={startUT:F1})");
 
             if (mgaConfig.DepartureMode == MGADepartureMode.InOrbitLockedOrbit && FlightGlobals.ActiveVessel != null) {
                 GMATStateManager.Current.SyncFromVessel(FlightGlobals.ActiveVessel);
@@ -260,11 +261,11 @@ namespace KSPGMAT.UI {
             double targetRaan = (mgaConfig.DepartureMode == MGADepartureMode.InOrbitLockedOrbit || mgaConfig.LockDepartureRAAN) ? mgaConfig.DepartureRAANDeg : -1.0;
             var (optUT, tofDays, approxDV) = PykepBridge.CalculateHohmannWindow(mgaConfig.DepartureBody, target, startUT, 0, targetInc, targetRaan);
             if (double.IsNaN(optUT)) {
-                UnityEngine.Debug.LogWarning($"[KSPGMAT-MGA] CalculateHohmannWindow 返回 NaN (C++ 原生库未就绪或无法计算)");
+                KSPGMATLog.Warn("UI", "[MGA] CalculateHohmannWindow 返回 NaN (C++ 原生库未就绪或无法计算)");
                 ScreenMessages.PostScreenMessage(I18n.T("mga_native_unavailable"), 4.5f, ScreenMessageStyle.UPPER_CENTER);
                 return;
             }
-            UnityEngine.Debug.Log($"[KSPGMAT-MGA] 预估霍曼窗口: 最优发射UT={optUT:F1} ({GMATClient.FormatUtcGregorian(optUT)}), 飞行时间={tofDays:F1}d, 预估ΔV={approxDV:F1} m/s");
+            KSPGMATLog.Info("UI", $"[MGA] 预估霍曼窗口: 最优发射UT={optUT:F1} ({GMATClient.FormatUtcGregorian(optUT)}), 飞行时间={tofDays:F1}d, 预估ΔV={approxDV:F1} m/s");
 
             mgaConfig.FlybySequence = new List<string> { target };
             double windowHalfSpan = (tofDays < 15.0) ? Math.Max(2.0, tofDays * 1.5) : 25.0;
@@ -277,7 +278,7 @@ namespace KSPGMAT.UI {
             mgaConfig.MinToFDays = new List<double> { minTof };
             mgaConfig.MaxToFDays = new List<double> { Math.Max(minTof * 1.5, tofDays * 1.35) };
 
-            UnityEngine.Debug.Log($"[KSPGMAT-MGA] 寻优搜索空间: 发射窗口=[{mgaConfig.EarliestDepartureUT:F1}, {mgaConfig.LatestDepartureUT:F1}] ({mgaDepDateInput} ~ {mgaEndDateInput}), 飞行范围=[{mgaConfig.MinToFDays[0]:F1}, {mgaConfig.MaxToFDays[0]:F1}] 天");
+            KSPGMATLog.Info("UI", $"[MGA] 寻优搜索空间: 发射窗口=[{mgaConfig.EarliestDepartureUT:F1}, {mgaConfig.LatestDepartureUT:F1}] ({mgaDepDateInput} ~ {mgaEndDateInput}), 飞行范围=[{mgaConfig.MinToFDays[0]:F1}, {mgaConfig.MaxToFDays[0]:F1}] 天");
 
             StartMgaOptimization();
             ScreenMessages.PostScreenMessage(I18n.Format("mga_solve_window", mgaConfig.DepartureBody, target, GMATClient.FormatUtcGregorian(optUT)), 4.5f, ScreenMessageStyle.UPPER_CENTER);
@@ -384,6 +385,7 @@ namespace KSPGMAT.UI {
                 string savedPath = MGAMissionRepository.SaveMission(script);
                 ScreenMessages.PostScreenMessage($"[统一任务配置] 已导出至: {Path.GetFileName(savedPath)}", 4.5f, ScreenMessageStyle.UPPER_CENTER);
             } catch (Exception ex) {
+                KSPGMATLog.Error("UI", "导出配置失败", ex);
                 ScreenMessages.PostScreenMessage($"[导出配置失败] {ex.Message}", 4.5f, ScreenMessageStyle.UPPER_CENTER);
             }
         }
@@ -398,22 +400,23 @@ namespace KSPGMAT.UI {
                     ScreenMessages.PostScreenMessage($"[统一任务配置] 已载入并启动全局优化: {latest.mission_name}", 4.5f, ScreenMessageStyle.UPPER_CENTER);
                 }
             } catch (Exception ex) {
+                KSPGMATLog.Error("UI", "导入配置失败", ex);
                 ScreenMessages.PostScreenMessage($"[导入配置失败] {ex.Message}", 4.5f, ScreenMessageStyle.UPPER_CENTER);
             }
         }
 
         private void RunNativeDiagnostics() {
             try {
-                Debug.Log("==========================================================================");
-                Debug.Log("[KSPGMAT-MGA-DEBUG] 启动 MGA 原生底层动力学引擎与星历自检...");
-                Debug.Log($"[KSPGMAT-MGA-DEBUG] 星历中枢状态: {EphemerisTimeSystem.GetCurrentEphemerisSourceDescription()}");
-                Debug.Log($"[KSPGMAT-MGA-DEBUG] 时间基准: KSP_EPOCH_JD={EphemerisTimeSystem.KSP_EPOCH_JD:F1}, J2000_JD={EphemerisTimeSystem.J2000_JD:F1}, J2000_UT={EphemerisTimeSystem.J2000_UT:F1}s");
+                KSPGMATLog.Info("UI", "==========================================================================");
+                KSPGMATLog.Info("UI", "[MGA-DEBUG] 启动 MGA 原生底层动力学引擎与星历自检...");
+                KSPGMATLog.Info("UI", $"[MGA-DEBUG] 星历中枢状态: {EphemerisTimeSystem.GetCurrentEphemerisSourceDescription()}");
+                KSPGMATLog.Info("UI", $"[MGA-DEBUG] 时间基准: KSP_EPOCH_JD={EphemerisTimeSystem.KSP_EPOCH_JD:F1}, J2000_JD={EphemerisTimeSystem.J2000_JD:F1}, J2000_UT={EphemerisTimeSystem.J2000_UT:F1}s");
                 if (GMATClient.HasFullSpiceEphemeris) {
-                    Debug.Log($"[KSPGMAT-MGA-DEBUG] NASA GMAT DE440/DE430 内核: {GMATClient.DetectedSpiceKernelName} ({GMATClient.DetectedSpiceKernelPath})");
+                    KSPGMATLog.Info("UI", $"[MGA-DEBUG] NASA GMAT DE440/DE430 内核: {GMATClient.DetectedSpiceKernelName} ({GMATClient.DetectedSpiceKernelPath})");
                 }
-                Debug.Log($"[KSPGMAT-MGA-DEBUG] PykepNative 可用状态: {PykepNative.IsAvailable} | 版本: {PykepNative.Version}");
-                Debug.Log($"[KSPGMAT-MGA-DEBUG] PyKEP SPICE 导入状态: {(PykepNative.HasSpiceLoaded ? $"已加载 ({System.IO.Path.GetFileName(PykepNative.LoadedSpicePath)})" : "未加载 (使用开普勒平根数)")}");
-                Debug.Log($"[KSPGMAT-MGA-DEBUG] 太阳常数 SunMu: {SolarSystemCatalog.SunMu:E6} km^3/s^2");
+                KSPGMATLog.Info("UI", $"[MGA-DEBUG] PykepNative 可用状态: {PykepNative.IsAvailable} | 版本: {PykepNative.Version}");
+                KSPGMATLog.Info("UI", $"[MGA-DEBUG] PyKEP SPICE 导入状态: {(PykepNative.HasSpiceLoaded ? $"已加载 ({System.IO.Path.GetFileName(PykepNative.LoadedSpicePath)})" : "未加载 (使用开普勒平根数)")}");
+                KSPGMATLog.Info("UI", $"[MGA-DEBUG] 太阳常数 SunMu: {SolarSystemCatalog.SunMu:E6} km^3/s^2");
 
                 // 1. 检验全行星星历 (核验 SMA 与 Mu，绝不允许被退化为地球 1 AU)
                 string[] testPlanets = new[] { "Mercury", "Venus", "Earth", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune", "Pluto" };
@@ -422,7 +425,7 @@ namespace KSPGMAT.UI {
                     var p = SolarSystemCatalog.GetPlanet(pName);
                     p.GetHeliocentricState(testUT, out Vector3d pos, out Vector3d vel);
                     string spiceTag = PykepNative.HasSpiceLoaded ? "[SPICE DE440]" : "[Keplerian]";
-                    Debug.Log($"[KSPGMAT-MGA-DEBUG] 行星: {p.Name,-8} {spiceTag} | SMA: {p.SMA:F1} km ({p.SMA / 1.496e8:F2} AU) | Mu: {p.Mu:F1} | 历元位置: ({pos.x / 1.496e8:F3}, {pos.y / 1.496e8:F3}, {pos.z / 1.496e8:F3}) AU | 速度: {vel.magnitude:F2} km/s");
+                    KSPGMATLog.Info("UI", $"[MGA-DEBUG] 行星: {p.Name,-8} {spiceTag} | SMA: {p.SMA:F1} km ({p.SMA / MGADefaults.AU_KM:F2} AU) | Mu: {p.Mu:F1} | 历元位置: ({pos.x / MGADefaults.AU_KM:F3}, {pos.y / MGADefaults.AU_KM:F3}, {pos.z / MGADefaults.AU_KM:F3}) AU | 速度: {vel.magnitude:F2} km/s");
 
                     // 如果已加载 SPICE，额外对比开普勒平根数与 SPICE 真值的位置偏差
                     if (PykepNative.HasSpiceLoaded && PykepNative.ElementsToState(
@@ -430,7 +433,7 @@ namespace KSPGMAT.UI {
                             p.MA0 * Mathf.Deg2Rad, p.EpochJ2000, testUT, SolarSystemCatalog.SunMu,
                             out Vector3d posKep, out Vector3d _)) {
                         double deltaKm = (pos - posKep).magnitude;
-                        Debug.Log($"[KSPGMAT-MGA-DEBUG]    └─ 摄动修正: SPICE 真值 vs 开普勒二体平根数 差异 = {deltaKm:F1} km ({deltaKm / 1000.0:F2} Mm)");
+                        KSPGMATLog.Info("UI", $"[MGA-DEBUG]    └─ 摄动修正: SPICE 真值 vs 开普勒二体平根数 差异 = {deltaKm:F1} km ({deltaKm / 1000.0:F2} Mm)");
                     }
                 }
 
@@ -439,24 +442,24 @@ namespace KSPGMAT.UI {
                 if (cassini != null) {
                     var res = MGABenchmarkSuite.RunBenchmark(cassini);
                     if (res != null && res.Solution != null) {
-                        Debug.Log($"[KSPGMAT-MGA-DEBUG] Cassini 求解结果: 总 ΔV = {res.Solution.TotalDeltaVKms * 1000.0:F1} m/s | 航段数 = {res.Solution.Legs.Count} | 全部可行 = {res.Solution.AllLegsFeasible}");
+                        KSPGMATLog.Info("UI", $"[MGA-DEBUG] Cassini 求解结果: 总 ΔV = {res.Solution.TotalDeltaVKms * 1000.0:F1} m/s | 航段数 = {res.Solution.Legs.Count} | 全部可行 = {res.Solution.AllLegsFeasible}");
                         for (int i = 0; i < res.Solution.Legs.Count; i++) {
                             var l = res.Solution.Legs[i];
-                            Debug.Log($"[KSPGMAT-MGA-DEBUG]    第 {i+1} 段: {l.FromBody} -> {l.ToBody} | ToF = {l.ToFDays:F1}d | Flyby ΔV = {l.FlybyDeltaVKms * 1000.0:F1} m/s | rp = {l.FlybyPeriapsisRadiusKm:F1} km");
+                            KSPGMATLog.Info("UI", $"[MGA-DEBUG]    第 {i+1} 段: {l.FromBody} -> {l.ToBody} | ToF = {l.ToFDays:F1}d | Flyby ΔV = {l.FlybyDeltaVKms * 1000.0:F1} m/s | rp = {l.FlybyPeriapsisRadiusKm:F1} km");
                         }
                     }
                 }
 
-                Debug.Log("==========================================================================");
+                KSPGMATLog.Info("UI", "==========================================================================");
                 ScreenMessages.PostScreenMessage("[原生底层动力学自检] 成功执行！星历常数与求解数据已详细输出至 KSP.log", 5.0f, ScreenMessageStyle.UPPER_CENTER);
             } catch (Exception ex) {
-                Debug.LogError($"[KSPGMAT-MGA-DEBUG] 自检异常: {ex}");
+                KSPGMATLog.Error("UI", "[MGA-DEBUG] 自检异常", ex);
                 ScreenMessages.PostScreenMessage($"[原生动力学自检失败] {ex.Message}", 5.0f, ScreenMessageStyle.UPPER_CENTER);
             }
         }
 
-        private bool showMgaReportModal = false;
-        private Vector2 mgaReportScrollPos = Vector2.zero;
+        private bool showMgaReportModal { get => MGAStateManager.Current.UI.ShowReportModal; set => MGAStateManager.Current.UI.ShowReportModal = value; }
+        private Vector2 mgaReportScrollPos { get => MGAStateManager.Current.UI.ReportScrollPos; set => MGAStateManager.Current.UI.ReportScrollPos = value; }
 
         private string GenerateDetailedMgaReport(MGASolution sol) {
             if (sol == null || sol.Legs == null || sol.Legs.Count == 0) return I18n.T("mga_report_no_solution");
@@ -528,8 +531,8 @@ namespace KSPGMAT.UI {
                 sb.AppendLine(I18n.Format("mga_report_leg", k + 1, leg.FromBody, leg.ToBody, leg.ToFDays));
                 sb.AppendLine(I18n.Format("mga_report_ev_epoch", GMATClient.FormatUtcGregorian(leg.DepartureUT), leg.DepartureUT));
                 sb.AppendLine(I18n.Format("mga_report_ev_epoch_arrival", GMATClient.FormatUtcGregorian(leg.ArrivalUT), leg.ArrivalUT));
-                sb.AppendLine(I18n.Format("mga_report_leg_r1", leg.DeparturePosKm.x, leg.DeparturePosKm.y, leg.DeparturePosKm.z, leg.DeparturePosKm.magnitude / 1.496e8));
-                sb.AppendLine(I18n.Format("mga_report_leg_r2", leg.ArrivalPosKm.x, leg.ArrivalPosKm.y, leg.ArrivalPosKm.z, leg.ArrivalPosKm.magnitude / 1.496e8));
+                sb.AppendLine(I18n.Format("mga_report_leg_r1", leg.DeparturePosKm.x, leg.DeparturePosKm.y, leg.DeparturePosKm.z, leg.DeparturePosKm.magnitude / MGADefaults.AU_KM));
+                sb.AppendLine(I18n.Format("mga_report_leg_r2", leg.ArrivalPosKm.x, leg.ArrivalPosKm.y, leg.ArrivalPosKm.z, leg.ArrivalPosKm.magnitude / MGADefaults.AU_KM));
                 sb.AppendLine(I18n.Format("mga_report_leg_v1", leg.DepartureVelKms.x, leg.DepartureVelKms.y, leg.DepartureVelKms.z, leg.DepartureVelKms.magnitude));
                 sb.AppendLine(I18n.Format("mga_report_leg_v2", leg.ArrivalVelKms.x, leg.ArrivalVelKms.y, leg.ArrivalVelKms.z, leg.ArrivalVelKms.magnitude));
             }
@@ -730,7 +733,7 @@ namespace KSPGMAT.UI {
         private int lastCanvasH { get => MGAStateManager.Current.Viewport.LastCanvasH; set => MGAStateManager.Current.Viewport.LastCanvasH = value; }
         private float mgaPitch { get => MGAStateManager.Current.Viewport.Pitch; set => MGAStateManager.Current.Viewport.Pitch = value; }
         private float mgaYaw { get => MGAStateManager.Current.Viewport.Yaw; set => MGAStateManager.Current.Viewport.Yaw = value; }
-        private bool isRotatingCanvas = false;
+        private bool isRotatingCanvas { get => MGAStateManager.Current.Viewport.IsRotatingCanvas; set => MGAStateManager.Current.Viewport.IsRotatingCanvas = value; }
         private bool mgaAutoFocusEnabled { get => MGAStateManager.Current.Viewport.AutoFocus; set => MGAStateManager.Current.Viewport.AutoFocus = value; }
 
         private void FocusOnSelectedManeuver(bool autoCenter = true) {
@@ -741,7 +744,7 @@ namespace KSPGMAT.UI {
                 var curEv = selectedMgaSolution.Events[selectedManeuverIndex];
                 Vector3d tgtPos = GMATOrbitCanvas.GetEventPositionKm(selectedMgaSolution, curEv);
                 if (!double.IsNaN(tgtPos.x)) {
-                    double missionMaxDistKm = 2.2 * 1.496e8;
+                    double missionMaxDistKm = 2.2 * MGADefaults.AU_KM;
                     foreach (var leg in selectedMgaSolution.Legs) {
                         double r1 = leg.DeparturePosKm.magnitude;
                         double r2 = leg.ArrivalPosKm.magnitude;
@@ -1700,6 +1703,7 @@ namespace KSPGMAT.UI {
                         File.WriteAllText(fullPath, scriptText);
                         ScreenMessages.PostScreenMessage(I18n.Format("mga_script_saved", fileName), 4.5f, ScreenMessageStyle.UPPER_CENTER);
                     } catch (Exception ex) {
+                        KSPGMATLog.Error("UI", "导出 MGA 脚本异常", ex);
                         ScreenMessages.PostScreenMessage(I18n.Format("mga_script_export_fail", ex.Message), 3.5f, ScreenMessageStyle.UPPER_CENTER);
                     }
                 }
@@ -1723,6 +1727,7 @@ namespace KSPGMAT.UI {
                         File.WriteAllText(fullPath, report);
                         ScreenMessages.PostScreenMessage(I18n.Format("mga_report_saved", fileName), 4.0f, ScreenMessageStyle.UPPER_CENTER);
                     } catch (Exception ex) {
+                        KSPGMATLog.Error("UI", "保存 MGA 报告异常", ex);
                         ScreenMessages.PostScreenMessage(I18n.Format("mga_report_save_fail", ex.Message), 3.5f, ScreenMessageStyle.UPPER_CENTER);
                     }
                 }
@@ -1840,7 +1845,7 @@ namespace KSPGMAT.UI {
             mgaStatusText = I18n.T("mga_status_start");
             mgaCts = new CancellationTokenSource();
 
-            UnityEngine.Debug.Log($"[KSPGMAT-MGA] >>> 启动 MGA 优化寻优: {mgaConfig.DepartureBody} -> {mgaConfig.DestinationBody}, 序列=[{string.Join(" -> ", mgaConfig.FlybySequence ?? new List<string>())}], 模式={mgaWorkflowMode}, 引擎={mgaConfig.EngineMode}, 约束窗口=[{GMATClient.FormatUtcGregorian(mgaConfig.EarliestDepartureUT)} ~ {GMATClient.FormatUtcGregorian(mgaConfig.LatestDepartureUT)}]");
+            KSPGMATLog.Info("UI", $"[MGA] >>> 启动 MGA 优化寻优: {mgaConfig.DepartureBody} -> {mgaConfig.DestinationBody}, 序列=[{string.Join(" -> ", mgaConfig.FlybySequence ?? new List<string>())}], 模式={mgaWorkflowMode}, 引擎={mgaConfig.EngineMode}, 约束窗口=[{GMATClient.FormatUtcGregorian(mgaConfig.EarliestDepartureUT)} ~ {GMATClient.FormatUtcGregorian(mgaConfig.LatestDepartureUT)}]");
 
             try {
                 var res = await MGAAdaptiveSolver.OptimizeAsync(mgaConfig, (p, msg) => {
@@ -1864,15 +1869,15 @@ namespace KSPGMAT.UI {
                     selectedManeuverIndex = 0;
                     MGAStateManager.Current.NotifySolutionChanged(selectedMgaSolution);
                     mgaStatusText = I18n.Format("mga_status_done", mgaSolutions.Count);
-                    UnityEngine.Debug.Log($"[KSPGMAT-MGA] <<< 寻优计算完成: 获得 {mgaSolutions.Count} 个收敛解, 最优解总ΔV={selectedMgaSolution.TotalDeltaVKms * 1000.0:F1} m/s, 飞行={selectedMgaSolution.TotalFlightDays:F1}天, 出发={GMATClient.FormatUtcGregorian(selectedMgaSolution.DepartureUT)}, 到达={GMATClient.FormatUtcGregorian(selectedMgaSolution.ArrivalUT)}");
+                    KSPGMATLog.Info("UI", $"[MGA] <<< 寻优计算完成: 获得 {mgaSolutions.Count} 个收敛解, 最优解总ΔV={selectedMgaSolution.TotalDeltaVKms * 1000.0:F1} m/s, 飞行={selectedMgaSolution.TotalFlightDays:F1}天, 出发={GMATClient.FormatUtcGregorian(selectedMgaSolution.DepartureUT)}, 到达={GMATClient.FormatUtcGregorian(selectedMgaSolution.ArrivalUT)}");
                     RefreshMgaCanvas();
                     ScreenMessages.PostScreenMessage(I18n.Format("mga_solve_done", selectedMgaSolution.TotalDeltaVKms * 1000.0), 4.0f, ScreenMessageStyle.UPPER_CENTER);
                 } else {
-                    UnityEngine.Debug.LogWarning($"[KSPGMAT-MGA] <<< 寻优计算完成: 未找到可行收敛解");
+                    KSPGMATLog.Warn("UI", "[MGA] <<< 寻优计算完成: 未找到可行收敛解");
                     mgaStatusText = I18n.T("mga_status_no_sol");
                 }
             } catch (Exception ex) {
-                UnityEngine.Debug.LogError($"[KSPGMAT-MGA] <<< 寻优异常: {ex}");
+                KSPGMATLog.Error("UI", "[MGA] <<< 寻优异常", ex);
                 mgaStatusText = I18n.Format("mga_status_exception", ex.Message);
             } finally {
                 isMgaOptimizing = false;
@@ -1921,7 +1926,7 @@ namespace KSPGMAT.UI {
                     mgaStatusText = I18n.T("mga_status_no_sol");
                 }
             } catch (Exception ex) {
-                UnityEngine.Debug.LogError($"[KSPGMAT-MGA] <<< 多序列寻优异常: {ex}");
+                KSPGMATLog.Error("UI", "[MGA] <<< 多序列寻优异常", ex);
                 mgaStatusText = I18n.Format("mga_status_exception", ex.Message);
             } finally {
                 isMgaOptimizing = false;
@@ -2194,7 +2199,7 @@ namespace KSPGMAT.UI {
                     160, 120,
                     (p, msg) => { porkchopStatusText = msg; });
             } catch (Exception ex) {
-                KSPGMATLog.Error($"[Porkchop] Error computing porkchop: {ex.Message}");
+                KSPGMATLog.Error("UI", "[Porkchop] Error computing porkchop", ex);
             } finally {
                 isComputingPorkchop = false;
             }
@@ -2248,7 +2253,7 @@ namespace KSPGMAT.UI {
                     ScreenMessages.PostScreenMessage(I18n.T("mga_upload_warn"), 3.5f, ScreenMessageStyle.UPPER_CENTER);
                 }
             } catch (Exception ex) {
-                KSPGMATLog.Error($"[TabMGA] Principia upload exception: {ex.Message}");
+                KSPGMATLog.Error("UI", "[TabMGA] Principia upload exception", ex);
             }
         }
 
@@ -2259,7 +2264,7 @@ namespace KSPGMAT.UI {
                 benchmarkSummaryText = summary;
                 selectedBenchmarkIndex = 0;
             } catch (Exception ex) {
-                KSPGMATLog.Error($"[Benchmark] RunAllBenchmarks exception: {ex.Message}");
+                KSPGMATLog.Error("UI", "[Benchmark] RunAllBenchmarks exception", ex);
             }
         }
 

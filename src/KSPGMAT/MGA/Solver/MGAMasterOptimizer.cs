@@ -393,6 +393,8 @@ namespace KSPGMAT.MGA.Solver {
         public List<List<string>> EvaluatedTopologies { get; set; } = new List<List<string>>();
         public double ComputeTimeSec { get; set; } = 0.0;
         public string DiagnosticReportPath { get; set; } = "";
+        public MGAConstraintProfile ConstraintProfile { get; set; }
+        public MGAConstraintAuditReport ConstraintReport { get; set; }
     }
 
     /// <summary>
@@ -422,13 +424,18 @@ namespace KSPGMAT.MGA.Solver {
                 return res;
             }
 
-            // 转译底层求解器配置
+            // 1. 通过统一约束管理器构建任务约束画像 (SSOT)
+            var constraintProfile = MGAConstraintManager.CreateProfile(hp, departureBody, arrivalBody);
+            res.ConstraintProfile = constraintProfile;
+
+            // 2. 转译底层求解器配置并注入全量约束
             var solverConfig = MGAConfigurationTranslator.TranslateToAdaptiveSolverConfig(
                 departureBody, arrivalBody, waypointIntentions, searchStartUT, searchEndUT, hp);
+            MGAConstraintManager.ApplyToSolverConfig(constraintProfile, solverConfig);
 
-            onProgress?.Invoke(0.05f, "已完成高价值参数校验与转译，进入拓扑推演与多岛连续优化...");
+            onProgress?.Invoke(0.05f, "已完成高价值参数校验与统一约束模型分发，进入拓扑推演与多岛连续优化...");
 
-            // 调度底层 MGAAdaptiveSolver 进行自适应推导与多岛进化
+            // 3. 调度底层 MGAAdaptiveSolver 进行自适应推导与多岛进化
             var solutions = MGAAdaptiveSolver.Solve(solverConfig, cancellationToken, onProgress);
 
             sw.Stop();
@@ -436,16 +443,15 @@ namespace KSPGMAT.MGA.Solver {
 
             if (solutions != null && solutions.Count > 0) {
                 var best = solutions[0];
-                double bestDv = best.TotalDeltaVKms * 1000.0;
-                bool budgetOk = hp.MaxVesselDeltaVMs > 0 ? (bestDv <= hp.MaxVesselDeltaVMs) : true;
-                res.Success = budgetOk;
                 res.BestSolution = best;
                 res.AllSolutions = solutions;
-                if (budgetOk) {
-                    res.Message = $"优化成功收敛！最优总机动 ΔV: {bestDv:F1} m/s (严格满足预算 <= {hp.MaxVesselDeltaVMs:F0} m/s), 历时: {best.TotalFlightDays:F1} 天";
-                } else {
-                    res.Message = $"强约束未满足: 当前收敛解总机动 ΔV: {bestDv:F1} m/s 超出强限制上限 ({hp.MaxVesselDeltaVMs:F0} m/s)";
-                }
+
+                // 4. 委托 MGAConstraintManager 开展集中式全景物理与工程合规审计
+                var auditReport = MGAConstraintManager.AuditSolution(best, constraintProfile);
+                res.ConstraintReport = auditReport;
+                res.Success = auditReport.IsFullyFeasible;
+                res.Message = auditReport.SummaryText;
+
                 if (best.Legs != null && best.Legs.Count > 0) {
                     res.BestTopology = new List<string> { best.Legs[0].FromBody };
                     foreach (var l in best.Legs) res.BestTopology.Add(l.ToBody);

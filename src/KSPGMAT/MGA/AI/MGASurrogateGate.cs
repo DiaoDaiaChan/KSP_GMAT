@@ -216,7 +216,7 @@ namespace KSPGMAT.MGA.AI
             {
                 AutoDisabled = true;
                 Enabled = false;
-                KSPGMATLog.Warn(
+                KSPGMATLog.Warn("AI",
                     $"[MGASurrogateGate] 实测假阴性率 {fn:P1} 超过硬门禁 {TargetFalseNegativeRate * HardAbortMultiple:P0}, " +
                     $"已彻底关闭代理前置粗筛 (对照样本 {ControlEvaluated}, 误杀 {ControlFalseNegatives})。");
                 return;

@@ -226,10 +226,21 @@ namespace KSPGMAT.MGA
 
             double r1 = pDep.SMA;
             double r2 = pFirst.SMA;
-            double aTrans = (r1 + r2) * 0.5;
             double v1 = Math.Sqrt(muCentral / r1);
-            double vTrans1 = Math.Sqrt(muCentral * (2.0 / r1 - 1.0 / aTrans));
-            double vInf = Math.Abs(vTrans1 - v1);
+            double vInf;
+            if (pFirst.Name.Equals(pDep.Name, StringComparison.OrdinalIgnoreCase))
+            {
+                // 出发星自共振蓄能 (2:1 共振轨道 a_res = r1 * 2^(2/3))
+                double aRes = r1 * Math.Pow(2.0, 2.0 / 3.0);
+                double vRes = Math.Sqrt(Math.Max(0.0, muCentral * (2.0 / r1 - 1.0 / aRes)));
+                vInf = Math.Abs(vRes - v1);
+            }
+            else
+            {
+                double aTrans = (r1 + r2) * 0.5;
+                double vTrans1 = Math.Sqrt(muCentral * (2.0 / r1 - 1.0 / aTrans));
+                vInf = Math.Abs(vTrans1 - v1);
+            }
 
             double rSafe = pDep.SafeRadiusKm > 0 ? pDep.SafeRadiusKm : (pDep.RadiusKm > 0 ? pDep.RadiusKm + 200.0 : 6571.0);
             double vEsc = Math.Sqrt(2.0 * pDep.Mu / rSafe);
@@ -478,6 +489,15 @@ namespace KSPGMAT.MGA
                     for (int i = 1; i < forwardBodies.Count; i++) withRes.Add(forwardBodies[i].Name);
                     list.Add(withRes);
 
+                    // 出发星自共振蓄能/调相梯级 (ΔV-EGA, 如 Juno 模式 Dep -> Dep -> Outward, 或 MESSENGER 模式 Dep -> Dep -> Inward):
+                    bool hasDepAssist = MGAPhysicalScales.IsSignificantAssist(pDep, 5.0, SolarSystemCatalog.GetCentralMu(centralBody));
+                    if (hasDepAssist)
+                    {
+                        var depResList = new List<string> { pDep.Name };
+                        depResList.AddRange(forwardBodies.Select(b => b.Name));
+                        if (!list.Any(x => x.SequenceEqual(depResList))) list.Add(depResList);
+                    }
+
                     // 深度势阱目标 (如 Earth -> Mercury / Moho):
                     // 解析推导到达天体所需无动力双曲偏折次数 N_req, 并派生目标天体多次同星减速共振链
                     if (pArr.SMA < pDep.SMA * 0.55)
@@ -488,16 +508,34 @@ namespace KSPGMAT.MGA
 
                         for (int r = 1; r <= maxArrRes; r++)
                         {
-                            // 1) 单/双中继 + r 次到达星共振 (如 Venus -> Mercury*r 或 Venus -> Venus -> Mercury*r)
+                            // 1) 单中继 + r 次到达星共振 (如 Venus -> Mercury*r)
                             var chainWithArr = forwardBodies.Select(b => b.Name).ToList();
                             for (int k = 0; k < r; k++) chainWithArr.Add(pArr.Name);
                             if (!list.Any(x => x.SequenceEqual(chainWithArr))) list.Add(chainWithArr);
 
+                            // 2) 双中继 + r 次到达星共振 (如 Venus -> Venus -> Mercury*r)
                             var chainDualWithArr = new List<string>(withRes);
                             for (int k = 0; k < r; k++) chainDualWithArr.Add(pArr.Name);
                             if (!list.Any(x => x.SequenceEqual(chainDualWithArr))) list.Add(chainDualWithArr);
+
+                            // 3) 出发星自共振 + 双中继 + r 次到达星共振 (如 Earth -> Venus -> Venus -> Mercury*r, 完整重现 MESSENGER)
+                            if (hasDepAssist)
+                            {
+                                var chainDepDualArr = new List<string> { pDep.Name };
+                                chainDepDualArr.AddRange(withRes);
+                                for (int k = 0; k < r; k++) chainDepDualArr.Add(pArr.Name);
+                                if (!list.Any(x => x.SequenceEqual(chainDepDualArr))) list.Add(chainDepDualArr);
+                            }
                         }
                     }
+                }
+
+                // 纯出发星自共振蓄能直达目标星梯级 (ΔV-EGA, 如 Juno: Earth -> Earth -> Jupiter):
+                // 仅当出发星具备显著借力效能且为外向转移时，无论中间是否存在中继行星，纯出发星 2:1 共振均可大幅削减出发逃逸能量赤字
+                if (isOutwardTransfer && MGAPhysicalScales.IsSignificantAssist(pDep, 5.0, SolarSystemCatalog.GetCentralMu(centralBody)))
+                {
+                    var pureDepRes = new List<string> { pDep.Name };
+                    if (!list.Any(x => x.SequenceEqual(pureDepRes))) list.Add(pureDepRes);
                 }
             }
 

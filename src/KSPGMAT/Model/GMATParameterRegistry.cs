@@ -332,7 +332,7 @@ namespace KSPGMAT {
                 string fullJson = "[" + "\n" + string.Join("," + "\n", jsonItems.ToArray()) + "\n" + "]";
                 File.WriteAllText(path, fullJson, System.Text.Encoding.UTF8);
             } catch (Exception ex) {
-                Debug.LogWarning("[KSPGMAT] Failed to save user coordinate systems: " + ex.Message);
+                KSPGMATLog.Error("ParameterRegistry", "Failed to save user coordinate systems", ex);
             }
         }
 
@@ -363,9 +363,9 @@ namespace KSPGMAT {
                     } catch {}
                     cur = closeBrace + 1;
                 }
-                Debug.Log($"[KSPGMAT] Loaded {UserCoordinateSystems.Count} custom user coordinate systems.");
+                KSPGMATLog.Info("ParameterRegistry", $"Loaded {UserCoordinateSystems.Count} custom user coordinate systems.");
             } catch (Exception ex) {
-                Debug.LogWarning("[KSPGMAT] Failed to load user coordinate systems: " + ex.Message);
+                KSPGMATLog.Error("ParameterRegistry", "Failed to load user coordinate systems", ex);
             }
         }
 
@@ -421,11 +421,11 @@ namespace KSPGMAT {
                     try {
                         string json = File.ReadAllText(path);
                         LoadFromJson(json);
-                        Debug.Log($"[KSPGMAT] Successfully loaded {AllParameters.Count} parameters and {AllPropStopDefs.Count} stop conditions from {path}");
+                        KSPGMATLog.Info("ParameterRegistry", $"Successfully loaded {AllParameters.Count} parameters and {AllPropStopDefs.Count} stop conditions from {path}");
                         LoadUserCoordinateSystems();
                         return;
                     } catch (Exception ex) {
-                        Debug.LogWarning($"[KSPGMAT] Failed to parse {path}: {ex.Message}");
+                        KSPGMATLog.Error("ParameterRegistry", $"Failed to parse {path}", ex);
                     }
                 }
             }
@@ -538,7 +538,7 @@ namespace KSPGMAT {
 
                 IsLoaded = true;
             } catch (Exception ex) {
-                Debug.LogWarning("[KSPGMAT] Error loading capabilities JSON: " + ex.Message);
+                KSPGMATLog.Error("ParameterRegistry", "Error loading capabilities JSON", ex);
             }
         }
 
@@ -579,7 +579,7 @@ namespace KSPGMAT {
                     pos = objEnd + 1;
                 }
             } catch (Exception ex) {
-                Debug.LogWarning("[KSPGMAT] ParseItemsFromJsonBlock error: " + ex.Message);
+                KSPGMATLog.Error("ParameterRegistry", "ParseItemsFromJsonBlock error", ex);
             }
             return list;
         }

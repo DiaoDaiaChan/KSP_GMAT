@@ -50,11 +50,11 @@ namespace KSPGMAT.MGA
         /// <summary>
         /// 深度不可行门禁。在规范化无量纲损失场 J(x) = f_hat + penalties 中，
         /// f_hat <= 1.0 表示满足参考预算，SelectionLossCeiling = 4.0 允许探索次优轨道。
-        /// 当 J(x) >= 10.0 (基准预算的 10 倍，即 SelectionLossCeiling * 2.5) 时，
-        /// 说明该解存在严重的物理不可行约束违规惩罚（如 Lambert 无解或极大超界），
-        /// 是"应当熔断该拓扑"的数学标志。避免将早期单纯高能探索解误判为深层不可行。
+        /// 当 J(x) >= 100.0 (基准预算的 100 倍，即远超正常物理容限) 时，
+        /// 说明该解存在严重的物理不可行约束违规惩罚（如 Lambert 无解 1e12 或极大势垒违背），
+        /// 是"应当熔断该拓扑"的数学标志。避免将早期单纯高能探索解或锁相倾角微差个体误判为深层不可行。
         /// </summary>
-        public const double DeepInfeasibilityLoss = 10.0;
+        public const double DeepInfeasibilityLoss = 100.0;
 
         /// <summary>选解阶段可接受的最差损失 (仍允许 4 倍基准预算的候选进入最终审计)。</summary>
         public const double SelectionLossCeiling = 4.0;
@@ -229,7 +229,7 @@ namespace KSPGMAT.MGA
                 }
 
                 // =============================================================
-                // 约束 9: 航时上限 (归一化尺度 = 航时上限本身)
+                // 约束 9: 航时上限与弹性连续双曲软界阻尼 (Phase 2 航时敏感性弹性塑形)
                 // =============================================================
                 double maxTofDays = ResolveMaxTofDays(config, sol);
                 if (maxTofDays > 0)
@@ -239,6 +239,14 @@ namespace KSPGMAT.MGA
                         MGAPhysicalScales.NormalizedViolation(overDays, maxTofDays));
                     // 航时决胜正则 (无量纲)
                     loss += DurationTieBreakerWeight * (sol.TotalFlightDays / maxTofDays);
+                }
+
+                // 连续软界航时阻尼: 凡超出标称物理航时 1.20 倍者，施加弹性惩罚，彻底消除 Pareto 前沿以极度拖延换取微小ΔV降低的伪最优解
+                double nomTofDays = ResolveNominalTofDays(config, sol);
+                if (nomTofDays > 0 && sol.TotalFlightDays > nomTofDays * 1.20)
+                {
+                    double excessFrac = (sol.TotalFlightDays - nomTofDays * 1.20) / nomTofDays;
+                    loss += (0.15 * excessFrac + 0.15 * excessFrac * excessFrac);
                 }
             }
 
@@ -327,27 +335,29 @@ namespace KSPGMAT.MGA
         /// <summary>
         /// 解算该解的航时上限 (天)。优先级: 显式 MaxDurationDays -> 各腿上限求和 -> 物理标称尺度。
         /// </summary>
-        private static double ResolveMaxTofDays(MGAConfig config, MGASolution sol)
+        /// <summary>
+        /// 基于各航段天体力学物理尺度 (霍曼转移/双曲巡航/共振周期) 动态解析汇聚全任务标称基准航时 (ToF_nominal)
+        /// 100% 依据 Vis-Viva 活力公式与开普勒周期律计算，零硬编码经验天数
+        /// </summary>
+        public static double ResolveNominalTofDays(MGAConfig config, MGASolution sol)
         {
-            if (config.EnableMaxDuration && config.MaxDurationDays > 0) return config.MaxDurationDays;
+            if (config != null && config.EnableMaxDuration && config.MaxDurationDays > 0) 
+                return config.MaxDurationDays;
+            return ResolveNominalTofDays(sol, config?.CentralBody ?? "Sun");
+        }
 
-            if (config.MaxToFDays != null && config.MaxToFDays.Count > 0)
-            {
-                double sum = 0.0;
-                foreach (var d in config.MaxToFDays) sum += d;
-                if (sum > 0) return sum;
-            }
-
+        public static double ResolveNominalTofDays(MGASolution sol, string centralBody = "Sun")
+        {
             if (sol == null || sol.Legs == null || sol.Legs.Count == 0) return 0.0;
 
-            // 未显式给定上限时, 由各航段的两体霍曼/共振特征尺度汇聚物理基准
-            string central = config.CentralBody ?? "Sun";
+            string central = !string.IsNullOrEmpty(centralBody) ? centralBody : "Sun";
             double muC = SolarSystemCatalog.GetCentralMu(central);
             if (muC <= 0) muC = SolarSystemCatalog.SunMu;
 
             double nominalDays = 0.0;
             foreach (var leg in sol.Legs)
             {
+                if (leg == null) continue;
                 var pF = SolarSystemCatalog.GetPlanet(leg.FromBody);
                 var pT = SolarSystemCatalog.GetPlanet(leg.ToBody);
                 double rF = (pF != null && pF.SMA > 0) ? pF.SMA : MGADefaults.AU_KM;
@@ -356,18 +366,46 @@ namespace KSPGMAT.MGA
                 if (!string.IsNullOrEmpty(leg.FromBody) &&
                     leg.FromBody.Equals(leg.ToBody, StringComparison.OrdinalIgnoreCase))
                 {
-                    // 同星共振段: 两个完整公转周期
-                    nominalDays += 2.0 * MGAPhysicalScales.BodyPeriodSec(pF, muC) / MGADefaults.SecondsPerDay;
+                    // 同星共振段: 标称 1~2 个公转周期
+                    nominalDays += 1.5 * MGAPhysicalScales.BodyPeriodSec(pF, muC) / MGADefaults.SecondsPerDay;
                 }
                 else
                 {
-                    nominalDays += MGAPhysicalScales.HohmannTofDays(muC, rF, rT) * 1.8;
+                    double tH = MGAPhysicalScales.HohmannTofDays(muC, rF, rT);
+                    double a1 = Math.Min(rF, rT);
+                    double a2 = Math.Max(rF, rT);
+                    double distKm = Math.Abs(rT - rF);
+                    double vFastCruise = Math.Sqrt(2.0 * muC / Math.Max(1.0, a1));
+                    double tFastDays = (distKm / Math.Max(1.0, vFastCruise)) / 86400.0;
+
+                    // 针对深空外太阳系飞掠 (tH > 2500d)，标称航时采用双曲逃逸与抛物线极速巡航基准，避免霍曼时间膨胀
+                    if (tH > 2500.0)
+                    {
+                        double tPara = (2.0 / (3.0 * Math.Sqrt(2.0 * muC))) * (Math.Pow(a2, 1.5) - Math.Pow(a1, 1.5)) / 86400.0;
+                        nominalDays += Math.Min(tH, Math.Max(tFastDays * 1.15, tPara * 0.55));
+                    }
+                    else
+                    {
+                        nominalDays += tH;
+                    }
                 }
             }
+            return Math.Max(10.0, nominalDays);
+        }
 
-            // 物理标称尺度的 2 倍作为松弛上限 (无量纲倍数, 非绝对天数)
-            double scaled = nominalDays * 2.0 / 1.8;
-            return Math.Max(1.0, scaled);
+        private static double ResolveMaxTofDays(MGAConfig config, MGASolution sol)
+        {
+            if (config != null && config.EnableMaxDuration && config.MaxDurationDays > 0) return config.MaxDurationDays;
+
+            if (config != null && config.MaxToFDays != null && config.MaxToFDays.Count > 0)
+            {
+                double sum = 0.0;
+                foreach (var d in config.MaxToFDays) sum += d;
+                if (sum > 0) return sum;
+            }
+
+            double nom = ResolveNominalTofDays(config, sol);
+            return Math.Max(10.0, nom * 2.0);
         }
 
         /// <summary>线程本地的无状态 ALM (用于 ComputeLoss 的兼容重载, 不参与跨代对偶上升)</summary>

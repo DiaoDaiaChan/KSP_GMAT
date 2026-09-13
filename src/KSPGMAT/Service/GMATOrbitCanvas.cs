@@ -4,6 +4,7 @@ using System.Linq;
 using UnityEngine;
 using KSPGMAT.Model;
 using KSPGMAT.MGA;
+using KSPGMAT;
 
 namespace KSPGMAT.Service {
     /// <summary>
@@ -400,9 +401,9 @@ namespace KSPGMAT.Service {
                     sb.AppendLine($"[KSPGMAT-Canvas]     {p.Name,-8} ({p.Icon}) [{role}]: 评估历元={evalUt:F1} ({GMATClient.FormatUtcGregorian(evalUt)}) | 日心=({pos.x:F0}, {pos.y:F0}, {pos.z:F0}) km ({distAU:F3} AU) | 屏幕像素=({scr.x:F0}, {scr.y:F0}){ghostInfo}");
                 }
                 sb.AppendLine("[KSPGMAT-Canvas] ===================================================================");
-                UnityEngine.Debug.Log(sb.ToString());
+                KSPGMATLog.Info("OrbitCanvas", sb.ToString());
             } catch (Exception ex) {
-                UnityEngine.Debug.LogWarning("[KSPGMAT-Canvas] LogCanvasDiagnostics error: " + ex.Message);
+                KSPGMATLog.Error("OrbitCanvas", "LogCanvasDiagnostics error", ex);
             }
         }
 

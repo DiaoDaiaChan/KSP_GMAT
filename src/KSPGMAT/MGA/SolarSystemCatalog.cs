@@ -108,11 +108,11 @@ namespace KSPGMAT.MGA
 
                     _dynamicRaOffsetDeg = meanDeg;
                     _hasDynamicallyCalibrated = true;
-                    KSPGMATLog.Info($"[SolarSystemCatalog] 动态星历坐标系自适应对齐标定成功: 样本数={validSamples}, 动态反推求解偏角={_dynamicRaOffsetDeg:F6}°");
+                    KSPGMATLog.Info("Ephemeris", $"[SolarSystemCatalog] 动态星历坐标系自适应对齐标定成功: 样本数={validSamples}, 动态反推求解偏角={_dynamicRaOffsetDeg:F6}°");
                     return true;
                 }
             } catch (Exception ex) {
-                KSPGMATLog.Warn("[SolarSystemCatalog] 动态标定失败: " + ex.Message);
+                KSPGMATLog.Error("Ephemeris", "[SolarSystemCatalog] 动态标定失败: " + ex.Message, ex);
             }
             return false;
         }
@@ -1066,10 +1066,10 @@ namespace KSPGMAT.MGA
                     res.SmaScheme2, res.EccScheme2, res.IncScheme2,
                     out res.PosDiffKm, out res.VelDiffMs,
                     out res.DaKm, out res.De, out res.DincDeg);
-                KSPGMATLog.Info($"[ComparePlanetSchemes] target={bodyName}, ut={ut:F1}s | frame={spiceFrame}");
-                KSPGMATLog.Info($"  Scheme1(SPICE): r=[{res.PosScheme1.x:F1}, {res.PosScheme1.y:F1}, {res.PosScheme1.z:F1}]km (|r|={res.PosScheme1.magnitude:F1}km), v=[{res.VelScheme1.x:F3}, {res.VelScheme1.y:F3}, {res.VelScheme1.z:F3}]km/s");
-                KSPGMATLog.Info($"  Scheme2(Game):  r=[{res.PosScheme2.x:F1}, {res.PosScheme2.y:F1}, {res.PosScheme2.z:F1}]km (|r|={res.PosScheme2.magnitude:F1}km), v=[{res.VelScheme2.x:F3}, {res.VelScheme2.y:F3}, {res.VelScheme2.z:F3}]km/s");
-                KSPGMATLog.Info($"  Diff: Δr={res.PosDiffKm:F1}km, Δv={res.VelDiffMs:F1}m/s | Δa={res.DaKm:F1}km, Δe={res.De:F5}, Δi={res.DincDeg:F3}°");
+                KSPGMATLog.Info("Ephemeris", $"[ComparePlanetSchemes] target={bodyName}, ut={ut:F1}s | frame={spiceFrame}");
+                KSPGMATLog.Info("Ephemeris", $"  Scheme1(SPICE): r=[{res.PosScheme1.x:F1}, {res.PosScheme1.y:F1}, {res.PosScheme1.z:F1}]km (|r|={res.PosScheme1.magnitude:F1}km), v=[{res.VelScheme1.x:F3}, {res.VelScheme1.y:F3}, {res.VelScheme1.z:F3}]km/s");
+                KSPGMATLog.Info("Ephemeris", $"  Scheme2(Game):  r=[{res.PosScheme2.x:F1}, {res.PosScheme2.y:F1}, {res.PosScheme2.z:F1}]km (|r|={res.PosScheme2.magnitude:F1}km), v=[{res.VelScheme2.x:F3}, {res.VelScheme2.y:F3}, {res.VelScheme2.z:F3}]km/s");
+                KSPGMATLog.Info("Ephemeris", $"  Diff: Δr={res.PosDiffKm:F1}km, Δv={res.VelDiffMs:F1}m/s | Δa={res.DaKm:F1}km, Δe={res.De:F5}, Δi={res.DincDeg:F3}°");
             }
 
             return res;

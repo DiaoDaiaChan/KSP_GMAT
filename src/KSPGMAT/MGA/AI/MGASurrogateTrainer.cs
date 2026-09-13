@@ -78,11 +78,11 @@ namespace KSPGMAT.MGA.AI
             }
 
             onProgress?.Invoke(1.0f, $"代理模型训练完成: {report}");
-            Console.WriteLine($"[MGASurrogateTrainer] {report}");
+            KSPGMATLog.Info("AI", $"[MGASurrogateTrainer] {report}");
             if (!report.Accepted)
             {
-                Console.WriteLine("[MGASurrogateTrainer] ⚠️ 模型未达采纳门禁 (AUC>=0.65, Acc>=0.60, R²>=0.50)，" +
-                                  "推理期将自动使用解析开普勒判据而非该网络。");
+                KSPGMATLog.Warn("AI", "[MGASurrogateTrainer] ⚠️ 模型未达采纳门禁 (AUC>=0.65, Acc>=0.60, R²>=0.50)，" +
+                                      "推理期将自动使用解析开普勒判据而非该网络。");
             }
             return report;
         }
@@ -257,7 +257,11 @@ namespace KSPGMAT.MGA.AI
                 }
                 return true;
             }
-            catch { return false; }
+            catch (Exception ex)
+            {
+                KSPGMATLog.Error("AI", $"[MGASurrogateTrainer] 导出样本失败: {path}", ex);
+                return false;
+            }
         }
     }
 }

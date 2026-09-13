@@ -169,16 +169,16 @@ namespace KSPGMAT.MGA.AI
                                         $"可行头={(Default.IsTrained ? "启用" : "未达门禁")}, dV头={(Default.DvHeadUsable ? "粗筛可用" : "不可用")})");
                         return true;
                     }
-                    KSPGMATLog.Warn($"[MGASurrogate] 权重文件存在但校验未通过, 已忽略: {p}");
+                    KSPGMATLog.Warn("AI", $"[MGASurrogate] 权重文件存在但校验未通过, 已忽略: {p}");
                 }
                 if (!anyFound)
                 {
-                    KSPGMATLog.Info("[MGASurrogate] 未找到训练权重文件, 代理推理使用解析开普勒判据 (安全退化)。");
+                    KSPGMATLog.Info("AI", "[MGASurrogate] 未找到训练权重文件, 代理推理使用解析开普勒判据 (安全退化)。");
                 }
             }
             catch (Exception ex)
             {
-                KSPGMATLog.Warn($"[MGASurrogate] 权重加载异常: {ex.Message}");
+                KSPGMATLog.Error("AI", $"[MGASurrogate] 权重加载异常: {ex.Message}", ex);
             }
             return false;
         }
@@ -757,7 +757,11 @@ namespace KSPGMAT.MGA.AI
                 File.WriteAllText(path, Serialize());
                 return true;
             }
-            catch { return false; }
+            catch (Exception ex)
+            {
+                KSPGMATLog.Error("AI", $"[MGASurrogate] 权重保存失败: {path}", ex);
+                return false;
+            }
         }
 
         /// <summary>从文件加载权重。成功且 trained=1 时 IsTrained 置位。</summary>
@@ -830,7 +834,12 @@ namespace KSPGMAT.MGA.AI
                 if (!shapeOk) IsTrained = false;
                 return IsTrained;
             }
-            catch { IsTrained = false; return false; }
+            catch (Exception ex)
+            {
+                KSPGMATLog.Error("AI", $"[MGASurrogate] 权重解析失败: {path}", ex);
+                IsTrained = false;
+                return false;
+            }
         }
 
         private static int RowLen(Dictionary<int, double[]> rows, int key)

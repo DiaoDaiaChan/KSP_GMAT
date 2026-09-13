@@ -12,25 +12,32 @@ namespace KSPGMAT {
             Instance = this;
             DontDestroyOnLoad(this);
 
+            KSPGMATLog.Init();
+            KSPGMATLog.Info("Bridge", "KSPGMAT plugin initializing...");
+
             if (gameObject.GetComponent<GMATMainWindow>() == null) {
                 gameObject.AddComponent<GMATMainWindow>();
             }
 
             if (!ROEngineInterop.IsRealismOverhaulInstalled()) {
-                UnityEngine.Debug.LogWarning("[KSPGMAT] WARNING: RealismOverhaul / RealFuels is required for realistic propellant density and engine models!");
+                KSPGMATLog.Warn("Bridge", "RealismOverhaul / RealFuels is required for realistic propellant density and engine models!");
             } else {
-                UnityEngine.Debug.Log("[KSPGMAT] RealismOverhaul & RealFuels detected. Propellant densities enabled.");
+                KSPGMATLog.Info("Bridge", "RealismOverhaul & RealFuels detected. Propellant densities enabled.");
             }
 
-            UnityEngine.Debug.Log("[KSPGMAT] Bridge initialized (CLI mode, no background server).");
+            KSPGMATLog.Info("Bridge", "Bridge initialized (CLI mode, no background server).");
             // Verify CLI availability
             GMATClient.CheckConnection((online, msg) => {
                 if (online) {
-                    UnityEngine.Debug.Log("[KSPGMAT] GMAT engine ready: " + msg);
+                    KSPGMATLog.Info("Bridge", "GMAT engine ready: " + msg);
                 } else {
-                    UnityEngine.Debug.LogWarning("[KSPGMAT] GMAT engine not available: " + msg);
+                    KSPGMATLog.Warn("Bridge", "GMAT engine not available: " + msg);
                 }
             });
+        }
+
+        void OnDestroy() {
+            KSPGMATLog.Flush();
         }
     }
 }

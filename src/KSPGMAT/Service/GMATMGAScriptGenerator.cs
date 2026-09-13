@@ -149,7 +149,7 @@ namespace KSPGMAT.Service {
                 sb.AppendLine("Burn_Insertion.CoordinateSystem = Local;");
                 sb.AppendLine($"Burn_Insertion.Origin = {lastLeg.ToBody};");
                 sb.AppendLine("Burn_Insertion.Axes = VNC;");
-                sb.AppendLine($"Burn_Insertion.Element1 = {(-solution.InsertionDeltaVKms / 1000.0).ToString("F6", CultureInfo.InvariantCulture)};");
+                sb.AppendLine($"Burn_Insertion.Element1 = {(-solution.InsertionDeltaVKms).ToString("F6", CultureInfo.InvariantCulture)};");
                 sb.AppendLine("Burn_Insertion.Element2 = 0.0;");
                 sb.AppendLine("Burn_Insertion.Element3 = 0.0;");
                 sb.AppendLine("Burn_Insertion.DecrementMass = true;");
@@ -206,7 +206,7 @@ namespace KSPGMAT.Service {
                 GMATTemplateManager.RefreshTemplates(); // Trigger instant dynamic library reload
                 return outPath;
             } catch (Exception ex) {
-                KSPGMATLog.Error($"[GMATMGAScriptGenerator] Failed to export MGA template: {ex.Message}");
+                KSPGMATLog.Error("MGAScriptGenerator", "Failed to export MGA template", ex);
                 return null;
             }
         }

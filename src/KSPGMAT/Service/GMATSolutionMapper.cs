@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
+using KSPGMAT;
 using KSPGMAT.Model;
 
 namespace KSPGMAT.Service {
@@ -145,7 +146,7 @@ namespace KSPGMAT.Service {
 
                     map[dcName] = summary;
                 } catch (Exception ex) {
-                    KSPGMATLog.Warn($"[GMATSolutionMapper] Error parsing {file}: {ex.Message}");
+                    KSPGMATLog.Error("SolutionMapper", $"Error parsing {file}", ex);
                 }
             }
             return map;
@@ -220,7 +221,7 @@ namespace KSPGMAT.Service {
 
                     map[optName] = summary;
                 } catch (Exception ex) {
-                    KSPGMATLog.Warn($"[GMATSolutionMapper] Error parsing optimizer file {file}: {ex.Message}");
+                    KSPGMATLog.Error("SolutionMapper", $"Error parsing optimizer file {file}", ex);
                 }
             }
             return map;
@@ -303,7 +304,7 @@ namespace KSPGMAT.Service {
                 result.final_ta = finalTa;
                 result.final_mass = finalMass;
             } catch (Exception ex) {
-                KSPGMATLog.Warn($"[GMATSolutionMapper] Error parsing TrajReport: {ex.Message}");
+                KSPGMATLog.Error("SolutionMapper", "Error parsing TrajReport", ex);
             }
         }
 
@@ -811,7 +812,7 @@ namespace KSPGMAT.Service {
                                 }
                             }
                         } catch (Exception ex) {
-                            KSPGMATLog.Warn($"[GMATSolutionMapper] Failed to parse report {reportPath}: {ex.Message}");
+                            KSPGMATLog.Error("SolutionMapper", $"Failed to parse report {reportPath}", ex);
                         }
                     }
                 }

@@ -3,8 +3,10 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using UnityEngine;
 using KSPGMAT.MGA;
+using KSPGMAT.MGA.Solver;
 using KSPGMAT.MGA.Telemetry;
 
 namespace KSPGMAT.Model {
@@ -862,8 +864,8 @@ namespace KSPGMAT.Model {
         public string DestinationBody {
             get {
                 if (string.IsNullOrEmpty(_destinationBody)) {
-                    if (FlybySequence != null && FlybySequence.Count > 0) {
-                        return FlybySequence[FlybySequence.Count - 1];
+                    if (_flybySequence != null && _flybySequence.Count > 0) {
+                        return _flybySequence[_flybySequence.Count - 1];
                     }
                     if (!string.IsNullOrEmpty(CentralBody) && !CentralBody.Equals("Sun", StringComparison.OrdinalIgnoreCase)) {
                         var sat = SolarSystemCatalog.GetMoonsOf(CentralBody);
@@ -887,7 +889,12 @@ namespace KSPGMAT.Model {
         public List<string> FlybySequence {
             get {
                 if (_flybySequence == null || _flybySequence.Count == 0) {
-                    _flybySequence = new List<string> { DestinationBody };
+                    string dest = !string.IsNullOrEmpty(_destinationBody)
+                        ? _destinationBody
+                        : (!string.IsNullOrEmpty(CentralBody) && !CentralBody.Equals("Sun", StringComparison.OrdinalIgnoreCase)
+                            ? (SolarSystemCatalog.GetMoonsOf(CentralBody)?.Count > 0 ? SolarSystemCatalog.GetMoonsOf(CentralBody)[0].Name : "Mars")
+                            : (SolarSystemCatalog.GetPlanet("Mars") != null ? "Mars" : "Duna"));
+                    _flybySequence = new List<string> { dest };
                 }
                 return _flybySequence;
             }
@@ -966,6 +973,7 @@ namespace KSPGMAT.Model {
         public double VesselMaxDeltaVMs { get; set; } = 0.0;
         public double MaxDsmDeltaVMs { get; set; } = 0.0;
         public double LaunchDeltaVCeilingMs { get; set; } = 0.0;
+        public MGAConstraintProfile ConstraintProfile { get; set; }
         public double DepartureToFMinFactor { get; set; } = 0.65;
         public double DepartureToFMaxFactor { get; set; } = 1.50;
         public double ResonantMaxOffsetDays { get; set; } = 0.0;
@@ -1017,12 +1025,12 @@ namespace KSPGMAT.Model {
                 // 飞掠模式：零制动
                 DestinationApAKm = DestinationPeAKm;
             } else if (ArrivalOrbitType == MGAArrivalOrbitType.HighlyElliptic || (AutoAdaptGiantPlanetEllipse && isGiant)) {
-                // 科学高偏心率捕获椭圆: 默认预设 e=0.95，远拱点严格限制在 SOI 内 (<= maxApA)
+                // 科学高偏心率捕获椭圆: 严格基于天体力学拉普拉斯引力球与 Hill 稳定界限推导 (ra = min(0.20 * SOI, 100 * rp))
                 if (forceResetIfInvalid || DestinationApAKm <= DestinationPeAKm) {
                     double destR = destP != null ? destP.RadiusKm : 6000.0;
                     double rp = destR + DestinationPeAKm;
-                    double ePreset = 0.95;
-                    double ra = rp * (1.0 + ePreset) / (1.0 - ePreset);
+                    double soiKm = (destP != null && destP.SoiKm > 0) ? destP.SoiKm : destR * 100.0;
+                    double ra = Math.Min(soiKm * 0.20, rp * 100.0);
                     DestinationApAKm = Math.Min(maxApA, Math.Round(ra - destR));
                 }
             } else {
@@ -1091,6 +1099,60 @@ namespace KSPGMAT.Model {
         public float TargetProgress { get; set; } = 0f;
         public bool IsPlayingAnimation { get; set; } = false;
         public float PlaySpeed { get; set; } = 1.0f;
+        public bool IsDraggingCanvas { get; set; } = false;
+        public bool IsRotatingCanvas { get; set; } = false;
+        public Vector2 LastMouseCanvasPos { get; set; } = Vector2.zero;
+    }
+
+    /// <summary>
+    /// MGA 全局 UI 交互、滚动条与模态框状态管理模型 (Single Source of Truth)
+    /// 集中管理原本散落在 UI 类中的各种临时弹窗、滚动条与交互标记，彻底杜绝散落状态
+    /// </summary>
+    [Serializable]
+    public class MGAUIInteractionState {
+        // 1. 面板滚动条集中管理
+        public Vector2 LeftScroll { get; set; } = Vector2.zero;
+        public Vector2 TabScroll { get; set; } = Vector2.zero;
+        public Vector2 SolutionScroll { get; set; } = Vector2.zero;
+        public Vector2 ReportScrollPos { get; set; } = Vector2.zero;
+        public bool ShowReportModal { get; set; } = false;
+        public bool ShowChainSuggestions { get; set; } = false;
+
+        // 2. 行星际天体弹出选择器 (Planet Picker Modal) 状态
+        public bool ShowPlanetPickerModal { get; set; } = false;
+        public Rect PlanetPickerWindowRect { get; set; } = new Rect(250, 100, 380, 520);
+        public int PlanetPickerTargetType { get; set; } = 0; // 0: Departure, 1: Destination, 2: ReplaceFlyby, 3: AppendFlyby, 4: SequenceStepBody
+        public int PlanetPickerFlybyIndex { get; set; } = -1;
+        public string PlanetPickerTitle { get; set; } = "";
+        public Vector2 PlanetPickerScrollPos { get; set; } = Vector2.zero;
+        public string PlanetPickerSearch { get; set; } = "";
+
+        // 3. 航段高精遥测明细弹窗 (Flight Telemetry Details) 状态
+        public bool ShowTelemetryModal { get; set; } = false;
+        public Rect TelemetryWindowRect { get; set; } = new Rect(300, 120, 540, 480);
+        public int TelemetrySelectedStepIndex { get; set; } = 0;
+        public Vector2 TelemetryScrollPos { get; set; } = Vector2.zero;
+
+        // 4. 方案全量动力学详情弹窗 (Solution Detail Modal) 状态
+        public bool ShowSolutionDetailModal { get; set; } = false;
+        public MGASolution DetailModalSolution { get; set; } = null;
+        public Rect SolutionDetailWindowRect { get; set; } = new Rect(280, 80, 720, 560);
+        public Vector2 SolutionDetailScrollPos { get; set; } = Vector2.zero;
+
+        // 5. 历史任务与统一配置库弹窗 (History Mission Picker) 状态
+        public bool ShowHistoryMissionPickerModal { get; set; } = false;
+        public Rect HistoryMissionPickerWindowRect { get; set; } = new Rect(260, 90, 680, 520);
+        public string HistoryMissionSearch { get; set; } = "";
+        public string HistoryMissionCategory { get; set; } = "全部";
+        public Vector2 HistoryMissionScrollPos { get; set; } = Vector2.zero;
+
+        // 6. 任务序列工作台拖拽重排与交互状态
+        public int SeqDraggedIndex { get; set; } = -1;
+        public int SeqStepToMoveUp { get; set; } = -1;
+        public int SeqStepToMoveDown { get; set; } = -1;
+        public int SeqStepToDelete { get; set; } = -1;
+        public int SeqHoveredIndex { get; set; } = -1;
+        public int SeqNextHoveredIndex { get; set; } = -1;
     }
 
     /// <summary>
@@ -1186,6 +1248,7 @@ namespace KSPGMAT.Model {
         public CraftTelemetry Telemetry { get; set; } = new CraftTelemetry();
 
         // 5. GUI 交互工作流状态 (0: 极速直达, 1: MGA 行星借力规划, 2: 任务序列工作台)
+        public MGAUIInteractionState UI { get; set; } = new MGAUIInteractionState();
         private int _workflowMode = 0;
         public int WorkflowMode { 
             get => _workflowMode; 
@@ -1197,6 +1260,56 @@ namespace KSPGMAT.Model {
         public int SelectedCandidateChainIndex { get; set; } = 0;
         public string CustomChainInput { get; set; } = "";
         public bool DatesInitialized { get; set; } = false;
+
+        public CancellationTokenSource CurrentCts { get; set; }
+
+        /// <summary>
+        /// 统一协同取消当前正在运行的后台差分演化或序列求解任务
+        /// </summary>
+        public void CancelOptimization() {
+            try {
+                if (CurrentCts != null && !CurrentCts.IsCancellationRequested) {
+                    CurrentCts.Cancel();
+                }
+            } catch { }
+            IsOptimizing = false;
+            IsSeqSolving = false;
+            NotifyStateChanged();
+        }
+
+        /// <summary>
+        /// 从当前 MissionSequence 统一提取动力学约束并全量同步到当前 Config 中 (SSOT 闭环)
+        /// 消除 UI 表现层中手工逐行赋值 12 行属性的散落代码
+        /// </summary>
+        public void ApplySequenceToConfig() {
+            var extracted = ExtractConfigFromSequence();
+            Config.DepartureBody = extracted.DepartureBody;
+            Config.DestinationBody = extracted.DestinationBody;
+            Config.DeparturePeAKm = extracted.DeparturePeAKm;
+            Config.DepartureApAKm = extracted.DepartureApAKm;
+            Config.DestinationPeAKm = extracted.DestinationPeAKm;
+            Config.DestinationApAKm = extracted.DestinationApAKm;
+            Config.EarliestDepartureUT = extracted.EarliestDepartureUT;
+            Config.LatestDepartureUT = extracted.LatestDepartureUT;
+            Config.DepartureSearchDays = Math.Max(1.0, (Config.LatestDepartureUT - Config.EarliestDepartureUT) / MGADefaults.SecondsPerDay);
+            Config.FlybySequence = new List<string>(extracted.FlybySequence);
+            Config.MinToFDays = new List<double>(extracted.MinToFDays);
+            Config.MaxToFDays = new List<double>(extracted.MaxToFDays);
+            Config.LegStrategies = new List<MGALegStrategy>(extracted.LegStrategies);
+            Config.FlybyStrategies = new List<MGAFlybyStrategy>(extracted.FlybyStrategies);
+            NotifyStateChanged();
+        }
+
+        /// <summary>
+        /// 统一更新飞掠天体序列，并自动执行策略维度同步与全量状态变更通知
+        /// </summary>
+        public void UpdateFlybySequence(List<string> newSequence) {
+            Config.FlybySequence = newSequence != null ? new List<string>(newSequence) : new List<string>();
+            CustomChainInput = string.Join(",", Config.FlybySequence);
+            int legCount = Math.Max(1, Config.FlybySequence.Count);
+            Config.SyncStrategiesWithChain(legCount);
+            NotifyStateChanged();
+        }
 
         // 6. 全面接入的高级分析与模态框交互状态 (SSOT)
         public float ParetoSliderVal { get; set; } = 0f;

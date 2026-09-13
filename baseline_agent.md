@@ -76,4 +76,27 @@
 - 严禁在 C# 中硬编码极值事件列表（如 `ExtremaKeywords`）或航天器直属属性列表（如 `craftDirect`）。
 - 严禁在 ForceModel 导出时写死仅判断 6 天体布尔变量。
 - 严禁删除/禁用 PyKEP 原生路径后静默回退托管公式；原生不可用应明确报错。
+- 严禁在 MGA 模块中散落业务状态变量；MGA 唯一真值源必须且只能为 `MGAStateManager`。
+- 严禁在 MGA 算法或 UI 代码中硬编码天文单位 (AU)、太阳引力常数 (Mu) 等物理参数；必须全量引用 `MGADefaults`。
+- 严禁在 Tab 视图类中直接编写底层通用 UI 控件逻辑；UI 控件一律集中由 `GMATMainWindow.Widgets.cs` 统一托管。
 
+## 14. MGA 唯一真值源 (SSOT) 与 UI 控件托管守则
+- **状态归口**：MGA 的任务配置 (`Config`)、任务序列 (`MissionSequence`)、方案池 (`Solutions`)、激活解 (`ActiveSolution`)、视口 (`Viewport`) 与模态框交互 (`UI`) 100% 托管于 `MGAStateManager.Current`。UI 表现层只允许声明委托属性，严禁私设业务状态字段。
+- **控件归口**：MGA 所有通用控件（出发模式选择器、方案候选表、步骤卡片、数值延迟输入框）必须集中在 `GMATMainWindow.Widgets.cs` 中实现。`TabMGA.cs` 与 `TabMGASequence.cs` 只负责页面高层布局编排与事件分发。
+- **物理常数注册**：所有天文单位 (`MGADefaults.AU_KM`)、引力参数 (`MGADefaults.FallbackSunMu` / `GetBodyMu`) 与安全高度阈值均严格调用 `MGADefaults`。
+- **编译器门禁**：新增或修改 MGA 代码后必须通过 `tools/ComplianceChecker` (Roslyn AST)，保持 `MGA-HARDCODED-CONST` 与 `MGA-SCATTERED-UI-FIELD` 0 违规。
+
+## 15. 统一日志系统准则 (Unified Logging System Standard)
+- **禁止裸写原生日志**：严禁在任何业务代码中直接调用 `UnityEngine.Debug.Log` / `LogWarning` / `LogError` 或 `Console.WriteLine` / `Console.Write`。全工程代码一律接入统一日志系统 `KSPGMATLog`。
+- **全通道自动同步**：`KSPGMATLog` 统一自动分发至三大输出通道：
+  1. Unity/KSP 控制台与游戏主日志 `KSP.log`；
+  2. 独立导出日志文件 `<GameData>/KSPGMAT/Logs/KSPGMAT.log`（启动自动轮转旧日志为 `KSPGMAT.previous.log`，加锁多线程安全，带启动 Session Banner）；
+  3. 控制台 stdout/stderr（确保离线 CLI 与单元测试套件如 `MGADebugRunner` 无头输出）。
+- **分级规范**：
+  - `Trace` / `Debug`：高频迭代与算法求解中间状态。
+  - `Info`：重要生命周期节点与业务收敛输出。
+  - `Warn`：非致命异常、自愈保护与安全净空受罚。
+  - `Error` / `Fatal`：致命故障，**必须传入 Exception 对象保留完整堆栈**（`KSPGMATLog.Error(tag, msg, ex)`）。
+  - `Success` / `Section`：关键收敛与分段横幅标记。
+- **上下文记录器推荐**：模块内推荐声明上下文记录器 `private static readonly ILogger Log = KSPGMATLog.ForContext("ModuleName");`，通过 `Log.Info(...)` / `Log.Warn(...)` 结构化输出。
+- **UI 交互支持**：UI 设置面板或主界面底部提供一键“打开日志文件夹 (`OpenLogFileOrFolder`)”与“立即刷新刷盘 (`Flush`)”功能。

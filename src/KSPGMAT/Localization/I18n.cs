@@ -53,7 +53,7 @@ namespace KSPGMAT {
 
                 string locDir = LocateLocDirectory();
                 if (locDir == null) {
-                    try { Debug.LogWarning("[KSPGMAT] i18n loc/ directory not found; UI strings may fall back to raw keys."); } catch {}
+                    try { KSPGMATLog.Warn("I18n", "i18n loc/ directory not found; UI strings may fall back to raw keys."); } catch {}
                     return;
                 }
 
@@ -99,7 +99,7 @@ namespace KSPGMAT {
 
                 _lastFingerprint = ComputeFingerprint();
             } catch (Exception ex) {
-                Debug.LogWarning("[KSPGMAT] i18n Reload error: " + ex.Message);
+                KSPGMATLog.Warn("I18n", "i18n Reload error: " + ex.Message);
             }
         }
 

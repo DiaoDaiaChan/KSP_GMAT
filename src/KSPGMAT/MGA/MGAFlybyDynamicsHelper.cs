@@ -194,7 +194,7 @@ namespace KSPGMAT.MGA {
         /// 彻底取代按 SMA 硬编码带挑选 {1,2} 或 {1,2,3} 的经验分支。
         /// </summary>
         public static readonly double[] ResonanceRatioCandidates = new double[] {
-            0.5, 0.90, 0.95, 1.0, 1.05, 1.10, 1.15, 1.25, 4.0 / 3.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0
+            0.5, 0.90, 0.95, 1.0, 1.05, 1.10, 1.15, 1.25, 4.0 / 3.0, 1.5, 5.0 / 3.0, 1.75, 15.0 / 8.0, 2.0, 2.25, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0
         };
 
         /// <summary>
@@ -203,13 +203,14 @@ namespace KSPGMAT.MGA {
         /// </summary>
         public static double PickNominalResonanceRatio(double tOrbSec, double minToFSec, double maxToFSec) {
             if (tOrbSec <= 0) return 1.0;
-            double center = (minToFSec + maxToFSec) * 0.5;
+            // 物理共振基准优先：优先选取落在物理有效区间内的基础有理共振槽 (以 1:1 基础槽为首选锚点)
+            double targetR = 1.0;
             double bestR = 1.0;
             double bestDist = double.MaxValue;
             foreach (double r in ResonanceRatioCandidates) {
                 double t = r * tOrbSec;
                 if (t < minToFSec - 86400.0 || t > maxToFSec + 86400.0) continue;
-                double d = Math.Abs(t - center);
+                double d = Math.Abs(r - targetR);
                 if (d < bestDist) { bestDist = d; bestR = r; }
             }
             return bestR;
@@ -243,7 +244,7 @@ namespace KSPGMAT.MGA {
                 {
                     double aTrans = (aP + downstreamTarget.SMA) * 0.5;
                     double vTransAtP = Math.Sqrt(Math.Max(1e-4, muCentralKmS * (2.0 / aP - 1.0 / aTrans)));
-                    vInf = Math.Abs(vTransAtP - vCircKms);
+                    vInf = Math.Max(Math.Abs(vTransAtP - vCircKms), vCircKms * 0.20);
                 }
                 else
                 {
@@ -284,8 +285,8 @@ namespace KSPGMAT.MGA {
             // 上界由天体引力偏折极限速度所决定的最大闭合半长轴周期与动力学逃逸能量协同确定
             // 短周期天体 (T_orb < 150天, 如水星 88天) 允许多阶共振自减速 (至多 6.5 T_orbit, 覆盖 MESSENGER/BepiColombo 4:4/6:6 槽)
             double minDays = Math.Max(10.0, tOrbitDays * 0.65);
-            double maxResMultiplier = Math.Min(6.5, Math.Max(3.0, ratioMax));
-            double maxDays = Math.Max(minDays * 1.5, Math.Min(tOrbitDays * maxResMultiplier, tDepMaxDays * 1.25));
+            double maxResMultiplier = (tOrbitDays < 150.0) ? 6.5 : Math.Min(6.5, Math.Max(3.0, ratioMax));
+            double maxDays = Math.Max(minDays * 1.5, Math.Max(tOrbitDays * maxResMultiplier, tDepMaxDays * 1.25));
             if (maxDays < minDays * 1.2) maxDays = minDays * 1.5;
 
             return (minDays, maxDays, kRes);
@@ -322,35 +323,24 @@ namespace KSPGMAT.MGA {
                 {
                     effDepMinFactor = Math.Min(effDepMinFactor, 0.35);
                 }
-                return (Math.Max(5.0, tHohmannDays * effDepMinFactor), Math.Max(10.0, tHohmannDays * depMaxFactor));
+                double minDepDays = Math.Max(5.0, tHohmannDays * effDepMinFactor);
+                double maxDepDays = Math.Max(minDepDays + 10.0, tHohmannDays * Math.Max(1.25, depMaxFactor));
+                return (minDepDays, maxDepDays);
             }
 
-            // 欧拉-兰伯特抛物线转移极小航时: T_parabolic ≈ (sqrt(2)/3) * (a1 + a2)^1.5 / sqrt(mu)
+            // 欧拉-兰伯特抛物线转移极小航时与恒星逃逸动能极速巡航界 (Euler-Lambert Parabolic & Star Escape Bounds)
             double tParabolicDays = (Math.Sqrt(2.0) / 3.0) * Math.Pow(a1 + a2, 1.5) / Math.Sqrt(muCentralKmS) / 86400.0;
-            double minDays = Math.Max(5.0, tParabolicDays * 0.90);
-
-            // 中间借力连接段: 航天器通过深空机动可能采用 1~2 圈多圈转移以闭合共面交点与星际相位 (如 MESSENGER E->V 448天, V->M 223天)
-            double maxFactor = Math.Max(depMaxFactor, 3.5);
-            double maxDays = Math.Max(minDays + 10.0, tHohmannDays * maxFactor);
-
-            // 若出发星为强引力巨行星 (如木星/土星) 且向外加速，或目标为极远深空 (a2/a1 > 4.0)，双曲巡航速度决定航时
             double distKm = Math.Abs(a2 - a1);
-            if ((fromPlanet.Mu > 5.0e6 || fromPlanet.RadiusKm > 20000.0) && a2 > a1)
-            {
-                double vCirc1 = Math.Sqrt(muCentralKmS / a1);
-                double vHypKms = vCirc1 * 1.5;
-                double tHypDays = (distKm / vHypKms) / 86400.0;
-                minDays = Math.Min(minDays, Math.Max(5.0, tHypDays * 0.85));
-                maxDays = Math.Min(maxDays, Math.Max(minDays + 50.0, tHypDays * 2.50));
-            }
-            else if (a2 / a1 > 4.0 || a1 / a2 > 4.0)
-            {
-                // 极远深空快速双曲巡航: 巡航速度由中心恒星在近端轨道处的特征逃逸动能速度解析确定
-                double vFastCruise = Math.Sqrt(2.0 * muCentralKmS / Math.Max(1.0, Math.Min(a1, a2)));
-                double tFastCruiseDays = (distKm / Math.Max(1.0, vFastCruise)) / 86400.0;
-                minDays = Math.Min(minDays, Math.Max(50.0, tFastCruiseDays * 0.80));
-                maxDays = Math.Min(maxDays, Math.Max(minDays + 100.0, tFastCruiseDays * 2.50));
-            }
+            double vFastCruise = Math.Sqrt(2.0 * muCentralKmS / Math.Max(1.0, Math.Min(a1, a2)));
+            double tFastCruiseDays = (distKm / Math.Max(1.0, vFastCruise)) / 86400.0;
+            double minDays = Math.Max(5.0, Math.Min(tParabolicDays * 0.90, tFastCruiseDays * 0.80));
+
+            // 中间借力连接段: 航天器可采用单弧霍曼、双曲借力加速、或通过深空机动进行 1~2 圈多圈调相以闭合行星相位
+            // 上界必须充分容纳霍曼基准与多圈转移；针对深空外太阳系 (tHohmann > 2500天)，上界锚定于双曲逃逸巡航物理包络，杜绝百年停滞死胡同
+            double maxFactor = Math.Max(depMaxFactor, 3.5);
+            double maxDays = (tHohmannDays > 2500.0) 
+                ? Math.Min(tHohmannDays * maxFactor, Math.Max(5478.75, tParabolicDays * 1.25))
+                : Math.Max(minDays + 10.0, tHohmannDays * maxFactor);
 
             return (minDays, maxDays);
         }

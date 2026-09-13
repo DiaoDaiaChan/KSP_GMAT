@@ -65,25 +65,17 @@ namespace KSPGMAT.MGA
                 // 终端格式化行
                 string line = $"[{_taskName}] [{bar}] {pct,3}% ({timeElapsedStr}) | {stageInfo} | {cpuStr}";
 
-                try
+                if (isFinished)
                 {
-                    // 若在支持光标的终端控制台中，直接在行内刷新；若重定向或换阶段则输出整行
-                    if (!Console.IsOutputRedirected)
-                    {
-                        Console.Write($"\r{line.PadRight(Console.WindowWidth > 1 ? Math.Min(120, Console.WindowWidth - 1) : 100)}");
-                        if (isFinished)
-                        {
-                            Console.WriteLine();
-                        }
-                    }
-                    else
-                    {
-                        Console.WriteLine(line);
-                    }
+                    KSPGMATLog.Success("Solver", line);
                 }
-                catch
+                else if (isStageChanged)
                 {
-                    Console.WriteLine(line);
+                    KSPGMATLog.Info("Solver", line);
+                }
+                else
+                {
+                    KSPGMATLog.Debug("Solver", line);
                 }
             }
         }

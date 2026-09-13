@@ -348,7 +348,7 @@ namespace KSPGMAT.MGA
             {
                 sw.Stop();
                 Telemetry.MGAPipelineTelemetryProbe.RecordGpuExecution("GPU 3D Multi-Leg Corridor", sw.Elapsed.TotalMilliseconds, totalItems, false);
-                KSPGMATLog.Warn($"[MGASurrogatePreFilter] GPU 多腿张量初筛异常，自动降级至 CPU: {ex.Message}");
+                KSPGMATLog.Error("Solver", $"[MGASurrogatePreFilter] GPU 多腿张量初筛异常，自动降级至 CPU: {ex.Message}", ex);
                 return false;
             }
         }

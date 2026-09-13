@@ -98,7 +98,8 @@ namespace KSPGMAT.MGA
             double departureEpochUT,
             double maxBudgetMs = 4000.0,
             double maxDsmBudgetMs = 4000.0,
-            bool noInsertionBurn = false)
+            bool noInsertionBurn = false,
+            double windowSpanDays = 0.0)
         {
             var cleanedFlybys = new List<string>();
             if (rawFlybys != null)
@@ -550,11 +551,19 @@ namespace KSPGMAT.MGA
                         legRep.PhaseDeltaDeg = deltaPhase;
 
                         // 星历几何相位角审计:
-                        // 始发首段 (k == 0) 由用户发射历元严格锁定，偏离霍曼最佳窗口时施加连续软罚分；
-                        // 中继航段 (k >= 1) 由开普勒轨道周期与 DE 连续 ToF 变量弹性调节，不作为不可逾越的刚性赤字
-                        if (k == 0 && deltaPhase > MGADefaults.DeparturePhaseAngleToleranceDeg)
+                        // 始发首段 (k == 0) 在给定搜索时间窗内可通过调整发射日滑动相位:
+                        // 窗口半跨度内最大可调整相位角 deltaPhi_window = |omega2 - omega1| * (windowSpanDays / 2)
+                        double windowAdjustableDeg = 0.0;
+                        if (windowSpanDays > 0.0)
                         {
-                            double excessDeg = deltaPhase - MGADefaults.DeparturePhaseAngleToleranceDeg;
+                            double w1 = Math.Sqrt(sunMu / Math.Pow(r1, 3.0));
+                            double wRel = Math.Abs(w2 - w1); // rad/s
+                            windowAdjustableDeg = (wRel * (windowSpanDays * 0.5 * 86400.0)) * (180.0 / Math.PI);
+                        }
+                        double allowablePhaseDeg = MGADefaults.DeparturePhaseAngleToleranceDeg + windowAdjustableDeg;
+                        if (k == 0 && deltaPhase > allowablePhaseDeg)
+                        {
+                            double excessDeg = deltaPhase - allowablePhaseDeg;
                             double phasePenaltyMs = MGADefaults.DeparturePhaseSoftPenaltyFactorMsPerDeg * excessDeg;
                             totalDeficit += phasePenaltyMs;
                         }
@@ -956,22 +965,24 @@ namespace KSPGMAT.MGA
             double maxBudgetMs = 4000.0,
             double maxDsmBudgetMs = 4000.0,
             List<string> userGoal = null,
-            bool noInsertionBurn = false)
+            bool noInsertionBurn = false,
+            double windowSpanDays = 0.0)
         {
             var evaluated = new List<ChainReachabilityResult>();
             var allCandidates = new List<List<string>>(candidateChains ?? new List<List<string>>());
 
             // 始终补充天体力学势阱梯级爬升与多阶共振候选链，确保最优物理拓扑进入全域竞争池
+            var synthesized = SynthesizeClimbingSequences(departure, arrival, userGoal);
+            foreach (var syn in synthesized)
+            {
+                if (!allCandidates.Any(c => c.SequenceEqual(syn)))
+                {
+                    allCandidates.Add(syn);
+                }
+            }
+
             if (userGoal != null && userGoal.Count > 0)
             {
-                var synthesized = SynthesizeClimbingSequences(departure, arrival, userGoal);
-                foreach (var syn in synthesized)
-                {
-                    if (!allCandidates.Any(c => c.SequenceEqual(syn)))
-                    {
-                        allCandidates.Add(syn);
-                    }
-                }
                 // 确保用户指定的目标借力天体得到严格满足，过滤掉未包含目标天体的无关直达/旁支拓扑
                 allCandidates = allCandidates.Where(c => userGoal.All(g => c.Contains(g, StringComparer.OrdinalIgnoreCase))).ToList();
             }
@@ -986,7 +997,7 @@ namespace KSPGMAT.MGA
 
             foreach (var chain in allCandidates)
             {
-                var report = AnalyzeChainReachability(departure, arrival, chain, departureEpochUT, maxBudgetMs, maxDsmBudgetMs, noInsertionBurn);
+                var report = AnalyzeChainReachability(departure, arrival, chain, departureEpochUT, maxBudgetMs, maxDsmBudgetMs, noInsertionBurn, windowSpanDays);
                 evaluated.Add(report);
             }
 

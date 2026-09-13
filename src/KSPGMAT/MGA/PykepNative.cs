@@ -659,7 +659,7 @@ namespace KSPGMAT.MGA {
                 }
             } catch (Exception ex) {
                 _isAvailable = false;
-                KSPGMATLog.Warn($"[PykepNative] Native dynamic link note: {ex.Message}");
+                KSPGMATLog.Error("PykepNative", $"Native dynamic link note: {ex.Message}", ex);
             }
         }
 
@@ -777,7 +777,7 @@ namespace KSPGMAT.MGA {
                 int bestIdx = 0;
                 double minV2 = double.MaxValue;
                 for (int i = 0; i < v1List.Count; i++) {
-                    double v2Val = v1List[i].sqrMagnitude;
+                    double v2Val = v1List[i].sqrMagnitude + v2List[i].sqrMagnitude;
                     if (v2Val < minV2) {
                         minV2 = v2Val;
                         bestIdx = i;
@@ -917,7 +917,7 @@ namespace KSPGMAT.MGA {
                     return true;
                 }
             } catch (Exception ex) {
-                KSPGMATLog.Warn($"[PykepNative.AlignInjection] Native exception: {ex.Message}");
+                KSPGMATLog.Error("PykepNative", $"[PykepNative.AlignInjection] Native exception: {ex.Message}", ex);
             }
             return false;
         }
@@ -964,7 +964,7 @@ namespace KSPGMAT.MGA {
                         return true;
                     }
                 } catch (Exception ex) {
-                    KSPGMATLog.Warn($"[PykepNative.AlignInjectionDyn] Native exception: {ex.Message}");
+                    KSPGMATLog.Error("PykepNative", $"[PykepNative.AlignInjectionDyn] Native exception: {ex.Message}", ex);
                 }
             }
 
@@ -1043,7 +1043,7 @@ namespace KSPGMAT.MGA {
                     return false;
                 }
             } catch (Exception ex) {
-                KSPGMATLog.Error($"[PykepNative] LoadSpiceKernel exception: {ex.Message}");
+                KSPGMATLog.Error("PykepNative", $"LoadSpiceKernel exception: {ex.Message}", ex);
                 return false;
             }
         }
@@ -1256,7 +1256,7 @@ namespace KSPGMAT.MGA {
                     } catch { }
                 }
             } catch (Exception ex) {
-                KSPGMATLog.Warn($"[PykepNative] Auto-detect SPICE ephemeris note: {ex.Message}");
+                KSPGMATLog.Error("PykepNative", $"Auto-detect SPICE ephemeris note: {ex.Message}", ex);
             }
             return false;
         }
@@ -1482,7 +1482,7 @@ namespace KSPGMAT.MGA {
                     flybyOnly ? 1 : 0,
                     outTotDv, outC3);
             } catch (Exception ex) {
-                KSPGMATLog.Warn($"[PykepNative] GPU 计算异常回退: {ex.Message}");
+                KSPGMATLog.Error("PykepNative", $"GPU 计算异常回退: {ex.Message}", ex);
                 return -3;
             }
         }
@@ -1522,7 +1522,7 @@ namespace KSPGMAT.MGA {
                     p2RpMinKm,
                     outBestTotDv, outBestTof1Days, outBestTof2Days);
             } catch (Exception ex) {
-                KSPGMATLog.Warn($"[PykepNative] GPU MGA 走廊张量求解异常: {ex.Message}");
+                KSPGMATLog.Error("PykepNative", $"GPU MGA 走廊张量求解异常: {ex.Message}", ex);
                 return -3;
             }
         }
@@ -1549,7 +1549,7 @@ namespace KSPGMAT.MGA {
                     startUt, stepDays, stepCount,
                     outPhaseAnglesDeg);
             } catch (Exception ex) {
-                KSPGMATLog.Warn($"[PykepNative] GPU 历表雷达计算异常: {ex.Message}");
+                KSPGMATLog.Error("PykepNative", $"GPU 历表雷达计算异常: {ex.Message}", ex);
                 return -3;
             }
         }
@@ -1583,7 +1583,7 @@ namespace KSPGMAT.MGA {
                     earliestDepUT, latestDepUT,
                     outPopulationLoss);
             } catch (Exception ex) {
-                KSPGMATLog.Warn($"[PykepNative] GPU 种群批处理求解异常: {ex.Message}");
+                KSPGMATLog.Error("PykepNative", $"GPU 种群批处理求解异常: {ex.Message}", ex);
                 return -3;
             }
         }
@@ -1628,7 +1628,7 @@ namespace KSPGMAT.MGA {
                     out outSigmaRR, out outSigmaTT, out outSigmaRT,
                     out outCollisionProb);
             } catch (Exception ex) {
-                KSPGMATLog.Warn($"[PykepNative] GPU 蒙特卡洛 B 平面评估异常: {ex.Message}");
+                KSPGMATLog.Error("PykepNative", $"GPU 蒙特卡洛 B 平面评估异常: {ex.Message}", ex);
                 return -3;
             }
         }
@@ -1657,7 +1657,7 @@ namespace KSPGMAT.MGA {
                     segmentCount, candidateCount,
                     impulsesXyz, outMismatchLoss);
             } catch (Exception ex) {
-                KSPGMATLog.Warn($"[PykepNative] GPU Sims-Flanagan 评估异常: {ex.Message}");
+                KSPGMATLog.Error("PykepNative", $"GPU Sims-Flanagan 评估异常: {ex.Message}", ex);
                 return -3;
             }
         }

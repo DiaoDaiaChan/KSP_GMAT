@@ -416,7 +416,7 @@ namespace KSPGMAT.MGA {
                     sol.BuildEvents(cfg);
                 }
 
-                KSPGMATLog.Success($"[MGAInjectionAligner] 方案已自动对齐停泊轨点火相位: 偏移 {shiftSec:+0.0;-0.0}s ({shiftSec / 60.0:+0.0;-0.0}min), 最优点火历元={GMATClient.FormatUtcGregorian(alignedTime)}, 新射出ΔV={alignedDv.magnitude:F1} m/s");
+                KSPGMATLog.Success("Solver", $"[MGAInjectionAligner] 方案已自动对齐停泊轨点火相位: 偏移 {shiftSec:+0.0;-0.0}s ({shiftSec / 60.0:+0.0;-0.0}min), 最优点火历元={GMATClient.FormatUtcGregorian(alignedTime)}, 新射出ΔV={alignedDv.magnitude:F1} m/s");
                 return true;
             }
             return false;
@@ -486,7 +486,7 @@ namespace KSPGMAT.MGA {
                 sol.BuildEvents(cfg);
             }
 
-            KSPGMATLog.Info($"[MGAInjectionAligner] 方案已还原为标称未对齐状态: 标称历元={GMATClient.FormatUtcGregorian(sol.DepartureUT)}, 标称射出ΔV={sol.LaunchDeltaVKms * 1000.0:F1} m/s");
+            KSPGMATLog.Info("Solver", $"[MGAInjectionAligner] 方案已还原为标称未对齐状态: 标称历元={GMATClient.FormatUtcGregorian(sol.DepartureUT)}, 标称射出ΔV={sol.LaunchDeltaVKms * 1000.0:F1} m/s");
         }
     }
 }

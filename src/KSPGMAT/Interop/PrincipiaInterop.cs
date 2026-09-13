@@ -98,7 +98,7 @@ namespace KSPGMAT {
                         if (m.Name.Contains("FlightPlan")) {
                             List<string> pms = new List<string>();
                             foreach (var p in m.GetParameters()) pms.Add(p.ParameterType.Name + " " + p.Name);
-                            KSPGMATLog.Info($"[Principia API] {m.Name}({string.Join(", ", pms.ToArray())}) -> {m.ReturnType.Name}");
+                            KSPGMATLog.Info("Principia", $"[API] {m.Name}({string.Join(", ", pms.ToArray())}) -> {m.ReturnType.Name}");
                         }
                     }
                 }
@@ -130,9 +130,9 @@ namespace KSPGMAT {
                 }
 
                 initialized = true;
-                Debug.Log("[KSPGMAT] Principia reflection bindings initialized successfully.");
+                KSPGMATLog.Info("Principia", "Principia reflection bindings initialized successfully.");
             } catch (Exception ex) {
-                Debug.LogWarning("[KSPGMAT] Error initializing Principia reflection: " + ex.Message);
+                KSPGMATLog.Error("Principia", "Error initializing Principia reflection", ex);
             }
         }
 
@@ -210,11 +210,11 @@ namespace KSPGMAT {
                         // Convert meters and m/s to km and km/s
                         pos_km = new Vector3d(q.x / 1000.0, q.y / 1000.0, q.z / 1000.0);
                         vel_kms = new Vector3d(p.x / 1000.0, p.y / 1000.0, p.z / 1000.0);
-                        KSPGMATLog.Info($"[PrincipiaInterop] Query ICRF: source=Principia(VesselFromParent), r=[{pos_km.x:F2}, {pos_km.y:F2}, {pos_km.z:F2}]km (|r|={pos_km.magnitude:F1}km), v=[{vel_kms.x:F3}, {vel_kms.y:F3}, {vel_kms.z:F3}]km/s (|v|={vel_kms.magnitude:F3}km/s)");
+                        KSPGMATLog.Info("Principia", $"Query ICRF: source=Principia(VesselFromParent), r=[{pos_km.x:F2}, {pos_km.y:F2}, {pos_km.z:F2}]km (|r|={pos_km.magnitude:F1}km), v=[{vel_kms.x:F3}, {vel_kms.y:F3}, {vel_kms.z:F3}]km/s (|v|={vel_kms.magnitude:F3}km/s)");
                         return true;
                     }
                 } catch (Exception ex) {
-                    KSPGMATLog.Warn("[PrincipiaInterop] Error querying VesselFromParent: " + ex.Message);
+                    KSPGMATLog.Error("Principia", "Error querying VesselFromParent", ex);
                 }
             }
 
@@ -223,7 +223,7 @@ namespace KSPGMAT {
             Vector3d v_ksp = vessel.orbit.vel;
             pos_km = new Vector3d(r_ksp.x / 1000.0, r_ksp.z / 1000.0, r_ksp.y / 1000.0);
             vel_kms = new Vector3d(v_ksp.x / 1000.0, v_ksp.z / 1000.0, v_ksp.y / 1000.0);
-            KSPGMATLog.Warn($"[PrincipiaInterop] Query ICRF: source=StockFallback, r=[{pos_km.x:F2}, {pos_km.y:F2}, {pos_km.z:F2}]km, v=[{vel_kms.x:F3}, {vel_kms.y:F3}, {vel_kms.z:F3}]km/s");
+            KSPGMATLog.Warn("Principia", $"Query ICRF: source=StockFallback, r=[{pos_km.x:F2}, {pos_km.y:F2}, {pos_km.z:F2}]km, v=[{vel_kms.x:F3}, {vel_kms.y:F3}, {vel_kms.z:F3}]km/s");
             return true;
         }
 
@@ -267,7 +267,7 @@ namespace KSPGMAT {
                     return true;
                 }
             } catch (Exception ex) {
-                KSPGMATLog.Warn("[PrincipiaInterop] Error querying CelestialFromParent: " + ex.Message);
+                KSPGMATLog.Error("Principia", "Error querying CelestialFromParent", ex);
             }
             return false;
         }
@@ -364,7 +364,7 @@ namespace KSPGMAT {
                 double finalTime = currentTime + initialDurationSeconds;
                 double massTonnes = Math.Max(0.1, vessel.totalMass);
                 mFlightPlanCreate.Invoke(null, new object[] { plugin, guid, finalTime, massTonnes });
-                Debug.Log($"[KSPGMAT] Created new FlightPlan for vessel {vessel.vesselName} (mass: {massTonnes}t, finalTime: {finalTime})");
+                KSPGMATLog.Info("Principia", $"Created new FlightPlan for vessel {vessel.vesselName} (mass: {massTonnes}t, finalTime: {finalTime})");
             }
             return true;
         }
@@ -393,10 +393,10 @@ namespace KSPGMAT {
                     } catch {}
                 }
                 EnsureFlightPlanExists(vessel);
-                Debug.Log($"[KSPGMAT] Cleared all Principia FlightPlan nodes for vessel {vessel.vesselName}");
+                KSPGMATLog.Info("Principia", $"Cleared all Principia FlightPlan nodes for vessel {vessel.vesselName}");
                 return true;
             } catch (Exception ex) {
-                KSPGMATLog.Warn("[PrincipiaInterop] Error clearing FlightPlan: " + ex.Message);
+                KSPGMATLog.Error("Principia", "Error clearing FlightPlan", ex);
                 return false;
             }
         }
@@ -411,7 +411,7 @@ namespace KSPGMAT {
                 if (status != null && fStatus_Error != null) return (int)fStatus_Error.GetValue(status) == 0;
                 return true;
             } catch (Exception ex) {
-                KSPGMATLog.Error("[PrincipiaInterop] Failed to set flight plan final time: " + ex.Message);
+                KSPGMATLog.Error("Principia", "Failed to set flight plan final time", ex);
                 return false;
             }
         }
@@ -421,7 +421,7 @@ namespace KSPGMAT {
         /// </summary>
         public static bool InsertOrUpdateBurn(Vessel vessel, double burnInitialTime, Vector3d deltaV_mps, double thrust_kN, double isp_s, int burnIndex = 0, bool isFrenet = true, string originBodyName = null) {
             if (vessel == null || !HasVessel(vessel)) {
-                Debug.LogWarning("[KSPGMAT] Cannot insert burn: Vessel is not tracked by Principia.");
+                KSPGMATLog.Warn("Principia", "Cannot insert burn: Vessel is not tracked by Principia.");
                 return false;
             }
             EnsureInitialized();
@@ -430,7 +430,7 @@ namespace KSPGMAT {
                 fNav_Centre == null || fNav_Primary == null || fNav_Secondary == null || fNav_Extension == null ||
                 fBurn_Thrust == null || fBurn_Isp == null || fBurn_Frame == null || fBurn_InitialTime == null ||
                 fBurn_DeltaV == null || fBurn_IsInertiallyFixed == null) {
-                KSPGMATLog.Error("[PrincipiaInterop] Burn write rejected: Principia adapter fields are unavailable.");
+                KSPGMATLog.Error("Principia", "Burn write rejected: Principia adapter fields are unavailable.");
                 return false;
             }
 
@@ -440,7 +440,7 @@ namespace KSPGMAT {
                 double.IsNaN(deltaV_mps.x) || double.IsInfinity(deltaV_mps.x) ||
                 double.IsNaN(deltaV_mps.y) || double.IsInfinity(deltaV_mps.y) ||
                 double.IsNaN(deltaV_mps.z) || double.IsInfinity(deltaV_mps.z)) {
-                KSPGMATLog.Error("[PrincipiaInterop] Burn write rejected: non-finite burn data.");
+                KSPGMATLog.Error("Principia", "Burn write rejected: non-finite burn data.");
                 return false;
             }
 
@@ -448,7 +448,7 @@ namespace KSPGMAT {
             // with a native CHECK failure. Keep inertially-fixed burns out of this
             // write path until a valid adapter frame for them is available.
             if (!isFrenet) {
-                KSPGMATLog.Error("[PrincipiaInterop] Burn write rejected: only the valid Frenet navigation frame is supported.");
+                KSPGMATLog.Error("Principia", "Burn write rejected: only the valid Frenet navigation frame is supported.");
                 return false;
             }
 
@@ -463,7 +463,7 @@ namespace KSPGMAT {
                     if (burnInitialTime + 21600.0 > desiredFinalTime) {
                         double newFinal = burnInitialTime + 21600.0;
                         mFlightPlanSetDesiredFinalTime.Invoke(null, new object[] { plugin, guid, newFinal });
-                        KSPGMATLog.Info($"[PrincipiaInterop] Extended flight plan desired final time to {newFinal:F2}s");
+                        KSPGMATLog.Info("Principia", $"Extended flight plan desired final time to {newFinal:F2}s");
                     }
                 } catch {}
             }
@@ -530,9 +530,9 @@ namespace KSPGMAT {
             bool writtenSuccessfully = (err == 0) || (afterCount > numManoeuvres) || (burnIndex < afterCount);
 
             if (writtenSuccessfully) {
-                KSPGMATLog.Success($"[PrincipiaInterop] Burn {burnIndex} inserted/confirmed in Principia! (time={burnInitialTime:F2}s, dv=({deltaV_mps.x:F1}, {deltaV_mps.y:F1}, {deltaV_mps.z:F1})m/s, origin={targetBody.name})");
+                KSPGMATLog.Success("Principia", $"Burn {burnIndex} inserted/confirmed in Principia! (time={burnInitialTime:F2}s, dv=({deltaV_mps.x:F1}, {deltaV_mps.y:F1}, {deltaV_mps.z:F1})m/s, origin={targetBody.name})");
             } else {
-                KSPGMATLog.Warn($"[PrincipiaInterop] Burn {burnIndex} status code {err}: {msg}");
+                KSPGMATLog.Warn("Principia", $"Burn {burnIndex} status code {err}: {msg}");
             }
 
             return writtenSuccessfully;
@@ -605,7 +605,11 @@ namespace KSPGMAT {
                 }
                 message = "已读取 " + nodes.Count + " 个 Principia manoeuvre 节点";
                 return true;
-            } catch (Exception ex) { message = "读取 Principia Flight Plan 失败: " + ex.Message; return false; }
+            } catch (Exception ex) {
+                KSPGMATLog.Error("Principia", "读取 Principia Flight Plan 失败", ex);
+                message = "读取 Principia Flight Plan 失败: " + ex.Message;
+                return false;
+            }
         }
 
         private static object InvokeManoeuvreGetter(IntPtr plugin, string guid, int index) {

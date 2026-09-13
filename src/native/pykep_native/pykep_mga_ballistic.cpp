@@ -346,20 +346,21 @@ EXPORT_API int pykep_mga_evaluate_mu(
 
                     out_sol->launch_dv_kms = calc_central_departure_dv(p1.mu, p1.radius, dep_pe_km, dep_ap_km, r_dest_km, beta_rad, nullptr);
 
-                    double hx = p1.ry * v1[2] - p1.rz * v1[1];
-                    double hy = p1.rz * v1[0] - p1.rx * v1[2];
-                    double hz = p1.rx * v1[1] - p1.ry * v1[0];
-                    double h_mag = std::sqrt(hx * hx + hy * hy + hz * hz);
-                    if (h_mag < 1e-6) {
-                        hx = p1.ry * p2.rz - p1.rz * p2.ry;
-                        hy = p1.rz * p2.rx - p1.rx * p2.rz;
-                        hz = p1.rx * p2.ry - p1.ry * p2.rx;
-                        h_mag = std::sqrt(hx * hx + hy * hy + hz * hz);
+                    double r1_arr[3] = { out_sol->legs[0].r1x, out_sol->legs[0].r1y, out_sol->legs[0].r1z };
+                    double h_eff_x = (h_park_mag > 1e-6) ? h_park_x : (r1_arr[1] * v1[2] - r1_arr[2] * v1[1]);
+                    double h_eff_y = (h_park_mag > 1e-6) ? h_park_y : (r1_arr[2] * v1[0] - r1_arr[0] * v1[2]);
+                    double h_eff_z = (h_park_mag > 1e-6) ? h_park_z : (r1_arr[0] * v1[1] - r1_arr[1] * v1[0]);
+                    double h_eff_mag = std::sqrt(h_eff_x * h_eff_x + h_eff_y * h_eff_y + h_eff_z * h_eff_z);
+                    if (h_eff_mag < 1e-6) {
+                        h_eff_x = r1_arr[1] * p2.rz - r1_arr[2] * p2.ry;
+                        h_eff_y = r1_arr[2] * p2.rx - r1_arr[0] * p2.rz;
+                        h_eff_z = r1_arr[0] * p2.ry - r1_arr[1] * p2.rx;
+                        h_eff_mag = std::sqrt(h_eff_x * h_eff_x + h_eff_y * h_eff_y + h_eff_z * h_eff_z);
                     }
-                    if (h_mag > 1e-6) {
-                        out_sol->ejection_inc_deg = std::acos(std::max(-1.0, std::min(1.0, hz / h_mag))) * RAD2DEG;
-                        double nx = -hy;
-                        double ny = hx;
+                    if (h_eff_mag > 1e-6) {
+                        out_sol->ejection_inc_deg = std::acos(std::max(-1.0, std::min(1.0, h_eff_z / h_eff_mag))) * RAD2DEG;
+                        double nx = -h_eff_y;
+                        double ny = h_eff_x;
                         double n_mag = std::sqrt(nx * nx + ny * ny);
                         if (n_mag > 1e-6) {
                             double lan = std::atan2(ny, nx) * RAD2DEG;

@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
 using UnityEngine;
+using KSPGMAT;
 
 namespace KSPGMAT.Model {
     /// <summary>
@@ -291,11 +292,7 @@ namespace KSPGMAT.Model {
                     return;
                 }
             } catch (Exception ex) {
-                try {
-                    Debug.LogWarning($"[KSP_GMAT] GMATSchemaRegistry LoadCapabilities: {ex.Message}");
-                } catch {
-                    Console.WriteLine($"[KSP_GMAT] GMATSchemaRegistry LoadCapabilities: {ex.Message}");
-                }
+                KSPGMATLog.Error("SchemaRegistry", "LoadCapabilities error", ex);
             }
 
             // 兜底载入核心基准元数据 (防文件丢失)
@@ -347,7 +344,7 @@ namespace KSPGMAT.Model {
                     return;
                 }
             } catch (Exception ex) {
-                try { Debug.LogWarning($"[KSP_GMAT] MiniJSON parse fallback: {ex.Message}"); } catch { }
+                KSPGMATLog.Error("SchemaRegistry", "MiniJSON parse fallback", ex);
             }
 
             ParseJsonFallback(json);

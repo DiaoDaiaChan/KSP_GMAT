@@ -265,11 +265,11 @@ namespace KSPGMAT.MGA
             budget.DeepestWaypointDifficulty = deepestDifficulty;
 
             // ------------------------------------------------------------------
-            // 6. 链长上限: 求解器物理上限 <-> 预算总和
+            // 6. 链长上限: 求解器物理上限 <-> 预算总和 (含可用中继梯级、折返腿、共振调相腿)
             // ------------------------------------------------------------------
             budget.MaxChainLegs = Math.Min(
                 MaxSupportedChainBodies,
-                budget.MaxSwingBys + Math.Max(0, budget.MaxBackLegs) + 2);
+                budget.MaxSwingBys + Math.Max(0, budget.MaxBackLegs) + Math.Max(0, budget.MaxResonances) + 2);
 
             var sb = new StringBuilder();
             sb.Append(isOutward ? "外向" : "内向");

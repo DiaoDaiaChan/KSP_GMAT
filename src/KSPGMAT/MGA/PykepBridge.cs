@@ -444,7 +444,7 @@ namespace KSPGMAT.MGA {
                     }
                 }
             } catch (Exception ex) {
-                KSPGMATLog.Warn($"[PykepBridge] Native MGA bridge linkage note: {ex.Message}");
+                KSPGMATLog.Error("PykepBridge", $"Native MGA bridge linkage note: {ex.Message}", ex);
             }
         }
 
@@ -907,7 +907,7 @@ namespace KSPGMAT.MGA {
                     try {
                         sol.DepartureMEE = CartesianToMEE(leg0.DeparturePosKm, leg0.DepartureVelKms, centralMu);
                     } catch (Exception ex) {
-                        KSPGMATLog.Warn($"[PykepBridge] MEE failed: {ex.Message}");
+                        KSPGMATLog.Error("PykepBridge", $"MEE failed: {ex.Message}", ex);
                     }
                 }
 
@@ -923,7 +923,7 @@ namespace KSPGMAT.MGA {
                     try {
                         sol.PrimerVector = CalculatePrimerVector(leg0.DeparturePosKm, leg0.DepartureVelKms, dv1, dv2, leg0.ToFDays * 86400.0, centralMu);
                     } catch (Exception ex) {
-                        KSPGMATLog.Warn($"[PykepBridge] PrimerVector failed: {ex.Message}");
+                        KSPGMATLog.Error("PykepBridge", $"PrimerVector failed: {ex.Message}", ex);
                     }
 
                     // Feature 2: 目标天体双曲飞掠 B-Plane 与 TCM 中道修正计算
@@ -933,7 +933,7 @@ namespace KSPGMAT.MGA {
                         try {
                             sol.BPlane = CalculateBPlane(rRel, vRel, pArr.Mu);
                         } catch (Exception ex) {
-                            KSPGMATLog.Warn($"[PykepBridge] BPlane failed: {ex.Message}");
+                            KSPGMATLog.Error("PykepBridge", $"BPlane failed: {ex.Message}", ex);
                         }
 
                         // 计算中道 1/2 处 TCM 点火
@@ -944,7 +944,7 @@ namespace KSPGMAT.MGA {
                             Vector3d vMid = leg0.DepartureVelKms;
                             sol.SuggestedTCM = CalculateBPlaneTCM(rMid, vMid, dtToEnc, rRel, vRel, config.TargetBDotTKm, config.TargetBDotRKm, pArr.Mu);
                         } catch (Exception ex) {
-                            KSPGMATLog.Warn($"[PykepBridge] BPlaneTCM failed: {ex.Message}");
+                            KSPGMATLog.Error("PykepBridge", $"BPlaneTCM failed: {ex.Message}", ex);
                         }
                     }
                 }
@@ -964,7 +964,7 @@ namespace KSPGMAT.MGA {
                             tofSec, config.LowThrustMaxThrustN, config.LowThrustIspSec, centralMu,
                             nSeg, throttles);
                     } catch (Exception ex) {
-                        KSPGMATLog.Warn($"[PykepBridge] SimsFlanagan failed: {ex.Message}");
+                        KSPGMATLog.Error("PykepBridge", $"SimsFlanagan failed: {ex.Message}", ex);
                     }
                 }
 
@@ -973,11 +973,11 @@ namespace KSPGMAT.MGA {
                     try {
                         sol.ParetoFront = GenerateParetoFront(genome, fullChain, config, 9);
                     } catch (Exception ex) {
-                        KSPGMATLog.Warn($"[PykepBridge] ParetoFront failed: {ex.Message}");
+                        KSPGMATLog.Error("PykepBridge", $"ParetoFront failed: {ex.Message}", ex);
                     }
                 }
             } catch (Exception ex) {
-                KSPGMATLog.Warn($"[PykepBridge] PopulateAdvancedAstrodynamics outer note: {ex}");
+                KSPGMATLog.Error("PykepBridge", "PopulateAdvancedAstrodynamics outer note", ex);
             }
         }
 
@@ -1133,12 +1133,14 @@ namespace KSPGMAT.MGA {
 
 
             try {
-                UnityEngine.Debug.Log($"[KSPGMAT-Pykep] 映射原生 MGA 解: 序列='{sol.FlybyChainSummary}' | 发射ΔV={sol.LaunchDeltaVKms * 1000.0:F1} m/s, 制动ΔV={sol.InsertionDeltaVKms * 1000.0:F1} m/s, 总ΔV={sol.TotalDeltaVKms * 1000.0:F1} m/s, 飞行={sol.TotalFlightDays:F1}天, 可行性={sol.AllLegsFeasible}");
+                KSPGMATLog.Debug("Solver", $"[PykepBridge] 映射原生 MGA 解: 序列='{sol.FlybyChainSummary}' | 发射ΔV={sol.LaunchDeltaVKms * 1000.0:F1} m/s, 制动ΔV={sol.InsertionDeltaVKms * 1000.0:F1} m/s, 总ΔV={sol.TotalDeltaVKms * 1000.0:F1} m/s, 飞行={sol.TotalFlightDays:F1}天, 可行性={sol.AllLegsFeasible}");
                 for (int k = 0; k < sol.Legs.Count; k++) {
                     var l = sol.Legs[k];
-                    UnityEngine.Debug.Log($"[KSPGMAT-Pykep]   Leg #{k + 1}: {l.FromBody} -> {l.ToBody} | 出发UT={l.DepartureUT:F1}, 到达UT={l.ArrivalUT:F1}, 飞行={l.ToFDays:F1}d, 相角={l.PhaseAngleDeg:F1}°, C3={l.C3Kms2:F2} km²/s², VNC=({l.ProgradeMs:F1}, {l.NormalMs:F1}, {l.RadialMs:F1}) m/s, R1={l.DeparturePosKm.magnitude / 1.496e8:F3}AU, R2={l.ArrivalPosKm.magnitude / 1.496e8:F3}AU");
+                    KSPGMATLog.Debug("Solver", $"[PykepBridge]   Leg #{k + 1}: {l.FromBody} -> {l.ToBody} | 出发UT={l.DepartureUT:F1}, 到达UT={l.ArrivalUT:F1}, 飞行={l.ToFDays:F1}d, 相角={l.PhaseAngleDeg:F1}°, C3={l.C3Kms2:F2} km²/s², VNC=({l.ProgradeMs:F1}, {l.NormalMs:F1}, {l.RadialMs:F1}) m/s, R1={l.DeparturePosKm.magnitude / 1.496e8:F3}AU, R2={l.ArrivalPosKm.magnitude / 1.496e8:F3}AU");
                 }
-            } catch { }
+            } catch (Exception ex) {
+                KSPGMATLog.Error("Solver", "映射原生 MGA 解日志输出异常", ex);
+            }
 
             return sol;
         }
@@ -1715,7 +1717,7 @@ namespace KSPGMAT.MGA {
             }
             catch (Exception ex)
             {
-                KSPGMATLog.Warn($"[PykepBridge] EvaluateSurrogateGpuGrid 异常: {ex.Message}");
+                KSPGMATLog.Error("PykepBridge", $"EvaluateSurrogateGpuGrid 异常: {ex.Message}", ex);
                 return false;
             }
         }

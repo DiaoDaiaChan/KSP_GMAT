@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
+using KSPGMAT;
 using KSPGMAT.Model;
 
 namespace KSPGMAT.Service {
@@ -900,7 +901,7 @@ namespace KSPGMAT.Service {
             string sanitized = GMATScriptLinter.FixScript(raw);
             var lintReport = GMATScriptLinter.Lint(sanitized);
             if (lintReport.HasErrors) {
-                UnityEngine.Debug.LogWarning($"[KSP_GMAT Lint] 生成脚本包含 {lintReport.ErrorCount} 项潜在问题: {lintReport.Issues[0]}");
+                KSPGMATLog.Warn("ScriptGenerator", $"[Lint] 生成脚本包含 {lintReport.ErrorCount} 项潜在问题: {lintReport.Issues[0]}");
             }
             return sanitized;
         }

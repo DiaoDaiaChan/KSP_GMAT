@@ -159,7 +159,7 @@ namespace KSPGMAT.MGA
         /// </summary>
         public static void PrintSummary()
         {
-            Console.WriteLine(GenerateReport());
+            KSPGMATLog.Info("Solver", GenerateReport());
         }
     }
 }

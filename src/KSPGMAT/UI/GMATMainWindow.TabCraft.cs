@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 using KSPGMAT.MGA;
+using KSPGMAT;
 
 namespace KSPGMAT.UI {
     public partial class GMATMainWindow {
@@ -48,7 +49,7 @@ namespace KSPGMAT.UI {
             try {
                 craftComparisonResult = SolarSystemCatalog.ComparePlanetSchemes(craftComparisonBody, ut);
             } catch (Exception ex) {
-                KSPGMATLog.Warn("[TabCraft] Error comparing schemes: " + ex.Message);
+                KSPGMATLog.Warn("UI", "[TabCraft] Error comparing schemes: " + ex.Message);
             }
         }
 

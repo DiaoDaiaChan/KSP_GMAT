@@ -112,5 +112,38 @@ namespace KSPGMAT.MGA
             }
             return sb.ToString();
         }
+        /// <summary>
+        /// 综合考虑工质最优与航时惩罚的帕累托平衡选解器 (Pareto-Knee Balanced Selector)。
+        /// 在 Pareto 前沿解集中，识别边际替换率合理的膝部解，抑制航时无限拖延换取微小工质降低的伪最优陷阱。
+        /// </summary>
+        public static MGASolution SelectParetoKneeSolution(IEnumerable<MGASolution> paretoFront, MGAConfig config)
+        {
+            return SelectParetoKneeSolution(paretoFront, config?.CentralBody ?? "Sun");
+        }
+
+        public static MGASolution SelectParetoKneeSolution(IEnumerable<MGASolution> paretoFront, string centralBody = "Sun")
+        {
+            if (paretoFront == null) return null;
+            var list = paretoFront.Where(s => s != null && s.AllLegsFeasible).ToList();
+            if (list.Count == 0) return paretoFront.FirstOrDefault();
+            if (list.Count == 1) return list[0];
+
+            double nominalDays = MGAPhysicsLossEngine.ResolveNominalTofDays(list[0], centralBody);
+            if (nominalDays <= 0) return list.OrderBy(s => s.TotalDeltaVKms).First();
+
+            return list
+                .OrderBy(s => {
+                    double dvKms = s.TotalDeltaVKms;
+                    if (s.TotalFlightDays > nominalDays * 1.20)
+                    {
+                        double excess = (s.TotalFlightDays - nominalDays * 1.20) / nominalDays;
+                        dvKms += (0.15 * excess + 0.15 * excess * excess) * dvKms;
+                    }
+                    return dvKms;
+                })
+                .ThenBy(s => s.TotalDeltaVKms)
+                .ThenBy(s => s.TotalFlightDays)
+                .First();
+        }
     }
 }

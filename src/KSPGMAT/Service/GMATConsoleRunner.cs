@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
+using KSPGMAT;
 using KSPGMAT.Model;
 
 namespace KSPGMAT.Service {
@@ -19,10 +20,10 @@ namespace KSPGMAT.Service {
                 try {
                     if (currentRunningProcess != null && !currentRunningProcess.HasExited) {
                         currentRunningProcess.Kill();
-                        KSPGMATLog.Warn("User aborted GmatConsole execution process.");
+                        KSPGMATLog.Warn("ConsoleRunner", "User aborted GmatConsole execution process.");
                     }
                 } catch (Exception ex) {
-                    KSPGMATLog.Warn($"Process kill exception: {ex.Message}");
+                    KSPGMATLog.Error("ConsoleRunner", "Process kill exception", ex);
                 }
                 currentRunningProcess = null;
             }
@@ -124,7 +125,7 @@ namespace KSPGMAT.Service {
                         }
 
                         sw.Stop();
-                        KSPGMATLog.Info($"GmatConsole finished in {sw.ElapsedMilliseconds} ms (ExitCode: {exitCode}, Script: mission_{timestamp}.script)");
+                        KSPGMATLog.Info("ConsoleRunner", $"GmatConsole finished in {sw.ElapsedMilliseconds} ms (ExitCode: {exitCode}, Script: mission_{timestamp}.script)");
 
                         var result = GMATSolutionMapper.ParseAndMapResult(stdout, stderr, exitCode, reportFile, outputDir, originalSteps, scriptContent, scriptFile);
 
@@ -165,7 +166,7 @@ namespace KSPGMAT.Service {
                         callback?.Invoke(result.success, result);
                     }
                 } catch (Exception ex) {
-                    KSPGMATLog.Error($"GmatConsole execution error: {ex}");
+                    KSPGMATLog.Error("ConsoleRunner", "GmatConsole execution error", ex);
                     callback?.Invoke(false, new MissionResult {
                         success = false,
                         error = $"GmatConsole 执行异常: {ex.Message}"
