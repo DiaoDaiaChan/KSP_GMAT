@@ -2,12 +2,15 @@
 
 > **版本**：R2026a Standard Baseline  
 > **工程目录**：`c:\Users\43701\gmat-win-R2026a\bin\KSP_GMAT`  
-> **适用范围**：KSP 模组核心、UI/UX 视图系统、数据模型、GMAT 脚本编译器、求解器通信管线与 Principia 动力学互操作系统。
+> **适用范围**：KSP 模组核心、UI/UX 视图系统、数据模型、GMAT 脚本编译器、求解器通信管线与 Principia 动力学互操作系统。  
+> **架构全景脑图**：详见 [docs/CODEBASE_ARCHITECTURE_MINDMAP.md](docs/CODEBASE_ARCHITECTURE_MINDMAP.md)（涵盖全工程 148 个文件的职责全景脑图、Mermaid 关系拓扑图与组件级契约规范）。
 
 ---
 
 # 目录 (Table of Contents)
-- [0. 核心架构设计原则 (Single Source of Truth)](#0-核心架构设计原则-single-source-of-truth)
+- [0. 核心架构设计原则与全景脑图 (Architecture & SSOT)](#0-核心架构设计原则与全景脑图-architecture--ssot)
+  - [0.1 全代码库分层职责全景脑图 (Codebase Mindmap Reference)](#01-全代码库分层职责全景脑图-codebase-mindmap-reference)
+  - [0.2 核心铁律：单一数据真值源 (Single Source of Truth)](#02-核心铁律单一数据真值源-single-source-of-truth)
 - [1. 飞船变量与状态全局统一管理规范 (GMATStateManager)](#1-飞船变量与状态全局统一管理规范-gmatstatemanager)
   - [1.1 架构流转全景拓扑](#11-架构流转全景拓扑)
   - [1.2 状态数据模型规范](#12-状态数据模型规范)
@@ -53,7 +56,15 @@
 
 ---
 
-# 0. 核心架构设计原则 (Single Source of Truth)
+# 0. 核心架构设计原则与全景脑图 (Architecture & SSOT)
+
+## 0.1 全代码库分层职责全景脑图 (Codebase Mindmap Reference)
+全工程全部 148 个文件（涵盖 Core、Model、Service、Interop、Localization、MGA AI/GPU/Solver/Telemetry、UI、Native C++、ComplianceChecker 语法树引擎及脱机测试套件）的职责全景脑图、数据流转图与组件级契约规范，统一收录并维护于：
+👉 **[`docs/CODEBASE_ARCHITECTURE_MINDMAP.md`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/docs/CODEBASE_ARCHITECTURE_MINDMAP.md)**
+
+所有新特性的添加、类定义、依赖拓扑与跨层调用，必须严格遵循该全景图所划分的架构层级边界与调用契约。
+
+## 0.2 核心铁律：单一数据真值源 (Single Source of Truth, SSOT)
 
 在航天轨道动力学与 NASA GMAT 任务设计中，航天器状态（位置、速度、历元、质量、气动/光压）、推进硬件（多级储罐、推力器、供油绑定）以及任务打靶序列（Target / Vary / Achieve）具有强耦合性。
 
@@ -61,6 +72,7 @@
 
 > ### 🛑 核心铁律：**单一数据真值源 (Single Source of Truth, SSOT)**
 > **所有 GMAT 相关的飞船变量、动力学状态、硬件配置、用户自定义变量与脚本合规过滤逻辑，必须且只能由 `GMATStateManager` 统一维护、更新与导出。严禁在 UI 窗口、IDE 缓冲区或子面板中开设分散私有变量。**
+
 
 ---
 

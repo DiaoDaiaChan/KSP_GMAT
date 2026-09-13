@@ -1,6 +1,7 @@
 # KSP_GMAT Agent 编码守则 (baseline_agent.md)
 
 > **用法**：每次对话开始时，把本文件内容附给 coding agent，要求其编写/修改代码时**始终遵守**以下铁律。完成代码时重复：我已遵守baseline
+> **全工程职责全景脑图**：请查阅 [`docs/CODEBASE_ARCHITECTURE_MINDMAP.md`](docs/CODEBASE_ARCHITECTURE_MINDMAP.md)，严格遵守 148 个文件的职责划分、Mermaid 拓扑流转与组件级契约。
 # 每一步都应该commit介绍编写/修改了什么代码
 
 ---
