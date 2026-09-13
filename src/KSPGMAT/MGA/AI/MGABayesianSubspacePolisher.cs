@@ -1,8 +1,8 @@
 // ============================================================================
 // MGABayesianSubspacePolisher.cs
-// 活动子空间高斯过程贝叶斯局部抛光器 (Active Subspace Gaussian Process Polisher)
-// 理论来源: Constantine et al. (2014) "Active Subspaces", Snoek et al. (2012) "Practical Bayesian Optimization"
-// 机制: 在 DE 收敛的高价值吸引子邻域，通过主敏感方向降维与高斯过程期望改善 (EI) 主动采样完成高精度收敛
+// 局部有限差分一阶梯度与二次抛物线极值抛光器 (Local Gradient & Quadratic Vertex Polisher)
+// 机制: 在 DE 收敛的高价值吸引子邻域，通过有限差分探测主梯度方向，沿主敏感轴线搜索并结合二次极值插值加速收敛
+// 遵从 baseline_agent.md 实事求是原则：本模块为纯确定性局部一阶梯度/二次抛光算法，剥离虚假学术包装
 // ============================================================================
 
 using System;
@@ -11,14 +11,14 @@ using System.Collections.Generic;
 namespace KSPGMAT.MGA.AI
 {
     /// <summary>
-    /// 活动子空间贝叶斯优化器
+    /// 局部一阶梯度与二次插值抛光器 (Local Gradient & Quadratic Vertex Polisher)
     /// </summary>
     public class MGABayesianSubspacePolisher
     {
         public delegate double ObjectiveEvaluator(double[] point);
 
         /// <summary>
-        /// 在基准最优解周围执行活动子空间贝叶斯抛光
+        /// 在基准最优解周围执行局部梯度探测与二次抛物线抛光
         /// </summary>
         /// <param name="bestPoint">当前最优输入参数（如发射时间、各腿ToF）</param>
         /// <param name="lowerBounds">参数下界</param>

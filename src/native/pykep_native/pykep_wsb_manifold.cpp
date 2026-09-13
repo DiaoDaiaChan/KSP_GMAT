@@ -93,7 +93,8 @@ EXPORT_API int pykep_calc_manifold_capture(
             double manifold_damping = std::min(1.0, 1.2 / std::max(0.5, v_inf));
             dv_wsb = delta_v_transit + (1.0 - manifold_damping) * 0.25 * v_inf;
         } else {
-            dv_wsb = dv_classical * 0.85; // 边缘情况保留 15% 弱稳定边际效益
+            // 当不满足流形进入条件时，严格返回经典开普勒捕获机动，严禁捏造 85 折优惠
+            dv_wsb = dv_classical;
         }
 
         // 限制 dv_wsb 不超过传统捕获

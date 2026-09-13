@@ -173,12 +173,12 @@ namespace KSPGMAT.MGA
                 double coarseBestDv = double.MaxValue;
                 double coarseBestTof = nomTofDays;
 
-                double rp1 = (p1 != null ? p1.RadiusKm : 6371.0) + config.DepPeKm;
-                double muP1 = (p1 != null) ? p1.Mu : 398600.0;
+                double rp1 = (p1 != null && p1.RadiusKm > 0 ? p1.RadiusKm : MGADefaults.GetBodyRadiusKm(fromBody)) + config.DepPeKm;
+                double muP1 = (p1 != null && p1.Mu > 0) ? p1.Mu : MGADefaults.GetBodyMu(fromBody);
                 double vPark1 = Math.Sqrt(muP1 / Math.Max(1.0, rp1));
 
-                double rp2 = (p2 != null ? p2.RadiusKm : 6052.0) + config.ArrPeKm;
-                double muP2 = (p2 != null) ? p2.Mu : 324859.0;
+                double rp2 = (p2 != null && p2.RadiusKm > 0 ? p2.RadiusKm : MGADefaults.GetBodyRadiusKm(toBody)) + config.ArrPeKm;
+                double muP2 = (p2 != null && p2.Mu > 0) ? p2.Mu : MGADefaults.GetBodyMu(toBody);
                 double vPark2 = Math.Sqrt(muP2 / Math.Max(1.0, rp2));
 
                 for (double ut = cycleStart; ut <= cycleEnd; ut += coarseStepDays * 86400.0)

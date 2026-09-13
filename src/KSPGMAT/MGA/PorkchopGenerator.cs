@@ -294,7 +294,7 @@ namespace KSPGMAT.MGA {
                         p1.GetRelativeState(central, depUT, out Vector3d r1, out Vector3d vP1);
                         p2.GetRelativeState(central, arrUT, out Vector3d r2, out Vector3d vP2);
 
-                        double cRadius = SolarSystemCatalog.GetPlanet(central)?.RadiusKm ?? MGADefaults.EarthRadiusKm;
+                        double cRadius = SolarSystemCatalog.GetPlanet(central)?.RadiusKm ?? MGADefaults.GetBodyRadiusKm(central);
                         if (r1.sqrMagnitude < 1.0) {
                             double rPark = (p1 != null && p1.RadiusKm > 0 ? p1.RadiusKm : cRadius) + depAltKm;
                             PykepNative.SynthesizeParkingState(centralMu, rPark, false, 0.0, 0.0, r2, vP2, out r1, out vP1);
@@ -409,9 +409,21 @@ namespace KSPGMAT.MGA {
                 }
             }
 
-            if (validCount == 0 || minDV >= 1e5) minDV = 3500.0;
+            if (validCount == 0 || minDV >= 1e5) {
+                // 无可行解时统一填充空解深色背景，不捏造虚假 3500 m/s 色带 (遵从 baseline 实事求是原则)
+                for (int i = 0; i < pixels.Length; i++) {
+                    pixels[i] = new Color(0.10f, 0.12f, 0.18f, 1.0f);
+                }
+                tex.SetPixels(pixels);
+                tex.Apply();
+                grid.ScaleMinDV = 0.0;
+                grid.ScaleMaxDV = 0.0;
+                grid.ColorBarTexture = new Texture2D(16, 256, TextureFormat.RGBA32, false);
+                return tex;
+            }
+
             double logMin = Math.Log(minDV);
-            double mean = validCount > 0 ? sumLog / validCount : logMin;
+            double mean = sumLog / validCount;
             double stddev = validCount > 1 ? Math.Sqrt(Math.Max(0.0, sumSqLog / validCount - mean * mean)) : 0.5;
             double logMax = Math.Min(Math.Log(Math.Max(minDV * 1.5, maxDV)), mean + 2.0 * stddev);
             if (logMax <= logMin + 0.01) logMax = logMin + 0.5;

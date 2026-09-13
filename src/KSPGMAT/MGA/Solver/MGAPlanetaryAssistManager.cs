@@ -140,9 +140,8 @@ namespace KSPGMAT.MGA
                             r.Body.SMA > minSma * 1.05 && r.Body.SMA < maxSma * 0.95 &&
                             !r.Body.Name.Equals(pDep.Name, StringComparison.OrdinalIgnoreCase) &&
                             !r.Body.Name.Equals(pArr.Name, StringComparison.OrdinalIgnoreCase) &&
-                            // 引力势深/μ 门槛: 仅保留具显著引力助推能力的爬升跳板 (弱小天体如火星不足以承担能量梯级)
-                            (r.Body.GravityPotentialDepth >= MGADefaults.MinAssistPowerIndexInner
-                             || r.Body.Mu >= MGADefaults.GiantPlanetMinMu))
+                            // 无量纲借力显著性门槛: 仅保留具显著引力助推能力的爬升跳板 (弱小天体不足以承担能量梯级)
+                            MGAPhysicalScales.IsSignificantAssist(r.Body, 5.0, SolarSystemCatalog.GetCentralMu(centralBody)))
                 .Select(r => r.Body);
 
             if (isOutward)

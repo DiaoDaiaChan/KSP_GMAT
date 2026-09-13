@@ -14,10 +14,9 @@ using KSPGMAT.Model;
 namespace KSPGMAT.MGA
 {
     /// <summary>
-    /// 模块 A: 自适应多岛并行微分进化引擎
-    /// 理论来源: Dario Izzo et al. (Springer 2012) "The Generalized Island Model"
-    /// 机制: 环形拓扑 (Ring)、每 10 代迁移 Top 2、根据物理会合周期完整覆盖全时域 (彻底废除 45 天截断)
-    /// 底层实现: 100% 委托 Native kep3 差分进化与 Householder-4 兰伯特求解
+    /// 模块 A: 跨会合周期多窗口并行差分进化寻优器 (Multi-Window Parallel DE Evaluator across Synodic Windows)
+    /// 机制: 根据开普勒会合周期将发射搜索全时域划分为独立候选时区，并行分发各窗口差分进化寻优，聚焦能量波谷并汇聚全域解集
+    /// 遵从 baseline_agent.md 实事求是原则：底层 100% 委托 Native kep3 差分进化与 Householder-4 兰伯特求解
     /// </summary>
     public static class MGAArchipelagoOptimizer
     {

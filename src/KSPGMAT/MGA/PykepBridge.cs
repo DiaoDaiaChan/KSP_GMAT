@@ -504,7 +504,7 @@ namespace KSPGMAT.MGA {
                 p1.GetRelativeState(central, currentUT, out Vector3d r1, out Vector3d v1);
                 p2.GetRelativeState(central, arrUT, out Vector3d r2, out Vector3d v2);
 
-                double centralRadius = SolarSystemCatalog.GetPlanet(central)?.RadiusKm ?? MGADefaults.EarthRadiusKm;
+                double centralRadius = SolarSystemCatalog.GetPlanet(central)?.RadiusKm ?? MGADefaults.GetBodyRadiusKm(central);
                 if (fromName.Equals(central, StringComparison.OrdinalIgnoreCase)) {
                     double rPark = (p1 != null && p1.RadiusKm > 0 ? p1.RadiusKm : centralRadius) + (config?.DeparturePeAKm ?? MGADefaults.DepartureAltitudeKm);
                     bool lockPlane = config != null && (config.DepartureMode == MGADepartureMode.InOrbitLockedOrbit || config.LockDepartureInclination);
@@ -733,7 +733,7 @@ namespace KSPGMAT.MGA {
 
             string central = config?.CentralBody ?? "Sun";
             double centralMu = SolarSystemCatalog.GetCentralMu(central);
-            double centralRadius = SolarSystemCatalog.GetPlanet(central)?.RadiusKm ?? MGADefaults.EarthRadiusKm;
+            double centralRadius = SolarSystemCatalog.GetPlanet(central)?.RadiusKm ?? MGADefaults.GetBodyRadiusKm(central);
 
             if (config != null) config.SyncStrategiesWithChain(legCount, fullChain);
 
@@ -1434,7 +1434,7 @@ namespace KSPGMAT.MGA {
         /// 获取给定天体到其中心天体的轨道半长轴或距心距离 (km)
         /// </summary>
         private static double GetCbDistanceToCentral(CelestialBody cb, string central, double defaultAltKm = MGADefaults.DepartureAltitudeKm) {
-            double cRadius = SolarSystemCatalog.GetPlanet(central)?.RadiusKm ?? MGADefaults.EarthRadiusKm;
+            double cRadius = SolarSystemCatalog.GetPlanet(central)?.RadiusKm ?? MGADefaults.GetBodyRadiusKm(central);
             if (cb == null) return cRadius + defaultAltKm;
             if (cb.name.Equals(central, StringComparison.OrdinalIgnoreCase) || 
                (cb.bodyName != null && cb.bodyName.Equals(central, StringComparison.OrdinalIgnoreCase))) {
@@ -1458,7 +1458,7 @@ namespace KSPGMAT.MGA {
         /// 获取天体相对于指定中心天体的等效轨道半长轴 (SMA, km)
         /// </summary>
         public static double GetRelativeSMA(SolarPlanet body, string centralBody, double defaultAltKm = MGADefaults.DepartureAltitudeKm) {
-            double cRadius = SolarSystemCatalog.GetPlanet(centralBody)?.RadiusKm ?? MGADefaults.EarthRadiusKm;
+            double cRadius = SolarSystemCatalog.GetPlanet(centralBody)?.RadiusKm ?? MGADefaults.GetBodyRadiusKm(centralBody);
             if (body == null) return cRadius + defaultAltKm;
             if (body.Name.Equals(centralBody, StringComparison.OrdinalIgnoreCase)) {
                 return (body.RadiusKm > 0 ? body.RadiusKm : cRadius) + defaultAltKm;

@@ -1,8 +1,8 @@
 // ============================================================================
 // MGAPolicyValueGuide.cs
-// AlphaZero 范式 Policy-Value 策略与价值引导引擎 (Policy-Value MCTS Guidance)
-// 理论来源: Silver et al. (2017) "Mastering Chess and Shogi by Self-Play with a General Reinforcement Learning Algorithm"
-// 机制: 为 MCTS 提供天体选择先验分布 P(s, a) 与部分轨迹价值评估 V(s)，替代均一展开与深层盲目 Rollout
+// 启发式动力学先验概率与部分轨迹价值评分器 (Heuristic Prior Probability & Value Scorer)
+// 机制: 为 MCTS 提供天体选择动力学先验分布 P(s, a) 与部分轨迹势能价值评估 V(s)，替代均一展开与深层盲目 Rollout
+// 遵从 baseline_agent.md 实事求是原则：本模块为基于引力功率指数与开普勒几何特征的先验评分器，剥离虚假学术包装
 // ============================================================================
 
 using System;
@@ -13,7 +13,7 @@ using KSPGMAT.Model;
 namespace KSPGMAT.MGA.AI
 {
     /// <summary>
-    /// MCTS 拓扑探索的 Policy-Value 引导器
+    /// MCTS 拓扑探索的启发式先验概率与价值评分器 (Heuristic Prior Scorer)
     /// </summary>
     public class MGAPolicyValueGuide
     {

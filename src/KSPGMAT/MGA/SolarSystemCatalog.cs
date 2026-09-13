@@ -46,13 +46,29 @@ namespace KSPGMAT.MGA
                     ? PrincipiaInterop.GetCurrentPrincipiaTime() 
                     : Planetarium.GetUniversalTime();
 
-                string[] samplePlanets = new[] { "Earth", "Mars", "Venus", "Jupiter" };
+                // 动态自适应提取主星直属大天体作为相位对齐样本 (兼容 RSS、Stock 或任意行星包)
+                var sampleList = new List<string>();
+                if (FlightGlobals.Bodies != null && FlightGlobals.Bodies.Count > 0) {
+                    var sun = FlightGlobals.Bodies.Find(b => b.orbit == null || b.referenceBody == null || b.referenceBody == b);
+                    if (sun != null) {
+                        var majorBodies = FlightGlobals.Bodies
+                            .Where(b => b != sun && b.referenceBody == sun && b.orbit != null && b.gravParameter > 0)
+                            .OrderBy(b => b.orbit.semiMajorAxis)
+                            .Take(6)
+                            .Select(b => b.name)
+                            .ToList();
+                        sampleList.AddRange(majorBodies);
+                    }
+                }
+                if (sampleList.Count == 0) {
+                    sampleList.AddRange(new[] { "Earth", "Mars", "Venus", "Jupiter" });
+                }
 
                 double sinSum = 0.0;
                 double cosSum = 0.0;
                 int validSamples = 0;
 
-                foreach (var name in samplePlanets) {
+                foreach (var name in sampleList) {
                     var body = FlightGlobals.Bodies.Find(x => 
                         x.name.Equals(name, StringComparison.OrdinalIgnoreCase) || 
                         x.bodyName.Equals(name, StringComparison.OrdinalIgnoreCase));
@@ -276,6 +292,37 @@ namespace KSPGMAT.MGA
                     } catch { }
                 }
                 return "Sun";
+            }
+        }
+
+        /// <summary>
+        /// 动态默认始发天体 (优先选取主航天港母星如 Kerbin 或 Earth，无运行时回退 "Earth")
+        /// </summary>
+        public static string DefaultDepartureBody {
+            get {
+                if (IsFlightGlobalsReady) {
+                    try {
+                        var home = FlightGlobals.GetHomeBody();
+                        if (home != null && !string.IsNullOrEmpty(home.name)) return home.name;
+                    } catch { }
+                }
+                return "Earth";
+            }
+        }
+
+        /// <summary>
+        /// 动态默认到达目标天体 (优先选取相邻主行星如 Duna 或 Mars，无运行时回退 "Mars")
+        /// </summary>
+        public static string DefaultArrivalBody {
+            get {
+                if (IsFlightGlobalsReady) {
+                    try {
+                        var home = FlightGlobals.GetHomeBody();
+                        var target = FlightGlobals.Bodies.Find(b => b != home && b.referenceBody == home?.referenceBody && b.orbit != null && b.orbit.semiMajorAxis > home.orbit.semiMajorAxis);
+                        if (target != null && !string.IsNullOrEmpty(target.name)) return target.name;
+                    } catch { }
+                }
+                return "Mars";
             }
         }
 

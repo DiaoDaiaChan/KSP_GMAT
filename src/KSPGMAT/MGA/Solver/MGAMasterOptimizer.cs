@@ -339,9 +339,10 @@ namespace KSPGMAT.MGA.Solver {
             MGADefaults.GetBodyCaptureAltitudeBounds(arrivalBody, out double arrMinPe, out double arrRecPe, out _);
 
             bool isFlybyOnly = (p.MaxArrivalVInfKms == 0.0);
+            string resolvedCentral = SolarSystemCatalog.ResolveTransferCentralBody(departureBody, arrivalBody);
 
             var cfg = new MGAAdaptiveSolverConfig {
-                CentralBody = "Sun",
+                CentralBody = !string.IsNullOrEmpty(resolvedCentral) ? resolvedCentral : SolarSystemCatalog.RootStarName,
                 DeparturePlanet = departureBody,
                 ArrivalPlanet = arrivalBody,
                 FlybySequence = waypointIntentions != null ? new List<string>(waypointIntentions) : new List<string>(),

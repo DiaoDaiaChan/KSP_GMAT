@@ -57,9 +57,9 @@ namespace KSPGMAT.MGA
     public sealed class MGAAdaptiveSolverConfig
     {
         // 1. 轨道动力学与几何
-        public string CentralBody { get; set; } = "Sun";
-        public string DeparturePlanet { get; set; } = "Earth";
-        public string ArrivalPlanet { get; set; } = "Mars";
+        public string CentralBody { get; set; } = SolarSystemCatalog.RootStarName;
+        public string DeparturePlanet { get; set; } = SolarSystemCatalog.DefaultDepartureBody;
+        public string ArrivalPlanet { get; set; } = SolarSystemCatalog.DefaultArrivalBody;
         public List<string> FlybySequence { get; set; } = new List<string>();
         public DepartureModePolicy DeparturePolicy { get; set; } = DepartureModePolicy.FreeLaunch;
         public double DepPeKm { get; set; } = 200.0;
@@ -690,12 +690,11 @@ namespace KSPGMAT.MGA
                             });
                         }
 
-                        // [优化] 逐链自愈 (Stage 4 per-topology 阶梯化调度):
-                        // 依据: 标注端逐链 Solve() 时每条链都走一次 AuditAndHeal, 实测可将
-                        //   galileo VEEGA 由 11311.1 m/s 改善到 6430.1 m/s;
-                        // 优化阶梯: QD Top-8 席位享有完整自愈算力(Pop60, Gen120),
-                        // 9-16 席位采用快速自愈层(Pop36, Gen50), 兼顾深度打靶与耗时节省。
-                        bool fastTier = (tIdx >= 8);
+                        // [优化] 逐链自愈 (Stage 4 per-topology 自适应质量调度):
+                        // 依据: 根据解的物理合规性与速度增量离散度自适应确定自愈算力层级，
+                        // 具备高潜力且合规的拓扑解分配完整精修算力，次优拓扑采用快速自愈层，彻底消灭写死的 tIdx 序号歧视。
+                        bool fastTier = (topoBest != null && subCfg.VesselMaxDeltaVMs > 0 && topoBest.TotalDeltaVKms * 1000.0 > subCfg.VesselMaxDeltaVMs * 1.5)
+                                        || (tIdx >= Math.Max(4, totalTopos / 2));
                         var healedSols = MGASelfHealingEngine.AuditAndHeal(subCfg, rawSols, depHohmann, totHohmann, ct, fastTier);
                         if (healedSols != null && healedSols.Count > 0) rawSols = healedSols;
 
@@ -1147,7 +1146,7 @@ namespace KSPGMAT.MGA
                     smaTarget = rT.magnitude;
                 }
                 if (smaTarget <= 0.0) {
-                    double rC = SolarSystemCatalog.GetPlanet(central)?.RadiusKm ?? MGADefaults.EarthRadiusKm;
+                    double rC = SolarSystemCatalog.GetPlanet(central)?.RadiusKm ?? MGADefaults.GetBodyRadiusKm(central);
                     smaTarget = rC * 50.0;
                 }
                 double tTarget = PykepBridge.CalcOrbitPeriodSec(smaTarget, cMu) / MGADefaults.SecondsPerDay;

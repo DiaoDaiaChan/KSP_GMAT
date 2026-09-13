@@ -252,7 +252,11 @@ EXPORT_API int pykep_find_transfer_window(
     // 场景 B: 行星际日心转移 (如 Earth -> Mars, Earth -> Venus)
     // 采用全周期 3D 兰伯特特征能量网格扫描，彻底消除伪波谷
     // =========================================================================
-    mu_central = SUN_MU;
+    double mu_c = SUN_MU;
+    double dummy_r = 0, dummy_safe_c = 0, dummy_soi_c = 0, dummy_atm_c = 0;
+    if (pykep_spice_planet_properties(central_body, &mu_c, &dummy_r, &dummy_safe_c, &dummy_soi_c, &dummy_atm_c) == 0 && mu_c > 0) {
+        mu_central = mu_c;
+    }
 
     // 1. 估算行星轨道半长轴与会合周期
     double r1_vec[3], v1_vec[3], r2_vec[3], v2_vec[3];
@@ -261,8 +265,8 @@ EXPORT_API int pykep_find_transfer_window(
 
     double r1_mag = std::sqrt(r1_vec[0] * r1_vec[0] + r1_vec[1] * r1_vec[1] + r1_vec[2] * r1_vec[2]);
     double r2_mag = std::sqrt(r2_vec[0] * r2_vec[0] + r2_vec[1] * r2_vec[1] + r2_vec[2] * r2_vec[2]);
-    if (r1_mag < 1e6) r1_mag = 1.496e8;
-    if (r2_mag < 1e6) r2_mag = 2.279e8;
+    if (r1_mag < 10.0) r1_mag = (r_p1 > 0) ? r_p1 * 100.0 : 1.0e7;
+    if (r2_mag < 10.0) r2_mag = (r_p2 > 0) ? r_p2 * 100.0 : r1_mag * 1.5;
 
     double a_hoh = (r1_mag + r2_mag) * 0.5;
     double base_tof_sec = PI * std::sqrt(a_hoh * a_hoh * a_hoh / mu_central);
@@ -270,7 +274,7 @@ EXPORT_API int pykep_find_transfer_window(
 
     double t1_orb = 2.0 * PI * std::sqrt(r1_mag * r1_mag * r1_mag / mu_central);
     double t2_orb = 2.0 * PI * std::sqrt(r2_mag * r2_mag * r2_mag / mu_central);
-    double synodic_sec = (std::abs(t1_orb - t2_orb) > 1e-4) ? (t1_orb * t2_orb / std::abs(t1_orb - t2_orb)) : (780.0 * 86400.0);
+    double synodic_sec = (std::abs(t1_orb - t2_orb) > 1e-4) ? (t1_orb * t2_orb / std::abs(t1_orb - t2_orb)) : (t1_orb * 2.0);
     double synodic_days = synodic_sec / 86400.0;
 
     double total_scan_days = (search_span_days > 30.0) ? search_span_days : (synodic_days * 1.25);

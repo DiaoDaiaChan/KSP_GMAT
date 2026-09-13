@@ -27,16 +27,16 @@ namespace KSPGMAT.MGA {
 
         public StateManagedParkingOrbit(GMATSpacecraftModel spacecraft = null) {
             sc = spacecraft ?? GMATStateManager.Current?.Spacecraft ?? new GMATSpacecraftModel();
-            string body = !string.IsNullOrEmpty(sc.CentralBody) ? sc.CentralBody : "Earth";
+            string body = !string.IsNullOrEmpty(sc.CentralBody) ? sc.CentralBody : SolarSystemCatalog.RootStarName;
             var p = SolarSystemCatalog.GetPlanet(body);
 
             // 1. 引力常数从星历动态提取
-            double muKms = (p != null && p.Mu > 0) ? p.Mu : SolarSystemCatalog.EarthMu;
+            double muKms = (p != null && p.Mu > 0) ? p.Mu : MGADefaults.GetBodyMu(body);
             cachedMu = muKms * 1e9; // m^3/s^2
 
             // 2. 安全停泊半径直接使用星历权威计算好的 SafeRadiusKm (已在星历中综合了天体几何半径与大气层厚度)
-            defaultParkRadiusKm = (p != null && p.SafeRadiusKm > 0) ? p.SafeRadiusKm : SolarSystemCatalog.EarthRadiusKm + MGADefaults.DepartureAltitudeKm;
-            double rBodyM = (p != null && p.RadiusKm > 0 ? p.RadiusKm : SolarSystemCatalog.EarthRadiusKm) * 1000.0;
+            defaultParkRadiusKm = (p != null && p.SafeRadiusKm > 0) ? p.SafeRadiusKm : MGADefaults.GetBodySafeRadiusKm(body);
+            double rBodyM = (p != null && p.RadiusKm > 0 ? p.RadiusKm : MGADefaults.GetBodyRadiusKm(body)) * 1000.0;
             double minSafeRadiusM = defaultParkRadiusKm * 1000.0;
             double maxSoiRadiusM = (p != null && p.SoiKm > 0 && !double.IsInfinity(p.SoiKm)) ? (p.SoiKm * 1000.0) : (minSafeRadiusM * 50.0);
 
@@ -128,12 +128,12 @@ namespace KSPGMAT.MGA {
         public AnalyticalParkingOrbit(string bodyName, double altitudeKm = -1.0, double incDeg = 0.0, double raanDeg = 0.0, double aopDeg = 0.0) {
             BodyName = SolarSystemCatalog.CanonicalizeName(bodyName);
             var p = SolarSystemCatalog.GetPlanet(BodyName);
-            double rBodyKm = (p != null && p.RadiusKm > 0) ? p.RadiusKm : SolarSystemCatalog.EarthRadiusKm;
-            double muKms = (p != null && p.Mu > 0) ? p.Mu : SolarSystemCatalog.EarthMu;
+            double rBodyKm = (p != null && p.RadiusKm > 0) ? p.RadiusKm : MGADefaults.GetBodyRadiusKm(BodyName);
+            double muKms = (p != null && p.Mu > 0) ? p.Mu : MGADefaults.GetBodyMu(BodyName);
 
             double parkRadiusKm = (altitudeKm > 0) 
                 ? (rBodyKm + altitudeKm) 
-                : ((p != null && p.SafeRadiusKm > 0) ? p.SafeRadiusKm : (rBodyKm + 200.0));
+                : ((p != null && p.SafeRadiusKm > 0) ? p.SafeRadiusKm : MGADefaults.GetBodySafeRadiusKm(BodyName));
 
             SemiMajorAxis = parkRadiusKm * 1000.0;
             GravParameter = muKms * 1e9;
@@ -231,14 +231,14 @@ namespace KSPGMAT.MGA {
             double muKms = orbit.GravParameter / 1e9; // m^3/s^2 -> km^3/s^2
             if (muKms <= 0) {
                 var p = SolarSystemCatalog.GetPlanet(orbit.BodyName);
-                muKms = (p != null && p.Mu > 0) ? p.Mu : SolarSystemCatalog.EarthMu;
+                muKms = (p != null && p.Mu > 0) ? p.Mu : MGADefaults.GetBodyMu(orbit.BodyName);
             }
 
             double orbitPeriod = orbit.Period;
             if (orbitPeriod <= 0 || double.IsNaN(orbitPeriod) || orbitPeriod > 86400.0 * 10.0) {
                 var pOrbit = SolarSystemCatalog.GetPlanet(orbit.BodyName);
-                double safeR = (pOrbit != null && pOrbit.SafeRadiusKm > 0) ? pOrbit.SafeRadiusKm : (SolarSystemCatalog.EarthRadiusKm + 200.0);
-                double safeMu = (pOrbit != null && pOrbit.Mu > 0) ? pOrbit.Mu : SolarSystemCatalog.EarthMu;
+                double safeR = (pOrbit != null && pOrbit.SafeRadiusKm > 0) ? pOrbit.SafeRadiusKm : MGADefaults.GetBodySafeRadiusKm(orbit.BodyName);
+                double safeMu = (pOrbit != null && pOrbit.Mu > 0) ? pOrbit.Mu : MGADefaults.GetBodyMu(orbit.BodyName);
                 orbitPeriod = PykepBridge.CalcOrbitPeriodSec(safeR, safeMu);
             }
 

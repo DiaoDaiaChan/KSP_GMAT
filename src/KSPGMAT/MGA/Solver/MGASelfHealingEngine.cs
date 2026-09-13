@@ -22,11 +22,11 @@ namespace KSPGMAT.MGA
     public static class MGASelfHealingEngine
     {
         /// <summary>
-        /// 劳登引向量极值容差。理论基础: 最优脉冲布局要求 |p|max &lt;= 1 (Lawden 条件),
-        /// 故超出 1 即说明存在更省的脉冲排布。10% 为数值/建模误差留出的工程松弛。
-        /// 取代原内联的 1.25 (25% 松弛, 无依据)。
+        /// 劳登引向量极值必要条件。理论基础: 脉冲最优性要求 |p(t)| &lt;= 1 (Lawden 必要条件),
+        /// 故超出 1.0 即严格表明当前脉冲布局存在可进一步降低速度增量的优化空间。
+        /// 严格遵循理论基准 1.0，杜绝人为放宽。
         /// </summary>
-        public const double PrimerVectorLawdenTolerance = 1.10;
+        public const double PrimerVectorLawdenTolerance = 1.00;
 
         /// <summary>
         /// 自愈候选的预算接纳松弛系数: 恢复严格物理刚性预算比较 (1.00)，彻底废除 +5% 作弊放行后门
@@ -147,7 +147,10 @@ namespace KSPGMAT.MGA
                             return (MinDays: Math.Max(0.5, tOrbD * 0.85), MaxDays: tOrbD * 3.25);
                         }
                     }
-                    return (MinDays: Math.Max(0.5, l.ToFDays * 0.70), MaxDays: l.ToFDays * 1.30);
+                    var baseBounds = MGAMCTSTopologySelector.AutoDeriveResonantLegBounds(config.DeparturePlanet, config.ArrivalPlanet, bestFlybys, config.CentralBody);
+                    double minPhysical = (baseBounds != null && idx < baseBounds.Count) ? baseBounds[idx].MinDays : 0.5;
+                    double maxPhysical = (baseBounds != null && idx < baseBounds.Count) ? baseBounds[idx].MaxDays : l.ToFDays * 2.5;
+                    return (MinDays: Math.Min(minPhysical, Math.Max(0.5, l.ToFDays * 0.60)), MaxDays: Math.Max(maxPhysical, l.ToFDays * 1.50));
                 }).ToList()
                 : ((config.LegToFBounds != null && config.LegToFBounds.Count > 0)
                     ? config.LegToFBounds
@@ -187,7 +190,8 @@ namespace KSPGMAT.MGA
             };
             if (hasLawdenViolation && bestSol.PrimerVector.MaxPTimeSec > 0 && bestSol.Legs != null && bestSol.Legs.Count > 0)
             {
-                double nomEta = Math.Max(0.15, Math.Min(0.85, bestSol.PrimerVector.MaxPTimeSec / Math.Max(1.0, bestSol.Legs[0].ToFDays * 86400.0)));
+                // 基于劳登引向量峰值时刻直接对齐最优机动历元，放宽至全物理可行区间 (0.01 ~ 0.99)
+                double nomEta = Math.Max(0.01, Math.Min(0.99, bestSol.PrimerVector.MaxPTimeSec / Math.Max(1.0, bestSol.Legs[0].ToFDays * 86400.0)));
                 fineCfg.DsmEtas = new List<double> { nomEta };
                 fineCfg.DsmEtaDefault = nomEta;
             }

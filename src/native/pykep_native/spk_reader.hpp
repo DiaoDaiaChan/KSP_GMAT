@@ -187,6 +187,13 @@ namespace kspgmat::spice {
             while (!lower.empty() && std::isspace((unsigned char)lower.back())) lower.pop_back();
             std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return (char)std::tolower(c); });
 
+            // 若直接传入数字字符串，直接解析为 NAIF ID
+            try {
+                size_t processed = 0;
+                int idVal = std::stoi(lower, &processed);
+                if (processed == lower.size()) return idVal;
+            } catch (...) {}
+
             if (lower.find("sun") != std::string::npos || lower == "sol" || lower == "10") return 10;
             if (lower.find("mercury") != std::string::npos || lower == "1") return 1;
             if (lower.find("venus") != std::string::npos || lower == "2") return 2;
@@ -194,11 +201,26 @@ namespace kspgmat::spice {
             if (lower.find("earth") != std::string::npos || lower == "399") return 399;
             if (lower.find("moon") != std::string::npos || lower.find("luna") != std::string::npos || lower.find("mun") != std::string::npos || lower == "301") return 301;
             if (lower.find("mars") != std::string::npos || lower == "4") return 4;
+            if (lower.find("phobos") != std::string::npos || lower == "401") return 401;
+            if (lower.find("deimos") != std::string::npos || lower == "402") return 402;
             if (lower.find("jupiter") != std::string::npos || lower == "5") return 5;
+            if (lower.find("io") != std::string::npos || lower == "501") return 501;
+            if (lower.find("europa") != std::string::npos || lower == "502") return 502;
+            if (lower.find("ganymede") != std::string::npos || lower == "503") return 503;
+            if (lower.find("callisto") != std::string::npos || lower == "504") return 504;
             if (lower.find("saturn") != std::string::npos || lower == "6") return 6;
+            if (lower.find("mimas") != std::string::npos || lower == "601") return 601;
+            if (lower.find("enceladus") != std::string::npos || lower == "602") return 602;
+            if (lower.find("tethys") != std::string::npos || lower == "603") return 603;
+            if (lower.find("dione") != std::string::npos || lower == "604") return 604;
+            if (lower.find("rhea") != std::string::npos || lower == "605") return 605;
+            if (lower.find("titan") != std::string::npos || lower == "606") return 606;
+            if (lower.find("iapetus") != std::string::npos || lower == "608") return 608;
             if (lower.find("uranus") != std::string::npos || lower == "7") return 7;
             if (lower.find("neptune") != std::string::npos || lower == "8") return 8;
+            if (lower.find("triton") != std::string::npos || lower == "801") return 801;
             if (lower.find("pluto") != std::string::npos || lower == "9") return 9;
+            if (lower.find("charon") != std::string::npos || lower == "901") return 901;
             return -1;
         }
 
