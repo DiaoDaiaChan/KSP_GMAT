@@ -117,8 +117,12 @@ namespace KSPGMAT.MGA.AI
                 double vInfRef = Math.Min(vInMag, vOutMag);
                 double turnDv = 2.0 * vInfRef * Math.Sin(excess * 0.5);
                 double dvExcess = Math.Max(0.0, turnDv - maxPoweredDeltaVKms);
-                // C1 连续光滑二次物理势垒: 在边界处无缝连续归零，随违背量平滑递增
-                return 100.0 * (dvExcess + 0.5 * dvExcess * dvExcess) + 500.0 * excess * excess;
+                // 严谨无量纲化 O(1) 标度: 速度违背除以当地逃逸/特征速度，转角违背除以 pi
+                double vChar = Math.Max(1.0, Math.Sqrt(mu / Math.Max(1.0, rpMinKm)));
+                double gDv = dvExcess / vChar;
+                double gTheta = excess / Math.PI;
+                // C1 连续光滑二次物理势垒: 在边界处平滑归零，无主观魔法权重相加
+                return (gDv + 0.5 * gDv * gDv) + (gTheta + 0.5 * gTheta * gTheta);
             }
             return 0.0;
         }

@@ -161,6 +161,8 @@ namespace KSPGMAT.MGA
             c.VesselMaxDeltaVMs = this.VesselMaxDeltaVMs;
             c.MaxDsmDeltaVMs = this.MaxDsmDeltaVMs;
             c.LaunchDeltaVCeilingMs = this.LaunchDeltaVCeilingMs;
+            c.PopulationSize = this.PopulationSize;
+            c.MaxGenerations = this.MaxGenerations;
             c.EnablePermutationsAndInsertions = this.EnablePermutationsAndInsertions;
             c.EnableAlternatingPumping = this.EnableAlternatingPumping;
             c.AutoTuneToFBounds = this.AutoTuneToFBounds;
@@ -219,8 +221,9 @@ namespace KSPGMAT.MGA
                 ConstrainByVesselDeltaV = cfg.ConstrainByVesselDeltaV,
                 VesselMaxDeltaVMs = cfg.VesselMaxDeltaVMs,
                 MaxDsmDeltaVMs = cfg.MaxDsmDeltaVMs > 0 ? cfg.MaxDsmDeltaVMs : (cfg.ConstrainByVesselDeltaV ? cfg.VesselMaxDeltaVMs : 0.0),
-                PopulationSize = cfg.PopulationSize,
-                MaxGenerations = cfg.MaxGenerations,
+                LaunchDeltaVCeilingMs = cfg.LaunchDeltaVCeilingMs,
+                PopulationSize = cfg.PopulationSize > 0 ? cfg.PopulationSize : MGADefaults.PopulationSize,
+                MaxGenerations = cfg.MaxGenerations > 0 ? cfg.MaxGenerations : MGADefaults.MaxGenerations,
                 DepartureToFMinFactor = cfg.DepartureToFMinFactor,
                 DepartureToFMaxFactor = cfg.DepartureToFMaxFactor,
                 ResonantMaxOffsetDays = cfg.ResonantMaxOffsetDays,
@@ -351,8 +354,8 @@ namespace KSPGMAT.MGA
                 if (muCForGiant <= 0) muCForGiant = SolarSystemCatalog.SunMu;
                 var depPForGiant = SolarSystemCatalog.GetPlanet(config.DeparturePlanet);
                 double vInfForGiant = MGAPhysicalScales.HohmannVInfKms(muCForGiant,
-                    (depPForGiant != null && depPForGiant.SMA > 0) ? depPForGiant.SMA : 1.496e8,
-                    (destP != null && destP.SMA > 0) ? destP.SMA : 1.496e8);
+                    (depPForGiant != null && depPForGiant.SMA > 0) ? depPForGiant.SMA : MGADefaults.AU_KM,
+                    (destP != null && destP.SMA > 0) ? destP.SMA : MGADefaults.AU_KM);
                 bool isGiant = MGAPhysicalScales.ClassifyGiantBySystemDistribution(
                     destP, vInfForGiant, muCForGiant, SolarSystemCatalog.GetAvailablePlanets());
                 if (config.ArrivalOrbitType == MGAArrivalOrbitType.HighlyElliptic || (config.AutoAdaptGiantPlanetEllipse && isGiant))
@@ -360,7 +363,7 @@ namespace KSPGMAT.MGA
                     if (config.ArrApKm <= config.ArrPeKm)
                     {
                         MGADefaults.GetBodyCaptureAltitudeBounds(config.ArrivalPlanet, out _, out _, out double maxApA);
-                        double destR = destP != null && destP.RadiusKm > 0 ? destP.RadiusKm : 6000.0;
+                        double destR = destP != null && destP.RadiusKm > 0 ? destP.RadiusKm : MGADefaults.FallbackEarthRadiusKm;
                         double rp = destR + config.ArrPeKm;
                         double ePreset = 0.95;
                         double ra = rp * (1.0 + ePreset) / (1.0 - ePreset);
@@ -844,16 +847,16 @@ namespace KSPGMAT.MGA
                         var l = bestSol.Legs[i];
                         var nextL = (i + 1 < bestSol.Legs.Count) ? bestSol.Legs[i + 1] : null;
                         var pObj = SolarSystemCatalog.GetPlanet(l.ToBody);
-                        double rSafe = (pObj != null && pObj.SafeRadiusKm > 0) ? pObj.SafeRadiusKm : 6000.0;
-                        double pMu = pObj != null ? pObj.Mu : 398600.4;
+                        double rSafe = (pObj != null && pObj.SafeRadiusKm > 0) ? pObj.SafeRadiusKm : MGADefaults.GetBodySafeRadiusKm(l.ToBody);
+                        double pMu = pObj != null ? pObj.Mu : MGADefaults.GetBodyMu(l.ToBody);
                         double maxTurn = MGAFlybyDynamicsHelper.ComputeMaxTurnAngleDeg(pMu, rSafe, l.VInfArrivalKms.magnitude);
 
                         double vIn = l.VInfArrivalKms.magnitude;
                         double vOut = nextL != null ? nextL.VInfDepartureKms.magnitude : vIn;
                         double deltaVinf = Math.Abs(vIn - vOut);
                         double dsmVal = l.DSM != null ? l.DSM.DeltaVMs : 0.0;
-                        double dsmRad = l.DSM != null ? (l.DSM.PositionKm.magnitude / 1.495978707e8) : 0.0;
-                        double dsmEta = (l.DSM != null && l.ToFDays > 0) ? (l.DSM.EpochOffsetSec / (l.ToFDays * 86400.0)) : 0.0;
+                        double dsmRad = l.DSM != null ? (l.DSM.PositionKm.magnitude / MGADefaults.AU_KM) : 0.0;
+                        double dsmEta = (l.DSM != null && l.ToFDays > 0) ? (l.DSM.EpochOffsetSec / (l.ToFDays * MGADefaults.SecondsPerDay)) : 0.0;
                         double bMag = l.BPlane != null ? l.BPlane.BMagKm : 0.0;
 
                         bool isPhys = l.FlybyDeltaVKms < 0.001 && l.FlybyTurningAngleDeg <= (maxTurn + 1.0) && l.FlybyPeriapsisRadiusKm >= (rSafe - 100.0);
@@ -945,12 +948,12 @@ namespace KSPGMAT.MGA
             // 2. 估计合理的飞行时间边界 (按天体半长轴自动推导霍曼飞行时间)
             var pDep = SolarSystemCatalog.GetPlanet(departurePlanet);
             var pArr = SolarSystemCatalog.GetPlanet(arrivalPlanet);
-            double rDep = (pDep != null && pDep.SMA > 0) ? pDep.SMA : 1.496e8;
-            double rArr = (pArr != null && pArr.SMA > 0) ? pArr.SMA : 1.496e8;
+            double rDep = (pDep != null && pDep.SMA > 0) ? pDep.SMA : MGADefaults.AU_KM;
+            double rArr = (pArr != null && pArr.SMA > 0) ? pArr.SMA : MGADefaults.AU_KM;
             double aTransfer = (rDep + rArr) * 0.5;
-            double muCentralM = (SolarSystemCatalog.SunMu > 0 ? SolarSystemCatalog.SunMu : 1.32712440018e11) * 1e9;
+            double muCentralM = (SolarSystemCatalog.SunMu > 0 ? SolarSystemCatalog.SunMu : MGADefaults.FallbackSunMu) * 1e9;
             double tHohmannSec = Math.PI * Math.Sqrt(Math.Pow(aTransfer * 1000.0, 3.0) / muCentralM);
-            double tHohmannDays = tHohmannSec / 86400.0;
+            double tHohmannDays = tHohmannSec / MGADefaults.SecondsPerDay;
             if (tHohmannDays <= 0 || double.IsNaN(tHohmannDays)) tHohmannDays = 260.0;
 
             double minTofDays = Math.Max(50.0, tHohmannDays * 0.60);

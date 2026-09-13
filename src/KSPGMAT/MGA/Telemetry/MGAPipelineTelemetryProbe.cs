@@ -284,7 +284,18 @@ namespace KSPGMAT.MGA.Telemetry
 
             public static void RecordBanditSnapshot(string island, int pulls, int[] armPulls, double[] armRewards, double f, double cr)
             {
-                RecordBanditSnapshot(island, pulls, armPulls, armRewards, f, cr);
+                lock (Instance._lock)
+                {
+                    Instance.Stage3.BanditRecords.Add(new BanditTuningRecord
+                    {
+                        IslandName = island,
+                        TotalOperatorPulls = pulls,
+                        ArmPulls = (int[])armPulls?.Clone() ?? new int[4],
+                        ArmRewards = (double[])armRewards?.Clone() ?? new double[4],
+                        FinalF = f,
+                        FinalCR = cr
+                    });
+                }
             }
 
             public static void RecordSelfHealing(bool success, double savedKms)
@@ -528,7 +539,7 @@ namespace KSPGMAT.MGA.Telemetry
                                 MaxTurnAngleDeg = 0.0,
                                 FlybyDvMs = l.FlybyDeltaVKms * 1000.0,
                                 DsmDvMs = l.DSM != null ? l.DSM.DeltaVMs : 0.0,
-                                DsmRadiusAu = l.DSM != null ? l.DSM.PositionKm.magnitude / 1.495978707e8 : 0.0,
+                                DsmRadiusAu = l.DSM != null ? l.DSM.PositionKm.magnitude / MGADefaults.AU_KM : 0.0,
                                 DsmEta = 0.5,
                                 VInfInKms = l.VInfArrivalKms.magnitude,
                                 VInfOutKms = l.VInfDepartureKms.magnitude,

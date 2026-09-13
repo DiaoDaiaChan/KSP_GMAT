@@ -111,6 +111,7 @@ namespace KSPGMAT.MGA
                 // 构造底层 MGAConfig 封送
                 var mgaCfg = new MGAConfig
                 {
+                    CentralBody = subCfg.CentralBody,
                     DepartureBody = subCfg.DeparturePlanet,
                     DestinationBody = subCfg.ArrivalPlanet,
                     FlybySequence = subCfg.FlybySequence,

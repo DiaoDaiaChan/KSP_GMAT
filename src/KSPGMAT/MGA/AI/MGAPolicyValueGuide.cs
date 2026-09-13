@@ -7,6 +7,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using KSPGMAT.Model;
 
 namespace KSPGMAT.MGA.AI
@@ -35,8 +36,8 @@ namespace KSPGMAT.MGA.AI
             var curPlanet = SolarSystemCatalog.GetPlanet(currentBody);
             var tgtPlanet = SolarSystemCatalog.GetPlanet(targetBody);
 
-            double curSma = curPlanet != null ? curPlanet.SMA : 1.496e8;
-            double tgtSma = tgtPlanet != null ? tgtPlanet.SMA : 1.496e8;
+            double curSma = curPlanet != null ? curPlanet.SMA : MGADefaults.AU_KM;
+            double tgtSma = tgtPlanet != null ? tgtPlanet.SMA : MGADefaults.AU_KM;
             bool isOutward = tgtSma > curSma;
 
             var logits = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
@@ -69,8 +70,13 @@ namespace KSPGMAT.MGA.AI
                     }
                     else if (candSma < curSma)
                     {
-                        // 内行星 (如金星) 依然可作为共振蓄能跳板 (如 VEEGA)
-                        logit += 0.8;
+                        // 内行星仅在具备显著借力偏折能力 (无量纲借力功率指数) 时提供动态先验加分，杜绝无脑 +0.8 硬编码
+                        double vInfInner = MGAPhysicalScales.HohmannVInfKms(SolarSystemCatalog.SunMu > 0 ? SolarSystemCatalog.SunMu : MGADefaults.FallbackSunMu, curSma, candSma);
+                        double assistIdx = MGAPhysicalScales.AssistPowerIndex(p, Math.Max(vInfInner, 1e-3), SolarSystemCatalog.SunMu > 0 ? SolarSystemCatalog.SunMu : MGADefaults.FallbackSunMu);
+                        if (assistIdx >= MGAPhysicalScales.DefaultMinAssistPowerIndex)
+                        {
+                            logit += assistIdx * 10.0;
+                        }
                     }
                 }
                 else
@@ -79,6 +85,15 @@ namespace KSPGMAT.MGA.AI
                     if (candSma < curSma && candSma >= tgtSma)
                     {
                         logit += 1.5;
+                    }
+                    else if (candSma > curSma)
+                    {
+                        double vInfOuter = MGAPhysicalScales.HohmannVInfKms(SolarSystemCatalog.SunMu > 0 ? SolarSystemCatalog.SunMu : MGADefaults.FallbackSunMu, curSma, candSma);
+                        double assistIdx = MGAPhysicalScales.AssistPowerIndex(p, Math.Max(vInfOuter, 1e-3), SolarSystemCatalog.SunMu > 0 ? SolarSystemCatalog.SunMu : MGADefaults.FallbackSunMu);
+                        if (assistIdx >= MGAPhysicalScales.DefaultMinAssistPowerIndex)
+                        {
+                            logit += assistIdx * 10.0;
+                        }
                     }
                 }
 
@@ -92,50 +107,65 @@ namespace KSPGMAT.MGA.AI
                 if (logit > maxLogit) maxLogit = logit;
             }
 
-            // Softmax 归一化为合法概率分布
+            // Softmax 归一化输出先验概率
             double sumExp = 0.0;
-            foreach (var kv in logits)
+            var expLogits = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+            foreach (var kvp in logits)
             {
-                sumExp += Math.Exp(kv.Value - maxLogit);
+                double e = Math.Exp(kvp.Value - maxLogit);
+                expLogits[kvp.Key] = e;
+                sumExp += e;
             }
 
-            foreach (var kv in logits)
+            foreach (var kvp in expLogits)
             {
-                double prob = sumExp > 0.0 ? (Math.Exp(kv.Value - maxLogit) / sumExp) : (1.0 / candidateBodies.Count);
-                priors[kv.Key] = prob;
+                priors[kvp.Key] = sumExp > 1e-9 ? kvp.Value / sumExp : 1.0 / candidateBodies.Count;
             }
 
             return priors;
         }
 
         /// <summary>
-        /// 价值网络前向评估: 预测部分拓扑序列的最终可行性期望价值 V(s) in [0, 1]
-        /// 代替深层随机 Rollout，直接评估当前节点状态的成单潜力
+        /// 状态价值网络评估函数 V(s)
+        /// 评估从当前局部拓扑到达最终目标天体的潜力和预期惩罚，输出标量价值 [0.0, 1.0]
         /// </summary>
-        public double EvaluateSequenceValue(
-            List<string> partialSequence, 
-            string targetBody, 
-            double accumulatedDeltaVKms, 
-            double maxDeltaVLimitKms)
+        public static double EvaluateStateValue(
+            List<string> currentSequence,
+            string targetBody,
+            double accumulatedDeltaVKms,
+            double maxDeltaVLimitKms,
+            double currentFlightDays,
+            double maxFlightDaysLimit)
         {
-            if (partialSequence == null || partialSequence.Count == 0) return 0.0;
+            if (currentSequence == null || currentSequence.Count == 0) return 0.5;
 
-            string lastBody = partialSequence[partialSequence.Count - 1];
-
-            // 1. 已超能耗预算惩罚
-            if (accumulatedDeltaVKms >= maxDeltaVLimitKms)
+            string lastBody = currentSequence.Last();
+            if (string.Equals(lastBody, targetBody, StringComparison.OrdinalIgnoreCase))
             {
-                return 0.01;
+                // 到达目标天体：依据剩余预算给出高价值
+                double dvRatio = Math.Max(0.0, 1.0 - (accumulatedDeltaVKms / Math.Max(maxDeltaVLimitKms, 1e-3)));
+                double tofRatio = Math.Max(0.0, 1.0 - (currentFlightDays / Math.Max(maxFlightDaysLimit, 1.0)));
+                return 0.7 + 0.2 * dvRatio + 0.1 * tofRatio;
             }
 
-            // 2. 剩余能耗裕度评分
-            double remainingMargin = (maxDeltaVLimitKms - accumulatedDeltaVKms) / Math.Max(1.0, maxDeltaVLimitKms);
-            double baseValue = Math.Max(0.0, Math.Min(1.0, remainingMargin));
+            // 中间节点状态评估
+            double baseValue = 0.5;
 
-            // 3. 若已抵达目标，获得高额完成收益
-            if (lastBody.Equals(targetBody, StringComparison.OrdinalIgnoreCase))
+            // 1. 消耗惩罚
+            double dvConsumedRatio = accumulatedDeltaVKms / Math.Max(maxDeltaVLimitKms, 1e-3);
+            if (dvConsumedRatio > 1.0) return 0.01; // 爆表惩罚
+            baseValue -= 0.3 * dvConsumedRatio;
+
+            // 2. 航时消耗惩罚
+            double tofConsumedRatio = currentFlightDays / Math.Max(maxFlightDaysLimit, 1.0);
+            if (tofConsumedRatio > 1.0) return 0.01;
+            baseValue -= 0.2 * tofConsumedRatio;
+
+            // 3. 借力增益奖励 (巨行星作为中继奖励更高)
+            var pNode = SolarSystemCatalog.GetPlanet(lastBody);
+            if (pNode != null && pNode.Mu > 1e6)
             {
-                return Math.Min(1.0, 0.5 + 0.5 * baseValue);
+                baseValue += 0.15; // 巨行星中继奖励
             }
 
             // 4. 距离目标的能量跨度评估
@@ -143,13 +173,25 @@ namespace KSPGMAT.MGA.AI
             var tgtP = SolarSystemCatalog.GetPlanet(targetBody);
             if (lastP != null && tgtP != null)
             {
-                double rDiffNorm = Math.Abs(lastP.SMA - tgtP.SMA) / 1.496e8;
+                double rDiffNorm = Math.Abs(lastP.SMA - tgtP.SMA) / MGADefaults.AU_KM;
                 // 距离目标越近，折现价值越高
                 double proximityBonus = 1.0 / (1.0 + 0.5 * rDiffNorm);
                 baseValue *= proximityBonus;
             }
 
             return Math.Max(0.02, Math.Min(0.98, baseValue));
+        }
+
+        /// <summary>
+        /// 兼容实例调用: 评估部分序列价值 V(s)
+        /// </summary>
+        public double EvaluateSequenceValue(
+            List<string> partialSequence,
+            string targetBody,
+            double accumulatedDeltaVKms,
+            double maxDeltaVLimitKms)
+        {
+            return EvaluateStateValue(partialSequence, targetBody, accumulatedDeltaVKms, maxDeltaVLimitKms, 0.0, 10000.0);
         }
     }
 }

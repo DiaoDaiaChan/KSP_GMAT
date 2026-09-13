@@ -1525,7 +1525,7 @@ namespace KSPGMAT.MGA {
         /// 彻底根除托管 atan2 投影伪极小值与地月模式 2 锁死非交点日问题
         /// </summary>
         public static (double bestDepUT, double tofDays, double approxDV) CalculateHohmannWindow(
-            string fromBody, string toBody, double searchStartUT, double searchSpanDays = 0, double targetIncDeg = -1.0, double targetRaanDeg = 0.0) 
+            string fromBody, string toBody, double searchStartUT, double searchSpanDays = 0, double targetIncDeg = -1.0, double targetRaanDeg = 0.0, MGAConfig config = null) 
         {
             if (!PykepNative.IsAvailable) {
                 KSPGMATLog.Error("PykepNative 原生库不可用，无法进行霍曼窗口物理评估 (返回失败标志 NaN)");
@@ -1544,7 +1544,7 @@ namespace KSPGMAT.MGA {
 
             double parkInc = targetIncDeg;
             double parkRaan = targetRaanDeg;
-            var mgaCfg = MGAStateManager.Current?.Config;
+            var mgaCfg = config ?? MGAStateManager.Current?.Config;
             if (mgaCfg != null && (mgaCfg.DepartureMode == MGADepartureMode.InOrbitLockedOrbit || mgaCfg.LockDepartureInclination)) {
                 if (parkInc < 0) parkInc = mgaCfg.DepartureInclinationDeg;
                 if (parkRaan < 0) parkRaan = mgaCfg.DepartureRAANDeg;

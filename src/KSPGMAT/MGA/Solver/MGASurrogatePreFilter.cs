@@ -72,10 +72,10 @@ namespace KSPGMAT.MGA
 
             double sma1 = PykepBridge.GetRelativeSMA(p1, central, config.DepPeKm);
             double sma2 = PykepBridge.GetRelativeSMA(p2, central, config.ArrPeKm);
-            if (sma1 <= 0) sma1 = 1.496e8;
-            if (sma2 <= 0) sma2 = 1.496e8;
+            if (sma1 <= 0) sma1 = MGADefaults.AU_KM;
+            if (sma2 <= 0) sma2 = MGADefaults.AU_KM;
             double aTrans = (sma1 + sma2) * 0.5;
-            double muCentralM = (centralMu > 0 ? centralMu : 1.32712440018e11) * 1e9;
+            double muCentralM = (centralMu > 0 ? centralMu : MGADefaults.FallbackSunMu) * 1e9;
             double nomTofDays = Math.PI * Math.Sqrt(Math.Pow(aTrans * 1000.0, 3.0) / muCentralM) / 86400.0;
             if (nomTofDays <= 0 || double.IsNaN(nomTofDays)) nomTofDays = 150.0;
 

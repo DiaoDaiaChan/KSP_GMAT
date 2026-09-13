@@ -26,6 +26,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using UnityEngine;
+using KSPGMAT.Model;
 
 namespace KSPGMAT.MGA.AI
 {
@@ -96,7 +97,7 @@ namespace KSPGMAT.MGA.AI
             if (!PykepNative.IsAvailable) return samples;
 
             double muCentral = SolarSystemCatalog.SunMu;
-            if (muCentral <= 0) muCentral = 1.32712440018e11;
+            if (muCentral <= 0) muCentral = MGADefaults.FallbackSunMu;
 
             // ---- 采样池: 取自实际天体目录 (对齐部署分布) ----
             var bodies = SolarSystemCatalog.GetAvailablePlanets();
@@ -130,7 +131,7 @@ namespace KSPGMAT.MGA.AI
                 }
                 else
                 {
-                    double lo = Math.Log(0.35 * 1.496e8), hi = Math.Log(45.0 * 1.496e8);
+                    double lo = Math.Log(0.35 * MGADefaults.AU_KM), hi = Math.Log(45.0 * MGADefaults.AU_KM);
                     r1Km = Math.Exp(lo + (hi - lo) * rng.NextDouble());
                     r2Km = Math.Exp(lo + (hi - lo) * rng.NextDouble());
                     incDiffDeg = rng.NextDouble() * 30.0;

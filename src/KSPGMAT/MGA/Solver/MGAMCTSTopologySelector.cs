@@ -123,8 +123,8 @@ namespace KSPGMAT.MGA
 
             var pDep = SolarSystemCatalog.GetPlanet(departurePlanet);
             var pArr = SolarSystemCatalog.GetPlanet(arrivalPlanet);
-            double rDep = (pDep != null && pDep.SMA > 0) ? pDep.SMA : 1.496e8;
-            double rArr = (pArr != null && pArr.SMA > 0) ? pArr.SMA : 1.496e8;
+            double rDep = (pDep != null && pDep.SMA > 0) ? pDep.SMA : MGADefaults.AU_KM;
+            double rArr = (pArr != null && pArr.SMA > 0) ? pArr.SMA : MGADefaults.AU_KM;
             double minR = Math.Min(rDep, rArr);
             double ratio = minR > 0 ? (Math.Max(rDep, rArr) / minR) : 1.0;
 
@@ -183,7 +183,7 @@ namespace KSPGMAT.MGA
                 if (allPlanets == null || allPlanets.Count == 0) return nodes;
 
                 double muCentral = SolarSystemCatalog.GetCentralMu(centralBody);
-                if (muCentral <= 0) muCentral = (SolarSystemCatalog.SunMu > 0 ? SolarSystemCatalog.SunMu : 1.32712440018e11);
+                if (muCentral <= 0) muCentral = (SolarSystemCatalog.SunMu > 0 ? SolarSystemCatalog.SunMu : MGADefaults.FallbackSunMu);
 
                 string rootStar = SolarSystemCatalog.RootStarName;
                 var depObj = SolarSystemCatalog.GetPlanet(departure);
@@ -210,7 +210,7 @@ namespace KSPGMAT.MGA
                         !p.ParentName.Equals(rootStar, StringComparison.OrdinalIgnoreCase))
                         continue;
 
-                    double depSma = (depObj != null && depObj.SMA > 0) ? depObj.SMA : 1.496e8;
+                    double depSma = (depObj != null && depObj.SMA > 0) ? depObj.SMA : MGADefaults.AU_KM;
                     double safeR = p.SafeRadiusKm > 0 ? p.SafeRadiusKm : (p.RadiusKm + 200.0);
                     double gravPot = p.Mu / safeR;
                     double vCirc = Math.Sqrt(muCentral / p.SMA);
@@ -397,7 +397,7 @@ namespace KSPGMAT.MGA
                 if (depNode == null || arrNode == null) return candidates;
 
                 double muCentral = SolarSystemCatalog.GetCentralMu(centralBody);
-                if (muCentral <= 0) muCentral = (SolarSystemCatalog.SunMu > 0 ? SolarSystemCatalog.SunMu : 1.32712440018e11);
+                if (muCentral <= 0) muCentral = (SolarSystemCatalog.SunMu > 0 ? SolarSystemCatalog.SunMu : MGADefaults.FallbackSunMu);
 
                 // 1. 直达基准霍曼转移作为候选 0
                 CalcHohmannLeg(depNode.SMA, arrNode.SMA, muCentral, out double vInfDepDirect, out double vInfArrDirect, out double tofDirect);
@@ -609,7 +609,11 @@ namespace KSPGMAT.MGA
                             if (currNode.Name.Equals(depNode.Name, StringComparison.OrdinalIgnoreCase) &&
                                 currPath.All(n => n.Name.Equals(depNode.Name, StringComparison.OrdinalIgnoreCase)))
                             {
-                                stepDeficit = 0.75; // ΔV-EGA 深空机动真实工质成本
+                                // 基于开普勒 2:1 共振与远心点调相理论: DeltaV_EGA = (v_res - v_0) * 0.15 动态关联中心天体与始发星公转动能
+                                double v0Dep = Math.Sqrt(muCentral / Math.Max(1.0, depNode.SMA));
+                                double aResDep = depNode.SMA * Math.Pow(2.0, 2.0 / 3.0);
+                                double vResDep = Math.Sqrt(Math.Max(0.0, muCentral * (2.0 / depNode.SMA - 1.0 / aResDep)));
+                                stepDeficit = Math.Abs(vResDep - v0Dep) * 0.15;
                             }
                             else
                             {
@@ -693,20 +697,21 @@ namespace KSPGMAT.MGA
                             string cat = (chain.Count == 1) ? "Single" : (chain.Count == 2 ? "Dual" : (chain.Count == 3 ? "Multi" : "GrandTour"));
 
                             // 天体物理势能泵红利 (Inner Assist Energy Pump Bonus):
-                            // 当飞往外行星 (如木星、土星) 且拓扑中包含内潜蓄能天体 (如金星，SMA < depNode.SMA * 0.85) 时，
-                            // 航天器可利用内行星公转速度偏折极大幅度抬升远日点，这是人类历史证明的最强外行星引力跳板 (VEEGA / VVEJGA)。
-                            // 赋予其关键物理优势评分，抵消航时与腿数惩罚，确保其优先进入演化池！
-                            bool hasInnerAssistPump = (arrNode.SMA > depNode.SMA * 1.5) && chain.Any(b =>
+                            // 当飞往外行星且拓扑中包含内潜蓄能天体时，利用真实双曲借力偏折能力计算动力学增益 DeltaV = 2*v_inf*sin(delta/2)
+                            double pumpBonus = 0.0;
+                            if (arrNode.SMA > depNode.SMA * 1.5)
                             {
-                                var p = SolarSystemCatalog.GetPlanet(b);
-                                if (p == null || p.SMA <= 0 || p.SMA >= depNode.SMA) return false;
-                                // 内侧蓄能跳板必须真正具备显著引力偏折能力 (无量纲借力功率指数),
-                                // 取代原 `SMA < dep*0.85` 的经验邻近判据。
-                                double vInfP = MGAPhysicalScales.HohmannVInfKms(muCentral, depNode.SMA, p.SMA);
-                                return MGAPhysicalScales.AssistPowerIndex(p, Math.Max(vInfP, 1e-3), muCentral)
-                                       >= MGAPhysicalScales.DefaultMinAssistPowerIndex;
-                            });
-                            double pumpBonus = hasInnerAssistPump ? 2.8 : 0.0;
+                                foreach (var b in chain)
+                                {
+                                    var p = SolarSystemCatalog.GetPlanet(b);
+                                    if (p != null && p.SMA > 0 && p.SMA < depNode.SMA)
+                                    {
+                                        double vInfP = MGAPhysicalScales.HohmannVInfKms(muCentral, depNode.SMA, p.SMA);
+                                        double dvPump = MGAPhysicalScales.AssistGainKms(p, Math.Max(vInfP, 1e-3));
+                                        if (dvPump > pumpBonus) pumpBonus = dvPump;
+                                    }
+                                }
+                            }
 
                             double score = launchDv + newCumDeficit * 1.5 + (vInfArrival * 0.8) + (newTotalToF / 365.25) * TradeoffKmsPerYear + legs * 0.05 - pumpBonus;
 
@@ -721,17 +726,23 @@ namespace KSPGMAT.MGA
                                 ParetoScore = score
                             });
 
-                            // 若目标是深势阱小天体 (如水星)，自动在其后展开 1~6 次目标本星自减速共振 (MESSENGER / BepiColombo 机制)
+                            // 若目标是深势阱小天体 (如水星/墨霍)，自动在其后展开 1~6 次目标本星自减速共振 (MESSENGER / BepiColombo 机制)
                             if (arrNode.IsDeepWell && chain.Count > 0)
                             {
+                                var pArr = SolarSystemCatalog.GetPlanet(arrNode.Name);
+                                double deltaTurn = (pArr != null)
+                                    ? MGAPhysicalScales.MaxTurnAngleRad(pArr, Math.Max(vInfArrival, 1e-3))
+                                    : MGAPhysicalScales.MaxTurnAngleRad((arrNode.SafeRadiusKm > 0 ? arrNode.SafeRadiusKm : arrNode.RadiusKm + 100.0) * Math.Pow(Math.Max(vInfArrival, 1e-3), 2.0) / Math.Max(1.0, arrNode.Mu));
+                                double decayRatio = Math.Max(0.5, Math.Min(0.95, 1.0 - Math.Sin(deltaTurn * 0.5)));
+
                                 for (int extraRes = 1; extraRes <= 6; extraRes++)
                                 {
                                     var resonantChain = new List<string>(chain);
                                     for (int er = 0; er < extraRes; er++) resonantChain.Add(arrival);
                                     double decelToF = newTotalToF + extraRes * arrNode.PeriodDays;
-                                    // 水星等深势阱天体共振自减速物理边际效益递减规律 (Vis-Viva Diminishing Returns):
-                                    // 首次偏折消除相对速度最多，后续偏折由于速度基数降低边际收益递减，避免超长共振链虚高评分挤死紧凑构型
-                                    double decelBonus = 5.0 * (1.0 - Math.Pow(0.72, extraRes));
+                                    // 深势阱天体共振自减速物理边际效益递减规律 (Vis-Viva Diminishing Returns):
+                                    // 基于目标天体真实双曲转角 delta 计算边际相对速度削减率，杜绝经验拟合
+                                    double decelBonus = vInfArrival * (1.0 - Math.Pow(decayRatio, extraRes));
                                     double decelScore = score - decelBonus + (extraRes * arrNode.PeriodDays / 365.25) * 0.15;
                                     int resLegs = legs + extraRes;
                                     string resCat = (resonantChain.Count >= 4) ? "GrandTour" : "Multi";
@@ -799,9 +810,9 @@ namespace KSPGMAT.MGA
                 }
 
                 double muCentral = SolarSystemCatalog.GetCentralMu(centralBody);
-                if (muCentral <= 0) muCentral = (SolarSystemCatalog.SunMu > 0 ? SolarSystemCatalog.SunMu : 1.32712440018e11);
+                if (muCentral <= 0) muCentral = (SolarSystemCatalog.SunMu > 0 ? SolarSystemCatalog.SunMu : MGADefaults.FallbackSunMu);
 
-                double rpDep = depNode.RadiusKm + 200.0;
+                double rpDep = depNode.SafeRadiusKm > 0 ? depNode.SafeRadiusKm : MGADefaults.GetBodySafeRadiusKm(depNode.Name);
                 double vParkDep = Math.Sqrt(depNode.Mu / rpDep);
 
                 var fullNodes = new List<BodyNode> { depNode };
@@ -973,9 +984,24 @@ namespace KSPGMAT.MGA
                 // 【已移除】原 AddDiverseFromBucket 局部函数 (首天体聚类 + 构型家族轮询 + 跨天体轮询),
                 // 随四桶流派机制一并退出求解链, 理由见下方分桶移除说明。
 
-                // 2. 全部去重拓扑按连续物理量 ParetoScore 升序收录 (直达已因深井门前置)。
-                //    配额语义保底: maxChains 真实绑定时仍按全局最优截断。
-                // 【已移除】原四桶 (Single/Dual/Multi/GrandTour) 动态配额分发与 Rosetta 链调试打印。
+                // 2. 深势阱小天体多次自共振减速拓扑保全 (Deep-Well Resonance Chain Quota: MESSENGER / BepiColombo 机制):
+                // 若目标为深势阱小天体，直达捕获需要极大工质，必须依靠多次目标本星连续自共振削减 v_inf。
+                // 确保至少保留 2 组含有目标连续自共振 (>= 2 次同星借力) 的优质代表性拓扑进入演化池。
+                if (isDeepWellTarget)
+                {
+                    var multiResCandidates = distinctList
+                        .Where(c => c.FlybyChain != null && c.FlybyChain.Count(b => b.Equals(arrival, StringComparison.OrdinalIgnoreCase)) >= 2)
+                        .OrderBy(c => c.ParetoScore)
+                        .Take(3);
+                    foreach (var rc in multiResCandidates)
+                    {
+                        var rRoute = new List<string>(rc.FlybyChain);
+                        if (!selected.Any(s => s.SequenceEqual(rRoute)))
+                        {
+                            selected.Add(rRoute);
+                        }
+                    }
+                }
 
                 // 3. 全局最优 ParetoScore 补齐
                 foreach (var c in distinctList.OrderBy(c => c.ParetoScore))
@@ -1073,7 +1099,7 @@ namespace KSPGMAT.MGA
                 if (depNode == null || arrNode == null) return results;
 
                 double muCentral = SolarSystemCatalog.GetCentralMu(centralBody);
-                if (muCentral <= 0) muCentral = (SolarSystemCatalog.SunMu > 0 ? SolarSystemCatalog.SunMu : 1.32712440018e11);
+                if (muCentral <= 0) muCentral = (SolarSystemCatalog.SunMu > 0 ? SolarSystemCatalog.SunMu : MGADefaults.FallbackSunMu);
 
                 double deltaVMax = Math.Max(10.0, maxBudgetKms); // 论文标准 DeltaV_max = 10 km/s 硬门禁
 
@@ -1100,7 +1126,7 @@ namespace KSPGMAT.MGA
                 // 天体力学能量边界包络: 借力天体轨道半长轴绝不可跨越任务引力包络 (去外行星不可跨过目标星，去内行星不可跨过出发星)
                 bool isOutward = arrNode.SMA > depNode.SMA;
                 double maxAllowedSma = isOutward ? (arrNode.SMA * 1.05) : (depNode.SMA * 1.15);
-                double minAllowedSma = !isOutward ? (arrNode.SMA * 0.90) : (SolarSystemCatalog.GetPlanet("Mercury")?.SMA ?? 5.79e7);
+                double minAllowedSma = !isOutward ? (arrNode.SMA * 0.90) : (nodes.Count > 0 ? nodes.Min(n => n.SMA) * 0.90 : 0.0);
 
                 // 辅助函数: 利用机器学习策略网络与符号物理模型为当前节点生成带先验概率分布的动作列表
                 List<KeplerAdjacencyGraphEngine.BodyNode> InitializeNodeActionsWithML(MCTSNode node)
@@ -1359,8 +1385,9 @@ namespace KSPGMAT.MGA
                                 KeplerAdjacencyGraphEngine.CalcHohmannLeg(depNode.SMA, firstBodyNode.SMA, muCentral, out vInfDep, out _, out _);
                             }
                         }
-                        double muDep = (depNode.Mu > 0) ? depNode.Mu : 398600.4418;
-                        double rpDep = (depNode.RadiusKm > 0 ? depNode.RadiusKm : 6378.137) + 200.0;
+                        var pDepBodySim = SolarSystemCatalog.GetPlanet(depNode.Name);
+                        double muDep = (depNode.Mu > 0) ? depNode.Mu : (pDepBodySim?.Mu ?? 1.0);
+                        double rpDep = depNode.SafeRadiusKm > 0 ? depNode.SafeRadiusKm : MGADefaults.GetBodySafeRadiusKm(depNode.Name);
                         double vHyp = Math.Sqrt(vInfDep * vInfDep + 2.0 * muDep / rpDep);
                         double launchDvKms = Math.Max(0.0, vHyp - Math.Sqrt(muDep / rpDep));
 
@@ -1412,8 +1439,9 @@ namespace KSPGMAT.MGA
                         {
                             KeplerAdjacencyGraphEngine.CalcHohmannLeg(depNode.SMA, pFirst.SMA, muCentral, out vInfDep, out _, out _);
                         }
-                        double muDep = (depNode.Mu > 0) ? depNode.Mu : 398600.4418;
-                        double rpDep = (depNode.RadiusKm > 0 ? depNode.RadiusKm : 6378.137) + 200.0;
+                        var pDepBodyCol = SolarSystemCatalog.GetPlanet(depNode.Name);
+                        double muDep = (depNode.Mu > 0) ? depNode.Mu : (pDepBodyCol?.Mu ?? 1.0);
+                        double rpDep = depNode.SafeRadiusKm > 0 ? depNode.SafeRadiusKm : MGADefaults.GetBodySafeRadiusKm(depNode.Name);
                         double launchDvKms = Math.Max(0.0, Math.Sqrt(vInfDep * vInfDep + 2.0 * muDep / rpDep) - Math.Sqrt(muDep / rpDep));
 
                         results.Add(new MCTSResult
@@ -1626,7 +1654,7 @@ namespace KSPGMAT.MGA
             if (depObj != null && arrObj != null && nodes.Count > 0)
             {
                 double muCentral = SolarSystemCatalog.GetCentralMu(central);
-                if (muCentral <= 0) muCentral = (SolarSystemCatalog.SunMu > 0 ? SolarSystemCatalog.SunMu : 1.32712440018e11);
+                if (muCentral <= 0) muCentral = (SolarSystemCatalog.SunMu > 0 ? SolarSystemCatalog.SunMu : MGADefaults.FallbackSunMu);
 
                 // 3.1 前置共振与内潜引力弹弓插序 (Inward Assist / EGA Pre-Insertion)
                 // 物理法则: 若首个目标在外侧且发射能量极高，或目标位于极深势阱，寻找内侧强势阱天体作为前置跳板
@@ -1733,7 +1761,7 @@ namespace KSPGMAT.MGA
                 return (3.8, 6.5);
             }
 
-            double muCentral = (SolarSystemCatalog.SunMu > 0 ? SolarSystemCatalog.SunMu : 1.32712440018e11);
+            double muCentral = (SolarSystemCatalog.SunMu > 0 ? SolarSystemCatalog.SunMu : MGADefaults.FallbackSunMu);
             double r1 = pDep.SMA;
             double r2 = pArr.SMA;
 
@@ -1798,11 +1826,11 @@ namespace KSPGMAT.MGA
             var bounds = new List<(double MinDays, double MaxDays)>();
             double muCentralM = (SolarSystemCatalog.GetCentralMu(centralBody) > 0 
                 ? SolarSystemCatalog.GetCentralMu(centralBody) 
-                : (SolarSystemCatalog.SunMu > 0 ? SolarSystemCatalog.SunMu : 1.32712440018e11)) * 1e9;
+                : (SolarSystemCatalog.SunMu > 0 ? SolarSystemCatalog.SunMu : MGADefaults.FallbackSunMu)) * 1e9;
 
             // 反梯级泵升深井识别: 全链最内天体 (如 Scenario 9 的水星 0.387 AU) 是否深于出发星 45%
             var depObjBounds = SolarSystemCatalog.GetPlanet(departure);
-            double depSmaBounds = (depObjBounds != null && depObjBounds.SMA > 0) ? depObjBounds.SMA : 1.496e8;
+            double depSmaBounds = (depObjBounds != null && depObjBounds.SMA > 0) ? depObjBounds.SMA : MGADefaults.AU_KM;
             double deepestSma = double.MaxValue;
             foreach (var bn in fullChain)
             {
@@ -1818,8 +1846,8 @@ namespace KSPGMAT.MGA
 
                 var p1 = SolarSystemCatalog.GetPlanet(b1);
                 var p2 = SolarSystemCatalog.GetPlanet(b2);
-                double sma1 = (p1 != null && p1.SMA > 0) ? p1.SMA : 1.496e8;
-                double sma2 = (p2 != null && p2.SMA > 0) ? p2.SMA : 1.496e8;
+                double sma1 = (p1 != null && p1.SMA > 0) ? p1.SMA : MGADefaults.AU_KM;
+                double sma2 = (p2 != null && p2.SMA > 0) ? p2.SMA : MGADefaults.AU_KM;
 
                 if (b1.Equals(b2, StringComparison.OrdinalIgnoreCase))
                 {

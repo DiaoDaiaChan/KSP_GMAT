@@ -199,7 +199,6 @@ namespace {
     static void ensure_spk_loaded() {
         if (g_spk_reader.is_loaded()) return;
         static const char* default_paths[] = {
-            "C:\\Users\\43701\\gmat-win-R2026a\\data\\planetary_ephem\\spk\\de440.bsp",
             "data/planetary_ephem/spk/de440.bsp",
             "../data/planetary_ephem/spk/de440.bsp",
             "../../data/planetary_ephem/spk/de440.bsp",

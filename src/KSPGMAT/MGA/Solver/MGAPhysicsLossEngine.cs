@@ -48,11 +48,13 @@ namespace KSPGMAT.MGA
         public const double FeasibleLossCeiling = 1.0 + 1.0e-9;
 
         /// <summary>
-        /// 深度不可行门禁。g_hat >= 1 表示越界量已等于该约束的整个物理基准尺度
-        /// (例如 DSM 超预算 100%), 此时二次罚项贡献 (ρ/2)·1^2 >= 0.5 并与线性项同量级,
-        /// 是"应当熔断该拓扑"的数学标志。
+        /// 深度不可行门禁。在规范化无量纲损失场 J(x) = f_hat + penalties 中，
+        /// f_hat <= 1.0 表示满足参考预算，SelectionLossCeiling = 4.0 允许探索次优轨道。
+        /// 当 J(x) >= 10.0 (基准预算的 10 倍，即 SelectionLossCeiling * 2.5) 时，
+        /// 说明该解存在严重的物理不可行约束违规惩罚（如 Lambert 无解或极大超界），
+        /// 是"应当熔断该拓扑"的数学标志。避免将早期单纯高能探索解误判为深层不可行。
         /// </summary>
-        public const double DeepInfeasibilityLoss = 1.0;
+        public const double DeepInfeasibilityLoss = 10.0;
 
         /// <summary>选解阶段可接受的最差损失 (仍允许 4 倍基准预算的候选进入最终审计)。</summary>
         public const double SelectionLossCeiling = 4.0;
@@ -104,7 +106,7 @@ namespace KSPGMAT.MGA
                     return config.VesselMaxDeltaVMs / 1000.0;
                 }
 
-                string key = (config.DepartureBody ?? "?") + "|" + (config.DestinationBody ?? "?");
+                string key = $"{config.DepartureBody ?? "?"}|{config.DestinationBody ?? "?"}|{config.DeparturePeAKm:F0}|{config.DestinationPeAKm:F0}";
                 if (_cache.Count > MaxEntries) _cache.Clear();
 
                 return _cache.GetOrAdd(key, _ =>
@@ -303,7 +305,7 @@ namespace KSPGMAT.MGA
                     var planet = SolarSystemCatalog.GetPlanet(legIn.ToBody);
                     if (planet == null || planet.Mu <= 0) continue;
 
-                    double rpMin = planet.RadiusKm + 50.0;
+                    double rpMin = (planet.SafeRadiusKm > 0) ? planet.SafeRadiusKm : MGADefaults.GetBodySafeRadiusKm(legIn.ToBody);
                     if (MGASymbolicPhysicsConstraints.IsFlybyTurnFeasible(
                             legIn.VInfArrivalKms, legOut.VInfDepartureKms, planet.Mu, rpMin,
                             maxPoweredKms, out double reqRad, out double maxRad))
@@ -348,8 +350,8 @@ namespace KSPGMAT.MGA
             {
                 var pF = SolarSystemCatalog.GetPlanet(leg.FromBody);
                 var pT = SolarSystemCatalog.GetPlanet(leg.ToBody);
-                double rF = (pF != null && pF.SMA > 0) ? pF.SMA : 1.496e8;
-                double rT = (pT != null && pT.SMA > 0) ? pT.SMA : 1.496e8;
+                double rF = (pF != null && pF.SMA > 0) ? pF.SMA : MGADefaults.AU_KM;
+                double rT = (pT != null && pT.SMA > 0) ? pT.SMA : MGADefaults.AU_KM;
 
                 if (!string.IsNullOrEmpty(leg.FromBody) &&
                     leg.FromBody.Equals(leg.ToBody, StringComparison.OrdinalIgnoreCase))

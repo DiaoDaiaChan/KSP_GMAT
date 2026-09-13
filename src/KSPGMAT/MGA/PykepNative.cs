@@ -1229,7 +1229,8 @@ namespace KSPGMAT.MGA {
                     searchDirs.Add(Path.Combine(binDir, "..", "data", "planetary_ephem", "spk"));
                     searchDirs.Add(Path.Combine(binDir, "data", "planetary_ephem", "spk"));
                 }
-                searchDirs.Add(@"C:\Users\43701\gmat-win-R2026a\data\planetary_ephem\spk");
+                string envGmatData = Environment.GetEnvironmentVariable("GMAT_DATA_DIR");
+                if (!string.IsNullOrEmpty(envGmatData)) searchDirs.Add(envGmatData);
                 searchDirs.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "GMAT", "spk"));
                 searchDirs.Add(Path.Combine(root, "GameData", "KSPGMAT", "data"));
 

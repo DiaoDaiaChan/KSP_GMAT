@@ -29,10 +29,9 @@ namespace KSPGMAT.MGA
         public const double PrimerVectorLawdenTolerance = 1.10;
 
         /// <summary>
-        /// 自愈候选的预算接纳松弛系数 (无量纲): 略超预算但在该系数内的解仍视为可用。
-        /// 取代原内联的 1.05。
+        /// 自愈候选的预算接纳松弛系数: 恢复严格物理刚性预算比较 (1.00)，彻底废除 +5% 作弊放行后门
         /// </summary>
-        public const double BudgetAcceptanceSlack = 1.05;
+        public const double BudgetAcceptanceSlack = 1.0;
 
         /// <summary>
         /// 执行轨迹解集的物理健康度审计与智能数值自愈 (Audit and Self-Healing)
@@ -156,6 +155,7 @@ namespace KSPGMAT.MGA
 
             var fineCfg = new MGAConfig
             {
+                CentralBody = config.CentralBody,
                 DepartureBody = config.DeparturePlanet,
                 DestinationBody = config.ArrivalPlanet,
                 FlybySequence = bestFlybys,

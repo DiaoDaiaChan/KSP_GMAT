@@ -29,15 +29,17 @@ namespace KSPGMAT.MGA {
         /// <summary>
         /// 基于借力天体相对入射速度 vIn 与出射速度 vOut 解算完整的飞掠几何与 B 平面参数
         /// </summary>
-        public static FlybyGeometry ComputeFlybyGeometry(Vector3d vInRelKms, Vector3d vOutRelKms, double bodyMu, double bodyRadiusKm) {
+        public static FlybyGeometry ComputeFlybyGeometry(Vector3d vInRelKms, Vector3d vOutRelKms, double bodyMu, double bodyRadiusKm, double safeRadiusKm = -1.0, string bodyName = null) {
             var res = new FlybyGeometry();
             double vInMag = vInRelKms.magnitude;
             double vOutMag = vOutRelKms.magnitude;
             res.VInfKms = vInMag;
 
+            double safeR = safeRadiusKm > 0 ? safeRadiusKm : (!string.IsNullOrEmpty(bodyName) ? MGADefaults.GetBodySafeRadiusKm(bodyName) : (bodyRadiusKm > 0 ? bodyRadiusKm + Math.Max(25.0, bodyRadiusKm * 0.05) : 1000.0));
+
             if (vInMag < 1e-6 || vOutMag < 1e-6 || bodyMu <= 0) {
-                res.PeriapsisRadiusKm = bodyRadiusKm + 200.0;
-                res.PeriapsisAltitudeKm = 200.0;
+                res.PeriapsisRadiusKm = safeR;
+                res.PeriapsisAltitudeKm = Math.Max(0.0, safeR - bodyRadiusKm);
                 return res;
             }
 
@@ -52,10 +54,10 @@ namespace KSPGMAT.MGA {
             res.IncomingDecDeg = Math.Asin(zClamped) * (180.0 / Math.PI);
 
             // 3. 原生 C++ 解算双曲飞掠偏转角与近拱点半径 (100% 委托 PykepNative.EvaluateFlyby / pykep_flyby_con)
-            double safeRadiusKm = bodyRadiusKm + 200.0;
+            double safeRadiusKmVal = safeR;
             bool nativeSuccess = false;
             try {
-                if (PykepNative.IsAvailable && PykepNative.EvaluateFlyby(vInRelKms, vOutRelKms, bodyMu, safeRadiusKm, out double turnDeg, out double rpKm, out _)) {
+                if (PykepNative.IsAvailable && PykepNative.EvaluateFlyby(vInRelKms, vOutRelKms, bodyMu, safeRadiusKmVal, out double turnDeg, out double rpKm, out _)) {
                     res.TurnAngleDeg = turnDeg;
                     res.PeriapsisRadiusKm = rpKm;
                     double deltaRad = turnDeg * (Math.PI / 180.0);
@@ -78,7 +80,7 @@ namespace KSPGMAT.MGA {
                     res.PeriapsisRadiusKm = (bodyMu / vInfSq) * (res.Eccentricity - 1.0);
                 } else {
                     res.Eccentricity = 1.0;
-                    res.PeriapsisRadiusKm = safeRadiusKm;
+                    res.PeriapsisRadiusKm = safeR;
                 }
             }
             res.PeriapsisAltitudeKm = res.PeriapsisRadiusKm - bodyRadiusKm;
@@ -124,12 +126,13 @@ namespace KSPGMAT.MGA {
                     var nextLeg = sol.Legs[k + 1];
                     string fbPlanetName = leg.ToBody;
                     var fbPlanet = SolarSystemCatalog.GetPlanet(fbPlanetName);
-                    double bodyMu = fbPlanet != null ? fbPlanet.Mu : 398600.4;
-                    double bodyRadius = fbPlanet != null ? fbPlanet.RadiusKm : 6378.14;
+                    double bodyMu = fbPlanet != null ? fbPlanet.Mu : 0.0;
+                    double bodyRadius = fbPlanet != null ? fbPlanet.RadiusKm : 0.0;
+                    double safeRadius = fbPlanet != null && fbPlanet.SafeRadiusKm > 0 ? fbPlanet.SafeRadiusKm : MGADefaults.GetBodySafeRadiusKm(fbPlanetName);
 
                     Vector3d vIn = leg.VInfArrivalKms;
                     Vector3d vOut = nextLeg.VInfDepartureKms;
-                    var geom = ComputeFlybyGeometry(vIn, vOut, bodyMu, bodyRadius);
+                    var geom = ComputeFlybyGeometry(vIn, vOut, bodyMu, bodyRadius, safeRadius, fbPlanetName);
 
                     leg.FlybyTurningAngleDeg = geom.TurnAngleDeg;
                     leg.FlybyPeriapsisRadiusKm = geom.PeriapsisRadiusKm;
@@ -147,7 +150,7 @@ namespace KSPGMAT.MGA {
                         THat = geom.THat,
                         RHat = geom.RHat,
                         EstimatedPericenterKm = geom.PeriapsisRadiusKm,
-                        SafeFlybyRadiusKm = fbPlanet != null && fbPlanet.SafeRadiusKm > 0 ? fbPlanet.SafeRadiusKm : (bodyRadius + 200.0)
+                        SafeFlybyRadiusKm = safeRadius
                     };
                 }
             }
@@ -249,7 +252,7 @@ namespace KSPGMAT.MGA {
             }
 
             // 2. 双曲无动力飞掠偏折角物理极限: delta_max = 2 * arcsin(1 / (1 + r_safe * v_inf^2 / mu_body))
-            double rSafeKm = currentPlanet.RadiusKm + 200.0;
+            double rSafeKm = (currentPlanet.SafeRadiusKm > 0) ? currentPlanet.SafeRadiusKm : MGADefaults.GetBodySafeRadiusKm(currentPlanet.Name);
             double eMin = 1.0 + (rSafeKm * vInf * vInf) / Math.Max(1e-6, currentPlanet.Mu);
             double deltaMaxRad = 2.0 * Math.Asin(1.0 / Math.Max(1.0001, eMin));
 
@@ -263,6 +266,7 @@ namespace KSPGMAT.MGA {
             double invAMax = 2.0 / aP - (vDepMax * vDepMax) / muCentralKmS;
             double aMax = (invAMax > 1e-12) ? (1.0 / invAMax) : (aP * 3.5);
             double tDepMaxDays = 2.0 * Math.PI * Math.Sqrt(Math.Pow(aMax, 3.0) / muCentralKmS) / 86400.0;
+            double ratioMax = Math.Max(1.0, tDepMaxDays / tOrbitDays);
 
             // 5. 由下游目标天体所需开普勒能量解析推导共振闭合阶数 k_res
             double kRes = 1.0;
@@ -271,7 +275,6 @@ namespace KSPGMAT.MGA {
                 // 目标是外侧天体 (如木星): 需要抬升半长轴以匹配下游转移
                 double aReq = (aP + downstreamTarget.SMA) * 0.5;
                 double tReqDays = 2.0 * Math.PI * Math.Sqrt(Math.Pow(aReq, 3.0) / muCentralKmS) / 86400.0;
-                double ratioMax = Math.Max(1.0, tDepMaxDays / tOrbitDays);
                 double ratioReq = Math.Max(1.0, tReqDays / tOrbitDays);
                 kRes = Math.Max(1.0, Math.Round(Math.Min(ratioReq, ratioMax)));
             }
@@ -281,7 +284,7 @@ namespace KSPGMAT.MGA {
             // 上界由天体引力偏折极限速度所决定的最大闭合半长轴周期与动力学逃逸能量协同确定
             // 短周期天体 (T_orb < 150天, 如水星 88天) 允许多阶共振自减速 (至多 6.5 T_orbit, 覆盖 MESSENGER/BepiColombo 4:4/6:6 槽)
             double minDays = Math.Max(10.0, tOrbitDays * 0.65);
-            double maxResMultiplier = (tOrbitDays < 150.0) ? 6.5 : 3.5;
+            double maxResMultiplier = Math.Min(6.5, Math.Max(3.0, ratioMax));
             double maxDays = Math.Max(minDays * 1.5, Math.Min(tOrbitDays * maxResMultiplier, tDepMaxDays * 1.25));
             if (maxDays < minDays * 1.2) maxDays = minDays * 1.5;
 
@@ -330,7 +333,7 @@ namespace KSPGMAT.MGA {
             double maxFactor = Math.Max(depMaxFactor, 3.5);
             double maxDays = Math.Max(minDays + 10.0, tHohmannDays * maxFactor);
 
-            // 若出发星为强引力巨行星 (如木星/土星) 且向外加速，或目标为极远深空 (a2/a1 > 4.0 或 a2 > 3e9 km)，双曲巡航速度决定航时
+            // 若出发星为强引力巨行星 (如木星/土星) 且向外加速，或目标为极远深空 (a2/a1 > 4.0)，双曲巡航速度决定航时
             double distKm = Math.Abs(a2 - a1);
             if ((fromPlanet.Mu > 5.0e6 || fromPlanet.RadiusKm > 20000.0) && a2 > a1)
             {
@@ -340,10 +343,11 @@ namespace KSPGMAT.MGA {
                 minDays = Math.Min(minDays, Math.Max(5.0, tHypDays * 0.85));
                 maxDays = Math.Min(maxDays, Math.Max(minDays + 50.0, tHypDays * 2.50));
             }
-            else if (a2 / a1 > 4.0 || a2 > 3.0e9)
+            else if (a2 / a1 > 4.0 || a1 / a2 > 4.0)
             {
-                // 极远深空快速双曲巡航: 航天器以 14~18 km/s 高速双曲奔赴
-                double tFastCruiseDays = (distKm / 15.0) / 86400.0;
+                // 极远深空快速双曲巡航: 巡航速度由中心恒星在近端轨道处的特征逃逸动能速度解析确定
+                double vFastCruise = Math.Sqrt(2.0 * muCentralKmS / Math.Max(1.0, Math.Min(a1, a2)));
+                double tFastCruiseDays = (distKm / Math.Max(1.0, vFastCruise)) / 86400.0;
                 minDays = Math.Min(minDays, Math.Max(50.0, tFastCruiseDays * 0.80));
                 maxDays = Math.Min(maxDays, Math.Max(minDays + 100.0, tFastCruiseDays * 2.50));
             }
@@ -353,8 +357,8 @@ namespace KSPGMAT.MGA {
 
         public static double GetResonanceToFMultiplier(double periodDays) {
             if (periodDays <= 0) return 1.0;
-            // 依据开普勒多阶共振自然收敛
-            return (periodDays >= 250.0 && periodDays <= 700.0) ? 2.0 : 1.0;
+            // 开普勒二体标准蓄能共振乘子 (2:1 共振轨道周期为 2.0 * T_orbit，全面兼容金星/地球/火星等任意内侧跳板)
+            return 2.0;
         }
 
         /// <summary>

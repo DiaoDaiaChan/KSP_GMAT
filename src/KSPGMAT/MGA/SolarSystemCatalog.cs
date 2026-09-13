@@ -1072,9 +1072,9 @@ namespace KSPGMAT.MGA
             if (IsFlightGlobalsReady) {
                 try {
                     var sun = FlightGlobals.Bodies.Find(b => b.orbit == null || b.referenceBody == null || b.referenceBody == b);
-                    // 找出所有作为 referenceBody 且在当前游戏存档中真实拥有子卫星的父天体
+                    // 找出所有作为 referenceBody 且在当前游戏存档中真实拥有有效引力子卫星的父天体 (无主观 500km 门槛)
                     var parentsWithMoons = FlightGlobals.Bodies
-                        .Where(b => b != sun && FlightGlobals.Bodies.Any(c => c != b && c.referenceBody == b && c.orbit != null && c.Radius >= 500.0))
+                        .Where(b => b != sun && FlightGlobals.Bodies.Any(c => c != b && c.referenceBody == b && c.orbit != null && c.gravParameter > 0 && c.Radius > 10.0))
                         .OrderBy(b => b.orbit != null ? b.orbit.semiMajorAxis : 0.0)
                         .Select(b => b.name)
                         .ToList();
@@ -1145,7 +1145,7 @@ namespace KSPGMAT.MGA
 
                     if (parentCb != null) {
                         var moons = FlightGlobals.Bodies
-                            .Where(b => b != parentCb && b.referenceBody == parentCb && b.orbit != null && b.Radius >= 500.0)
+                            .Where(b => b != parentCb && b.referenceBody == parentCb && b.orbit != null && b.gravParameter > 0 && b.Radius > 10.0)
                             .OrderBy(b => b.orbit.semiMajorAxis)
                             .Select(b => CreateFromCelestialBody(b))
                             .Where(sp => sp != null)
