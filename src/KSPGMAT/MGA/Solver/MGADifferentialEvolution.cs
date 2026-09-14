@@ -555,281 +555,69 @@ namespace KSPGMAT.MGA
             double[] fitness = new double[popSize];
             var random = new System.Random(ResolveRandomSeed());
 
-            // 启发式注种：若处于模式 2 (锁定倾角与 RAAN) 且为中心天体转移 (如 Earth -> Moon)
-            // 预先沿锁定停泊轨道面扫描目标天体零点面外偏角交点，将精准共面发射时刻注种至初始种群
-            var seedGenomes = new List<double[]>();
-            if (config != null && (config.DepartureMode == MGADepartureMode.InOrbitLockedOrbit || config.LockDepartureInclination)
-                && config.DeparturePeAKm > 0 && Math.Abs(config.DeparturePeAKm - config.DepartureApAKm) < 100.0) {
-                double scanSpanSec = Math.Min(30.0 * 86400.0, winEndUT - winStartUT);
-                if (PykepNative.FindNodalCrossing(fullChain[1], central, winStartUT, scanSpanSec, config.DepartureInclinationDeg, config.DepartureRAANDeg, out double tNode, out _)) {
-                    double nomTofSec = (nominalLegToFSec != null && nominalLegToFSec.Length > 0 && nominalLegToFSec[0] > 0) ? nominalLegToFSec[0] : (lowerBounds[1] + upperBounds[1]) * 0.5;
-                    double depSeedUT = tNode - nomTofSec;
-                    KSPGMATLog.Debug("Solver", $"       [DEBUG NodalCrossing] tNode={GMATClient.FormatUtcGregorian(tNode)}, nomTofSec={nomTofSec/86400.0:F2}d, depSeedUT={GMATClient.FormatUtcGregorian(depSeedUT)}, inBounds={depSeedUT >= lowerBounds[0] && depSeedUT <= upperBounds[0]}");
-                    if (depSeedUT < lowerBounds[0] || depSeedUT > upperBounds[0]) {
-                        // 寻找下一个升降交点 (~13.6 天后)
-                        if (PykepNative.FindNodalCrossing(fullChain[1], central, tNode + 1.0 * 86400.0, scanSpanSec, config.DepartureInclinationDeg, config.DepartureRAANDeg, out double nextNode, out _)) {
-                            depSeedUT = nextNode - nomTofSec;
-                            KSPGMATLog.Debug("Solver", $"       [DEBUG NextNode] nextNode={GMATClient.FormatUtcGregorian(nextNode)}, depSeedUT={GMATClient.FormatUtcGregorian(depSeedUT)}, inBounds={depSeedUT >= lowerBounds[0] && depSeedUT <= upperBounds[0]}");
-                        }
-                    }
-                    if (depSeedUT >= lowerBounds[0] && depSeedUT <= upperBounds[0]) {
-                        double[] dToFs = new double[] { 0.0, -0.25 * 86400.0, 0.25 * 86400.0, -0.5 * 86400.0, 0.5 * 86400.0 };
-                        foreach (double dt in dToFs) {
-                            double tofCand = Math.Max(lowerBounds[1], Math.Min(upperBounds[1], nomTofSec + dt));
-                            double depCand = Math.Max(lowerBounds[0], Math.Min(upperBounds[0], depSeedUT - dt));
-                            var g = new double[dim];
-                            g[0] = depCand;
-                            g[1] = tofCand;
-                            for (int d = 2; d < dim; d++) {
-                                if (d < 1 + legCount) {
-                                    g[d] = nominalLegToFSec[d - 1];
-                                } else {
-                                    int dsmIdx = d - (1 + legCount);
-                                    g[d] = (config != null && config.DsmEtas != null && dsmIdx < config.DsmEtas.Count && config.DsmEtas[dsmIdx] > 0)
-                                        ? config.DsmEtas[dsmIdx]
-                                        : (config != null ? config.DsmEtaDefault : 0.5);
-                                }
-                            }
-                            var testSol = PykepBridge.BuildFullSolution(g, fullChain, config, false);
-                            double testFit = testSol != null ? Fitness(testSol) : 1e9;
-                            double testInc = (testSol != null && testSol.Legs != null && testSol.Legs.Count > 0) ? testSol.Legs[0].EjectionInclinationDeg : -1;
-                            double testDv = testSol != null ? testSol.LaunchDeltaVKms * 1000.0 : -1;
-                            KSPGMATLog.Debug("Solver", $"       [DEBUG Nodal Seed] dep={GMATClient.FormatUtcGregorian(depCand)}, tof={tofCand/86400.0:F2}d, EjectionInc={testInc:F2}°, LaunchDv={testDv:F1} m/s, Fit={testFit:F1}");
-                            seedGenomes.Add(g);
-                        }
-                    }
-                }
-            }
+            // 启发式注种：节点共面与开普勒离散共振组合扫描
+            var seedGenomes = GenerateAnalyticalSeedGenomes(
+                config, fullChain, dim, legCount, optDsmEta,
+                winStartUT, winEndUT, central, centralMu,
+                lowerBounds, upperBounds, nominalLegToFSec, Fitness);
 
-            // 智能相位开普勒共振注种: 若链路中存在同星共振调相航段 (fromN == toN)，直接注入精确开普勒物理有理共振槽种子 (1:1, 3:2, 2:1, 3:1, 4:1)
-            for (int k = 0; k < legCount; k++) {
-                string fromN = fullChain[k];
-                string toN = fullChain[k + 1];
-                if (fromN.Equals(toN, StringComparison.OrdinalIgnoreCase)) {
-                    var p = SolarSystemCatalog.GetPlanet(fromN);
-                    double sma = PykepBridge.GetRelativeSMA(p, central, config?.DeparturePeAKm ?? MGADefaults.DepartureAltitudeKm);
-                    double tOrbSec = PykepBridge.CalcOrbitPeriodSec(sma, centralMu);
-                    if (tOrbSec > 0 && !double.IsNaN(tOrbSec)) {
-                        // 全部低阶有理共振槽候选, 由下方 ToF 边界过滤，并在全域发射窗口多历元均匀注种
-                        double[] resonanceRatios = MGAFlybyDynamicsHelper.ResonanceRatioCandidates;
-                        double[] seedEpochFracs = new double[] { 0.0, 0.15, 0.35, 0.5, 0.65, 0.85, 1.0 };
-                        foreach (double r in resonanceRatios) {
-                            double resTofSec = tOrbSec * r;
-                            if (resTofSec >= lowerBounds[1 + k] && resTofSec <= upperBounds[1 + k]) {
-                                foreach (double eFrac in seedEpochFracs) {
-                                    var resGenome = new double[dim];
-                                    resGenome[0] = lowerBounds[0] + eFrac * (upperBounds[0] - lowerBounds[0]);
-                                    for (int d = 1; d < dim; d++) {
-                                        if (d <= legCount) {
-                                            resGenome[d] = nominalLegToFSec[d - 1];
-                                        } else {
-                                            resGenome[d] = 0.5;
-                                        }
-                                    }
-                                    resGenome[1 + k] = resTofSec;
-                                    seedGenomes.Add(resGenome);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            // 5. 普适前向借力步进动力学注种与全局适应度初评优选
+            SynthesizeForwardStagedSeeds(
+                seedGenomes, out var cachedBlockCombos,
+                config, fullChain, dim, legCount, optDsmEta, hasResonantBlock,
+                winStartUT, winEndUT, central, centralMu,
+                lowerBounds, upperBounds, Fitness);
 
-            // 共振组合扫描注种 (Resonance-Combo Scan Seeding):
-            // 对链路中所有同星共振腿的周期比 {1:1, 3:2, 2:1, 3:1, 4:1} 做离散组合扫描,
-            // 组合出"全程共振同步"的完整基因组 (所有共振腿同时落在精确有理槽上),
-            // 以一次原生 BuildFullSolution 的 TotalΔV 为种子评分, 注入相位闭环最好的 K 个组合。
-            // 直击深井任务 (Scenario 9: 水星多次共振抬升轨道 + 金星/地球反梯级泵升) 的窄相位盆地,
-            // 避免 DE 从全失配起点盲目进化——此前 M→M 腿虽命中 1:1 槽却仍背 2706 m/s DSM 即源于此。
-            using (MGAStepProfiler.Scope("DE注种: 全程开普勒共振组合与相位闭环扫描"))
-            {
-                var sameBodyLegs = new List<int>();
-                for (int k = 0; k < legCount; k++) {
-                    if (fullChain[k].Equals(fullChain[k + 1], StringComparison.OrdinalIgnoreCase)) sameBodyLegs.Add(k);
-                }
-                if (sameBodyLegs.Count > 0) {
-                    // 共振周期比扫描面: 1:1 / 3:2 / 5:2 / 2:1 / 3:1 / 4:1, 覆盖整数与亚共振槽,
-                    // 为 MESSENGER 式水星 M×3 自减速+共振抬升提供更多相位闭环选择 (3:2/5:2 亚共振
-                    // 是窄相位盆地内最可能闭合的槽位, 此前仅整数比导致 M→M 腿背 2495 m/s DSM)。
-                    var ratioOptionsPerLeg = new List<List<double>>();
-                    var legPeriods = new double[sameBodyLegs.Count];
-                    for (int si = 0; si < sameBodyLegs.Count; si++) {
-                        int k = sameBodyLegs[si];
-                        var p = SolarSystemCatalog.GetPlanet(fullChain[k]);
-                        double sma = PykepBridge.GetRelativeSMA(p, central, config?.DeparturePeAKm ?? MGADefaults.DepartureAltitudeKm);
-                        double tOrbSec = PykepBridge.CalcOrbitPeriodSec(sma, centralMu);
-                        legPeriods[si] = (tOrbSec > 0 && !double.IsNaN(tOrbSec)) ? tOrbSec : 0.0;
-                        var opts = new List<double>();
-                        if (legPeriods[si] > 0) {
-                            // 地球等中继星重点测试 1:1 与 2:1 (伽利略 VEEGA) 蓄能，水星/金星测试多阶有理比 (含 5/3 亚共振以闭合会合周期)
-                            // 全部低阶有理共振槽候选 (水星/金星多阶有理比, 地球 2:1 VEEGA), 由下方 ToF 边界过滤
-                            double[] legRatios = MGAFlybyDynamicsHelper.ResonanceRatioCandidates;
-                            foreach (double r in legRatios) {
-                                double resTofSec = legPeriods[si] * r;
-                                if (resTofSec >= lowerBounds[1 + k] && resTofSec <= upperBounds[1 + k]) opts.Add(r);
-                            }
-                        }
-                        ratioOptionsPerLeg.Add(opts);
-                    }
+            // 6. 初始种群染色体分配与初评
+            InitializePopulation(
+                pop, fitness, popSize, subPopSize, dim, legCount,
+                optDsmEta, hasResonantBlock, centralMu, central,
+                lowerBounds, upperBounds, fullChain, config,
+                seedGenomes, cachedBlockCombos, Fitness, random);
 
-                    // 1. 将链路中所有同星共振腿按天体连续性划分为独立的物理共振块 (Contiguous Resonant Blocks)
-                    // 例如: 地球×1 为块 0, 金星×1 为块 1, 水星×3 为块 2 (MESSENGER EVVMMM)
-                    var blocks = new List<List<int>>();
-                    int curBlockStart = 0;
-                    for (int si = 0; si < sameBodyLegs.Count; si++) {
-                        if (si > 0) {
-                            int prevLeg = sameBodyLegs[si - 1];
-                            int curLeg = sameBodyLegs[si];
-                            bool isConsecutive = (curLeg == prevLeg + 1) &&
-                                fullChain[curLeg].Equals(fullChain[prevLeg], StringComparison.OrdinalIgnoreCase);
-                            if (!isConsecutive) {
-                                var b = new List<int>();
-                                for (int bi = curBlockStart; bi < si; bi++) b.Add(bi);
-                                blocks.Add(b);
-                                curBlockStart = si;
-                            }
-                        }
-                    }
-                    var lastB = new List<int>();
-                    for (int bi = curBlockStart; bi < sameBodyLegs.Count; bi++) lastB.Add(bi);
-                    blocks.Add(lastB);
+            // 7. 构建同星连续共振块拓扑映射
+            var resBlockMap = BuildResonanceBlockMap(fullChain, legCount, central, centralMu);
 
-                    // 2. 为每个物理共振块独立生成高质量天体力学共振候选组合:
-                    var blockCandidates = new List<List<double[]>>();
-                    foreach (var b in blocks) {
-                        var bCands = new List<double[]>();
-                        if (b.Count == 1) {
-                            int si = b[0];
-                            var opts = ratioOptionsPerLeg[si];
-                            // 优先锚定 1:1 基础开普勒无偏折物理共振槽 (以 |r - 1.0| 排序)
-                            var sortedOpts = opts.OrderBy(r => Math.Abs(r - 1.0)).ToList();
-                            int takeN = (blocks.Count == 1) ? Math.Min(32, sortedOpts.Count) : Math.Min(4, sortedOpts.Count);
-                            foreach (double r in sortedOpts.Take(takeN)) {
-                                bCands.Add(new double[] { r });
-                            }
-                        } else {
-                            // 多级连续同星自共振减速/调相块 (如水星 M×3 / 木卫多重借力):
-                            // 依据开普勒两体动力学，多级自共振通过单调阶梯减速 (p1 <= p2 <= p3, 如 MESSENGER 3:3 ➔ 4:4 ➔ 6:6)
-                            // 或均等调相 (1:1, 2:2) 逐步削减双曲超速。
-                            var localCombos = new List<double[]>();
-                            Action<int, double[]> buildLocal = null;
-                            buildLocal = (legIdx, cur) => {
-                                if (legIdx == b.Count) {
-                                    localCombos.Add((double[])cur.Clone());
-                                    return;
-                                }
-                                int si = b[legIdx];
-                                foreach (double r in ratioOptionsPerLeg[si]) {
-                                    cur[legIdx] = r;
-                                    buildLocal(legIdx + 1, cur);
-                                    if (localCombos.Count >= 2048) return;
-                                }
-                            };
-                            buildLocal(0, new double[b.Count]);
+            // 8. 异构多岛差分进化主代数循环
+            RunEvolutionLoop(
+                pop, fitness, popSize, subPopSize, islandCount, maxGens,
+                dim, legCount, optDsmEta, hasResonantBlock, central, centralMu,
+                lowerBounds, upperBounds, fullChain, config,
+                Fitness, alm, resBlockMap, cachedBlockCombos, onProgress, ct);
 
-                            // 筛选最具代表性的天体力学序列:
-                            // a) 单调非降序列 (自减速连续泵升): MESSENGER 典型轨迹 [3, 4, 6] 即属于此
-                            var monoInc = localCombos.Where(c => {
-                                for (int i = 1; i < c.Length; i++) if (c[i] < c[i - 1]) return false;
-                                return true;
-                            }).ToList();
+            // 局部坐标下降与 Hooke-Jeeves 模式加速搜索
+            PolishElitesHookeJeeves(
+                pop, fitness, popSize, lowerBounds, upperBounds,
+                fullChain, config, Fitness, cachedBlockCombos,
+                resBlockMap, central, centralMu, dim, legCount);
 
-                            // b) 单调非增序列 (加速阶段)
-                            var monoDec = localCombos.Where(c => {
-                                for (int i = 1; i < c.Length; i++) if (c[i] > c[i - 1]) return false;
-                                return true;
-                            }).ToList();
+            return ExtractAndEnrichSolutions(pop, fitness, popSize, fullChain, config);
+        }
 
-                            // c) 等周期调相序列
-                            var equalSeq = localCombos.Where(c => {
-                                for (int i = 1; i < c.Length; i++) if (Math.Abs(c[i] - c[0]) > 1e-4) return false;
-                                return true;
-                            }).ToList();
-
-                            // 优先保留关键的整数阶跃序列 (例如 1..6 范围内的单调组合, 如 [3,4,6], [2,3,4] 等)
-                            var intMonoInc = monoInc.Where(c => c.All(r => Math.Abs(r - Math.Round(r)) < 1e-4)).ToList();
-                            var otherMono = monoInc.Except(intMonoInc).ToList();
-
-                            var selected = new List<double[]>();
-                            selected.AddRange(intMonoInc);
-                            selected.AddRange(equalSeq);
-                            selected.AddRange(otherMono.Take(20));
-                            selected.AddRange(monoDec.Take(15));
-                            selected.AddRange(localCombos.OrderBy(c => c.Sum()).Take(15));
-
-                            var distinctCands = new List<double[]>();
-                            foreach (var sc in selected) {
-                                bool exists = false;
-                                foreach (var dc in distinctCands) {
-                                    if (dc.Length == sc.Length) {
-                                        bool eq = true;
-                                        for (int ei = 0; ei < dc.Length; ei++) {
-                                            if (Math.Abs(dc[ei] - sc[ei]) > 1e-4) { eq = false; break; }
-                                        }
-                                        if (eq) { exists = true; break; }
-                                    }
-                                }
-                                if (!exists) distinctCands.Add(sc);
-                                if (distinctCands.Count >= 64) break;
-                            }
-                            bCands.AddRange(distinctCands);
-                        }
-                        blockCandidates.Add(bCands);
-                    }
-
-                    // 3. 跨块组装全局共振组合 (Cartesian assembly across blocks, 杜绝单腿深度穷举引发的截断饥饿):
-                    var combos = new List<List<double>>();
-                    Action<int, List<double>> assembleBlocks = null;
-                    assembleBlocks = (bIdx, cur) => {
-                        if (bIdx == blocks.Count) {
-                            combos.Add(new List<double>(cur));
-                            return;
-                        }
-                        foreach (var cand in blockCandidates[bIdx]) {
-                            cur.AddRange(cand);
-                            assembleBlocks(bIdx + 1, cur);
-                            cur.RemoveRange(cur.Count - cand.Length, cand.Length);
-                            if (combos.Count >= 1024) return;
-                        }
-                    };
-                    assembleBlocks(0, new List<double>());
-
-                    var comboSeeds = new List<Tuple<double, double[]>>();
-                    double[] comboEpochs = new double[] { 0.0, -0.2, 0.2, -0.4, 0.4 };
-                    int comboEvalCount = 0;
-                    foreach (var combo in combos) {
-                        foreach (double epochFrac in comboEpochs) {
-                            if (comboEvalCount >= 2500) break;
-                            comboEvalCount++;
-                            var g = new double[dim];
-                            g[0] = (lowerBounds[0] + upperBounds[0]) * 0.5 + epochFrac * (upperBounds[0] - lowerBounds[0]);
-                            if (g[0] < lowerBounds[0]) g[0] = lowerBounds[0];
-                            if (g[0] > upperBounds[0]) g[0] = upperBounds[0];
-                            for (int k = 0; k < legCount; k++) {
-                                g[1 + k] = nominalLegToFSec[k];
-                            }
-                            for (int si = 0; si < sameBodyLegs.Count; si++) {
-                                g[1 + sameBodyLegs[si]] = legPeriods[si] * combo[si];
-                            }
-                            if (optDsmEta) {
-                                for (int k = 0; k < legCount; k++) g[1 + legCount + k] = 0.5;
-                            }
-                            var comboSol = PykepBridge.BuildFullSolution(g, fullChain, config, false);
-                            if (comboSol != null && !double.IsNaN(comboSol.TotalDeltaVKms) && comboSol.TotalDeltaVKms > 0) {
-                                double cFit = Fitness(comboSol);
-                                comboSeeds.Add(Tuple.Create(cFit, g));
-                            }
-                        }
-                    }
-                    foreach (var cs in comboSeeds.OrderBy(t => t.Item1).Take(24)) {
-                        seedGenomes.Add(cs.Item2);
-                    }
-                }
-            }
-
+        /// <summary>
+        /// 普适前向借力步进动力学注种与全局适应度初评优选
+        /// 依据前向逐级引力偏折匹配与能量守恒，为高维 MGA 链路提供高质量真实物理基底，杜绝纯随机投点引发的 Lambert 几何发散
+        /// </summary>
+        private static void SynthesizeForwardStagedSeeds(
+            List<double[]> seedGenomes,
+            out Dictionary<int, List<double[]>> cachedBlockCombos,
+            MGAConfig config,
+            List<string> fullChain,
+            int dim,
+            int legCount,
+            bool optDsmEta,
+            bool hasResonantBlock,
+            double winStartUT,
+            double winEndUT,
+            string central,
+            double centralMu,
+            double[] lowerBounds,
+            double[] upperBounds,
+            Func<MGASolution, double> fitnessFunc)
+        {
             // 普适前向借力步进动力学注种 (Universal Forward-Staging Seed Synthesis):
             // 依据前向逐级引力偏折匹配与能量守恒，为高维 MGA 链路提供高质量真实物理基底，杜绝纯随机投点引发的 Lambert 几何发散
-            var cachedBlockCombos = new Dictionary<int, List<double[]>>();
+            cachedBlockCombos = new Dictionary<int, List<double[]>>();
             // 【确定性契约】并行采样的结果不再直接写入共享 List, 而是先落入各历元本地缓冲,
             // 循环结束后按 epIdx 升序合并。原因: "首次出现者胜出"的去重语义若由线程时序决定,
             // 则保留的组合集合运行间不同 -> 注种不同 -> 解不可复现 (实测 cassini 相差 78.7 m/s)。
@@ -979,8 +767,10 @@ namespace KSPGMAT.MGA
                                         double smaNext = PykepBridge.GetRelativeSMA(pExit, central, 0.0);
                                         double aH = (sma + smaNext) * 0.5;
                                         double approxTofSec = (chosenExitToF > 10.0 * 86400.0) ? chosenExitToF : Math.PI * Math.Sqrt(Math.Pow(aH * 1000.0, 3.0) / (centralMu * 1e9));
-                                        pBody.GetRelativeState(central, curUT, out Vector3d rDep, out Vector3d vDepPlanet);
-                                        pExit.GetRelativeState(central, curUT + approxTofSec, out Vector3d rArrNext, out _);
+                                        pBody.GetRelativeState(central, curUT, out Vector3d rDep, out Vector3d vDepPlanet);
+
+                                        pExit.GetRelativeState(central, curUT + approxTofSec, out Vector3d rArrNext, out _);
+
                                         double rExitAvg = (rDep.magnitude + rArrNext.magnitude) * 0.5;
                                         double tOrbExitAvg = 2.0 * Math.PI * Math.Sqrt(Math.Pow(rExitAvg * 1000.0, 3.0) / (centralMu * 1e9));
                                         int nmaxExit = (tOrbExitAvg > 10.0) ? (int)Math.Floor(approxTofSec / tOrbExitAvg + 0.25) : 0;
@@ -1114,8 +904,10 @@ namespace KSPGMAT.MGA
                                 double[] refineToFs = new double[] { bestLegToF - stepSpan, bestLegToF + stepSpan };
                                 foreach (double refToF in refineToFs) {
                                     if (refToF >= minToF && refToF <= maxToF) {
-                                        double arrUT = curUT + refToF;
-                                        p2.GetRelativeState(central, arrUT, out Vector3d r2Ref, out _);
+                                        double arrUT = curUT + refToF;
+
+                                        p2.GetRelativeState(central, arrUT, out Vector3d r2Ref, out _);
+
                                         double rRefAvg = (r1.magnitude + r2Ref.magnitude) * 0.5;
                                         double tOrbRefAvg = 2.0 * Math.PI * Math.Sqrt(Math.Pow(rRefAvg * 1000.0, 3.0) / (centralMu * 1e9));
                                         int nmaxRef = (tOrbRefAvg > 10.0) ? (int)Math.Floor(refToF / tOrbRefAvg + 0.25) : 0;
@@ -1158,7 +950,7 @@ namespace KSPGMAT.MGA
 
                         var fSol = PykepBridge.BuildFullSolution(genome, fullChain, config, false);
                         if (fSol != null && !double.IsNaN(fSol.TotalDeltaVKms) && fSol.TotalDeltaVKms < MGADefaults.MaxPlausibleTotalDvKms) {
-                            epochSeeds.Add(Tuple.Create(Fitness(fSol), genome));
+                            epochSeeds.Add(Tuple.Create(fitnessFunc(fSol), genome));
                         }
 
                         // 派生微扰变体 (高轻量化探索)
@@ -1174,7 +966,7 @@ namespace KSPGMAT.MGA
                             }
                             var pSol = PykepBridge.BuildFullSolution(pGene, fullChain, config, false);
                             if (pSol != null && !double.IsNaN(pSol.TotalDeltaVKms) && pSol.TotalDeltaVKms < MGADefaults.MaxPlausibleTotalDvKms) {
-                                epochSeeds.Add(Tuple.Create(Fitness(pSol), pGene));
+                                epochSeeds.Add(Tuple.Create(fitnessFunc(pSol), pGene));
                             }
                         }
                     }
@@ -1206,7 +998,7 @@ namespace KSPGMAT.MGA
                                     curG[d] = candVal;
                                     var candSol = PykepBridge.BuildFullSolution(curG, fullChain, config, false);
                                     if (candSol != null && !double.IsNaN(candSol.TotalDeltaVKms)) {
-                                        double candF = Fitness(candSol);
+                                        double candF = fitnessFunc(candSol);
                                         if (candF < bestF) {
                                             bestF = candF;
                                             origVal = candVal;
@@ -1229,7 +1021,7 @@ namespace KSPGMAT.MGA
                                         curG[geneD] = candEta;
                                         var candSol = PykepBridge.BuildFullSolution(curG, fullChain, config, false);
                                         if (candSol != null && !double.IsNaN(candSol.TotalDeltaVKms)) {
-                                            double candF = Fitness(candSol);
+                                            double candF = fitnessFunc(candSol);
                                             if (candF < bestF) {
                                                 bestF = candF;
                                                 origEta = candEta;
@@ -1320,14 +1112,16 @@ namespace KSPGMAT.MGA
                 var scoredSeeds = new List<Tuple<double, double[]>>(seedGenomes.Count);
                 for (int si = 0; si < seedGenomes.Count; si++) {
                     var s = (batchSols != null && si < batchSols.Count) ? batchSols[si] : null;
-                    double f = (s != null && !double.IsNaN(s.TotalDeltaVKms)) ? Fitness(s) : 1e9;
+                    double f = (s != null && !double.IsNaN(s.TotalDeltaVKms)) ? fitnessFunc(s) : 1e9;
                     scoredSeeds.Add(Tuple.Create(f, seedGenomes[si]));
                 }
-                seedGenomes = scoredSeeds
+                var ordered = scoredSeeds
                     .OrderBy(t => t.Item1)
                     .ThenBy(t => t.Item2, MGASolutionOrdering.GenomeComparer.Instance)
                     .Select(t => t.Item2)
                     .ToList();
+                seedGenomes.Clear();
+                seedGenomes.AddRange(ordered);
             }
             }
 
@@ -1335,7 +1129,7 @@ namespace KSPGMAT.MGA
                 for (int si = 0; si < Math.Min(3, seedGenomes.Count); si++) {
                     var sSol = PykepBridge.BuildFullSolution(seedGenomes[si], fullChain, config, false);
                     if (sSol != null) {
-                        KSPGMATLog.Debug("Solver", $"     [种子 #{si+1}] 发射={GMATClient.FormatUtcGregorian(sSol.DepartureUT)}, 始发={sSol.LaunchDeltaVKms * 1000.0:F1} m/s, DSM={sSol.TotalDsmDeltaVKms * 1000.0:F1} m/s, 总ΔV={sSol.TotalDeltaVKms * 1000.0:F1} m/s, 适应度={Fitness(sSol):F1}");
+                        KSPGMATLog.Debug("Solver", $"     [种子 #{si+1}] 发射={GMATClient.FormatUtcGregorian(sSol.DepartureUT)}, 始发={sSol.LaunchDeltaVKms * 1000.0:F1} m/s, DSM={sSol.TotalDsmDeltaVKms * 1000.0:F1} m/s, 总ΔV={sSol.TotalDeltaVKms * 1000.0:F1} m/s, 适应度={fitnessFunc(sSol):F1}");
                         if (sSol.Legs != null && sSol.Legs.Count > 0) {
                             var l0 = sSol.Legs[0];
                             KSPGMATLog.Debug("Solver", $"       [DEBUG 种子 #{si+1}] EjectionInc={l0.EjectionInclinationDeg:F2}°, EjectionLAN={l0.EjectionLANDeg:F2}°, TargetInc={config?.DepartureInclinationDeg:F2}°, Feasible={sSol.AllLegsFeasible}");
@@ -1352,102 +1146,37 @@ namespace KSPGMAT.MGA
                     }
                 }
             }
+        }
 
-            int maxSeedsPerIsland = Math.Min(seedGenomes.Count, Math.Max(4, (int)(subPopSize * 0.15)));
-            using (MGAStepProfiler.Scope("DE种群: 初始染色体分配与初评"))
-            {
-            for (int i = 0; i < popSize; i++) {
-                pop[i] = new double[dim];
-                int islandIdx = (subPopSize > 0) ? (i / subPopSize) : 0;
-                int localSeedIdx = (i % subPopSize);
-                if (seedGenomes.Count > 0 && localSeedIdx < maxSeedsPerIsland) {
-                    int globalSeedIdx = (localSeedIdx == 0)
-                        ? 0
-                        : ((islandIdx * (maxSeedsPerIsland - 1) + localSeedIdx) % seedGenomes.Count);
-                    pop[i] = (double[])seedGenomes[globalSeedIdx].Clone();
-                } else {
-                    int d = 0;
-                    while (d < dim) {
-                        if (d >= 1 && d <= legCount && fullChain[d - 1].Equals(fullChain[d], StringComparison.OrdinalIgnoreCase)) {
-                            int resStart = d - 1;
-                            int resEnd = resStart;
-                            while (resEnd + 1 < legCount && fullChain[resEnd + 1].Equals(fullChain[resEnd + 2], StringComparison.OrdinalIgnoreCase)) {
-                                resEnd++;
-                            }
-                            int blockLen = resEnd - resStart + 1;
-                            var pBody = SolarSystemCatalog.GetPlanet(fullChain[resStart]);
-                            double sma = PykepBridge.GetRelativeSMA(pBody, central, 0.0);
-                            double tOrb = PykepBridge.CalcOrbitPeriodSec(sma, centralMu);
-                            if (tOrb > 0) {
-                                double maxOffset = (config != null && config.ResonantMaxOffsetDays > 0)
-                                    ? config.ResonantMaxOffsetDays * 86400.0
-                                    : Math.Max(5.0 * 86400.0, tOrb * 0.10);
 
-                                if (cachedBlockCombos.TryGetValue(resStart, out var blockCombos) && blockCombos.Count > 0) {
-                                    int pick = random.Next(Math.Min(8, blockCombos.Count));
-                                    double[] combo = blockCombos[pick];
-                                    for (int bi = 0; bi < blockLen; bi++) {
-                                        int legD = 1 + resStart + bi;
-                                        double resCenter = combo[bi] * tOrb;
-                                        double offset = (random.NextDouble() * 2.0 - 1.0) * maxOffset;
-                                        pop[i][legD] = Math.Max(lowerBounds[legD], Math.Min(upperBounds[legD], resCenter + offset));
-                                    }
-                                } else {
-                                    for (int bi = 0; bi < blockLen; bi++) {
-                                        int legD = 1 + resStart + bi;
-                                        pop[i][legD] = Math.Max(lowerBounds[legD], Math.Min(upperBounds[legD], tOrb));
-                                    }
-                                }
-                                d = 1 + resEnd + 1;
-                                continue;
-                            }
-                        }
-                        if (d > legCount) {
-                            double defEta = (config != null && config.DsmEtaDefault > 0) ? config.DsmEtaDefault : 0.5;
-                            pop[i][d] = Math.Max(0.1, Math.Min(0.9, defEta + (random.NextDouble() - 0.5) * 0.2));
-                        } else {
-                            pop[i][d] = lowerBounds[d] + random.NextDouble() * (upperBounds[d] - lowerBounds[d]);
-                        }
-                        d++;
-                    }
-                }
-            }
-
-            // 初始种群批量动力学评估 (支持 GPU DirectCompute CS 5.0 与多核 CPU 弹性加速)
-            float[] initLosses = null;
-            if (!hasResonantBlock && MGAGpuAccelerationManager.EvaluateDePopulationGpu(pop.ToList(), fullChain, config, centralMu, optDsmEta, out initLosses)) {
-                for (int i = 0; i < popSize; i++) {
-                    fitness[i] = initLosses[i];
-                }
-            } else {
-                var initSols = PykepBridge.BuildBatchSolutions(pop.ToList(), fullChain, config);
-                for (int i = 0; i < popSize; i++) {
-                    fitness[i] = (initSols != null && i < initSols.Count && initSols[i] != null && !double.IsNaN(initSols[i].TotalDeltaVKms))
-                        ? Fitness(initSols[i])
-                        : 1e9;
-                }
-            }
-            CPUMonitor.RecordEvaluation(popSize);
-            } // end Scope 初始染色体分配与初评
-
-            var resBlockMap = new Dictionary<int, (int rStart, int rEnd, int bLen, string body, double tOrb)>();
-            for (int rk = 0; rk < legCount; rk++) {
-                if (rk + 1 < fullChain.Count && fullChain[rk].Equals(fullChain[rk + 1], StringComparison.OrdinalIgnoreCase)) {
-                    int rStart = rk;
-                    int rEnd = rk;
-                    while (rEnd + 1 < legCount && fullChain[rEnd + 1].Equals(fullChain[rEnd + 2], StringComparison.OrdinalIgnoreCase)) {
-                        rEnd++;
-                    }
-                    var pB = SolarSystemCatalog.GetPlanet(fullChain[rStart]);
-                    double smaB = PykepBridge.GetRelativeSMA(pB, central, 0.0);
-                    double tB = PykepBridge.CalcOrbitPeriodSec(smaB, centralMu);
-                    for (int b = rStart; b <= rEnd; b++) {
-                        resBlockMap[1 + b] = (rStart, rEnd, rEnd - rStart + 1, fullChain[rStart], tB);
-                    }
-                    rk = rEnd;
-                }
-            }
-
+        /// <summary>
+        /// 异构多岛差分进化 (Multi-Island DE) 主代数循环全过程
+        /// 集成：强化学习 MAB 自适应算子调控、ASA 模拟退火并行回火、环形拓扑精英迁移、MBH 单调盆地跳跃、IDEA 膨胀超球禁区阻断与引导重启
+        /// </summary>
+        private static void RunEvolutionLoop(
+            double[][] pop,
+            double[] fitness,
+            int popSize,
+            int subPopSize,
+            int islandCount,
+            int maxGens,
+            int dim,
+            int legCount,
+            bool optDsmEta,
+            bool hasResonantBlock,
+            string central,
+            double centralMu,
+            double[] lowerBounds,
+            double[] upperBounds,
+            List<string> fullChain,
+            MGAConfig config,
+            Func<MGASolution, double> fitnessFunc,
+            MGAAugmentedLagrangian alm,
+            Dictionary<int, (int rStart, int rEnd, int bLen, string body, double tOrb)> resBlockMap,
+            Dictionary<int, List<double[]>> cachedBlockCombos,
+            Action<float, string> onProgress,
+            CancellationToken ct)
+        {
             // 强化学习 MAB 自适应变异算子与超参数调控器池 (Multi-Armed Bandit Tuners)
             var banditTuners = new MGABanditHyperparameterTuner[islandCount];
             for (int isl = 0; isl < islandCount; isl++) {
@@ -1630,7 +1359,7 @@ namespace KSPGMAT.MGA
                     // 3. 淘汰选择 (Survival Selection): 集成自适应模拟退火与 Metropolis 准则 (Parallel Tempering ASA)
                     // 高温探索岛允许以统计力学概率跨越开普勒势阱假壁垒，低温收敛岛严格执行梯度抛光
                     for (int i = 0; i < popSize; i++) {
-                        double candFit = (gpuLosses != null) ? gpuLosses[i] : Fitness(candSols[i]);
+                        double candFit = (gpuLosses != null) ? gpuLosses[i] : fitnessFunc(candSols[i]);
                         int islandId = i / subPopSize;
                         double T = MGAPhysicsLossEngine.GetIslandTemperature(gen, maxGens, islandId, islandCount);
                         var localRand = new System.Random(gen * popSize + i + 1337);
@@ -1693,7 +1422,7 @@ namespace KSPGMAT.MGA
                             int targetIdx = worst2[e];
                             pop[targetIdx] = (double[])eliteGenomes[isl][e].Clone();
                             var migSol = PykepBridge.BuildFullSolution(pop[targetIdx], fullChain, config, computeAdvanced: false);
-                            fitness[targetIdx] = Fitness(migSol);
+                            fitness[targetIdx] = fitnessFunc(migSol);
                         }
                     }
                     }
@@ -1728,7 +1457,7 @@ namespace KSPGMAT.MGA
                         }
                         if (hasPerturbed) {
                             var mbhSol = PykepBridge.BuildFullSolution(mbhCandidate, fullChain, config, computeAdvanced: false);
-                            double mbhFit = Fitness(mbhSol);
+                            double mbhFit = fitnessFunc(mbhSol);
                             if (mbhFit < bestPopFit) {
                                 int worstPopIdx = 0;
                                 double worstPopFit = -1.0;
@@ -1881,7 +1610,7 @@ namespace KSPGMAT.MGA
                                     }
                                     pop[pIdx] = newGene;
                                     var newSol = PykepBridge.BuildFullSolution(newGene, fullChain, config, computeAdvanced: false);
-                                    fitness[pIdx] = Fitness(newSol);
+                                    fitness[pIdx] = fitnessFunc(newSol);
                                 }
 
                                 stagGens = 0;
@@ -1928,366 +1657,803 @@ namespace KSPGMAT.MGA
                     $"Island_{isl + 1}", t.TotalPulls, t.ArmPulls, t.ArmRewards, t.CurrentF, t.CurrentCR);
             }
 
-            var rankedIndices = Enumerable.Range(0, popSize).OrderBy(idx => fitness[idx]).ToList();
+            // (已在 PolishElitesHookeJeeves 与 ExtractAndEnrichSolutions 内按需排序)
+        }
 
-            // 局部坐标下降与 Hooke-Jeeves 模式加速搜索 (Memetic Hooke-Jeeves Pattern Acceleration Polish):
-            // 围绕全局进化沉降的精英染色体，先逐坐标微步探索梯度斜率，并沿改善方向执行倍增步长加速，
-            // 随后执行全维模式跳跃 x_pattern = x + D，快速穿越狭长平缓的兰伯特相位峡谷，将 DSM 压降至物理极限
-            using (MGAStepProfiler.Scope("DE打磨: Hooke-Jeeves 模式加速极值搜索"))
+
+        /// <summary>
+        /// 差分进化后处理：帕累托前沿提取、多样性网格过滤与高保真动力学注水
+        /// </summary>
+        private static List<MGASolution> ExtractAndEnrichSolutions(
+            double[][] pop,
+            double[] fitness,
+            int popSize,
+            List<string> fullChain,
+            MGAConfig config)
+        {
+            var solutions = new List<MGASolution>();
+
+            using (MGAStepProfiler.Scope("DE选解: 帕累托前沿提取与高级动力学注水"))
             {
-            int polishCount = Math.Min(2, rankedIndices.Count);
-            for (int pIdx = 0; pIdx < polishCount; pIdx++) {
-                int indivIdx = rankedIndices[pIdx];
-                double curFit = fitness[indivIdx];
-                // 若染色体严重发散不可行 (归一化损失超出选解上界)，不浪费时间执行昂贵的单维微调
-                if (!MGAPhysicsLossEngine.IsAcceptableForSelection(curFit)) continue;
-                // 若为第 2 个候选且比第 1 个候选差 50% 以上，无需再花大量时间打磨次要解
-                if (pIdx > 0 && curFit > fitness[rankedIndices[0]] * 1.5) continue;
+                var rankedIndices = Enumerable.Range(0, popSize).OrderBy(idx => fitness[idx]).ToList();
+                var seenKeys = new HashSet<long>();
 
-                var curGene = (double[])pop[indivIdx].Clone();
+                double winBudgetMs = (config.ConstrainByVesselDeltaV && config.VesselMaxDeltaVMs > 0) ? config.VesselMaxDeltaVMs : double.MaxValue;
+                double winDsmBudgetMs = (config.MaxDsmDeltaVMs > 0) ? config.MaxDsmDeltaVMs : winBudgetMs;
 
-                double initialFit = curFit;
+                var chosenCandidateIndices = new List<int>();
 
-                // 0. 活动子空间贝叶斯高斯过程局部抛光 (Active Subspace Bayesian Optimization): 挖掘主敏感梯度加速收敛
-                try {
-                    var polishedBayesGene = MGABayesianSubspacePolisher.Polish(
-                        curGene,
-                        lowerBounds,
-                        upperBounds,
-                        probePt => {
-                            var pSol = PykepBridge.BuildFullSolution(probePt, fullChain, config, computeAdvanced: false);
-                            return Fitness(pSol);
-                        },
-                        maxEvaluations: 20);
+                // 第一阶段：细粒度网格采样 (12小时发射UT格 + 1天飞行历时格)，初筛帕累托前沿多样性解索引
+                // 注意：采用 computeAdvanced: false 快速初筛，完全规避过滤掉个体的昂贵 PrimerVector 与 B-Plane 计算
+                foreach (var idx in rankedIndices) {
+                    if (!MGAPhysicsLossEngine.IsAcceptableForSelection(fitness[idx])) continue;
+                    var sol = PykepBridge.BuildFullSolution(pop[idx], fullChain, config, computeAdvanced: false);
+                    if (sol != null && !double.IsNaN(sol.TotalDeltaVKms)) {
+                        double subjectMs = (config.NoInsertionBurn ? (sol.LaunchDeltaVKms + sol.TotalDsmDeltaVKms + sol.TotalFlybyDeltaVKms) : sol.TotalDeltaVKms) * 1000.0;
+                        if (winBudgetMs < MGADefaults.MaxPlausibleTotalDvKms * 1000.0 && subjectMs > winBudgetMs) continue;
+                        if (winDsmBudgetMs < MGADefaults.MaxPlausibleTotalDvKms * 1000.0 && (sol.TotalDsmDeltaVKms * 1000.0 > winDsmBudgetMs || (sol.Legs != null && sol.Legs.Any(l => l.DSM != null && l.DSM.DeltaVMs > winDsmBudgetMs)))) continue;
+                        if (config.LaunchDeltaVCeilingMs > 0 && sol.LaunchDeltaVKms * 1000.0 > config.LaunchDeltaVCeilingMs) continue;
+                        if (config.EarliestDepartureUT > 0 && sol.DepartureUT < config.EarliestDepartureUT - 1.0) continue;
+                        if (config.LatestDepartureUT > config.EarliestDepartureUT && sol.DepartureUT > config.LatestDepartureUT + 1.0) continue;
 
-                    var bayesSol = PykepBridge.BuildFullSolution(polishedBayesGene, fullChain, config, computeAdvanced: false);
-                    double bayesFit = Fitness(bayesSol);
-                    if (bayesFit < curFit) {
-                        curFit = bayesFit;
-                        curGene = polishedBayesGene;
+                        long key = ((long)(int)(sol.DepartureUT / 43200.0) << 32) ^ (long)(uint)(int)(sol.TotalFlightDays / 1.0);
+                        if (!seenKeys.Contains(key)) {
+                            seenKeys.Add(key);
+                            chosenCandidateIndices.Add(idx);
+                        }
                     }
-                } catch (Exception ex) {
-                    KSPGMATLog.Debug("Solver", $"Bayesian polishing fallback: {ex.Message}");
+                    if (chosenCandidateIndices.Count >= 8) break;
                 }
 
-                int maxPolishIter = (pIdx == 0) ? 2 : 1;
+                // 第二阶段保底：若收敛解不足 5 个，吸纳发射相差 > 6 小时或飞行历时相差 > 0.5 天的有效解
+                if (chosenCandidateIndices.Count < 5) {
+                    foreach (var idx in rankedIndices) {
+                        if (!MGAPhysicsLossEngine.IsAcceptableForSelection(fitness[idx])) continue;
+                        if (chosenCandidateIndices.Contains(idx)) continue;
+                        var sol = PykepBridge.BuildFullSolution(pop[idx], fullChain, config, computeAdvanced: false);
+                        if (sol == null || double.IsNaN(sol.TotalDeltaVKms)) continue;
+                        double subjectMs = (config.NoInsertionBurn ? (sol.LaunchDeltaVKms + sol.TotalDsmDeltaVKms + sol.TotalFlybyDeltaVKms) : sol.TotalDeltaVKms) * 1000.0;
+                        if (winBudgetMs < MGADefaults.MaxPlausibleTotalDvKms * 1000.0 && subjectMs > winBudgetMs) continue;
+                        if (winDsmBudgetMs < MGADefaults.MaxPlausibleTotalDvKms * 1000.0 && (sol.TotalDsmDeltaVKms * 1000.0 > winDsmBudgetMs || (sol.Legs != null && sol.Legs.Any(l => l.DSM != null && l.DSM.DeltaVMs > winDsmBudgetMs)))) continue;
+                        if (config.LaunchDeltaVCeilingMs > 0 && sol.LaunchDeltaVKms * 1000.0 > config.LaunchDeltaVCeilingMs) continue;
+                        if (config.EarliestDepartureUT > 0 && sol.DepartureUT < config.EarliestDepartureUT - 1.0) continue;
+                        if (config.LatestDepartureUT > config.EarliestDepartureUT && sol.DepartureUT > config.LatestDepartureUT + 1.0) continue;
 
-                for (int iter = 0; iter < maxPolishIter; iter++) {
-                    var baseGene = (double[])curGene.Clone();
-                    double baseFit = curFit;
-                    bool anyImproved = false;
+                        chosenCandidateIndices.Add(idx);
+                        if (chosenCandidateIndices.Count >= 8) break;
+                    }
+                }
 
-                    // 1. 逐坐标探索移动 (Exploratory Move)
-                    for (int d = 0; d < dim; d++) {
-                        bool isResLeg = (d >= 1 && d <= legCount && fullChain[d - 1].Equals(fullChain[d], StringComparison.OrdinalIgnoreCase));
-                        double resOffsetMax = (config != null && config.ResonantMaxOffsetDays > 0) ? config.ResonantMaxOffsetDays * 86400.0 : 0.4 * 86400.0;
-                        double span = isResLeg ? resOffsetMax : (upperBounds[d] - lowerBounds[d]);
-                        double[] probeFactors;
-                        if (isResLeg) {
-                            probeFactors = new double[] { -0.5, 0.5, -0.1, 0.1 };
-                        } else if (d > legCount) {
-                            // DSM 航向分率 Eta 坐标探索: 涵盖向出发星靠拢与到达星靠拢典型值
-                            probeFactors = new double[] { -0.20, 0.20, -0.05, 0.05 };
-                        } else {
-                            probeFactors = new double[] { -0.02, 0.02, -0.005, 0.005 };
+                // 对最终筛选出的至多 8 组优质解进行高保真动力学注水 (Populate Advanced Astrodynamics)
+                // 仅对首选最优解注入完整帕累托前沿曲线与高级物理量；其余精选解进行标准构建
+                for (int c = 0; c < chosenCandidateIndices.Count; c++) {
+                    int cIdx = chosenCandidateIndices[c];
+                    bool isPrimary = (c == 0);
+                    var fullSol = PykepBridge.BuildFullSolution(pop[cIdx], fullChain, config, computeAdvanced: isPrimary);
+                    if (fullSol != null && !double.IsNaN(fullSol.TotalDeltaVKms)) {
+                        MarkHardGateCompliance(fullSol, config);
+                        solutions.Add(fullSol);
+                    }
+                }
+
+                // 第三阶段：若候选方案仍不足 5 个，从最优解的帕累托前沿集合补充
+                if (solutions.Count > 0 && solutions.Count < 6) {
+                    var baseSol = solutions[0];
+                    if (baseSol.ParetoFront != null && baseSol.ParetoFront.Count > 1) {
+                        foreach (var pt in baseSol.ParetoFront) {
+                            if (pt.Genome == null) continue;
+                            bool alreadyHas = solutions.Any(s => Math.Abs(s.TotalFlightDays - pt.TotalFlightDays) < 0.5);
+                            if (!alreadyHas) {
+                                var pSol = PykepBridge.BuildFullSolution(pt.Genome, fullChain, config, computeAdvanced: false);
+                                if (pSol != null && !double.IsNaN(pSol.TotalDeltaVKms) && pSol.TotalDeltaVKms < MGADefaults.MaxPlausibleTotalDvKms) {
+                                    pSol.ParetoFront = baseSol.ParetoFront;
+                                    MarkHardGateCompliance(pSol, config);
+                                    solutions.Add(pSol);
+                                }
+                            }
+                            if (solutions.Count >= 8) break;
                         }
-                        double bestDVal = curGene[d];
-                        double bestDFit = curFit;
-                        double bestFactor = 0.0;
-                        double bestNextDVal = (d < legCount) ? curGene[d + 1] : 0.0;
-                        bool hasComp = false;
+                    }
+                }
 
-                        // 复合共振块整体联调: 评估全部会合闭合组合
-                        if (d >= 1 && d <= legCount && resBlockMap.TryGetValue(d, out var blk) && blk.bLen > 1 && d == 1 + blk.rStart) {
-                            if (cachedBlockCombos.TryGetValue(blk.rStart, out var combos) && combos != null) {
-                                foreach (var combo in combos) {
-                                    var comboGene = (double[])curGene.Clone();
-                                    for (int bi = 0; bi < blk.bLen && bi < combo.Length; bi++) {
-                                        int cIdx = 1 + blk.rStart + bi;
-                                        double curOff = curGene[cIdx] - Math.Round(curGene[cIdx] / blk.tOrb) * blk.tOrb;
-                                        comboGene[cIdx] = Math.Max(lowerBounds[cIdx], Math.Min(upperBounds[cIdx], combo[bi] * blk.tOrb + curOff));
+                // 若在强约束下未能完全落入预算区，吸纳种群内最佳收敛染色体，供调用方审计逐航段真实物理动力学
+                if (solutions.Count == 0 && rankedIndices.Count > 0) {
+                    var bestCand = PykepBridge.BuildFullSolution(pop[rankedIndices[0]], fullChain, config, computeAdvanced: true);
+                    if (bestCand != null && !double.IsNaN(bestCand.TotalDeltaVKms)) {
+                        MarkHardGateCompliance(bestCand, config);
+                        solutions.Add(bestCand);
+                    }
+                }
+
+                solutions = solutions.OrderBy(s => config.NoInsertionBurn 
+                    ? (s.LaunchDeltaVKms + s.TotalDsmDeltaVKms + s.TotalFlybyDeltaVKms) 
+                    : s.TotalDeltaVKms).ToList();
+            } // end Scope DE选解: 帕累托前沿提取与高级动力学注水
+
+            return solutions;
+        }
+
+        /// <summary>
+        /// 启发式注种：节点共面与开普勒离散共振组合扫描
+        /// </summary>
+        private static List<double[]> GenerateAnalyticalSeedGenomes(
+            MGAConfig config,
+            List<string> fullChain,
+            int dim,
+            int legCount,
+            bool optDsmEta,
+            double winStartUT,
+            double winEndUT,
+            string central,
+            double centralMu,
+            double[] lowerBounds,
+            double[] upperBounds,
+            double[] nominalLegToFSec,
+            Func<MGASolution, double> fitnessFunc)
+        {
+            var seedGenomes = new List<double[]>();
+
+            // 启发式注种：若处于模式 2 (锁定倾角与 RAAN) 且为中心天体转移 (如 Earth -> Moon)
+            // 预先沿锁定停泊轨道面扫描目标天体零点面外偏角交点，将精准共面发射时刻注种至初始种群
+            if (config != null && (config.DepartureMode == MGADepartureMode.InOrbitLockedOrbit || config.LockDepartureInclination)
+                && config.DeparturePeAKm > 0 && Math.Abs(config.DeparturePeAKm - config.DepartureApAKm) < 100.0) {
+                double scanSpanSec = Math.Min(30.0 * 86400.0, winEndUT - winStartUT);
+                if (PykepNative.FindNodalCrossing(fullChain[1], central, winStartUT, scanSpanSec, config.DepartureInclinationDeg, config.DepartureRAANDeg, out double tNode, out _)) {
+                    double nomTofSec = (nominalLegToFSec != null && nominalLegToFSec.Length > 0 && nominalLegToFSec[0] > 0) ? nominalLegToFSec[0] : (lowerBounds[1] + upperBounds[1]) * 0.5;
+                    double depSeedUT = tNode - nomTofSec;
+                    KSPGMATLog.Debug("Solver", $"       [DEBUG NodalCrossing] tNode={GMATClient.FormatUtcGregorian(tNode)}, nomTofSec={nomTofSec/86400.0:F2}d, depSeedUT={GMATClient.FormatUtcGregorian(depSeedUT)}, inBounds={depSeedUT >= lowerBounds[0] && depSeedUT <= upperBounds[0]}");
+                    if (depSeedUT < lowerBounds[0] || depSeedUT > upperBounds[0]) {
+                        // 寻找下一个升降交点 (~13.6 天后)
+                        if (PykepNative.FindNodalCrossing(fullChain[1], central, tNode + 1.0 * 86400.0, scanSpanSec, config.DepartureInclinationDeg, config.DepartureRAANDeg, out double nextNode, out _)) {
+                            depSeedUT = nextNode - nomTofSec;
+                            KSPGMATLog.Debug("Solver", $"       [DEBUG NextNode] nextNode={GMATClient.FormatUtcGregorian(nextNode)}, depSeedUT={GMATClient.FormatUtcGregorian(depSeedUT)}, inBounds={depSeedUT >= lowerBounds[0] && depSeedUT <= upperBounds[0]}");
+                        }
+                    }
+                    if (depSeedUT >= lowerBounds[0] && depSeedUT <= upperBounds[0]) {
+                        double[] dToFs = new double[] { 0.0, -0.25 * 86400.0, 0.25 * 86400.0, -0.5 * 86400.0, 0.5 * 86400.0 };
+                        foreach (double dt in dToFs) {
+                            double tofCand = Math.Max(lowerBounds[1], Math.Min(upperBounds[1], nomTofSec + dt));
+                            double depCand = Math.Max(lowerBounds[0], Math.Min(upperBounds[0], depSeedUT - dt));
+                            var g = new double[dim];
+                            g[0] = depCand;
+                            g[1] = tofCand;
+                            for (int d = 2; d < dim; d++) {
+                                if (d < 1 + legCount) {
+                                    g[d] = nominalLegToFSec[d - 1];
+                                } else {
+                                    int dsmIdx = d - (1 + legCount);
+                                    g[d] = (config != null && config.DsmEtas != null && dsmIdx < config.DsmEtas.Count && config.DsmEtas[dsmIdx] > 0)
+                                        ? config.DsmEtas[dsmIdx]
+                                        : (config != null ? config.DsmEtaDefault : 0.5);
+                                }
+                            }
+                            var testSol = PykepBridge.BuildFullSolution(g, fullChain, config, false);
+                            double testFit = testSol != null ? fitnessFunc(testSol) : 1e9;
+                            double testInc = (testSol != null && testSol.Legs != null && testSol.Legs.Count > 0) ? testSol.Legs[0].EjectionInclinationDeg : -1;
+                            double testDv = testSol != null ? testSol.LaunchDeltaVKms * 1000.0 : -1;
+                            KSPGMATLog.Debug("Solver", $"       [DEBUG Nodal Seed] dep={GMATClient.FormatUtcGregorian(depCand)}, tof={tofCand/86400.0:F2}d, EjectionInc={testInc:F2}°, LaunchDv={testDv:F1} m/s, Fit={testFit:F1}");
+                            seedGenomes.Add(g);
+                        }
+                    }
+                }
+            }
+
+            // 智能相位开普勒共振注种: 若链路中存在同星共振调相航段 (fromN == toN)，直接注入精确开普勒物理有理共振槽种子 (1:1, 3:2, 2:1, 3:1, 4:1)
+            for (int k = 0; k < legCount; k++) {
+                string fromN = fullChain[k];
+                string toN = fullChain[k + 1];
+                if (fromN.Equals(toN, StringComparison.OrdinalIgnoreCase)) {
+                    var p = SolarSystemCatalog.GetPlanet(fromN);
+                    double sma = PykepBridge.GetRelativeSMA(p, central, config?.DeparturePeAKm ?? MGADefaults.DepartureAltitudeKm);
+                    double tOrbSec = PykepBridge.CalcOrbitPeriodSec(sma, centralMu);
+                    if (tOrbSec > 0 && !double.IsNaN(tOrbSec)) {
+                        // 全部低阶有理共振槽候选, 由下方 ToF 边界过滤，并在全域发射窗口多历元均匀注种
+                        double[] resonanceRatios = MGAFlybyDynamicsHelper.ResonanceRatioCandidates;
+                        double[] seedEpochFracs = new double[] { 0.0, 0.15, 0.35, 0.5, 0.65, 0.85, 1.0 };
+                        foreach (double r in resonanceRatios) {
+                            double resTofSec = tOrbSec * r;
+                            if (resTofSec >= lowerBounds[1 + k] && resTofSec <= upperBounds[1 + k]) {
+                                foreach (double eFrac in seedEpochFracs) {
+                                    var resGenome = new double[dim];
+                                    resGenome[0] = lowerBounds[0] + eFrac * (upperBounds[0] - lowerBounds[0]);
+                                    for (int d = 1; d < dim; d++) {
+                                        if (d <= legCount) {
+                                            resGenome[d] = nominalLegToFSec[d - 1];
+                                        } else {
+                                            resGenome[d] = 0.5;
+                                        }
                                     }
-                                    var comboSol = PykepBridge.BuildFullSolution(comboGene, fullChain, config, computeAdvanced: false);
-                                    double cFit = Fitness(comboSol);
-                                    if (cFit < curFit) {
-                                        curFit = cFit;
-                                        curGene = comboGene;
-                                        anyImproved = true;
-                                    }
+                                    resGenome[1 + k] = resTofSec;
+                                    seedGenomes.Add(resGenome);
                                 }
                             }
                         }
+                    }
+                }
+            }
 
-                        // 若该坐标对应同星共振航段，直接评估开普勒精确物理整数共振槽 (1:1, 2:1, 3:1, 4:1) 及 SOI 微时差
-                        if (d >= 1 && d <= legCount && fullChain[d - 1].Equals(fullChain[d], StringComparison.OrdinalIgnoreCase)) {
-                            var pBody = SolarSystemCatalog.GetPlanet(fullChain[d]);
-                            double sma = PykepBridge.GetRelativeSMA(pBody, central, config?.DeparturePeAKm ?? MGADefaults.DepartureAltitudeKm);
-                            double tOrb = PykepBridge.CalcOrbitPeriodSec(sma, centralMu);
-                            double[] resRatios = MGAFlybyDynamicsHelper.ResonanceRatioCandidates;
-                            double rSoi = (pBody != null && pBody.SoiKm > 0) ? pBody.SoiKm : 1.5e5;
-                            double tSoiSec = (config != null && config.ResonantMaxOffsetDays > 0)
-                                ? config.ResonantMaxOffsetDays * 86400.0
-                                : Math.Max(0.2 * 86400.0, Math.Min(1.0 * 86400.0, (2.0 * rSoi) / 10.0));
-                            double[] soiOffsets = new double[] { 0.0, -0.5 * tSoiSec, 0.5 * tSoiSec, -tSoiSec, tSoiSec };
+            // 共振组合扫描注种 (Resonance-Combo Scan Seeding):
+            // 对链路中所有同星共振腿的周期比 {1:1, 3:2, 2:1, 3:1, 4:1} 做离散组合扫描,
+            // 组合出"全程共振同步"的完整基因组 (所有共振腿同时落在精确有理槽上),
+            // 以一次原生 BuildFullSolution 的 TotalΔV 为种子评分, 注入相位闭环最好的 K 个组合。
+            using (MGAStepProfiler.Scope("DE注种: 全程开普勒共振组合与相位闭环扫描"))
+            {
+                var sameBodyLegs = new List<int>();
+                for (int k = 0; k < legCount; k++) {
+                    if (fullChain[k].Equals(fullChain[k + 1], StringComparison.OrdinalIgnoreCase)) sameBodyLegs.Add(k);
+                }
+                if (sameBodyLegs.Count > 0) {
+                    var ratioOptionsPerLeg = new List<List<double>>();
+                    var legPeriods = new double[sameBodyLegs.Count];
+                    for (int si = 0; si < sameBodyLegs.Count; si++) {
+                        int k = sameBodyLegs[si];
+                        var p = SolarSystemCatalog.GetPlanet(fullChain[k]);
+                        double sma = PykepBridge.GetRelativeSMA(p, central, config?.DeparturePeAKm ?? MGADefaults.DepartureAltitudeKm);
+                        double tOrbSec = PykepBridge.CalcOrbitPeriodSec(sma, centralMu);
+                        legPeriods[si] = (tOrbSec > 0 && !double.IsNaN(tOrbSec)) ? tOrbSec : 0.0;
+                        var opts = new List<double>();
+                        if (legPeriods[si] > 0) {
+                            double[] legRatios = MGAFlybyDynamicsHelper.ResonanceRatioCandidates;
+                            foreach (double r in legRatios) {
+                                double resTofSec = legPeriods[si] * r;
+                                if (resTofSec >= lowerBounds[1 + k] && resTofSec <= upperBounds[1 + k]) opts.Add(r);
+                            }
+                        }
+                        ratioOptionsPerLeg.Add(opts);
+                    }
 
-                            foreach (double r in resRatios) {
-                                foreach (double dt in soiOffsets) {
-                                    double testVal = r * tOrb + dt;
-                                    if (testVal >= lowerBounds[d] && testVal <= upperBounds[d]) {
-                                        // 方案 A: 独立坐标尝试
-                                        var testGene = (double[])curGene.Clone();
-                                        testGene[d] = testVal;
-                                        var testSol = PykepBridge.BuildFullSolution(testGene, fullChain, config, computeAdvanced: false);
-                                        double testFit = Fitness(testSol);
-                                        if (testFit < bestDFit) {
-                                            bestDFit = testFit;
-                                            bestDVal = testVal;
-                                            bestFactor = 0.0;
-                                            hasComp = false;
+                    // 1. 将链路中所有同星共振腿按天体连续性划分为独立的物理共振块
+                    var blocks = new List<List<int>>();
+                    int curBlockStart = 0;
+                    for (int si = 0; si < sameBodyLegs.Count; si++) {
+                        if (si > 0) {
+                            int prevLeg = sameBodyLegs[si - 1];
+                            int curLeg = sameBodyLegs[si];
+                            bool isConsecutive = (curLeg == prevLeg + 1) &&
+                                fullChain[curLeg].Equals(fullChain[prevLeg], StringComparison.OrdinalIgnoreCase);
+                            if (!isConsecutive) {
+                                var b = new List<int>();
+                                for (int bi = curBlockStart; bi < si; bi++) b.Add(bi);
+                                blocks.Add(b);
+                                curBlockStart = si;
+                            }
+                        }
+                    }
+                    var lastB = new List<int>();
+                    for (int bi = curBlockStart; bi < sameBodyLegs.Count; bi++) lastB.Add(bi);
+                    blocks.Add(lastB);
+
+                    // 2. 为每个物理共振块独立生成高质量天体力学共振候选组合:
+                    var blockCandidates = new List<List<double[]>>();
+                    foreach (var b in blocks) {
+                        var bCands = new List<double[]>();
+                        if (b.Count == 1) {
+                            int si = b[0];
+                            var opts = ratioOptionsPerLeg[si];
+                            var sortedOpts = opts.OrderBy(r => Math.Abs(r - 1.0)).ToList();
+                            int takeN = (blocks.Count == 1) ? Math.Min(32, sortedOpts.Count) : Math.Min(4, sortedOpts.Count);
+                            foreach (double r in sortedOpts.Take(takeN)) {
+                                bCands.Add(new double[] { r });
+                            }
+                        } else {
+                            var localCombos = new List<double[]>();
+                            Action<int, double[]> buildLocal = null;
+                            buildLocal = (legIdx, cur) => {
+                                if (legIdx == b.Count) {
+                                    localCombos.Add((double[])cur.Clone());
+                                    return;
+                                }
+                                int si = b[legIdx];
+                                foreach (double r in ratioOptionsPerLeg[si]) {
+                                    cur[legIdx] = r;
+                                    buildLocal(legIdx + 1, cur);
+                                    if (localCombos.Count >= 2048) return;
+                                }
+                            };
+                            buildLocal(0, new double[b.Count]);
+
+                            var monoInc = localCombos.Where(c => {
+                                for (int i = 1; i < c.Length; i++) if (c[i] < c[i - 1]) return false;
+                                return true;
+                            }).ToList();
+
+                            var monoDec = localCombos.Where(c => {
+                                for (int i = 1; i < c.Length; i++) if (c[i] > c[i - 1]) return false;
+                                return true;
+                            }).ToList();
+
+                            var equalSeq = localCombos.Where(c => {
+                                for (int i = 1; i < c.Length; i++) if (Math.Abs(c[i] - c[0]) > 1e-4) return false;
+                                return true;
+                            }).ToList();
+
+                            var intMonoInc = monoInc.Where(c => c.All(r => Math.Abs(r - Math.Round(r)) < 1e-4)).ToList();
+                            var otherMono = monoInc.Except(intMonoInc).ToList();
+
+                            var selected = new List<double[]>();
+                            selected.AddRange(intMonoInc);
+                            selected.AddRange(equalSeq);
+                            selected.AddRange(otherMono.Take(20));
+                            selected.AddRange(monoDec.Take(15));
+                            selected.AddRange(localCombos.OrderBy(c => c.Sum()).Take(15));
+
+                            var distinctCands = new List<double[]>();
+                            foreach (var sc in selected) {
+                                bool exists = false;
+                                foreach (var dc in distinctCands) {
+                                    if (dc.Length == sc.Length) {
+                                        bool eq = true;
+                                        for (int ei = 0; ei < dc.Length; ei++) {
+                                            if (Math.Abs(dc[ei] - sc[ei]) > 1e-4) { eq = false; break; }
                                         }
+                                        if (eq) { exists = true; break; }
+                                    }
+                                }
+                                if (!exists) distinctCands.Add(sc);
+                                if (distinctCands.Count >= 64) break;
+                            }
+                            bCands.AddRange(distinctCands);
+                        }
+                        blockCandidates.Add(bCands);
+                    }
 
-                                        // 方案 B: 顺流相位补偿尝试 (维持后续全链天体到达时刻完全不变)
-                                        if (d < legCount) {
-                                            double delta = testVal - curGene[d];
-                                            double nextVal = curGene[d + 1] - delta;
-                                            if (nextVal >= lowerBounds[d + 1] && nextVal <= upperBounds[d + 1]) {
-                                                var compGene = (double[])curGene.Clone();
-                                                compGene[d] = testVal;
-                                                compGene[d + 1] = nextVal;
-                                                var compSol = PykepBridge.BuildFullSolution(compGene, fullChain, config, computeAdvanced: false);
-                                                double compFit = Fitness(compSol);
-                                                if (compFit < bestDFit) {
-                                                    bestDFit = compFit;
-                                                    bestDVal = testVal;
-                                                    bestFactor = 0.0;
-                                                    bestNextDVal = nextVal;
-                                                    hasComp = true;
+                    // 3. 跨块组装全局共振组合
+                    var combos = new List<List<double>>();
+                    Action<int, List<double>> assembleBlocks = null;
+                    assembleBlocks = (bIdx, cur) => {
+                        if (bIdx == blocks.Count) {
+                            combos.Add(new List<double>(cur));
+                            return;
+                        }
+                        foreach (var cand in blockCandidates[bIdx]) {
+                            cur.AddRange(cand);
+                            assembleBlocks(bIdx + 1, cur);
+                            cur.RemoveRange(cur.Count - cand.Length, cand.Length);
+                            if (combos.Count >= 1024) return;
+                        }
+                    };
+                    assembleBlocks(0, new List<double>());
+
+                    var comboSeeds = new List<Tuple<double, double[]>>();
+                    double[] comboEpochs = new double[] { 0.0, -0.2, 0.2, -0.4, 0.4 };
+                    int comboEvalCount = 0;
+                    foreach (var combo in combos) {
+                        foreach (double epochFrac in comboEpochs) {
+                            if (comboEvalCount >= 2500) break;
+                            comboEvalCount++;
+                            var g = new double[dim];
+                            g[0] = (lowerBounds[0] + upperBounds[0]) * 0.5 + epochFrac * (upperBounds[0] - lowerBounds[0]);
+                            if (g[0] < lowerBounds[0]) g[0] = lowerBounds[0];
+                            if (g[0] > upperBounds[0]) g[0] = upperBounds[0];
+                            for (int k = 0; k < legCount; k++) {
+                                g[1 + k] = nominalLegToFSec[k];
+                            }
+                            for (int si = 0; si < sameBodyLegs.Count; si++) {
+                                g[1 + sameBodyLegs[si]] = legPeriods[si] * combo[si];
+                            }
+                            if (optDsmEta) {
+                                for (int k = 0; k < legCount; k++) g[1 + legCount + k] = 0.5;
+                            }
+                            var comboSol = PykepBridge.BuildFullSolution(g, fullChain, config, false);
+                            if (comboSol != null && !double.IsNaN(comboSol.TotalDeltaVKms) && comboSol.TotalDeltaVKms > 0) {
+                                double cFit = fitnessFunc(comboSol);
+                                comboSeeds.Add(Tuple.Create(cFit, g));
+                            }
+                        }
+                    }
+                    foreach (var cs in comboSeeds.OrderBy(t => t.Item1).Take(24)) {
+                        seedGenomes.Add(cs.Item2);
+                    }
+                }
+            }
+
+            return seedGenomes;
+        }
+
+        /// <summary>
+        /// 初始种群染色体分配与动力学初评 (支持 GPU DirectCompute CS 5.0 与多核 CPU 弹性加速)
+        /// </summary>
+        private static void InitializePopulation(
+            double[][] pop,
+            double[] fitness,
+            int popSize,
+            int subPopSize,
+            int dim,
+            int legCount,
+            bool optDsmEta,
+            bool hasResonantBlock,
+            double centralMu,
+            string central,
+            double[] lowerBounds,
+            double[] upperBounds,
+            List<string> fullChain,
+            MGAConfig config,
+            List<double[]> seedGenomes,
+            Dictionary<int, List<double[]>> cachedBlockCombos,
+            Func<MGASolution, double> fitnessFunc,
+            System.Random random)
+        {
+            int maxSeedsPerIsland = Math.Min(seedGenomes.Count, Math.Max(4, (int)(subPopSize * 0.15)));
+            using (MGAStepProfiler.Scope("DE种群: 初始染色体分配与初评"))
+            {
+                for (int i = 0; i < popSize; i++) {
+                    pop[i] = new double[dim];
+                    int islandIdx = (subPopSize > 0) ? (i / subPopSize) : 0;
+                    int localSeedIdx = (i % subPopSize);
+                    if (seedGenomes.Count > 0 && localSeedIdx < maxSeedsPerIsland) {
+                        int globalSeedIdx = (localSeedIdx == 0)
+                            ? 0
+                            : ((islandIdx * (maxSeedsPerIsland - 1) + localSeedIdx) % seedGenomes.Count);
+                        pop[i] = (double[])seedGenomes[globalSeedIdx].Clone();
+                    } else {
+                        int d = 0;
+                        while (d < dim) {
+                            if (d >= 1 && d <= legCount && fullChain[d - 1].Equals(fullChain[d], StringComparison.OrdinalIgnoreCase)) {
+                                int resStart = d - 1;
+                                int resEnd = resStart;
+                                while (resEnd + 1 < legCount && fullChain[resEnd + 1].Equals(fullChain[resEnd + 2], StringComparison.OrdinalIgnoreCase)) {
+                                    resEnd++;
+                                }
+                                int blockLen = resEnd - resStart + 1;
+                                var pBody = SolarSystemCatalog.GetPlanet(fullChain[resStart]);
+                                double sma = PykepBridge.GetRelativeSMA(pBody, central, 0.0);
+                                double tOrb = PykepBridge.CalcOrbitPeriodSec(sma, centralMu);
+                                if (tOrb > 0) {
+                                    double maxOffset = (config != null && config.ResonantMaxOffsetDays > 0)
+                                        ? config.ResonantMaxOffsetDays * 86400.0
+                                        : Math.Max(5.0 * 86400.0, tOrb * 0.10);
+
+                                    if (cachedBlockCombos.TryGetValue(resStart, out var blockCombos) && blockCombos.Count > 0) {
+                                        int pick = random.Next(Math.Min(8, blockCombos.Count));
+                                        double[] combo = blockCombos[pick];
+                                        for (int bi = 0; bi < blockLen; bi++) {
+                                            int legD = 1 + resStart + bi;
+                                            double resCenter = combo[bi] * tOrb;
+                                            double offset = (random.NextDouble() * 2.0 - 1.0) * maxOffset;
+                                            pop[i][legD] = Math.Max(lowerBounds[legD], Math.Min(upperBounds[legD], resCenter + offset));
+                                        }
+                                    } else {
+                                        for (int bi = 0; bi < blockLen; bi++) {
+                                            int legD = 1 + resStart + bi;
+                                            pop[i][legD] = Math.Max(lowerBounds[legD], Math.Min(upperBounds[legD], tOrb));
+                                        }
+                                    }
+                                    d = 1 + resEnd + 1;
+                                    continue;
+                                }
+                            }
+                            if (d > legCount) {
+                                double defEta = (config != null && config.DsmEtaDefault > 0) ? config.DsmEtaDefault : 0.5;
+                                pop[i][d] = Math.Max(0.1, Math.Min(0.9, defEta + (random.NextDouble() - 0.5) * 0.2));
+                            } else {
+                                pop[i][d] = lowerBounds[d] + random.NextDouble() * (upperBounds[d] - lowerBounds[d]);
+                            }
+                            d++;
+                        }
+                    }
+                }
+
+                // 初始种群批量动力学评估 (支持 GPU DirectCompute CS 5.0 与多核 CPU 弹性加速)
+                float[] initLosses = null;
+                if (!hasResonantBlock && MGAGpuAccelerationManager.EvaluateDePopulationGpu(pop.ToList(), fullChain, config, centralMu, optDsmEta, out initLosses)) {
+                    for (int i = 0; i < popSize; i++) {
+                        fitness[i] = initLosses[i];
+                    }
+                } else {
+                    var initSols = PykepBridge.BuildBatchSolutions(pop.ToList(), fullChain, config);
+                    for (int i = 0; i < popSize; i++) {
+                        fitness[i] = (initSols != null && i < initSols.Count && initSols[i] != null && !double.IsNaN(initSols[i].TotalDeltaVKms))
+                            ? fitnessFunc(initSols[i])
+                            : 1e9;
+                    }
+                }
+                CPUMonitor.RecordEvaluation(popSize);
+            } // end Scope 初始染色体分配与初评
+        }
+
+        /// <summary>
+        /// 构建连续同星共振块物理拓扑映射 (Contiguous Resonant Block Map)
+        /// </summary>
+        private static Dictionary<int, (int rStart, int rEnd, int bLen, string body, double tOrb)> BuildResonanceBlockMap(
+            List<string> fullChain, int legCount, string central, double centralMu)
+        {
+            var resBlockMap = new Dictionary<int, (int rStart, int rEnd, int bLen, string body, double tOrb)>();
+            for (int rk = 0; rk < legCount; rk++) {
+                if (rk + 1 < fullChain.Count && fullChain[rk].Equals(fullChain[rk + 1], StringComparison.OrdinalIgnoreCase)) {
+                    int rStart = rk;
+                    int rEnd = rk;
+                    while (rEnd + 1 < legCount && fullChain[rEnd + 1].Equals(fullChain[rEnd + 2], StringComparison.OrdinalIgnoreCase)) {
+                        rEnd++;
+                    }
+                    var pB = SolarSystemCatalog.GetPlanet(fullChain[rStart]);
+                    double smaB = PykepBridge.GetRelativeSMA(pB, central, 0.0);
+                    double tB = PykepBridge.CalcOrbitPeriodSec(smaB, centralMu);
+                    for (int b = rStart; b <= rEnd; b++) {
+                        resBlockMap[1 + b] = (rStart, rEnd, rEnd - rStart + 1, fullChain[rStart], tB);
+                    }
+                    rk = rEnd;
+                }
+            }
+            return resBlockMap;
+        }
+
+        /// <summary>
+        /// 局部坐标下降与 Hooke-Jeeves 模式加速搜索 (Memetic Hooke-Jeeves Pattern Acceleration Polish):
+        /// 围绕全局进化沉降的精英染色体，先逐坐标微步探索梯度斜率，并沿改善方向执行倍增步长加速，
+        /// 随后执行全维模式跳跃 x_pattern = x + D，快速穿越狭长平缓的兰伯特相位峡谷，将 DSM 压降至物理极限
+        /// </summary>
+        private static void PolishElitesHookeJeeves(
+            double[][] pop,
+            double[] fitness,
+            int popSize,
+            double[] lowerBounds,
+            double[] upperBounds,
+            List<string> fullChain,
+            MGAConfig config,
+            Func<MGASolution, double> fitnessFunc,
+            Dictionary<int, List<double[]>> cachedBlockCombos,
+            Dictionary<int, (int rStart, int rEnd, int bLen, string body, double tOrb)> resBlockMap,
+            string central,
+            double centralMu,
+            int dim,
+            int legCount)
+        {
+            using (MGAStepProfiler.Scope("DE打磨: Hooke-Jeeves 模式加速极值搜索"))
+            {
+                var rankedIndices = Enumerable.Range(0, popSize).OrderBy(idx => fitness[idx]).ToList();
+                int polishCount = Math.Min(2, rankedIndices.Count);
+                for (int pIdx = 0; pIdx < polishCount; pIdx++) {
+                    int indivIdx = rankedIndices[pIdx];
+                    double curFit = fitness[indivIdx];
+                    // 若染色体严重发散不可行 (归一化损失超出选解上界)，不浪费时间执行昂贵的单维微调
+                    if (!MGAPhysicsLossEngine.IsAcceptableForSelection(curFit)) continue;
+                    // 若为第 2 个候选且比第 1 个候选差 50% 以上，无需再花大量时间打磨次要解
+                    if (pIdx > 0 && curFit > fitness[rankedIndices[0]] * 1.5) continue;
+
+                    var curGene = (double[])pop[indivIdx].Clone();
+                    double initialFit = curFit;
+
+                    // 0. 活动子空间贝叶斯高斯过程局部抛光 (Active Subspace Bayesian Optimization): 挖掘主敏感梯度加速收敛
+                    try {
+                        var polishedBayesGene = MGABayesianSubspacePolisher.Polish(
+                            curGene,
+                            lowerBounds,
+                            upperBounds,
+                            probePt => {
+                                var pSol = PykepBridge.BuildFullSolution(probePt, fullChain, config, computeAdvanced: false);
+                                return fitnessFunc(pSol);
+                            },
+                            maxEvaluations: 20);
+
+                        var bayesSol = PykepBridge.BuildFullSolution(polishedBayesGene, fullChain, config, computeAdvanced: false);
+                        double bayesFit = fitnessFunc(bayesSol);
+                        if (bayesFit < curFit) {
+                            curFit = bayesFit;
+                            curGene = polishedBayesGene;
+                        }
+                    } catch (Exception ex) {
+                        KSPGMATLog.Debug("Solver", $"Bayesian polishing fallback: {ex.Message}");
+                    }
+
+                    int maxPolishIter = (pIdx == 0) ? 2 : 1;
+
+                    for (int iter = 0; iter < maxPolishIter; iter++) {
+                        var baseGene = (double[])curGene.Clone();
+                        double baseFit = curFit;
+                        bool anyImproved = false;
+
+                        // 1. 逐坐标探索移动 (Exploratory Move)
+                        for (int d = 0; d < dim; d++) {
+                            bool isResLeg = (d >= 1 && d <= legCount && fullChain[d - 1].Equals(fullChain[d], StringComparison.OrdinalIgnoreCase));
+                            double resOffsetMax = (config != null && config.ResonantMaxOffsetDays > 0) ? config.ResonantMaxOffsetDays * 86400.0 : 0.4 * 86400.0;
+                            double span = isResLeg ? resOffsetMax : (upperBounds[d] - lowerBounds[d]);
+                            double[] probeFactors;
+                            if (isResLeg) {
+                                probeFactors = new double[] { -0.5, 0.5, -0.1, 0.1 };
+                            } else if (d > legCount) {
+                                // DSM 航向分率 Eta 坐标探索: 涵盖向出发星靠拢与到达星靠拢典型值
+                                probeFactors = new double[] { -0.20, 0.20, -0.05, 0.05 };
+                            } else {
+                                probeFactors = new double[] { -0.02, 0.02, -0.005, 0.005 };
+                            }
+                            double bestDVal = curGene[d];
+                            double bestDFit = curFit;
+                            double bestFactor = 0.0;
+                            double bestNextDVal = (d < legCount) ? curGene[d + 1] : 0.0;
+                            bool hasComp = false;
+
+                            // 复合共振块整体联调: 评估全部会合闭合组合
+                            if (d >= 1 && d <= legCount && resBlockMap.TryGetValue(d, out var blk) && blk.bLen > 1 && d == 1 + blk.rStart) {
+                                if (cachedBlockCombos.TryGetValue(blk.rStart, out var combos) && combos != null) {
+                                    foreach (var combo in combos) {
+                                        var comboGene = (double[])curGene.Clone();
+                                        for (int bi = 0; bi < blk.bLen && bi < combo.Length; bi++) {
+                                            int cIdx = 1 + blk.rStart + bi;
+                                            double curOff = curGene[cIdx] - Math.Round(curGene[cIdx] / blk.tOrb) * blk.tOrb;
+                                            comboGene[cIdx] = Math.Max(lowerBounds[cIdx], Math.Min(upperBounds[cIdx], combo[bi] * blk.tOrb + curOff));
+                                        }
+                                        var comboSol = PykepBridge.BuildFullSolution(comboGene, fullChain, config, computeAdvanced: false);
+                                        double cFit = fitnessFunc(comboSol);
+                                        if (cFit < curFit) {
+                                            curFit = cFit;
+                                            curGene = comboGene;
+                                            anyImproved = true;
+                                        }
+                                    }
+                                }
+                            }
+
+                            // 若该坐标对应同星共振航段，直接评估开普勒精确物理整数共振槽 (1:1, 2:1, 3:1, 4:1) 及 SOI 微时差
+                            if (d >= 1 && d <= legCount && fullChain[d - 1].Equals(fullChain[d], StringComparison.OrdinalIgnoreCase)) {
+                                var pBody = SolarSystemCatalog.GetPlanet(fullChain[d]);
+                                double sma = PykepBridge.GetRelativeSMA(pBody, central, config?.DeparturePeAKm ?? MGADefaults.DepartureAltitudeKm);
+                                double tOrb = PykepBridge.CalcOrbitPeriodSec(sma, centralMu);
+                                double[] resRatios = MGAFlybyDynamicsHelper.ResonanceRatioCandidates;
+                                double rSoi = (pBody != null && pBody.SoiKm > 0) ? pBody.SoiKm : 1.5e5;
+                                double tSoiSec = (config != null && config.ResonantMaxOffsetDays > 0)
+                                    ? config.ResonantMaxOffsetDays * 86400.0
+                                    : Math.Max(0.2 * 86400.0, Math.Min(1.0 * 86400.0, (2.0 * rSoi) / 10.0));
+                                double[] soiOffsets = new double[] { 0.0, -0.5 * tSoiSec, 0.5 * tSoiSec, -tSoiSec, tSoiSec };
+
+                                foreach (double r in resRatios) {
+                                    foreach (double dt in soiOffsets) {
+                                        double testVal = r * tOrb + dt;
+                                        if (testVal >= lowerBounds[d] && testVal <= upperBounds[d]) {
+                                            // 方案 A: 独立坐标尝试
+                                            var testGene = (double[])curGene.Clone();
+                                            testGene[d] = testVal;
+                                            var testSol = PykepBridge.BuildFullSolution(testGene, fullChain, config, computeAdvanced: false);
+                                            double testFit = fitnessFunc(testSol);
+                                            if (testFit < bestDFit) {
+                                                bestDFit = testFit;
+                                                bestDVal = testVal;
+                                                bestFactor = 0.0;
+                                                hasComp = false;
+                                            }
+
+                                            // 方案 B: 顺流相位补偿尝试 (维持后续全链天体到达时刻完全不变)
+                                            if (d < legCount) {
+                                                double delta = testVal - curGene[d];
+                                                double nextVal = curGene[d + 1] - delta;
+                                                if (nextVal >= lowerBounds[d + 1] && nextVal <= upperBounds[d + 1]) {
+                                                    var compGene = (double[])curGene.Clone();
+                                                    compGene[d] = testVal;
+                                                    compGene[d + 1] = nextVal;
+                                                    var compSol = PykepBridge.BuildFullSolution(compGene, fullChain, config, computeAdvanced: false);
+                                                    double compFit = fitnessFunc(compSol);
+                                                    if (compFit < bestDFit) {
+                                                        bestDFit = compFit;
+                                                        bestDVal = testVal;
+                                                        bestFactor = 0.0;
+                                                        bestNextDVal = nextVal;
+                                                        hasComp = true;
+                                                    }
                                                 }
                                             }
                                         }
                                     }
                                 }
                             }
-                        }
 
-                        foreach (double factor in probeFactors) {
-                            double testVal = Math.Max(lowerBounds[d], Math.Min(upperBounds[d], curGene[d] + factor * span));
-                            var testGene = (double[])curGene.Clone();
-                            testGene[d] = testVal;
+                            foreach (double factor in probeFactors) {
+                                double testVal = Math.Max(lowerBounds[d], Math.Min(upperBounds[d], curGene[d] + factor * span));
+                                var testGene = (double[])curGene.Clone();
+                                testGene[d] = testVal;
 
-                            var testSol = PykepBridge.BuildFullSolution(testGene, fullChain, config, computeAdvanced: false);
-                            double testFit = Fitness(testSol);
-                            if (testFit < bestDFit) {
-                                bestDFit = testFit;
-                                bestDVal = testVal;
-                                bestFactor = factor;
-                                hasComp = false;
-                            }
-
-                            // 顺流相位滑移 (Interplanetary Phasing Slide): 同时微调本段与后置航段，维持后续行星际对齐
-                            if (d >= 1 && d < legCount) {
-                                double delta = testVal - curGene[d];
-                                double nextVal = curGene[d + 1] - delta;
-                                if (nextVal >= lowerBounds[d + 1] && nextVal <= upperBounds[d + 1]) {
-                                    var compGene = (double[])curGene.Clone();
-                                    compGene[d] = testVal;
-                                    compGene[d + 1] = nextVal;
-                                    var compSol = PykepBridge.BuildFullSolution(compGene, fullChain, config, computeAdvanced: false);
-                                    double compFit = Fitness(compSol);
-                                    if (compFit < bestDFit) {
-                                        bestDFit = compFit;
-                                        bestDVal = testVal;
-                                        bestFactor = factor;
-                                        bestNextDVal = nextVal;
-                                        hasComp = true;
-                                    }
+                                var testSol = PykepBridge.BuildFullSolution(testGene, fullChain, config, computeAdvanced: false);
+                                double testFit = fitnessFunc(testSol);
+                                if (testFit < bestDFit) {
+                                    bestDFit = testFit;
+                                    bestDVal = testVal;
+                                    bestFactor = factor;
+                                    hasComp = false;
                                 }
-                            }
-                        }
 
-                        // 若探测到改善方向，采纳最优坐标并沿梯度加速搜索
-                        if (bestDFit < curFit) {
-                            anyImproved = true;
-                            curGene[d] = bestDVal;
-                            if (hasComp && d < legCount) {
-                                curGene[d + 1] = bestNextDVal;
-                            }
-                            curFit = bestDFit;
-
-                            if (Math.Abs(bestFactor) > 1e-6) {
-                                // 自适应步长加速: 依据适应度相对改善率动态调节探索倍数 (1.2 ~ 1.8)
-                                double relImprovement = Math.Max(0.0, (curFit - bestDFit) / Math.Max(1e-4, Math.Abs(curFit)));
-                                double stepMultiplier = 1.2 + Math.Min(0.6, relImprovement * 2.0);
-                                double accelFactor = bestFactor * stepMultiplier;
-                                for (int accStep = 0; accStep < 2; accStep++) {
-                                    double testVal = Math.Max(lowerBounds[d], Math.Min(upperBounds[d], curGene[d] + accelFactor * span));
-                                    if (Math.Abs(testVal - bestDVal) < 1e-6) break;
-
-                                    var testGene = (double[])curGene.Clone();
-                                    testGene[d] = testVal;
-                                    var testSol = PykepBridge.BuildFullSolution(testGene, fullChain, config, computeAdvanced: false);
-                                    double testFit = Fitness(testSol);
-                                    if (testFit < curFit) {
-                                        double stepGain = (curFit - testFit) / Math.Max(1e-4, Math.Abs(curFit));
-                                        curFit = testFit;
-                                        curGene[d] = testVal;
-                                        accelFactor *= (1.1 + Math.Min(0.5, stepGain * 2.0));
-                                    } else {
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // 2. 全维 Hooke-Jeeves 模式跳跃 (Pattern Move: x_p = x_new + (x_new - x_base))
-                    if (anyImproved && curFit < baseFit) {
-                        var patternGene = new double[dim];
-                        for (int d = 0; d < dim; d++) {
-                            double delta = curGene[d] - baseGene[d];
-                            double patVal = curGene[d] + delta;
-                            if (d >= 1 && d <= legCount && fullChain[d - 1].Equals(fullChain[d], StringComparison.OrdinalIgnoreCase)) {
-                                var pBody = SolarSystemCatalog.GetPlanet(fullChain[d]);
-                                double sma = PykepBridge.GetRelativeSMA(pBody, central, 0.0);
-                                double tOrb = PykepBridge.CalcOrbitPeriodSec(sma, centralMu);
-                                if (tOrb > 0) {
-                                    double bestResCenter = tOrb;
-                                    double minDiff = double.MaxValue;
-                                    double[] polishRatios = MGAFlybyDynamicsHelper.ResonanceRatioCandidates;
-                                    foreach (double r in polishRatios) {
-                                        double rCenter = r * tOrb;
-                                        if (rCenter >= lowerBounds[d] - 86400.0 && rCenter <= upperBounds[d] + 86400.0) {
-                                            double diff = Math.Abs(patVal - rCenter);
-                                            if (diff < minDiff) {
-                                                minDiff = diff;
-                                                bestResCenter = rCenter;
-                                            }
+                                // 顺流相位滑移 (Interplanetary Phasing Slide): 同时微调本段与后置航段，维持后续行星际对齐
+                                if (d >= 1 && d < legCount) {
+                                    double delta = testVal - curGene[d];
+                                    double nextVal = curGene[d + 1] - delta;
+                                    if (nextVal >= lowerBounds[d + 1] && nextVal <= upperBounds[d + 1]) {
+                                        var compGene = (double[])curGene.Clone();
+                                        compGene[d] = testVal;
+                                        compGene[d + 1] = nextVal;
+                                        var compSol = PykepBridge.BuildFullSolution(compGene, fullChain, config, computeAdvanced: false);
+                                        double compFit = fitnessFunc(compSol);
+                                        if (compFit < bestDFit) {
+                                            bestDFit = compFit;
+                                            bestDVal = testVal;
+                                            bestFactor = factor;
+                                            bestNextDVal = nextVal;
+                                            hasComp = true;
                                         }
                                     }
-                                    double resOffset = (config != null && config.ResonantMaxOffsetDays > 0) ? config.ResonantMaxOffsetDays * 86400.0 : Math.Max(5.0 * 86400.0, tOrb * 0.10);
-                                    patVal = Math.Max(lowerBounds[d], Math.Min(upperBounds[d], Math.Max(bestResCenter - resOffset, Math.Min(bestResCenter + resOffset, patVal))));
                                 }
                             }
-                            patternGene[d] = Math.Max(lowerBounds[d], Math.Min(upperBounds[d], patVal));
-                        }
 
-                        var patSol = PykepBridge.BuildFullSolution(patternGene, fullChain, config, computeAdvanced: false);
-                        double patFit = Fitness(patSol);
-                        if (patFit < curFit) {
-                            curGene = patternGene;
-                            curFit = patFit;
-                        }
-                    } else {
-                        break;
-                    }
-                }
+                            // 若探测到改善方向，采纳最优坐标并沿梯度加速搜索
+                            if (bestDFit < curFit) {
+                                anyImproved = true;
+                                curGene[d] = bestDVal;
+                                if (hasComp && d < legCount) {
+                                    curGene[d + 1] = bestNextDVal;
+                                }
+                                curFit = bestDFit;
 
-                pop[indivIdx] = curGene;
-                fitness[indivIdx] = curFit;
+                                if (Math.Abs(bestFactor) > 1e-6) {
+                                    // 自适应步长加速: 依据适应度相对改善率动态调节探索倍数 (1.2 ~ 1.8)
+                                    double relImprovement = Math.Max(0.0, (curFit - bestDFit) / Math.Max(1e-4, Math.Abs(curFit)));
+                                    double stepMultiplier = 1.2 + Math.Min(0.6, relImprovement * 2.0);
+                                    double accelFactor = bestFactor * stepMultiplier;
+                                    for (int accStep = 0; accStep < 2; accStep++) {
+                                        double testVal = Math.Max(lowerBounds[d], Math.Min(upperBounds[d], curGene[d] + accelFactor * span));
+                                        if (Math.Abs(testVal - bestDVal) < 1e-6) break;
 
-                double dvSavedKms = (curFit < initialFit && MGAPhysicsLossEngine.IsAcceptableForSelection(initialFit)) ? Math.Max(0.0, (initialFit - curFit) / 1000.0) : 0.0;
-                Telemetry.MGAPipelineTelemetryProbe.AiMetrics.RecordSelfHealing(curFit < initialFit, dvSavedKms);
-            }
-            } // end Scope DE打磨: Hooke-Jeeves 模式加速极值搜索
-
-            using (MGAStepProfiler.Scope("DE选解: 帕累托前沿提取与高级动力学注水"))
-            {
-            rankedIndices = Enumerable.Range(0, popSize).OrderBy(idx => fitness[idx]).ToList();
-            var seenKeys = new HashSet<long>();
-
-            double winBudgetMs = (config.ConstrainByVesselDeltaV && config.VesselMaxDeltaVMs > 0) ? config.VesselMaxDeltaVMs : double.MaxValue;
-            double winDsmBudgetMs = (config.MaxDsmDeltaVMs > 0) ? config.MaxDsmDeltaVMs : winBudgetMs;
-
-            var chosenCandidateIndices = new List<int>();
-
-            // 第一阶段：细粒度网格采样 (12小时发射UT格 + 1天飞行历时格)，初筛帕累托前沿多样性解索引
-            // 注意：采用 computeAdvanced: false 快速初筛，完全规避过滤掉个体的昂贵 PrimerVector 与 B-Plane 计算
-            foreach (var idx in rankedIndices) {
-                if (!MGAPhysicsLossEngine.IsAcceptableForSelection(fitness[idx])) continue;
-                var sol = PykepBridge.BuildFullSolution(pop[idx], fullChain, config, computeAdvanced: false);
-                if (sol != null && !double.IsNaN(sol.TotalDeltaVKms)) {
-                    double subjectMs = (config.NoInsertionBurn ? (sol.LaunchDeltaVKms + sol.TotalDsmDeltaVKms + sol.TotalFlybyDeltaVKms) : sol.TotalDeltaVKms) * 1000.0;
-                    if (winBudgetMs < MGADefaults.MaxPlausibleTotalDvKms * 1000.0 && subjectMs > winBudgetMs) continue;
-                    if (winDsmBudgetMs < MGADefaults.MaxPlausibleTotalDvKms * 1000.0 && (sol.TotalDsmDeltaVKms * 1000.0 > winDsmBudgetMs || (sol.Legs != null && sol.Legs.Any(l => l.DSM != null && l.DSM.DeltaVMs > winDsmBudgetMs)))) continue;
-                    if (config.LaunchDeltaVCeilingMs > 0 && sol.LaunchDeltaVKms * 1000.0 > config.LaunchDeltaVCeilingMs) continue;
-                    if (config.EarliestDepartureUT > 0 && sol.DepartureUT < config.EarliestDepartureUT - 1.0) continue;
-                    if (config.LatestDepartureUT > config.EarliestDepartureUT && sol.DepartureUT > config.LatestDepartureUT + 1.0) continue;
-
-                    long key = ((long)(int)(sol.DepartureUT / 43200.0) << 32) ^ (long)(uint)(int)(sol.TotalFlightDays / 1.0);
-                    if (!seenKeys.Contains(key)) {
-                        seenKeys.Add(key);
-                        chosenCandidateIndices.Add(idx);
-                    }
-                }
-                if (chosenCandidateIndices.Count >= 8) break;
-            }
-
-            // 第二阶段保底：若收敛解不足 5 个，吸纳发射相差 > 6 小时或飞行历时相差 > 0.5 天的有效解
-            if (chosenCandidateIndices.Count < 5) {
-                foreach (var idx in rankedIndices) {
-                    if (!MGAPhysicsLossEngine.IsAcceptableForSelection(fitness[idx])) continue;
-                    if (chosenCandidateIndices.Contains(idx)) continue;
-                    var sol = PykepBridge.BuildFullSolution(pop[idx], fullChain, config, computeAdvanced: false);
-                    if (sol == null || double.IsNaN(sol.TotalDeltaVKms)) continue;
-                    double subjectMs = (config.NoInsertionBurn ? (sol.LaunchDeltaVKms + sol.TotalDsmDeltaVKms + sol.TotalFlybyDeltaVKms) : sol.TotalDeltaVKms) * 1000.0;
-                    if (winBudgetMs < MGADefaults.MaxPlausibleTotalDvKms * 1000.0 && subjectMs > winBudgetMs) continue;
-                    if (winDsmBudgetMs < MGADefaults.MaxPlausibleTotalDvKms * 1000.0 && (sol.TotalDsmDeltaVKms * 1000.0 > winDsmBudgetMs || (sol.Legs != null && sol.Legs.Any(l => l.DSM != null && l.DSM.DeltaVMs > winDsmBudgetMs)))) continue;
-                    if (config.LaunchDeltaVCeilingMs > 0 && sol.LaunchDeltaVKms * 1000.0 > config.LaunchDeltaVCeilingMs) continue;
-                    if (config.EarliestDepartureUT > 0 && sol.DepartureUT < config.EarliestDepartureUT - 1.0) continue;
-                    if (config.LatestDepartureUT > config.EarliestDepartureUT && sol.DepartureUT > config.LatestDepartureUT + 1.0) continue;
-
-                    chosenCandidateIndices.Add(idx);
-                    if (chosenCandidateIndices.Count >= 8) break;
-                }
-            }
-
-            // 对最终筛选出的至多 8 组优质解进行高保真动力学注水 (Populate Advanced Astrodynamics)
-            // 仅对首选最优解注入完整帕累托前沿曲线与高级物理量；其余精选解进行标准构建
-            for (int c = 0; c < chosenCandidateIndices.Count; c++) {
-                int cIdx = chosenCandidateIndices[c];
-                bool isPrimary = (c == 0);
-                var fullSol = PykepBridge.BuildFullSolution(pop[cIdx], fullChain, config, computeAdvanced: isPrimary);
-                if (fullSol != null && !double.IsNaN(fullSol.TotalDeltaVKms)) {
-                    MarkHardGateCompliance(fullSol, config);
-                    solutions.Add(fullSol);
-                }
-            }
-
-            // 第三阶段：若候选方案仍不足 5 个，从最优解的帕累托前沿集合补充
-            if (solutions.Count > 0 && solutions.Count < 6) {
-                var baseSol = solutions[0];
-                if (baseSol.ParetoFront != null && baseSol.ParetoFront.Count > 1) {
-                    foreach (var pt in baseSol.ParetoFront) {
-                        if (pt.Genome == null) continue;
-                        bool alreadyHas = solutions.Any(s => Math.Abs(s.TotalFlightDays - pt.TotalFlightDays) < 0.5);
-                        if (!alreadyHas) {
-                            var pSol = PykepBridge.BuildFullSolution(pt.Genome, fullChain, config, computeAdvanced: false);
-                            if (pSol != null && !double.IsNaN(pSol.TotalDeltaVKms) && pSol.TotalDeltaVKms < MGADefaults.MaxPlausibleTotalDvKms) {
-                                pSol.ParetoFront = baseSol.ParetoFront;
-                                MarkHardGateCompliance(pSol, config);
-                                solutions.Add(pSol);
+                                        var testGene = (double[])curGene.Clone();
+                                        testGene[d] = testVal;
+                                        var testSol = PykepBridge.BuildFullSolution(testGene, fullChain, config, computeAdvanced: false);
+                                        double testFit = fitnessFunc(testSol);
+                                        if (testFit < curFit) {
+                                            double stepGain = (curFit - testFit) / Math.Max(1e-4, Math.Abs(curFit));
+                                            curFit = testFit;
+                                            curGene[d] = testVal;
+                                            accelFactor *= (1.1 + Math.Min(0.5, stepGain * 2.0));
+                                        } else {
+                                            break;
+                                        }
+                                    }
+                                }
                             }
                         }
-                        if (solutions.Count >= 8) break;
+
+                        // 2. 全维 Hooke-Jeeves 模式跳跃 (Pattern Move: x_p = x_new + (x_new - x_base))
+                        if (anyImproved && curFit < baseFit) {
+                            var patternGene = new double[dim];
+                            for (int d = 0; d < dim; d++) {
+                                double delta = curGene[d] - baseGene[d];
+                                double patVal = curGene[d] + delta;
+                                if (d >= 1 && d <= legCount && fullChain[d - 1].Equals(fullChain[d], StringComparison.OrdinalIgnoreCase)) {
+                                    var pBody = SolarSystemCatalog.GetPlanet(fullChain[d]);
+                                    double sma = PykepBridge.GetRelativeSMA(pBody, central, 0.0);
+                                    double tOrb = PykepBridge.CalcOrbitPeriodSec(sma, centralMu);
+                                    if (tOrb > 0) {
+                                        double bestResCenter = tOrb;
+                                        double minDiff = double.MaxValue;
+                                        double[] polishRatios = MGAFlybyDynamicsHelper.ResonanceRatioCandidates;
+                                        foreach (double r in polishRatios) {
+                                            double rCenter = r * tOrb;
+                                            if (rCenter >= lowerBounds[d] - 86400.0 && rCenter <= upperBounds[d] + 86400.0) {
+                                                double diff = Math.Abs(patVal - rCenter);
+                                                if (diff < minDiff) {
+                                                    minDiff = diff;
+                                                    bestResCenter = rCenter;
+                                                }
+                                            }
+                                        }
+                                        double resOffset = (config != null && config.ResonantMaxOffsetDays > 0) ? config.ResonantMaxOffsetDays * 86400.0 : Math.Max(5.0 * 86400.0, tOrb * 0.10);
+                                        patVal = Math.Max(lowerBounds[d], Math.Min(upperBounds[d], Math.Max(bestResCenter - resOffset, Math.Min(bestResCenter + resOffset, patVal))));
+                                    }
+                                }
+                                patternGene[d] = Math.Max(lowerBounds[d], Math.Min(upperBounds[d], patVal));
+                            }
+
+                            var patSol = PykepBridge.BuildFullSolution(patternGene, fullChain, config, computeAdvanced: false);
+                            double patFit = fitnessFunc(patSol);
+                            if (patFit < curFit) {
+                                curGene = patternGene;
+                                curFit = patFit;
+                            }
+                        } else {
+                            break;
+                        }
                     }
+
+                    pop[indivIdx] = curGene;
+                    fitness[indivIdx] = curFit;
+
+                    double dvSavedKms = (curFit < initialFit && MGAPhysicsLossEngine.IsAcceptableForSelection(initialFit)) ? Math.Max(0.0, (initialFit - curFit) / 1000.0) : 0.0;
+                    Telemetry.MGAPipelineTelemetryProbe.AiMetrics.RecordSelfHealing(curFit < initialFit, dvSavedKms);
                 }
-            }
-
-            // 若在强约束下未能完全落入预算区，吸纳种群内最佳收敛染色体，供调用方审计逐航段真实物理动力学
-            if (solutions.Count == 0 && rankedIndices.Count > 0) {
-                var bestCand = PykepBridge.BuildFullSolution(pop[rankedIndices[0]], fullChain, config, computeAdvanced: true);
-                if (bestCand != null && !double.IsNaN(bestCand.TotalDeltaVKms)) {
-                    MarkHardGateCompliance(bestCand, config);
-                    solutions.Add(bestCand);
-                }
-            }
-
-            solutions = solutions.OrderBy(s => config.NoInsertionBurn 
-                ? (s.LaunchDeltaVKms + s.TotalDsmDeltaVKms + s.TotalFlybyDeltaVKms) 
-                : s.TotalDeltaVKms).ToList();
-            } // end Scope DE选解: 帕累托前沿提取与高级动力学注水
-
-            return solutions;
+            } // end Scope DE打磨: Hooke-Jeeves 模式加速极值搜索
         }
 
         /// <summary>
