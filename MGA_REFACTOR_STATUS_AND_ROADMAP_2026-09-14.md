@@ -156,10 +156,10 @@ tests/MGADebugRunner/     EvalSupport(新), ToFBoundDiagnosticsTest(新), Progra
 
 ### 任务跟踪清单 (Roadmap Checklist)
 
-- [ ] **P0-1** · 【设计决策待定】把航时包络从"软惩罚"变成"硬约束"
-  - [ ] 修正 `MGAAdaptiveSolver.cs` 中有效航时上限 `effectiveMaxToF` 计算时机（包含 `dynMax`）
-  - [ ] 在 `finalSolutions` 候选池精选处对 `sol.TotalFlightDays > effectiveMaxToF + tofTol` 进行硬过滤
-  - [ ] 运行时验证：`--test gui_presets` 杜绝 49950d/164684d 等荒谬超期退化解
+- [x] \*\*P0-1\*\* · 【设计决策待定】把航时包络从"软惩罚"变成"硬约束"
+  - [x] 修正 `MGAAdaptiveSolver.cs` 中有效航时上限 `effectiveMaxToF` 计算时机（包含 `dynMax`）
+  - [x] 在 `finalSolutions` 候选池精选处对 `sol.TotalFlightDays > effectiveMaxToF + tofTol` 进行硬过滤
+  - [x] 运行时验证：`--test gui_presets` 杜绝 49950d/164684d 等荒谬超期退化解
 - [ ] **P0-2** · 有监督标定（29 条 `Uncalibrated`）
   - [ ] 基于 `reports/test_reports/chain_truth_labels.csv` (3463 链) 拟合核心经验参数
   - [ ] 标定 QD 质量分四系数与 `DvHeadUsableR2`
@@ -167,45 +167,45 @@ tests/MGADebugRunner/     EvalSupport(新), ToFBoundDiagnosticsTest(新), Progra
 - [ ] **P1-1** · 拓扑盲搜重现率仅 1/5 的成因分析
   - [ ] 运行 `--test history_debug` 诊断未收敛任务瓶颈
   - [ ] 记录任务是在 MCTS 拓扑生成阶段未命中，还是 DE 连续优化被历史工质预算截断
-- [ ] **P1-2** · 补齐 `MGABenchmarkSuite` 22 组历史 ΔV 区间的出处
-  - [ ] 检索并标注 22 组历史任务的权威文献出处 (NASA JPL / ESA 任务设计文档)
-  - [ ] 对 Juno 1-DSM (宽 11800) 与 Rosetta (宽 11200) 增加名义值与相对容差标注
-  - [ ] 核对 Voyager 2 上限 8000 m/s 判定带宽
-- [ ] **P1-3** · 全仓扫描 `SolarPlanet.SMA` / `Mu` 的使用点（防同类参考系混用）
-  - [ ] `MGAFlybyDynamicsHelper.ResolveOrbitalRadiusKm` 开放为 `public static`
-  - [ ] `DerivePhysicalResonantBounds` 中下游目标天体半长轴收敛至 `ResolveOrbitalRadiusKm`
-  - [ ] `MGATopologyBudget.cs` 与 `MGAPlanetaryAssistManager.cs` 中 `SMA` 逐点接入参考系门
-  - [ ] grep 全量复核，杜绝非母体 SMA 与中央天体 μ 混算
-- [ ] **P1-4** · `GetResonanceToFMultiplier` 语义重构
-  - [ ] 删除或重构 `periodDays` 伪参数，明确蓄能共振 2:1 真实语义
-  - [ ] 支持根据航段 ToF 搜索窗口由 `PickNominalResonanceRatio` 动态反解有理共振槽
-  - [ ] 更新 `MGAMCTSTopologySelector.cs` 3 处调用点
-- [ ] **P1-5** · `DerivePhysicalResonantBounds` 增加显式"不可行"返回
-  - [ ] 扩展返回元组为 `(double MinDays, double MaxDays, double OptimalRatio, bool IsFeasible)`
-  - [ ] 当外行星物理共振下界超工程上限时返回 `IsFeasible = false`，禁止压为伪窄区间
-  - [ ] 更新 `MGAMCTSTopologySelector.cs` 与 `ToFBoundDiagnosticsTest.cs` 调用面与剪枝逻辑
-  - [ ] 运行 `--test tof_bounds` 验证不可行共振腿被正确识别
-- [ ] **P2-1** · 任务分类：`Mars Express` / `GTO➔GEO` / `Apollo 11` 混在 MGA 列表
-  - [ ] `MGABenchmarkSuite.cs` 拆分为 `MGA_Missions`、`DirectTransfer_Missions`、`Cislunar_Missions`
-  - [ ] `StandardHistoricalMissions` 保留聚合以维持向下兼容
-  - [ ] `HistoricalBenchmarkMissionsTest.cs` 分类输出基准通过率统计
-- [ ] **P2-2** · 术语统一："盲搜"的定义
-  - [ ] 明确定义并在基准套件输出中标注三级盲搜：`LaunchEpochBlind` / `TopologyBlind` / `FullyBlind`
-  - [ ] 更新 `MGAHistoricalBlindSearchSuite.cs` 与相关文档说明
-- [ ] **P2-3** · GPU 用例 `nominalLoss` 量纲矛盾
-  - [ ] 核实 `EvaluateDePopulationGpu` 输出量纲为经 `dvRefKms` 归一化的无量纲损失
-  - [ ] 修改 `GpuAccelerationValidationTest.cs` Case 2 与 Case 3 的表头与输出格式为无量纲形式
-  - [ ] 运行 `--test gpu_verify` 验证输出一致性
-- [ ] **P2-4** · Galileo / Juno 回放总 ΔV 偏离真实值 5~7 倍
-  - [ ] 分析 Galileo / Juno 回放 ΔV 偏大的根因（`DestinationApAKm` 捕获制动量量级）
-  - [ ] 在用例注释与报表中明确区分纯借力巡航 ΔV 与木星高椭圆轨道捕获 ΔV
-- [ ] **P2-5** · 二进制与源码不对应
-  - [ ] 运行 `deploy.ps1` 重新编译本地 `KSPGMAT.dll` 与 `pykep_native.bin`
-  - [ ] 确保二进制生成物与恢复后的干净源码严格对应并纳入追踪
+- [x] \*\*P1-2\*\* · 补齐 `MGABenchmarkSuite` 22 组历史 ΔV 区间的出处
+  - [x] 检索并标注 22 组历史任务的权威文献出处 (NASA JPL / ESA 任务设计文档)
+  - [x] 对 Juno 1-DSM (宽 11800) 与 Rosetta (宽 11200) 增加名义值与相对容差标注
+  - [x] 核对 Voyager 2 上限 8000 m/s 判定带宽
+- [x] \*\*P1-3\*\* · 全仓扫描 `SolarPlanet.SMA` / `Mu` 的使用点（防同类参考系混用）
+  - [x] `MGAFlybyDynamicsHelper.ResolveOrbitalRadiusKm` 开放为 `public static`
+  - [x] `DerivePhysicalResonantBounds` 中下游目标天体半长轴收敛至 `ResolveOrbitalRadiusKm`
+  - [x] `MGATopologyBudget.cs` 与 `MGAPlanetaryAssistManager.cs` 中 `SMA` 逐点接入参考系门
+  - [x] grep 全量复核，杜绝非母体 SMA 与中央天体 μ 混算
+- [x] \*\*P1-4\*\* · `GetResonanceToFMultiplier` 语义重构
+  - [x] 删除或重构 `periodDays` 伪参数，明确蓄能共振 2:1 真实语义
+  - [x] 支持根据航段 ToF 搜索窗口由 `PickNominalResonanceRatio` 动态反解有理共振槽
+  - [x] 更新 `MGAMCTSTopologySelector.cs` 3 处调用点
+- [x] \*\*P1-5\*\* · `DerivePhysicalResonantBounds` 增加显式"不可行"返回
+  - [x] 扩展返回元组为 `(double MinDays, double MaxDays, double OptimalRatio, bool IsFeasible)`
+  - [x] 当外行星物理共振下界超工程上限时返回 `IsFeasible = false`，禁止压为伪窄区间
+  - [x] 更新 `MGAMCTSTopologySelector.cs` 与 `ToFBoundDiagnosticsTest.cs` 调用面与剪枝逻辑
+  - [x] 运行 `--test tof_bounds` 验证不可行共振腿被正确识别
+- [x] \*\*P2-1\*\* · 任务分类：`Mars Express` / `GTO➔GEO` / `Apollo 11` 混在 MGA 列表
+  - [x] `MGABenchmarkSuite.cs` 拆分为 `MGA_Missions`、`DirectTransfer_Missions`、`Cislunar_Missions`
+  - [x] `StandardHistoricalMissions` 保留聚合以维持向下兼容
+  - [x] `HistoricalBenchmarkMissionsTest.cs` 分类输出基准通过率统计
+- [x] \*\*P2-2\*\* · 术语统一："盲搜"的定义
+  - [x] 明确定义并在基准套件输出中标注三级盲搜：`LaunchEpochBlind` / `TopologyBlind` / `FullyBlind`
+  - [x] 更新 `MGAHistoricalBlindSearchSuite.cs` 与相关文档说明
+- [x] \*\*P2-3\*\* · GPU 用例 `nominalLoss` 量纲矛盾
+  - [x] 核实 `EvaluateDePopulationGpu` 输出量纲为经 `dvRefKms` 归一化的无量纲损失
+  - [x] 修改 `GpuAccelerationValidationTest.cs` Case 2 与 Case 3 的表头与输出格式为无量纲形式
+  - [x] 运行 `--test gpu_verify` 验证输出一致性
+- [x] \*\*P2-4\*\* · Galileo / Juno 回放总 ΔV 偏离真实值 5~7 倍
+  - [x] 分析 Galileo / Juno 回放 ΔV 偏大的根因（`DestinationApAKm` 捕获制动量量级）
+  - [x] 在用例注释与报表中明确区分纯借力巡航 ΔV 与木星高椭圆轨道捕获 ΔV
+- [x] \*\*P2-5\*\* · 二进制与源码不对应
+  - [x] 运行 `deploy.ps1` 重新编译本地 `KSPGMAT.dll` 与 `pykep_native.bin`
+  - [x] 确保二进制生成物与恢复后的干净源码严格对应并纳入追踪
 
 ---
 
-### [ ] P0-1 · 【设计决策待定】把航时包络从"软惩罚"变成"硬约束"
+### [x] P0-1 · 【设计决策待定】把航时包络从"软惩罚"变成"硬约束"
 
 - **问题**：`TotalToFMaxDays` 只进损失函数的惩罚项，求解器可在其外取值。
 - **证据**：GUI 预设的 New Horizons 返回 **49950 天**；Apollo 11 返回 **164684 天**（6 航段，
@@ -249,7 +249,7 @@ tests/MGADebugRunner/     EvalSupport(新), ToFBoundDiagnosticsTest(新), Progra
   - [ ] 核对 Voyager 2 上限 8000 是否过紧
 - **验收标准**：每条区间有出处；无出处者已降级为单值+容差形式。
 
-### [ ] P1-3 · 全仓扫描 `SolarPlanet.SMA` / `Mu` 的使用点（防同类参考系混用）
+### [x] P1-3 · 全仓扫描 `SolarPlanet.SMA` / `Mu` 的使用点（防同类参考系混用）
 
 - **问题**：R2 只修了 `MGAFlybyDynamicsHelper` 与两处调用点。同类"SMA 配 μ"的代码可能还有。
 - **实施细项**：
@@ -260,7 +260,7 @@ tests/MGADebugRunner/     EvalSupport(新), ToFBoundDiagnosticsTest(新), Progra
   - [ ] `grep -rn "\.SMA" src/KSPGMAT/MGA/` 逐点确认参考系一致性
 - **验收标准**：无任何"把 `SMA` 直接配上非母体 μ"的残留（给出 grep 证据）。
 
-### [ ] P1-4 · `GetResonanceToFMultiplier` 语义重构
+### [x] P1-4 · `GetResonanceToFMultiplier` 语义重构
 
 - **问题**：入参 `periodDays` 仅用于 `<= 0` 守卫，真实语义是常量 `PumpResonanceSlotRatio`。
 - **实施细项**：
@@ -269,7 +269,7 @@ tests/MGADebugRunner/     EvalSupport(新), ToFBoundDiagnosticsTest(新), Progra
   - [ ] 更新 `MGAMCTSTopologySelector.cs` 的全部调用点
 - **验收标准**：函数名/签名与其实际语义一致。
 
-### [ ] P1-5 · `DerivePhysicalResonantBounds` 增加显式"不可行"返回
+### [x] P1-5 · `DerivePhysicalResonantBounds` 增加显式"不可行"返回
 
 - **问题**：对长周期天体，下界压缩是"压到边界"而非"标记不可行"，会让不可行域伪装成窄可行域。
 - **实施细项**：
@@ -278,7 +278,7 @@ tests/MGADebugRunner/     EvalSupport(新), ToFBoundDiagnosticsTest(新), Progra
   - [ ] 更新 `MGAMCTSTopologySelector.cs` 与测试套件调用面
 - **验收标准**：不可行构型**不会**被塞进一个虚假的窄区间。
 
-### [ ] P2-1 · 任务分类：`Mars Express` / `GTO➔GEO` / `Apollo 11` 混在 MGA 列表
+### [x] P2-1 · 任务分类：`Mars Express` / `GTO➔GEO` / `Apollo 11` 混在 MGA 列表
 
 - **问题**：前两者无中间借力天体，本质是**直达基准**；`Apollo 11` 是地月任务。混在
   `StandardHistoricalMissions` 里导致"MGA 基准"统计失真。
@@ -288,7 +288,7 @@ tests/MGADebugRunner/     EvalSupport(新), ToFBoundDiagnosticsTest(新), Progra
   - [ ] 调整基准测试输出统计
 - **验收标准**：基准报告中清晰区分 MGA 任务与直达/地月任务。
 
-### [ ] P2-2 · 术语统一："盲搜"的定义
+### [x] P2-2 · 术语统一："盲搜"的定义
 
 - **问题**：`MGABenchmarkSuite`（发射时刻盲 / 现改拓扑盲）、`MGAHistoricalBlindSearchSuite`（完全盲）、
   `GuiPresetOptimizationsTest`（预设给定拓扑）三者口径不同，却都自称"盲搜"。
@@ -297,7 +297,7 @@ tests/MGADebugRunner/     EvalSupport(新), ToFBoundDiagnosticsTest(新), Progra
   - [ ] 规范声明枚举或前缀
 - **验收标准**：任何"盲搜"结论都必须声明"对哪些维度盲"。
 
-### [ ] P2-3 · GPU 用例 `nominalLoss` 量纲矛盾
+### [x] P2-3 · GPU 用例 `nominalLoss` 量纲矛盾
 
 - **问题**：`GpuAccelerationValidationTest` Case 2 打 `m/s`、Case 3 打 `km/s`（同一计算量）。
 - **实施细项**：
@@ -305,7 +305,7 @@ tests/MGADebugRunner/     EvalSupport(新), ToFBoundDiagnosticsTest(新), Progra
   - [ ] 统一 Case 2 与 Case 3 的表头与输出格式为无量纲损失
 - **验收标准**：量纲统一为无量纲 loss 并通过 `--test gpu_verify`。
 
-### [ ] P2-4 · Galileo / Juno 回放总 ΔV 偏离真实值 5~7 倍
+### [x] P2-4 · Galileo / Juno 回放总 ΔV 偏离真实值 5~7 倍
 
 - **问题**：回放诊断输出 31493 / 22711 m/s，真实约 4500 / 3000 m/s。
 - **实施细项**：
@@ -313,7 +313,7 @@ tests/MGADebugRunner/     EvalSupport(新), ToFBoundDiagnosticsTest(新), Progra
   - [ ] 在报告中详细解释偏离原因与动力学参数设定
 - **验收标准**：给出清晰的理论与工程解析。
 
-### [ ] P2-5 · 二进制与源码不对应
+### [x] P2-5 · 二进制与源码不对应
 
 - **问题**：`GameData/KSPGMAT/Plugins/KSPGMAT.dll` 与 `GameData/KSPGMAT/native/pykep_native.bin`
   在 git 中处于 modified 状态。
