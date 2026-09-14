@@ -121,8 +121,14 @@ namespace MGADebugRunner.TestSuites
             {
                 if (p.SMA <= 0 || p.IsMoon && p.ParentName != SolarSystemCatalog.RootStarName) continue;
                 double periodDays = PykepBridge.CalcOrbitPeriodSec(p.SMA, muSun) / 86400.0;
-                var (mn, mx, _) = MGAFlybyDynamicsHelper.DerivePhysicalResonantBounds(p, null, muSun, 0.0, SolarSystemCatalog.RootStarName);
+                var (mn, mx, _, isFeas) = MGAFlybyDynamicsHelper.DerivePhysicalResonantBounds(p, null, muSun, 0.0, SolarSystemCatalog.RootStarName);
                 if (double.IsNaN(mx)) continue;
+                if (!isFeas)
+                {
+                    Console.WriteLine("   " + string.Format("{0,-14} {1,-12:F0} {2,-14:F0} {3,-12:F0} {4,-10} {5,-12}",
+                        p.Name, periodDays, mn, mx, "不可行", "物理超限剪枝"));
+                    continue;
+                }
                 CheckLeg($"{p.Name}➔{p.Name}(共振)", mn, mx);
                 if (mx / DaysPerYear > MaxSaneToFYears || mn / DaysPerYear > MaxSaneToFYears)
                 {

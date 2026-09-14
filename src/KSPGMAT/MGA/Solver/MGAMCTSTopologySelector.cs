@@ -703,7 +703,7 @@ namespace KSPGMAT.MGA
                             {
                                 stepDeficit = 0.0;
                             }
-                            legToF = currNode.PeriodDays * (currNode.IsDeepWell ? 1.0 : MGAFlybyDynamicsHelper.GetResonanceToFMultiplier(currNode.PeriodDays));
+                            legToF = currNode.PeriodDays * (currNode.IsDeepWell ? 1.0 : MGAFlybyDynamicsHelper.GetResonanceToFMultiplier());
                             nextVinf = lastVinf;
                         }
                         else
@@ -933,7 +933,7 @@ namespace KSPGMAT.MGA
                         {
                             stepDef = 0.75; // ΔV-EGA 首段自环深空机动理论标称成本
                         }
-                        legToF = curr.PeriodDays * (curr.IsDeepWell ? 1.0 : MGAFlybyDynamicsHelper.GetResonanceToFMultiplier(curr.PeriodDays));
+                        legToF = curr.PeriodDays * (curr.IsDeepWell ? 1.0 : MGAFlybyDynamicsHelper.GetResonanceToFMultiplier());
                     }
                     else
                     {
@@ -1408,7 +1408,7 @@ namespace KSPGMAT.MGA
                             double nominalHohmannDays = 0.0; // 缩时前的标称霍曼航时 (供代理特征 ToF 比推导)
                             if (isResonance)
                             {
-                                legToF = currBodyNode.PeriodDays * (currBodyNode.IsDeepWell ? 1.0 : MGAFlybyDynamicsHelper.GetResonanceToFMultiplier(currBodyNode.PeriodDays));
+                                legToF = currBodyNode.PeriodDays * (currBodyNode.IsDeepWell ? 1.0 : MGAFlybyDynamicsHelper.GetResonanceToFMultiplier());
                                 nextVinf = current.LastVInfKms;
                                 stepDeficit = (current.Depth == 0) ? 0.75 : 0.0;
                             }
@@ -2036,7 +2036,7 @@ namespace KSPGMAT.MGA
 
                     double muCentralKmS = muCentralM * 1e-9;
                     // 【2026-09-14 修正】同样传入中央天体名, 使 "SMA 是否与该 μ 同参考系" 可被校验。
-                    var (minLeg, maxLeg, _) = MGAFlybyDynamicsHelper.DerivePhysicalResonantBounds(
+                    var (minLeg, maxLeg, _, isResFeasible) = MGAFlybyDynamicsHelper.DerivePhysicalResonantBounds(
                         p1, pDownstream, muCentralKmS, 0.0, centralBody);
                     bounds.Add((minLeg, maxLeg));
                 }

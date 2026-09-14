@@ -370,7 +370,7 @@ namespace KSPGMAT.MGA {
         /// 解析自动推导同星共振航段 (P -> P) 的物理有效航时上下界 [MinDays, MaxDays] 与最佳共振阶数。
         /// 彻底消除硬编码 2:1、1.86~2.14 或 period 300~550 天经验魔法常数。
         /// </summary>
-        public static (double MinDays, double MaxDays, double OptimalRatio) DerivePhysicalResonantBounds(
+        public static (double MinDays, double MaxDays, double OptimalRatio, bool IsFeasible) DerivePhysicalResonantBounds(
             SolarPlanet currentPlanet,
             SolarPlanet downstreamTarget,
             double muCentralKmS,
@@ -380,7 +380,7 @@ namespace KSPGMAT.MGA {
             if (currentPlanet == null || muCentralKmS <= 0)
             {
                 // 【2026-09-14 审计修正】原为裸字面量 (300.0, 800.0, 1.0)。命名化并标注为回退值。
-                return (InvalidInputFallbackMinDays, InvalidInputFallbackMaxDays, NoShrinkResonanceRatio);
+                return (InvalidInputFallbackMinDays, InvalidInputFallbackMaxDays, NoShrinkResonanceRatio, false);
             }
 
             // 【2026-09-14 第二轮审计修正 —— 参考系一致性门 (与异星转移段同规则)】
@@ -390,7 +390,7 @@ namespace KSPGMAT.MGA {
             double aP = ResolveOrbitalRadiusKm(currentPlanet, centralRes);
             if (aP <= 0.0)
             {
-                return (InvalidInputFallbackMinDays, InvalidInputFallbackMaxDays, NoShrinkResonanceRatio);
+                return (InvalidInputFallbackMinDays, InvalidInputFallbackMaxDays, NoShrinkResonanceRatio, false);
             }
 
             double tOrbitDays = 2.0 * Math.PI * Math.Sqrt(Math.Pow(aP, 3.0) / muCentralKmS) / 86400.0;
@@ -401,11 +401,12 @@ namespace KSPGMAT.MGA {
             // 现改为单一**无量纲比例**: vInf 下界 = 该天体圆轨速度 × MinVInfOfCircularSpeed。
             // 原绝对 3.0 km/s 下限被移除 —— 它以外太阳系天体的量级为基准, 对短周期小天体过大。
             double vInf = vinfEstimateKms;
+            double aDownstream = (downstreamTarget != null) ? ResolveOrbitalRadiusKm(downstreamTarget, centralRes) : -1.0;
             if (vInf <= 0.0)
             {
-                if (downstreamTarget != null && downstreamTarget.SMA > 0)
+                if (aDownstream > 0)
                 {
-                    double aTrans = (aP + downstreamTarget.SMA) * 0.5;
+                    double aTrans = (aP + aDownstream) * 0.5;
                     double vTransAtP = Math.Sqrt(Math.Max(1e-4, muCentralKmS * (2.0 / aP - 1.0 / aTrans)));
                     vInf = Math.Max(Math.Abs(vTransAtP - vCircKms), vCircKms * MinVInfOfCircularSpeed);
                 }
@@ -434,10 +435,10 @@ namespace KSPGMAT.MGA {
 
             // 5. 由下游目标天体所需开普勒能量解析推导共振闭合阶数 k_res
             double kRes = 1.0;
-            if (downstreamTarget != null && downstreamTarget.SMA > aP)
+            if (aDownstream > aP)
             {
                 // 目标是外侧天体 (如木星): 需要抬升半长轴以匹配下游转移
-                double aReq = (aP + downstreamTarget.SMA) * 0.5;
+                double aReq = (aP + aDownstream) * 0.5;
                 double tReqDays = 2.0 * Math.PI * Math.Sqrt(Math.Pow(aReq, 3.0) / muCentralKmS) / 86400.0;
                 double ratioReq = Math.Max(1.0, tReqDays / tOrbitDays);
                 kRes = Math.Max(1.0, Math.Round(Math.Min(ratioReq, ratioMax)));
@@ -483,13 +484,17 @@ namespace KSPGMAT.MGA {
             // "这条共振腿的物理下界已超任务包络", 相应拓扑会在下游可行性判定中被淘汰。
             // -----------------------------------------------------------------
             double capDays = MaxTransferToFYears * DaysPerJulianYear;
+            bool isFeasible = (minDays <= capDays);
+            if (!isFeasible)
+            {
+                // 不可行：标记 isFeasible = false，杜绝将超出任务包络的长周期共振压为伪可行窄区间
+                return (minDays, maxDays, kRes, false);
+            }
+
             maxDays = Math.Min(maxDays, capDays);
-            double minCeiling = capDays / ToFMinSpanFactor;
-            if (minDays > minCeiling) minDays = minCeiling;
             if (maxDays < minDays * ToFMinSpanGuard) maxDays = Math.Min(capDays, minDays * ToFMinSpanFactor);
 
-
-            return (minDays, maxDays, kRes);
+            return (minDays, maxDays, kRes, true);
         }
 
         /// <summary>
@@ -595,7 +600,7 @@ namespace KSPGMAT.MGA {
         ///   · 天体是卫星 (IsMoon)   : 半长轴以 ParentName 为参考系, 仅当 ParentName == 中央天体时可用。
         ///   · 天体是行星 (非卫星)   : 半长轴以**根恒星**为参考系, 仅当中央天体 == 根恒星时可用。
         /// </summary>
-        private static double ResolveOrbitalRadiusKm(SolarPlanet p, string centralName)
+        public static double ResolveOrbitalRadiusKm(SolarPlanet p, string centralName)
         {
             if (p == null) return -1.0;
 
@@ -636,6 +641,24 @@ namespace KSPGMAT.MGA {
         /// 由窗口反解真实槽位; 本方法仅作为无窗口信息时的保守默认。
         /// 标注: **[经验默认·待标定]**
         /// </summary>
+        /// <summary>
+        /// 蓄能共振的标称航时倍数 (以借力天体公转周期为单位)。
+        /// 若已知航时搜索窗口 [minToFDays, maxToFDays]，优先调用 <see cref="PickNominalResonanceRatio"/>
+        /// 反解最匹配的有理共振槽；无窗口信息时返回标准开普勒 2:1 蓄能共振槽 <see cref="PumpResonanceSlotRatio"/>。
+        /// </summary>
+        public static double GetResonanceToFMultiplier() {
+            return PumpResonanceSlotRatio;
+        }
+
+        public static double GetResonanceToFMultiplier(double minToFDays, double maxToFDays, double periodDays) {
+            if (periodDays <= 0) return NoShrinkResonanceRatio;
+            if (minToFDays > 0 && maxToFDays >= minToFDays) {
+                return PickNominalResonanceRatio(periodDays * 86400.0, minToFDays * 86400.0, maxToFDays * 86400.0);
+            }
+            return PumpResonanceSlotRatio;
+        }
+
+        [Obsolete("periodDays is insufficient to uniquely determine resonance ratio. Call GetResonanceToFMultiplier() or GetResonanceToFMultiplier(minToFDays, maxToFDays, periodDays).")]
         public static double GetResonanceToFMultiplier(double periodDays) {
             if (periodDays <= 0) return NoShrinkResonanceRatio;
             return PumpResonanceSlotRatio;
