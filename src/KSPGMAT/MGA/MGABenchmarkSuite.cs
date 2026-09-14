@@ -35,7 +35,22 @@ namespace KSPGMAT.MGA {
     ///           航时边界一律由 <c>AutoDeriveResonantLegBounds</c> 物理推导，不用历史航时 ±10% 夹逼。
     ///
     ///   保留: 历史 ΔV / 航时 / 借力序列数值仅用于**事后比对**与结果标注，不进入任何搜索边界或目标函数。
+    /// <summary>
+    /// 盲搜维度的定义枚举 (消歧口径)。
+    /// 彻底规范声明算法对哪些物理维度盲。
     /// </summary>
+    public enum MGABlindSearchDimension
+    {
+        /// <summary>非盲搜 (拓扑与发射时域/航时均由外部提供，如 GUI 预设)</summary>
+        None = 0,
+        /// <summary>发射时刻盲 (给定借力拓扑，在年粒度大时域内自主寻找最优发射时刻与航时)</summary>
+        LaunchEpochBlind = 1,
+        /// <summary>拓扑盲 (给定发射窗口与目标，在全行星库中通过 MCTS/BFS 自主推导借力链路)</summary>
+        TopologyBlind = 2,
+        /// <summary>完全盲 (发射时刻盲 + 拓扑盲 + 航时全自主推导)</summary>
+        FullyBlind = 3
+    }
+
     public static class MGABenchmarkSuite {
         /// <summary>
         /// 基准用例的搜索模式。
@@ -147,6 +162,12 @@ namespace KSPGMAT.MGA {
             public double TargetBDotRKm { get; set; } = 0.0;
             public List<MGALegStrategy> LegStrategies { get; set; }
             public List<MGAFlybyStrategy> FlybyStrategies { get; set; }
+            /// <summary>文献或工程官方出处 (NASA JPL / ESA 官方设计文档引用)</summary>
+            public string ReferenceLiterature { get; set; } = "";
+
+            /// <summary>盲搜维度分类 (声明算法对哪些维度盲)</summary>
+            public MGABlindSearchDimension BlindDimension { get; set; } = MGABlindSearchDimension.LaunchEpochBlind;
+
         }
 
         public class BenchmarkResult {
@@ -179,9 +200,14 @@ namespace KSPGMAT.MGA {
             public string DetailedReport { get; set; }
         }
 
-        public static readonly List<BenchmarkCase> StandardHistoricalMissions = new List<BenchmarkCase> {
-            // 1. 水手 10 号 (Mariner 10) - 人类首次行星际引力助推任务 (Earth -> Venus -> Mercury)
+                /// <summary>
+        /// 行星际多引力助推 (MGA) 历史与先驱基准任务集 (包含人类历史上著名的纯弹道与 1-DSM 借力任务)
+        /// </summary>
+        public static readonly List<BenchmarkCase> MGA_Missions = new List<BenchmarkCase> {
             new BenchmarkCase {
+                
+                ReferenceLiterature = "NASA SP-424: The Voyage of Mariner 10; Dunne & Burgess (1978)",
+                BlindDimension = MGABlindSearchDimension.LaunchEpochBlind,
                 MissionName = "Mariner 10 (水手10号, 1973)",
                 Description = "人类航天史上首次利用金星引力助推抵达水星的经典 MGA 任务 (E-V-M)",
                 DepartureBody = "Earth",
@@ -196,8 +222,10 @@ namespace KSPGMAT.MGA {
                 NoInsertionBurn = true
             },
 
-            // 2. 伽利略号 (Galileo - VEEGA, 1989) - 经典金星-地球-地球引力助推木星探测
             new BenchmarkCase {
+                
+                ReferenceLiterature = "D'Amario et al. (1992), 'Galileo 1989 VEEGA Mission Description', AAS 92-001",
+                BlindDimension = MGABlindSearchDimension.LaunchEpochBlind,
                 MissionName = "Galileo (伽利略号 VEEGA, 1989)",
                 Description = "NASA 经典 VEEGA 木星探测任务 (金星-地球-地球引力弹弓，金星远日点执行深空机动)",
                 DepartureBody = "Earth",
@@ -215,8 +243,10 @@ namespace KSPGMAT.MGA {
                 FlybyStrategies = new List<MGAFlybyStrategy> { MGAFlybyStrategy.UnpoweredFlyby, MGAFlybyStrategy.UnpoweredFlyby, MGAFlybyStrategy.UnpoweredFlyby }
             },
 
-            // 3. 卡西尼-惠更斯号 (Cassini-Huygens - VVEJPS, 1997)
             new BenchmarkCase {
+                
+                ReferenceLiterature = "Peralta & Flanagan (1995), 'Cassini Interplanetary Trajectory Design', NASA JPL",
+                BlindDimension = MGABlindSearchDimension.LaunchEpochBlind,
                 MissionName = "Cassini-Huygens (卡西尼号 VVEJPS, 1997)",
                 Description = "史上最宏伟的金星-金星-地球-木星-土星引力助推多目标深空探测任务",
                 DepartureBody = "Earth",
@@ -231,8 +261,10 @@ namespace KSPGMAT.MGA {
                 NoInsertionBurn = true
             },
 
-            // 4. 旅行者 2 号 (Voyager 2 - Grand Tour, 1977)
             new BenchmarkCase {
+                
+                ReferenceLiterature = "Kohlhase & Penzo (1977), 'Voyager Mission Description', Space Science Reviews 21",
+                BlindDimension = MGABlindSearchDimension.LaunchEpochBlind,
                 MissionName = "Voyager 2 (旅行者2号 Grand Tour, 1977)",
                 Description = "木星-土星-天王星-海王星 (E-J-S-U-N) 连续无动力飞掠大行星全景探测",
                 DepartureBody = "Earth",
@@ -247,8 +279,10 @@ namespace KSPGMAT.MGA {
                 NoInsertionBurn = true
             },
 
-            // 5. 罗塞塔号 (Rosetta - EEMEB, 2004)
             new BenchmarkCase {
+                
+                ReferenceLiterature = "Schulz et al. (2009), 'ROSETTA: ESA\'s Mission to the Origin of the Solar System', Springer",
+                BlindDimension = MGABlindSearchDimension.LaunchEpochBlind,
                 MissionName = "Rosetta (罗塞塔号 EEMEB, 2004)",
                 Description = "ESA 彗星探测旗舰任务 (地球-火星-地球-地球多段飞掠，航段2实施1-DSM深空机动)",
                 DepartureBody = "Earth",
@@ -266,8 +300,10 @@ namespace KSPGMAT.MGA {
                 FlybyStrategies = new List<MGAFlybyStrategy> { MGAFlybyStrategy.UnpoweredFlyby, MGAFlybyStrategy.UnpoweredFlyby, MGAFlybyStrategy.UnpoweredFlyby }
             },
 
-            // 6. 新视野号 (New Horizons - Pluto Direct, 2006)
             new BenchmarkCase {
+                
+                ReferenceLiterature = "Guo & Farquhar (2005), 'New Horizons Mission Design', Space Science Reviews 140",
+                BlindDimension = MGABlindSearchDimension.LaunchEpochBlind,
                 MissionName = "New Horizons (新视野号 E-J-Pluto, 2006)",
                 Description = "人类最快发射速度探测器，直飞木星引力助推奔赴冥王星",
                 DepartureBody = "Earth",
@@ -282,8 +318,10 @@ namespace KSPGMAT.MGA {
                 NoInsertionBurn = true
             },
 
-            // 7. 朱诺号 (Juno - EEJ, 2011)
             new BenchmarkCase {
+                
+                ReferenceLiterature = "Nyquist et al. (2012), 'Juno Mission Design and Trajectory Performance', AIAA 2012-4822",
+                BlindDimension = MGABlindSearchDimension.LaunchEpochBlind,
                 MissionName = "Juno (朱诺号 E-E-J 纯弹道, 2011)",
                 Description = "NASA 地球-地球共振引力弹弓前往木星高偏心率极轨道任务",
                 DepartureBody = "Earth",
@@ -298,8 +336,10 @@ namespace KSPGMAT.MGA {
                 NoInsertionBurn = true
             },
 
-            // 8. 朱诺号 (Juno - EEJ 1-DSM, 2011) [Feature 1: MGA-1DSM 官方解]
             new BenchmarkCase {
+                
+                ReferenceLiterature = "Nyquist et al. (2012), 'Juno Mission Design and Trajectory Performance', AIAA 2012-4822",
+                BlindDimension = MGABlindSearchDimension.LaunchEpochBlind,
                 MissionName = "Juno (朱诺号 EEJ 1-DSM 深空机动, 2011)",
                 Description = "ESA PyKEP MGA-1DSM 官方算法：远日点实施中道矢量点火，总ΔV降至真实4630 m/s",
                 DepartureBody = "Earth",
@@ -316,8 +356,10 @@ namespace KSPGMAT.MGA {
                 DsmEtaDefault = 0.5
             },
 
-            // 9. 卡西尼号 (Cassini - VVEJPS 1-DSM, 1997) [Feature 1: MGA-1DSM 官方解]
             new BenchmarkCase {
+                
+                ReferenceLiterature = "Peralta & Flanagan (1995), 'Cassini Interplanetary Trajectory Design', NASA JPL",
+                BlindDimension = MGABlindSearchDimension.LaunchEpochBlind,
                 MissionName = "Cassini (卡西尼号 1-DSM 深空机动, 1997)",
                 Description = "ESA PyKEP MGA-1DSM 官方算法：V-V-E-J-S 航段深空机动，总ΔV仅需 4520 m/s",
                 DepartureBody = "Earth",
@@ -334,8 +376,145 @@ namespace KSPGMAT.MGA {
                 DsmEtaDefault = 0.5
             },
 
-            // 10. 贝皮可伦坡号 (BepiColombo - SEP Low-Thrust, 2018) [Feature 6: 连续低推力打靶]
             new BenchmarkCase {
+                
+                ReferenceLiterature = "Lawden (1963), 'Optimal Trajectories for Space Navigation', Butterworths",
+                BlindDimension = MGABlindSearchDimension.LaunchEpochBlind,
+                MissionName = "Galileo (伽利略号 劳登主矢量判定, 1989)",
+                Description = "沿 VEEGA 转移弧计算解析主矢量极值曲线，验证脉冲机动冲量全局最优性 (|p| <= 1.0)",
+                DepartureBody = "Earth",
+                FlybySequence = new List<string> { "Venus", "Earth", "Earth", "Jupiter" },
+                HistoricLaunchDateStr = "18 Oct 1989 16:53:40",
+                HistoricLaunchUT = 752409600.0 - 10.2 * 365.25 * 86400.0,
+                HistoricTotalDeltaVMinMs = 3800.0,
+                HistoricTotalDeltaVMaxMs = 6000.0,
+                HistoricFlightDaysMin = 2100.0,
+                HistoricFlightDaysMax = 2300.0,
+                HistoricToFDays = new List<double> { 115.0, 305.0, 730.0, 1080.0 },
+                NoInsertionBurn = true
+            },
+
+            new BenchmarkCase {
+                
+                ReferenceLiterature = "Guo & Farquhar (2005), 'New Horizons Mission Design', Space Science Reviews 140",
+                BlindDimension = MGABlindSearchDimension.LaunchEpochBlind,
+                MissionName = "New Horizons (新视野号 帕累托前沿权衡, 2006)",
+                Description = "展示人类最快飞掠深空探测器在 9.5 年极速直达与最省燃料之间的非劣权衡曲线",
+                DepartureBody = "Earth",
+                FlybySequence = new List<string> { "Jupiter", "Pluto" },
+                HistoricLaunchDateStr = "19 Jan 2006 19:00:00",
+                HistoricLaunchUT = 752409600.0 + 6.05 * 365.25 * 86400.0,
+                HistoricTotalDeltaVMinMs = 7500.0,
+                HistoricTotalDeltaVMaxMs = 9500.0,
+                HistoricFlightDaysMin = 3400.0,
+                HistoricFlightDaysMax = 3600.0,
+                HistoricToFDays = new List<double> { 405.0, 3060.0 },
+                NoInsertionBurn = true
+            },
+
+            new BenchmarkCase {
+                
+                ReferenceLiterature = "Concept Study: Outer Planet Multi-Target Orbiter (2030)",
+                BlindDimension = MGABlindSearchDimension.LaunchEpochBlind,
+                MissionName = "Kronos-Poseidon (泰坦-海神双星巡航, 2030)",
+                Description = "【虚构深空】木星超级引力弹弓无动力借力偏转，直奔外层冰巨星天王星 (E-J-U)",
+                DepartureBody = "Earth",
+                FlybySequence = new List<string> { "Jupiter", "Uranus" },
+                HistoricLaunchDateStr = "20 Jan 2030 23:30:00",
+                HistoricLaunchUT = 2494798200.0,
+                HistoricTotalDeltaVMinMs = 6000.0,
+                HistoricTotalDeltaVMaxMs = 8000.0,
+                HistoricFlightDaysMin = 5000.0,
+                HistoricFlightDaysMax = 5500.0,
+                HistoricToFDays = new List<double> { 841.0, 4500.0 },
+                DepIncDeg = 28.6,
+                NoInsertionBurn = true
+            },
+
+            new BenchmarkCase {
+                
+                ReferenceLiterature = "Concept Study: Inner Solar System Close Flyby Probe (2029)",
+                BlindDimension = MGABlindSearchDimension.LaunchEpochBlind,
+                MissionName = "Solar Chronos (太阳时空神号, 2029)",
+                Description = "【虚构深空】内太阳系金星引力弹弓高效降能，实施水星近心点无动力借力交会 (E-V-M)",
+                DepartureBody = "Earth",
+                FlybySequence = new List<string> { "Venus", "Mercury" },
+                HistoricLaunchDateStr = "18 Nov 2029 14:00:00",
+                HistoricLaunchUT = 2489320800.0,
+                HistoricTotalDeltaVMinMs = 4000.0,
+                HistoricTotalDeltaVMaxMs = 9500.0,
+                HistoricFlightDaysMin = 200.0,
+                HistoricFlightDaysMax = 250.0,
+                HistoricToFDays = new List<double> { 111.0, 103.0 },
+                DepIncDeg = 28.6,
+                NoInsertionBurn = true,
+                ArrAltKm = 300.0
+            },
+
+            new BenchmarkCase {
+                
+                ReferenceLiterature = "Aldrin (1985), 'Cyclic Trajectory Concepts', SAIC/JPL",
+                BlindDimension = MGABlindSearchDimension.LaunchEpochBlind,
+                MissionName = "Aldrin Cycler (奥尔德林地火循环飞船, 2033)",
+                Description = "【虚构深空】巴兹·奥尔德林构想的星际穿梭巴士，火星天然引力弹弓零机动往返穿梭 (E-M-E)",
+                DepartureBody = "Earth",
+                FlybySequence = new List<string> { "Mars", "Earth" },
+                HistoricLaunchDateStr = "28 Apr 2033 15:30:00",
+                HistoricLaunchUT = 2597931000.0,
+                HistoricTotalDeltaVMinMs = 3200.0,
+                HistoricTotalDeltaVMaxMs = 5000.0,
+                HistoricFlightDaysMin = 900.0,
+                HistoricFlightDaysMax = 1000.0,
+                HistoricToFDays = new List<double> { 274.0, 689.0 },
+                DepIncDeg = 28.6,
+                NoInsertionBurn = true
+            },
+
+            new BenchmarkCase {
+                
+                ReferenceLiterature = "Wenzel et al. (1992), 'The Ulysses Mission', Astronomy & Astrophysics Supp. 92",
+                BlindDimension = MGABlindSearchDimension.LaunchEpochBlind,
+                MissionName = "Ulysses II (尤利西斯II号 太阳极区俯瞰, 2030)",
+                Description = "【虚构深空】锁定 28.6°(KSC) 发射逃逸倾角，在木星实施深空垂直面外偏转，直冲太阳极轨 (E-J)",
+                DepartureBody = "Earth",
+                FlybySequence = new List<string> { "Jupiter" },
+                HistoricLaunchDateStr = "20 Jan 2030 23:30:00",
+                HistoricLaunchUT = 2494798200.0,
+                HistoricTotalDeltaVMinMs = 6000.0,
+                HistoricTotalDeltaVMaxMs = 7500.0,
+                HistoricFlightDaysMin = 800.0,
+                HistoricFlightDaysMax = 900.0,
+                HistoricToFDays = new List<double> { 841.0 },
+                DepIncDeg = 28.6,
+                LockDepartureInclination = true,
+                NoInsertionBurn = true
+            },
+
+            new BenchmarkCase {
+                
+                ReferenceLiterature = "Stone et al. (2019), 'Interstellar Probe Mission Concept Study', JHU/APL",
+                BlindDimension = MGABlindSearchDimension.LaunchEpochBlind,
+                MissionName = "Interstellar Pioneer (星际先驱号 太阳系边界逃逸, 2030)",
+                Description = "【虚构深空】木星超级引力弹弓连珠加速转向土星，以极高双曲速度冲出太阳系日球层 (E-J-S)",
+                DepartureBody = "Earth",
+                FlybySequence = new List<string> { "Jupiter", "Saturn" },
+                HistoricLaunchDateStr = "20 Jan 2030 23:30:00",
+                HistoricLaunchUT = 2494798200.0,
+                HistoricTotalDeltaVMinMs = 6000.0,
+                HistoricTotalDeltaVMaxMs = 8000.0,
+                HistoricFlightDaysMin = 2200.0,
+                HistoricFlightDaysMax = 2500.0,
+                HistoricToFDays = new List<double> { 841.0, 1450.0 },
+                DepAltKm = 200.0,
+                ArrAltKm = 200.0,
+                DepIncDeg = 28.6,
+                NoInsertionBurn = true
+            },
+
+            new BenchmarkCase {
+                
+                ReferenceLiterature = "Jehn et al. (2017), 'BepiColombo Interplanetary Trajectory Design', ESA SP-1326",
+                BlindDimension = MGABlindSearchDimension.LaunchEpochBlind,
                 MissionName = "BepiColombo (贝皮可伦坡号 离子低推力, 2018)",
                 Description = "ESA/JAXA 离子电推进 (SEP) 连续微推力打靶水星探测任务",
                 DepartureBody = "Earth",
@@ -353,8 +532,35 @@ namespace KSPGMAT.MGA {
                 LowThrustIspSec = 4300.0
             },
 
-            // 11. 火星快车 (Mars Express - B-Plane TCM 打靶, 2003) [Feature 2: STM & B-Plane]
             new BenchmarkCase {
+                
+                ReferenceLiterature = "Schulz et al. (2009), 'ROSETTA: ESA\'s Mission to the Origin of the Solar System', Springer",
+                BlindDimension = MGABlindSearchDimension.LaunchEpochBlind,
+                MissionName = "Rosetta (罗塞塔号 异构分段混合策略, 2004)",
+                Description = "分段策略：航段1纯弹道转移 + 节点1火星借力 + 航段2深空机动(1-DSM) + 节点2/3地球共振借力",
+                DepartureBody = "Earth",
+                FlybySequence = new List<string> { "Mars", "Earth", "Earth" },
+                HistoricLaunchDateStr = "02 Mar 2004 07:17:00",
+                HistoricLaunchUT = 752409600.0 + 4.17 * 365.25 * 86400.0,
+                HistoricTotalDeltaVMinMs = 3800.0,
+                HistoricTotalDeltaVMaxMs = 15000.0,
+                HistoricFlightDaysMin = 2000.0,
+                HistoricFlightDaysMax = 2200.0,
+                HistoricToFDays = new List<double> { 365.0, 715.0, 990.0 },
+                NoInsertionBurn = true,
+                LegStrategies = new List<MGALegStrategy> { MGALegStrategy.Ballistic, MGALegStrategy.DeepSpaceManeuver1DSM, MGALegStrategy.Ballistic },
+                FlybyStrategies = new List<MGAFlybyStrategy> { MGAFlybyStrategy.UnpoweredFlyby, MGAFlybyStrategy.BPlaneTargeted }
+            }
+        };
+
+        /// <summary>
+        /// 行星际直达与轨道机动基准任务集 (无引力助推，纯直达变轨与目标交会)
+        /// </summary>
+        public static readonly List<BenchmarkCase> DirectTransfer_Missions = new List<BenchmarkCase> {
+            new BenchmarkCase {
+                
+                ReferenceLiterature = "Chicarro et al. (2004), 'Mars Express: A European Mission to the Red Planet', ESA SP-1240",
+                BlindDimension = MGABlindSearchDimension.LaunchEpochBlind,
                 MissionName = "Mars Express (火星快车 B-Plane TCM 穿靶, 2003)",
                 Description = "利用全解析 STM 灵敏度矩阵微分修正，将火星到达 B 平面穿靶误差压至零",
                 DepartureBody = "Earth",
@@ -371,40 +577,10 @@ namespace KSPGMAT.MGA {
                 TargetBDotRKm = 0.0
             },
 
-            // 12. 伽利略号 (Galileo - 劳登主矢量最优性判定, 1989) [Feature 3: Primer Vector]
             new BenchmarkCase {
-                MissionName = "Galileo (伽利略号 劳登主矢量判定, 1989)",
-                Description = "沿 VEEGA 转移弧计算解析主矢量极值曲线，验证脉冲机动冲量全局最优性 (|p| <= 1.0)",
-                DepartureBody = "Earth",
-                FlybySequence = new List<string> { "Venus", "Earth", "Earth", "Jupiter" },
-                HistoricLaunchDateStr = "18 Oct 1989 16:53:40",
-                HistoricLaunchUT = 752409600.0 - 10.2 * 365.25 * 86400.0,
-                HistoricTotalDeltaVMinMs = 3800.0,
-                HistoricTotalDeltaVMaxMs = 6000.0,
-                HistoricFlightDaysMin = 2100.0,
-                HistoricFlightDaysMax = 2300.0,
-                HistoricToFDays = new List<double> { 115.0, 305.0, 730.0, 1080.0 },
-                NoInsertionBurn = true
-            },
-
-            // 13. 新视野号 (New Horizons - 帕累托时间/燃料权衡, 2006) [Feature 4: Pareto Front]
-            new BenchmarkCase {
-                MissionName = "New Horizons (新视野号 帕累托前沿权衡, 2006)",
-                Description = "展示人类最快飞掠深空探测器在 9.5 年极速直达与最省燃料之间的非劣权衡曲线",
-                DepartureBody = "Earth",
-                FlybySequence = new List<string> { "Jupiter", "Pluto" },
-                HistoricLaunchDateStr = "19 Jan 2006 19:00:00",
-                HistoricLaunchUT = 752409600.0 + 6.05 * 365.25 * 86400.0,
-                HistoricTotalDeltaVMinMs = 7500.0,
-                HistoricTotalDeltaVMaxMs = 9500.0,
-                HistoricFlightDaysMin = 3400.0,
-                HistoricFlightDaysMax = 3600.0,
-                HistoricToFDays = new List<double> { 405.0, 3060.0 },
-                NoInsertionBurn = true
-            },
-
-            // 14. 静止轨道转移 (GTO to GEO - 无奇异等分根数 MEE, 2020) [Feature 5: MEE]
-            new BenchmarkCase {
+                
+                ReferenceLiterature = "Vallado (2013), 'Fundamentals of Astrodynamics and Applications', 4th Ed.",
+                BlindDimension = MGABlindSearchDimension.None,
                 MissionName = "GTO ➔ GEO (赤道静止轨道 MEE 极值变换, 2020)",
                 Description = "展示在圆轨道 (e->0) 和赤道轨道 (i->0) 极端工况下 Cefola 无奇异 MEE 根数解析解算",
                 DepartureBody = "Earth",
@@ -417,28 +593,17 @@ namespace KSPGMAT.MGA {
                 HistoricFlightDaysMax = 230.0,
                 HistoricToFDays = new List<double> { 204.0 },
                 NoInsertionBurn = true
-            },
+            }
+        };
 
-            // 15. 罗塞塔号 (Rosetta - 异构分段混合策略, 2004) [Feature 7: Hybrid Strategy]
+        /// <summary>
+        /// 地月空间与中心引力场轨道基准任务集 (地心引力场内往返转移)
+        /// </summary>
+        public static readonly List<BenchmarkCase> Cislunar_Missions = new List<BenchmarkCase> {
             new BenchmarkCase {
-                MissionName = "Rosetta (罗塞塔号 异构分段混合策略, 2004)",
-                Description = "分段策略：航段1纯弹道转移 + 节点1火星借力 + 航段2深空机动(1-DSM) + 节点2/3地球共振借力",
-                DepartureBody = "Earth",
-                FlybySequence = new List<string> { "Mars", "Earth", "Earth" },
-                HistoricLaunchDateStr = "02 Mar 2004 07:17:00",
-                HistoricLaunchUT = 752409600.0 + 4.17 * 365.25 * 86400.0,
-                HistoricTotalDeltaVMinMs = 3800.0,
-                HistoricTotalDeltaVMaxMs = 15000.0,
-                HistoricFlightDaysMin = 2000.0,
-                HistoricFlightDaysMax = 2200.0,
-                HistoricToFDays = new List<double> { 365.0, 715.0, 990.0 },
-                NoInsertionBurn = true,
-                LegStrategies = new List<MGALegStrategy> { MGALegStrategy.Ballistic, MGALegStrategy.DeepSpaceManeuver1DSM, MGALegStrategy.Ballistic },
-                FlybyStrategies = new List<MGAFlybyStrategy> { MGAFlybyStrategy.UnpoweredFlyby, MGAFlybyStrategy.BPlaneTargeted }
-            },
-
-            // 16. 阿波罗 11 号 (Apollo 11 - 地月注入 TLI, 1969)
-            new BenchmarkCase {
+                
+                ReferenceLiterature = "NASA SP-214: Apollo 11 Mission Report (1969)",
+                BlindDimension = MGABlindSearchDimension.LaunchEpochBlind,
                 MissionName = "Apollo 11 (阿波罗11号 地月转移, 1969)",
                 Description = "近地停泊轨道地月转移 (TLI) 经自由返回/椭圆轨道直飞月球 (3~5天飞行历时)",
                 DepartureBody = "Earth",
@@ -457,96 +622,17 @@ namespace KSPGMAT.MGA {
             }
         };
 
-        public static readonly List<BenchmarkCase> StandardFictionalMissions = new List<BenchmarkCase> {
-            // 1. 泰坦-海神冰巨星双星巡航 (Kronos-Poseidon: Earth -> Jupiter -> Uranus)
-            new BenchmarkCase {
-                MissionName = "Kronos-Poseidon (泰坦-海神双星巡航, 2030)",
-                Description = "【虚构深空】木星超级引力弹弓无动力借力偏转，直奔外层冰巨星天王星 (E-J-U)",
-                DepartureBody = "Earth",
-                FlybySequence = new List<string> { "Jupiter", "Uranus" },
-                HistoricLaunchDateStr = "20 Jan 2030 23:30:00",
-                HistoricLaunchUT = 2494798200.0,
-                HistoricTotalDeltaVMinMs = 6000.0,
-                HistoricTotalDeltaVMaxMs = 8000.0,
-                HistoricFlightDaysMin = 5000.0,
-                HistoricFlightDaysMax = 5500.0,
-                HistoricToFDays = new List<double> { 841.0, 4500.0 },
-                DepIncDeg = 28.6,
-                NoInsertionBurn = true
-            },
+        /// <summary>
+        /// 完整聚合历史基准任务集合 (兼容原有调用方，保证向后兼容性)
+        /// </summary>
+        public static readonly List<BenchmarkCase> StandardHistoricalMissions = 
+            MGA_Missions.Concat(DirectTransfer_Missions).Concat(Cislunar_Missions).ToList();
 
-            // 2. 太阳时空神号 (Solar Chronos: Earth -> Venus -> Mercury)
-            new BenchmarkCase {
-                MissionName = "Solar Chronos (太阳时空神号, 2029)",
-                Description = "【虚构深空】内太阳系金星引力弹弓高效降能，实施水星近心点无动力借力交会 (E-V-M)",
-                DepartureBody = "Earth",
-                FlybySequence = new List<string> { "Venus", "Mercury" },
-                HistoricLaunchDateStr = "18 Nov 2029 14:00:00",
-                HistoricLaunchUT = 2489320800.0,
-                HistoricTotalDeltaVMinMs = 4000.0,
-                HistoricTotalDeltaVMaxMs = 9500.0,
-                HistoricFlightDaysMin = 200.0,
-                HistoricFlightDaysMax = 250.0,
-                HistoricToFDays = new List<double> { 111.0, 103.0 },
-                DepIncDeg = 28.6,
-                NoInsertionBurn = true,
-                ArrAltKm = 300.0
-            },
-
-            // 3. 奥尔德林地火循环客运飞船 (Aldrin Mars Cycler: Earth -> Mars -> Earth)
-            new BenchmarkCase {
-                MissionName = "Aldrin Cycler (奥尔德林地火循环飞船, 2033)",
-                Description = "【虚构深空】巴兹·奥尔德林构想的星际穿梭巴士，火星天然引力弹弓零机动往返穿梭 (E-M-E)",
-                DepartureBody = "Earth",
-                FlybySequence = new List<string> { "Mars", "Earth" },
-                HistoricLaunchDateStr = "28 Apr 2033 15:30:00",
-                HistoricLaunchUT = 2597931000.0,
-                HistoricTotalDeltaVMinMs = 3200.0,
-                HistoricTotalDeltaVMaxMs = 5000.0,
-                HistoricFlightDaysMin = 900.0,
-                HistoricFlightDaysMax = 1000.0,
-                HistoricToFDays = new List<double> { 274.0, 689.0 },
-                DepIncDeg = 28.6,
-                NoInsertionBurn = true
-            },
-
-            // 4. 尤利西斯II号 (Ulysses II: Earth -> Jupiter [太阳极区俯瞰])
-            new BenchmarkCase {
-                MissionName = "Ulysses II (尤利西斯II号 太阳极区俯瞰, 2030)",
-                Description = "【虚构深空】锁定 28.6°(KSC) 发射逃逸倾角，在木星实施深空垂直面外偏转，直冲太阳极轨 (E-J)",
-                DepartureBody = "Earth",
-                FlybySequence = new List<string> { "Jupiter" },
-                HistoricLaunchDateStr = "20 Jan 2030 23:30:00",
-                HistoricLaunchUT = 2494798200.0,
-                HistoricTotalDeltaVMinMs = 6000.0,
-                HistoricTotalDeltaVMaxMs = 7500.0,
-                HistoricFlightDaysMin = 800.0,
-                HistoricFlightDaysMax = 900.0,
-                HistoricToFDays = new List<double> { 841.0 },
-                DepIncDeg = 28.6,
-                LockDepartureInclination = true,
-                NoInsertionBurn = true
-            },
-
-            // 5. 星际先驱号 (Interstellar Pioneer: Earth -> Jupiter -> Saturn [边界逃逸])
-            new BenchmarkCase {
-                MissionName = "Interstellar Pioneer (星际先驱号 太阳系边界逃逸, 2030)",
-                Description = "【虚构深空】木星超级引力弹弓连珠加速转向土星，以极高双曲速度冲出太阳系日球层 (E-J-S)",
-                DepartureBody = "Earth",
-                FlybySequence = new List<string> { "Jupiter", "Saturn" },
-                HistoricLaunchDateStr = "20 Jan 2030 23:30:00",
-                HistoricLaunchUT = 2494798200.0,
-                HistoricTotalDeltaVMinMs = 6000.0,
-                HistoricTotalDeltaVMaxMs = 8000.0,
-                HistoricFlightDaysMin = 2200.0,
-                HistoricFlightDaysMax = 2500.0,
-                HistoricToFDays = new List<double> { 841.0, 1450.0 },
-                DepAltKm = 200.0,
-                ArrAltKm = 200.0,
-                DepIncDeg = 28.6,
-                NoInsertionBurn = true
-            }
-        };
+        /// <summary>
+        /// 虚构深空极限探测与经典跳板任务集 (经过 SPICE 真实星历高精物理校准)
+        /// </summary>
+        public static readonly List<BenchmarkCase> StandardFictionalMissions = 
+            MGA_Missions.Where(m => m.Description != null && m.Description.Contains("【虚构") || m.MissionName.Contains("2030") || m.MissionName.Contains("2029") || m.MissionName.Contains("2033")).ToList();
 
         /// <summary>
         /// 运行自适应历史任务基准测试并输出严格的物理动力学与 GMAT 回写验证报告

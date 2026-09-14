@@ -10,8 +10,8 @@ namespace MGADebugRunner.TestSuites
     public class HistoricalBenchmarkMissionsTest : ITestModule
     {
         public string ModuleId => "historical_benchmark";
-        public string Name => "10大历史深空任务全量基准测试套件";
-        public string Description => "验证游戏内 GUI [Historical Benchmark Suite] 全部 10 大真实历史飞行任务全收敛";
+        public string Name => "历史深空与经典飞行任务全量基准测试套件";
+        public string Description => "验证游戏内 GUI [Historical Benchmark Suite] 全部真实历史与深空飞行任务全收敛 (区分 MGA / 直达 / 地月)";
 
         public bool Run(TestContext ctx)
         {
@@ -29,29 +29,40 @@ namespace MGADebugRunner.TestSuites
         public static void RunTest(ref int total, ref int passed, bool includePresets = true)
         {
             Console.WriteLine("------------------------------------------------------------------------------------------");
-            Console.WriteLine("🪐 [用例集 D] 游戏内 GUI [Historical Benchmark Suite] 全部 10 大真实历史飞行任务全收敛验证");
+            Console.WriteLine("🪐 [用例集 D] 历史基准飞行任务全量验证 (区分 MGA 借力 / 行星际直达 / 地月任务)");
             Console.WriteLine("------------------------------------------------------------------------------------------");
 
-            var missions = MGABenchmarkSuite.StandardHistoricalMissions;
-
-            foreach (var testCase in missions)
+            var categories = new (string Name, System.Collections.Generic.List<MGABenchmarkSuite.BenchmarkCase> List)[]
             {
-                total++;
-                Console.Write($"• [{missions.IndexOf(testCase) + 1:D2}/10] {testCase.MissionName,-40} ... ");
+                ("MGA 行星际引力助推任务集", MGABenchmarkSuite.MGA_Missions),
+                ("行星际直达与轨道机动任务集", MGABenchmarkSuite.DirectTransfer_Missions),
+                ("地月空间与中心引力场任务集", MGABenchmarkSuite.Cislunar_Missions)
+            };
 
-                var res = MGABenchmarkSuite.RunBenchmark(testCase);
+            foreach (var cat in categories)
+            {
+                Console.WriteLine($"\n>>> [{cat.Name}] 共 {cat.List.Count} 项任务 <<<");
+                for (int i = 0; i < cat.List.Count; i++)
+                {
+                    total++;
+                    var testCase = cat.List[i];
+                    Console.Write($"• [{i + 1:D2}/{cat.List.Count:D2}] {testCase.MissionName,-40} ... ");
 
-                if (res.Success && res.Solution != null)
-                {
-                    passed++;
-                    var sol = res.Solution;
-                    Console.WriteLine($"✅ 收敛通过! 航段={sol.Legs.Count} | 计算总ΔV={res.ComputedTotalDV,6:F0} m/s (历史范围: {testCase.HistoricTotalDeltaVMinMs:F0}~{testCase.HistoricTotalDeltaVMaxMs:F0}) | 历时={res.ComputedFlightDays,4:F0}d");
-                }
-                else
-                {
-                    Console.WriteLine($"❌ 未通过: Continuity={res.VectorContinuityPassed}, Feasibility={res.FlybyFeasibilityPassed}, DvTolerance={res.DeltaVWithinTolerance} (计算总ΔV: {res.ComputedTotalDV:F0} m/s)");
+                    var res = MGABenchmarkSuite.RunBenchmark(testCase);
+
+                    if (res.Success && res.Solution != null)
+                    {
+                        passed++;
+                        var sol = res.Solution;
+                        Console.WriteLine($"✅ 收敛通过! 航段={sol.Legs.Count} | 计算总ΔV={res.ComputedTotalDV,6:F0} m/s (历史范围: {testCase.HistoricTotalDeltaVMinMs:F0}~{testCase.HistoricTotalDeltaVMaxMs:F0}) | 历时={res.ComputedFlightDays,4:F0}d | 口径={testCase.BlindDimension}");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"❌ 未通过: Continuity={res.VectorContinuityPassed}, Feasibility={res.FlybyFeasibilityPassed}, DvTolerance={res.DeltaVWithinTolerance} (计算总ΔV: {res.ComputedTotalDV:F0} m/s)");
+                    }
                 }
             }
+
             Console.WriteLine();
 
             if (includePresets)

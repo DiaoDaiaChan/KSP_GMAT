@@ -18,6 +18,7 @@ using System.Text;
 using System.Threading;
 using KSPGMAT.Model;
 using KSPGMAT.Service;
+using KSPGMAT.MGA;
 
 namespace KSPGMAT.MGA.Solver
 {
@@ -47,6 +48,9 @@ namespace KSPGMAT.MGA.Solver
         public int PopulationSize { get; set; } = 80;
         public int MaxGenerations { get; set; } = 120;
         public string HistoricalDescription { get; set; }
+
+        /// <summary>盲搜维度规范声明: 拓扑盲 + 发射时域盲 + 航时自推导</summary>
+        public MGABlindSearchDimension BlindDimension => MGABlindSearchDimension.FullyBlind;
     }
 
     /// <summary>
