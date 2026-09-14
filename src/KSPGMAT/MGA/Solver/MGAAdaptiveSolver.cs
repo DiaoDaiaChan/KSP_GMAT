@@ -414,6 +414,9 @@ namespace KSPGMAT.MGA
                 if (userSpecifiedMaxToF <= 0) config.TotalToFMaxDays = dynMax;
             }
 
+            double effectiveMaxToF = (config != null && config.TotalToFMaxDays > 0) ? config.TotalToFMaxDays : -1.0;
+            double effectiveMinToF = (config != null && config.TotalToFMinDays > 0) ? config.TotalToFMinDays : -1.0;
+
             var candidateChains = new List<List<string>>();
             if (!config.EnablePermutationsAndInsertions)
             {
@@ -553,15 +556,28 @@ namespace KSPGMAT.MGA
                 if (subCfg.AutoTuneToFBounds)
                 {
                     var (dynMin, dynMax) = MGAMCTSTopologySelector.CalculateAdaptiveToFBounds(subCfg.DeparturePlanet, subCfg.ArrivalPlanet, subCfg.FlybySequence, subCfg.CentralBody, subCfg.DepartureToFMinFactor, subCfg.DepartureToFMaxFactor);
-                    subCfg.TotalToFMinDays = dynMin;
+                    subCfg.TotalToFMinDays = (userSpecifiedMinToF > 0) ? userSpecifiedMinToF : dynMin;
                     subCfg.TotalToFMaxDays = (userSpecifiedMaxToF > 0) ? userSpecifiedMaxToF : dynMax;
                     subCfg.LegToFBounds = MGAMCTSTopologySelector.AutoDeriveResonantLegBounds(subCfg.DeparturePlanet, subCfg.ArrivalPlanet, subCfg.FlybySequence, subCfg.CentralBody, subCfg.DepartureToFMinFactor, subCfg.DepartureToFMaxFactor);
                 }
 
                 // DeltaV-EGA (深空机动与借力协同): 在跨势阱折返或多次共振航段中，自适应激活 1-DSM 与多圈共振调相
                 var fullChainEga = new List<string> { subCfg.DeparturePlanet };
-                if (subCfg.FlybySequence != null) fullChainEga.AddRange(subCfg.FlybySequence);
-                fullChainEga.Add(subCfg.ArrivalPlanet);
+                if (subCfg.FlybySequence != null)
+                {
+                    var cleanFlybys = subCfg.FlybySequence
+                        .Where(b => !string.IsNullOrEmpty(b) && !b.Equals(subCfg.DeparturePlanet, StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+                    if (cleanFlybys.Count > 0 && cleanFlybys.Last().Equals(subCfg.ArrivalPlanet, StringComparison.OrdinalIgnoreCase))
+                    {
+                        cleanFlybys = cleanFlybys.Take(cleanFlybys.Count - 1).ToList();
+                    }
+                    fullChainEga.AddRange(cleanFlybys);
+                }
+                if (fullChainEga.Count == 0 || !fullChainEga.Last().Equals(subCfg.ArrivalPlanet, StringComparison.OrdinalIgnoreCase))
+                {
+                    fullChainEga.Add(subCfg.ArrivalPlanet);
+                }
                 int neededLegs = fullChainEga.Count - 1;
 
                 if (subCfg.LegStrategies == null || subCfg.LegStrategies.Count != neededLegs)
@@ -784,7 +800,7 @@ namespace KSPGMAT.MGA
 
             var rawSolutions = allRawSolutions
                 .OrderBy(s => (config.LaunchDeltaVCeilingMs > 0 && s.LaunchDeltaVKms * 1000.0 > (config.LaunchDeltaVCeilingMs + launchTol) ? 1e6 : 0.0)
-                            + (userSpecifiedMaxToF > 0 && s.TotalFlightDays > (userSpecifiedMaxToF + tofTolOrdering) ? 1e6 : 0.0)
+                            + (effectiveMaxToF > 0 && s.TotalFlightDays > (effectiveMaxToF + tofTolOrdering) ? 1e6 : 0.0)
                             + (!s.AllLegsFeasible ? 1e5 : 0.0)
                             + s.TotalDeltaVKms)
                 .ToList();
@@ -833,7 +849,7 @@ namespace KSPGMAT.MGA
                 {
                     continue;
                 }
-                if (userSpecifiedMaxToF > 0 && sol.TotalFlightDays > (userSpecifiedMaxToF + tofTol))
+                if (effectiveMaxToF > 0 && sol.TotalFlightDays > (effectiveMaxToF + tofTol))
                 {
                     continue;
                 }

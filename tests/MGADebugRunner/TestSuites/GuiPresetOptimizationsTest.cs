@@ -73,11 +73,14 @@ namespace MGADebugRunner.TestSuites
                     winEndUT = j2000 + 365.25 * 86400.0;
                 }
 
+                // flybyChain 参数语义为**中间借力天体** (不含出发与终点)，故需去掉 FlybySequence 的末元素。
+                var intermediates = bCase.FlybySequence.Take(Math.Max(0, bCase.FlybySequence.Count - 1)).ToList();
+
                 var mgaConfig = new MGAConfig
                 {
                     DepartureBody = bCase.DepartureBody,
                     DestinationBody = bCase.FlybySequence.Last(),
-                    FlybySequence = new List<string>(bCase.FlybySequence),
+                    FlybySequence = new List<string>(intermediates),
                     EarliestDepartureUT = winStartUT,
                     LatestDepartureUT = winEndUT,
                     DepartureAltitudeKm = bCase.DepAltKm,
@@ -91,8 +94,6 @@ namespace MGADebugRunner.TestSuites
                 };
 
                 // 【2026-09-14 修正】航时边界改用开普勒/共振物理推导，杜绝历史真值 ±10% 夹逼。
-                // flybyChain 参数语义为**中间借力天体** (不含出发与终点)，故需去掉 FlybySequence 的末元素。
-                var intermediates = bCase.FlybySequence.Take(Math.Max(0, bCase.FlybySequence.Count - 1)).ToList();
                 var legBounds = MGAMCTSTopologySelector.AutoDeriveResonantLegBounds(
                     bCase.DepartureBody, bCase.FlybySequence.Last(), intermediates, "Sun");
                 if (legBounds != null && legBounds.Count > 0)

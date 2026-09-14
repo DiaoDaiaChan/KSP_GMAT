@@ -396,14 +396,19 @@ namespace KSPGMAT.MGA
             var solutions = new List<MGASolution>();
             var fullChain = new List<string> { config.DepartureBody };
             if (config.FlybySequence != null && config.FlybySequence.Count > 0) {
-                if (config.FlybySequence.Count == 1 && config.FlybySequence[0].Equals(config.DestinationBody, StringComparison.OrdinalIgnoreCase)) {
-                    // 纯直达航段
-                } else {
-                    fullChain.AddRange(config.FlybySequence);
+                var intermediateFlybys = config.FlybySequence;
+                // 若调用方传入的 FlybySequence 末尾包含到达天体 DestinationBody，将其视为终点截断，严禁作为借力天体重复注入
+                if (intermediateFlybys.Count > 0 &&
+                    !string.IsNullOrEmpty(config.DestinationBody) &&
+                    intermediateFlybys.Last().Equals(config.DestinationBody, StringComparison.OrdinalIgnoreCase)) {
+                    intermediateFlybys = intermediateFlybys.Take(intermediateFlybys.Count - 1).ToList();
                 }
+                fullChain.AddRange(intermediateFlybys);
             }
             if (!string.IsNullOrEmpty(config.DestinationBody)) {
-                fullChain.Add(config.DestinationBody);
+                if (fullChain.Count == 0 || !fullChain.Last().Equals(config.DestinationBody, StringComparison.OrdinalIgnoreCase)) {
+                    fullChain.Add(config.DestinationBody);
+                }
             }
             if (fullChain.Count < 2) return solutions;
             int legCount = fullChain.Count - 1;
