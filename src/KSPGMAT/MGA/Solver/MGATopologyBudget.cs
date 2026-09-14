@@ -99,20 +99,22 @@ namespace KSPGMAT.MGA
             var budget = new MGATopologyBudget();
             var pDep = SolarSystemCatalog.GetPlanet(departure);
             var pArr = SolarSystemCatalog.GetPlanet(arrival);
-            if (pDep == null || pArr == null || pDep.SMA <= 0 || pArr.SMA <= 0)
+            string central = string.IsNullOrEmpty(centralBody) ? "Sun" : centralBody;
+            double muCentral = SolarSystemCatalog.GetCentralMu(central);
+            if (muCentral <= 0) muCentral = SolarSystemCatalog.SunMu;
+
+            double rDepResolved = MGAFlybyDynamicsHelper.ResolveOrbitalRadiusKm(pDep, central);
+            double rArrResolved = MGAFlybyDynamicsHelper.ResolveOrbitalRadiusKm(pArr, central);
+            if (pDep == null || pArr == null || rDepResolved <= 0 || rArrResolved <= 0)
             {
                 budget.MaxSwingBys = 2;
                 budget.MaxResonances = 1;
                 budget.MaxBackLegs = 1;
                 budget.MaxBackSpacing = 1;
                 budget.MaxChainLegs = 4;
-                budget.Rationale = "天体目录不可用, 退化为最小可搜索预算。";
+                budget.Rationale = "出发/到达天体在当前参考系下不可解析, 退化为最小可搜索预算。";
                 return budget;
             }
-
-            string central = string.IsNullOrEmpty(centralBody) ? "Sun" : centralBody;
-            double muCentral = SolarSystemCatalog.GetCentralMu(central);
-            if (muCentral <= 0) muCentral = SolarSystemCatalog.SunMu;
 
             // ------------------------------------------------------------------
             // 1. 取系统节点

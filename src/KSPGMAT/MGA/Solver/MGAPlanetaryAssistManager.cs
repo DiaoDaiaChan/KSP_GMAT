@@ -72,13 +72,16 @@ namespace KSPGMAT.MGA
         /// </summary>
         public static SolarPlanet GetInnerAssistJumpingStone(SolarPlanet pDep, SolarPlanet deepW, string centralBody)
         {
-            if (pDep == null || deepW == null || pDep.SMA <= 0 || deepW.SMA <= 0) return null;
+            if (pDep == null || deepW == null) return null;
+            double rDep = MGAFlybyDynamicsHelper.ResolveOrbitalRadiusKm(pDep, centralBody);
+            double rDeep = MGAFlybyDynamicsHelper.ResolveOrbitalRadiusKm(deepW, centralBody);
+            if (rDep <= 0 || rDeep <= 0) return null;
 
             var rankings = GetGravityAssistRankings(centralBody);
             if (rankings == null || rankings.Count == 0) return null;
 
-            double minSma = Math.Min(deepW.SMA, pDep.SMA);
-            double maxSma = Math.Max(deepW.SMA, pDep.SMA);
+            double minSma = Math.Min(rDeep, rDep);
+            double maxSma = Math.Max(rDeep, rDep);
 
             var candidates = rankings
                 .Where(r => r.Body != null && !r.Body.IsMoon &&
@@ -103,11 +106,13 @@ namespace KSPGMAT.MGA
             var rankings = GetGravityAssistRankings(centralBody);
             if (rankings == null || rankings.Count == 0) return pDep;
 
-            double refSma = pDep.SMA;
+            double refSma = MGAFlybyDynamicsHelper.ResolveOrbitalRadiusKm(pDep, centralBody);
+            if (refSma <= 0) refSma = pDep.SMA;
+            double rDeepW = (deepW != null) ? MGAFlybyDynamicsHelper.ResolveOrbitalRadiusKm(deepW, centralBody) : -1.0;
             var candidates = rankings
                 .Where(r => r.Body != null && !r.Body.IsMoon &&
                             r.Body.SMA >= refSma * 0.85 && r.Body.SMA <= refSma * 1.8 &&
-                            (deepW == null || r.Body.SMA > deepW.SMA * 1.2))
+                            (rDeepW <= 0 || r.Body.SMA > rDeepW * 1.2))
                 .OrderByDescending(r => r.PotentialDepth)
                 .Select(r => r.Body)
                 .ToList();
@@ -122,13 +127,16 @@ namespace KSPGMAT.MGA
         public static List<SolarPlanet> GetOuterGiantSlingshots(SolarPlanet pDep, SolarPlanet pArr, string centralBody, int maxCount = 2)
         {
             var list = new List<SolarPlanet>();
-            if (pDep == null || pArr == null || pDep.SMA <= 0 || pArr.SMA <= 0) return list;
+            if (pDep == null || pArr == null) return list;
+            double rDep = MGAFlybyDynamicsHelper.ResolveOrbitalRadiusKm(pDep, centralBody);
+            double rArr = MGAFlybyDynamicsHelper.ResolveOrbitalRadiusKm(pArr, centralBody);
+            if (rDep <= 0 || rArr <= 0) return list;
 
             var rankings = GetGravityAssistRankings(centralBody);
             if (rankings == null || rankings.Count == 0) return list;
 
-            double minSma = pDep.SMA * 1.4;
-            double maxSma = pArr.SMA * 0.95;
+            double minSma = rDep * 1.4;
+            double maxSma = rArr * 0.95;
 
             if (minSma >= maxSma) return list;
 
@@ -151,14 +159,17 @@ namespace KSPGMAT.MGA
         public static List<SolarPlanet> GetForwardSteppingStones(SolarPlanet pDep, SolarPlanet pArr, string centralBody)
         {
             var list = new List<SolarPlanet>();
-            if (pDep == null || pArr == null || pDep.SMA <= 0 || pArr.SMA <= 0) return list;
+            if (pDep == null || pArr == null) return list;
+            double rDep = MGAFlybyDynamicsHelper.ResolveOrbitalRadiusKm(pDep, centralBody);
+            double rArr = MGAFlybyDynamicsHelper.ResolveOrbitalRadiusKm(pArr, centralBody);
+            if (rDep <= 0 || rArr <= 0) return list;
 
             var rankings = GetGravityAssistRankings(centralBody);
             if (rankings == null || rankings.Count == 0) return list;
 
-            bool isOutward = pArr.SMA > pDep.SMA;
-            double minSma = Math.Min(pDep.SMA, pArr.SMA);
-            double maxSma = Math.Max(pDep.SMA, pArr.SMA);
+            bool isOutward = rArr > rDep;
+            double minSma = Math.Min(rDep, rArr);
+            double maxSma = Math.Max(rDep, rArr);
 
             var stones = rankings
                 .Where(r => r.Body != null && !r.Body.IsMoon &&
@@ -249,8 +260,9 @@ namespace KSPGMAT.MGA
             double muCentral = SolarSystemCatalog.GetCentralMu(cBody);
             if (muCentral <= 0) muCentral = SolarSystemCatalog.SunMu;
 
-            double r1 = pDep.SMA;
-            double r2 = pFirst.SMA;
+            double r1 = MGAFlybyDynamicsHelper.ResolveOrbitalRadiusKm(pDep, cBody);
+            double r2 = MGAFlybyDynamicsHelper.ResolveOrbitalRadiusKm(pFirst, cBody);
+            if (r1 <= 0 || r2 <= 0) return 3800.0;
             double v1 = Math.Sqrt(muCentral / r1);
             double vInf;
             if (pFirst.Name.Equals(pDep.Name, StringComparison.OrdinalIgnoreCase))
@@ -289,9 +301,10 @@ namespace KSPGMAT.MGA
             var list = new List<List<string>>();
             var pDep = SolarSystemCatalog.GetPlanet(departure);
             var pArr = SolarSystemCatalog.GetPlanet(arrival);
-            if (pDep == null || pArr == null || pDep.SMA <= 0 || pArr.SMA <= 0) return list;
-
-            string centralBody = !string.IsNullOrEmpty(pDep.ParentName) ? pDep.ParentName : SolarSystemCatalog.RootStarName;
+            string centralBody = !string.IsNullOrEmpty(pDep?.ParentName) ? pDep.ParentName : SolarSystemCatalog.RootStarName;
+            double rDep = MGAFlybyDynamicsHelper.ResolveOrbitalRadiusKm(pDep, centralBody);
+            double rArr = MGAFlybyDynamicsHelper.ResolveOrbitalRadiusKm(pArr, centralBody);
+            if (pDep == null || pArr == null || rDep <= 0 || rArr <= 0) return list;
 
             // 1. 获取中心恒星系统内由天体力学势深排序的“引力必吃榜”
             var assistRankings = GetGravityAssistRankings(centralBody);
@@ -304,8 +317,14 @@ namespace KSPGMAT.MGA
                 .ToList();
 
             // 识别深引力势阱天体：轨道半长轴显著低于出发星的天体 (如从地球/火星出发访问水星/Moho)
-            var innerDeepGoals = goalPlanets.Where(p => p.SMA < pDep.SMA).OrderBy(p => p.SMA).ToList();
-            bool isOutwardTransfer = pArr.SMA > pDep.SMA * 1.3;
+            var innerDeepGoals = goalPlanets
+                .Where(p => {
+                    double rG = MGAFlybyDynamicsHelper.ResolveOrbitalRadiusKm(p, centralBody);
+                    return rG > 0 && rG < rDep;
+                })
+                .OrderBy(p => MGAFlybyDynamicsHelper.ResolveOrbitalRadiusKm(p, centralBody))
+                .ToList();
+            bool isOutwardTransfer = rArr > rDep * 1.3;
 
             // 场景 A: 存在深势阱天体目标，且最终目标处于外部系统 (经典的深井折返爬升任务，如 Earth/Mars ➔ Mercury ➔ Neptune/Jupiter)
             if (innerDeepGoals.Count > 0 && isOutwardTransfer)
@@ -578,7 +597,7 @@ namespace KSPGMAT.MGA
             // 天体力学单共振守恒法则：非深势阱减速任务在同一次逃逸爬升链条中，
             // 物理上只允许至多 1 个天体实施自共振蓄能（奥卡姆剃刀与能量连续性）；
             // 严禁同一条链中既出现 A->A 又出现 B->B（如 Venus->Venus + Earth->Earth），彻底杜绝无增益组合冗余
-            bool isDeepWellArrival = pArr.SMA < pDep.SMA * 0.55;
+            bool isDeepWellArrival = rArr < rDep * 0.55;
             if (!isDeepWellArrival)
             {
                 list = list.Where(chain =>
