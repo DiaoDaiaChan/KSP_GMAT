@@ -136,7 +136,7 @@ namespace MGADebugRunner.TestSuites
             bool casePassed = true;
 
             Console.WriteLine(string.Format("{0,-12} | {1,-10} | {2,-12} | {3,-18} | {4,-22} | {5,-10}",
-                "批处理规模", "HLSL状态", "GPU耗时", "GPU吞吐量", "[回放基线]Loss", "奇点误报?"));
+                "批处理规模", "HLSL状态", "GPU耗时", "GPU吞吐量", "[回放基线]Loss(无量纲)", "奇点误报?"));
             Console.WriteLine(new string('-', 88));
 
             Random rand = new Random(42);
@@ -181,8 +181,8 @@ namespace MGADebugRunner.TestSuites
 
                 string singStr = isSingularityMisfire ? "❌ 100000误报" : "✅ 正常无奇点";
 
-                Console.WriteLine(string.Format("{0,-12} | {1,-10} | {2,-12} | {3,-18} | {4,-15} | {5,-10}",
-                    $"{popSize:N0}", "✅ SUCCESS", $"{timeMs:F2} ms", $"{throughput:N0} evals/s", $"{nominalLoss:F2} m/s", singStr));
+                Console.WriteLine(string.Format("{0,-12} | {1,-10} | {2,-12} | {3,-18} | {4,-22} | {5,-10}",
+                    $"{popSize:N0}", "✅ SUCCESS", $"{timeMs:F2} ms", $"{throughput:N0} evals/s", $"{nominalLoss:F4}", singStr));
                 if (isSingularityMisfire || !isFinite)
                 {
                     casePassed = false;
@@ -253,7 +253,7 @@ namespace MGADebugRunner.TestSuites
             bool casePassed = true;
 
             Console.WriteLine(string.Format("{0,-12} | {1,-10} | {2,-12} | {3,-18} | {4,-22} | {5,-10}",
-                "批处理规模", "HLSL状态", "GPU耗时", "GPU吞吐量", "[回放基线]Loss", "奇点误报?"));
+                "批处理规模", "HLSL状态", "GPU耗时", "GPU吞吐量", "[回放基线]Loss(无量纲)", "奇点误报?"));
             Console.WriteLine(new string('-', 88));
 
             Random rand = new Random(101);
@@ -298,8 +298,8 @@ namespace MGADebugRunner.TestSuites
 
                 string singStr = isSingularityMisfire ? "❌ 100000误报" : "✅ 正常无奇点";
 
-                Console.WriteLine(string.Format("{0,-12} | {1,-10} | {2,-12} | {3,-18} | {4,-15} | {5,-10}",
-                    $"{popSize:N0}", "✅ SUCCESS", $"{timeMs:F2} ms", $"{throughput:N0} evals/s", $"{nominalLoss:F2} km/s", singStr));
+                Console.WriteLine(string.Format("{0,-12} | {1,-10} | {2,-12} | {3,-18} | {4,-22} | {5,-10}",
+                    $"{popSize:N0}", "✅ SUCCESS", $"{timeMs:F2} ms", $"{throughput:N0} evals/s", $"{nominalLoss:F4}", singStr));
 
                 if (isSingularityMisfire || !isFinite)
                 {

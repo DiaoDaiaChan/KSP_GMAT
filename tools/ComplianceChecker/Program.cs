@@ -15,12 +15,19 @@ namespace KSPGMAT.Tools.ComplianceChecker {
 
             string projectRoot = "";
             bool strict = false;
+            bool compilerFormat = false;
+            var targetFiles = new List<string>();
 
             for (int i = 0; i < args.Length; i++) {
                 if (args[i] == "--project-root" && i + 1 < args.Length) {
                     projectRoot = args[++i];
                 } else if (args[i] == "--strict") {
                     strict = true;
+                } else if (args[i] == "--format" && i + 1 < args.Length) {
+                    string fmt = args[++i].ToLowerInvariant();
+                    if (fmt == "compiler" || fmt == "agent" || fmt == "compact") compilerFormat = true;
+                } else if ((args[i] == "--file" || args[i] == "-f") && i + 1 < args.Length) {
+                    targetFiles.Add(args[++i]);
                 }
             }
 
@@ -31,38 +38,53 @@ namespace KSPGMAT.Tools.ComplianceChecker {
             string srcDir = Path.Combine(projectRoot, "src", "KSPGMAT");
             string locDir = Path.Combine(projectRoot, "GameData", "KSPGMAT", "loc");
 
-            Console.WriteLine();
-            Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine("==========================================================================================");
-            Console.WriteLine("  🛡️  KSP-GMAT 编译级 AST 代码合规自查引擎 (Roslyn Code Compliance Analyzer)");
-            Console.WriteLine("==========================================================================================");
-            Console.ResetColor();
-            Console.ForegroundColor = ConsoleColor.DarkGray;
-            Console.WriteLine($"  源码目录: {srcDir}");
-            Console.WriteLine($"  语言目录: {locDir}");
-            Console.WriteLine($"  技术架构: Microsoft.CodeAnalysis.CSharp (Roslyn AST 抽象语法树分析)");
-            Console.WriteLine($"  基线规范: baseline.md & baseline_agent.md (单一真值源 SSOT / 零硬编码)");
-            Console.ResetColor();
-            Console.WriteLine();
+            List<string> allFiles;
+            if (targetFiles.Count > 0) {
+                allFiles = new List<string>();
+                foreach (var tf in targetFiles) {
+                    string full = Path.IsPathRooted(tf) ? tf : Path.Combine(projectRoot, tf);
+                    if (File.Exists(full)) {
+                        allFiles.Add(Path.GetFullPath(full));
+                    } else {
+                        Console.ForegroundColor = ConsoleColor.Yellow;
+                        Console.WriteLine($"⚠️ 指定文件不存在，已跳过: {tf}");
+                        Console.ResetColor();
+                    }
+                }
+            } else {
+                if (!Directory.Exists(srcDir)) {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine($"❌ 源码目录未找到: {srcDir}");
+                    Console.ResetColor();
+                    return 1;
+                }
 
-            if (!Directory.Exists(srcDir)) {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine($"❌ 源码目录未找到: {srcDir}");
-                Console.ResetColor();
-                return 1;
+                allFiles = Directory.GetFiles(srcDir, "*.cs", SearchOption.AllDirectories)
+                    .Where(p => {
+                        string rel = p.Substring(srcDir.Length);
+                        return !rel.StartsWith(@"\obj\") && !rel.StartsWith("/obj/") &&
+                               !rel.StartsWith(@"\bin\") && !rel.StartsWith("/bin/");
+                    })
+                    .ToList();
             }
 
-            // 1. 扫描所有 C# 源码文件 (排除 src/KSPGMAT/obj 和 src/KSPGMAT/bin)
-            var allFiles = Directory.GetFiles(srcDir, "*.cs", SearchOption.AllDirectories)
-                .Where(p => {
-                    string rel = p.Substring(srcDir.Length);
-                    return !rel.StartsWith(@"\obj\") && !rel.StartsWith("/obj/") &&
-                           !rel.StartsWith(@"\bin\") && !rel.StartsWith("/bin/");
-                })
-                .ToList();
-
-            Console.WriteLine($"  🔍 已索引 C# 源代码文件: {allFiles.Count} 个 (全工程深入穿透，零目录死角)");
-            Console.WriteLine();
+            if (!compilerFormat) {
+                Console.WriteLine();
+                Console.ForegroundColor = ConsoleColor.Cyan;
+                Console.WriteLine("==========================================================================================");
+                Console.WriteLine("  🛡️  KSP-GMAT 编译级 AST 代码合规自查引擎 (Roslyn Code Compliance Analyzer)");
+                Console.WriteLine("==========================================================================================");
+                Console.ResetColor();
+                Console.ForegroundColor = ConsoleColor.DarkGray;
+                Console.WriteLine($"  源码目录: {srcDir}");
+                Console.WriteLine($"  语言目录: {locDir}");
+                Console.WriteLine($"  技术架构: Microsoft.CodeAnalysis.CSharp (Roslyn AST 抽象语法树分析)");
+                Console.WriteLine($"  基线规范: baseline.md & baseline_agent.md (单一真值源 SSOT / 零硬编码)");
+                Console.ResetColor();
+                Console.WriteLine();
+                Console.WriteLine($"  🔍 已索引 C# 源代码文件: {allFiles.Count} 个 (目标文件精准穿透)");
+                Console.WriteLine();
+            }
 
             var sw = Stopwatch.StartNew();
             var allIssues = new List<ComplianceIssue>();
@@ -71,6 +93,34 @@ namespace KSPGMAT.Tools.ComplianceChecker {
             foreach (var file in allFiles) {
                 string code = File.ReadAllText(file, Encoding.UTF8);
                 var tree = CSharpSyntaxTree.ParseText(code, path: file);
+
+                // 2.0 原生 C# 语法树诊断 (拦截漏分号、括号不闭合、语法关键字错位等 CS 原生错误)
+                foreach (var diag in tree.GetDiagnostics()) {
+                    if (diag.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Error) {
+                        var lineSpan = diag.Location.GetLineSpan();
+                        int lineNum = lineSpan.StartLinePosition.Line + 1;
+                        int colNum = lineSpan.StartLinePosition.Character + 1;
+                        string snippet = "";
+                        try {
+                            var lines = tree.GetText().Lines;
+                            if (lineSpan.StartLinePosition.Line < lines.Count) {
+                                snippet = lines[lineSpan.StartLinePosition.Line].ToString().Trim();
+                            }
+                        } catch { }
+
+                        allIssues.Add(new ComplianceIssue {
+                            Severity = IssueSeverity.ERROR,
+                            Category = diag.Id,
+                            FilePath = file,
+                            FileName = Path.GetFileName(file),
+                            Line = lineNum,
+                            Column = colNum,
+                            Message = $"[语法错误 {diag.Id}] {diag.GetMessage()}",
+                            Snippet = snippet,
+                            Suggestion = "修复 C# 语法错误以确保可通过编译器正常生成"
+                        });
+                    }
+                }
 
                 // Analyzer 1: 状态管理与 SSOT
                 var stateAnalyzer = new StateComplianceAnalyzer(file);
@@ -97,8 +147,8 @@ namespace KSPGMAT.Tools.ComplianceChecker {
                 allIssues.AddRange(logAnalyzer.Analyze(tree));
             }
 
-            // 3. 检测本地化字典完整性
-            if (Directory.Exists(locDir)) {
+            // 3. 全量扫描时检测本地化字典完整性
+            if (targetFiles.Count == 0 && Directory.Exists(locDir)) {
                 allIssues.AddRange(I18nComplianceAnalyzer.AuditLocalizationTables(locDir));
             }
 
@@ -108,6 +158,23 @@ namespace KSPGMAT.Tools.ComplianceChecker {
             var errors = allIssues.Where(i => i.Severity == IssueSeverity.ERROR).ToList();
             var warns = allIssues.Where(i => i.Severity == IssueSeverity.WARN).ToList();
             var infos = allIssues.Where(i => i.Severity == IssueSeverity.INFO).ToList();
+
+            if (compilerFormat) {
+                foreach (var err in errors) {
+                    Console.WriteLine($"{err.FilePath}({err.Line},{err.Column}): error {err.Category}: {err.Message}");
+                }
+                foreach (var warn in warns) {
+                    Console.WriteLine($"{warn.FilePath}({warn.Line},{warn.Column}): warning {warn.Category}: {warn.Message}");
+                }
+                if (errors.Count == 0 && warns.Count == 0) {
+                    Console.WriteLine($"✅ [ComplianceChecker] 0 错误, 0 警告 (受检文件: {allFiles.Count} 个, 用时: {sw.ElapsedMilliseconds} ms)");
+                } else if (errors.Count == 0) {
+                    Console.WriteLine($"✅ [ComplianceChecker] 0 阻断错误, {warns.Count} 个提示警告 (受检文件: {allFiles.Count} 个, 用时: {sw.ElapsedMilliseconds} ms)");
+                } else {
+                    Console.WriteLine($"❌ [ComplianceChecker] {errors.Count} 个阻断错误, {warns.Count} 个提示警告 (受检文件: {allFiles.Count} 个, 用时: {sw.ElapsedMilliseconds} ms)");
+                }
+                return errors.Count > 0 ? 1 : 0;
+            }
 
             Console.ForegroundColor = ConsoleColor.Cyan;
             Console.WriteLine("==========================================================================================");

@@ -31,9 +31,14 @@ namespace KSPGMAT.Tools.ComplianceChecker.Analyzers {
 
         public List<ComplianceIssue> Analyze(SyntaxTree tree) {
             issues.Clear();
-            if (!I18nExemptFiles.Contains(fileName)) {
-                Visit(tree.GetRoot());
+            if (I18nExemptFiles.Contains(fileName)) return issues;
+            if (filePath.IndexOf("/tools/", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                filePath.IndexOf("\\tools\\", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                filePath.IndexOf("/tests/", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                filePath.IndexOf("\\tests\\", StringComparison.OrdinalIgnoreCase) >= 0) {
+                return issues;
             }
+            Visit(tree.GetRoot());
             return issues;
         }
 

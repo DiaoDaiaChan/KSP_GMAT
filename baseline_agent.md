@@ -67,7 +67,8 @@
 - **门禁校验**：`GMATScriptLinter` 必须校验 Python 调用的括号闭合与语法结构；UI 卡片提供一键调阅原生源码实现与 4 大工程预设。
 
 ## 12. 维护守则
-- 改完必须 `pwsh -File deploy.ps1` 且 **0 警告 0 错误**；每次编译部署自动触发 `tools/ComplianceChecker` (Roslyn AST) 编译器级合规自查，确保 **0 阻断性违规 (0 Critical Errors)**；新增字段/控件/词条同步登记基线文档。
+- **Agent 极速自检门禁**：每次修改/编写代码后，在 commit 前必须运行 `pwsh -File scripts/agent_check.ps1 -Build` 进行毫秒级 Roslyn AST 语法树错误拦截与增量编译校验，确保 **0 语法错误、0 阻断性违规 (0 Critical Errors)、0 编译警告错误** 后方可提交。
+- **全量构建部署**：全阶段完成后执行 `pwsh -File deploy.ps1` 且 **0 警告 0 错误**；自动触发 `tools/ComplianceChecker` (Roslyn AST) 编译器级合规自查，确保 0 致命违规；新增字段/控件/词条同步登记基线文档。
 
 ## 13. 审计红线（禁止再犯）
 - 严禁 C# 自算 ΔV/质量流/开普勒推导并冒充 GMAT 原生。
