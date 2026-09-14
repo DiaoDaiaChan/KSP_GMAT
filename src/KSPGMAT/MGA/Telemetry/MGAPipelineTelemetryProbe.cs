@@ -723,45 +723,18 @@ namespace KSPGMAT.MGA.Telemetry
         /// 在控制台输出精简摘要
         /// </summary>
         // ====================================================================
-        // 5. 兼容旧版 diagnostic 绑定的轻量数据结构与接口 (由新探针统一接管)
+        // 5. 兼容历史绑定的轻量级诊断报表代理 (由新探针统一接管)
         // ====================================================================
         public class ReportData
         {
-            public MissionHeader Mission { get; set; } = new MissionHeader();
-            public List<TopologyCandidateEntry> EvaluatedTopologies { get; set; } = new List<TopologyCandidateEntry>();
-            public List<LegBoundsMetric> SearchBounds { get; set; } = new List<LegBoundsMetric>();
-            public List<IslandConvergenceRecord> IslandRecords { get; set; } = new List<IslandConvergenceRecord>();
-            public List<LegMechanicsRecord> BestSolutionLegs { get; set; } = new List<LegMechanicsRecord>();
-            public List<RootCauseFinding> RootCauses { get; set; } = new List<RootCauseFinding>();
+            private static readonly ReportData s_default = new ReportData();
+            public static ReportData Instance => s_default;
 
-            public double BestLaunchDvMs { get; set; }
-            public double BestTotalDsmMs { get; set; }
-            public double BestTotalDvMs { get; set; }
-            public double BestTotalFlightDays { get; set; }
-            public string BestDepartureEpochStr { get; set; }
-
-            public void DeduceRootCauses()
-            {
-                RootCauses.Clear();
-                if (EvaluatedTopologies.Count > 0 && EvaluatedTopologies.All(t => !t.IsPhysicallyReachable))
-                {
-                    RootCauses.Add(new RootCauseFinding
-                    {
-                        Severity = "Critical",
-                        Stage = "Stage 1",
-                        Description = "星历可达性分析表明，在指定的始发窗口与转移天数内，无任何拓扑满足轨道共面借力窗口要求。"
-                    });
-                }
-                if (IslandRecords.Count > 0 && IslandRecords.All(r => !r.IsConverged))
-                {
-                    RootCauses.Add(new RootCauseFinding
-                    {
-                        Severity = "Warning",
-                        Stage = "Stage 3",
-                        Description = "所有岛屿差分进化未能满足硬约束收敛门限，可能因搜索界限 (Bounds) 偏窄或最大代数不足。"
-                    });
-                }
-            }
+            public MissionMetadata Mission => MGAPipelineTelemetryProbe.Instance.Mission;
+            public Stage1TopologyTelemetry Stage1 => MGAPipelineTelemetryProbe.Instance.Stage1;
+            public Stage2WindowTelemetry Stage2 => MGAPipelineTelemetryProbe.Instance.Stage2;
+            public Stage3EvolutionTelemetry Stage3 => MGAPipelineTelemetryProbe.Instance.Stage3;
+            public Stage4HealingTelemetry Stage4 => MGAPipelineTelemetryProbe.Instance.Stage4;
 
             public void ExportToFile(string path)
             {
@@ -772,123 +745,6 @@ namespace KSPGMAT.MGA.Telemetry
             {
                 MGAPipelineTelemetryProbe.PrintConsoleSummary();
             }
-        }
-
-        public class MissionHeader
-        {
-            public string DeparturePlanet { get; set; }
-            public string ArrivalPlanet { get; set; }
-            public List<string> UserGoalWaypoints { get; set; } = new List<string>();
-            public double DepartureEpochUT { get; set; }
-            public string DepartureEpochStr { get; set; }
-            public double SearchSpanDays { get; set; }
-            public double VesselMaxDeltaVMs { get; set; }
-            public double MaxDsmDeltaVMs { get; set; }
-            public bool NoInsertionBurn { get; set; }
-            public double TotalComputeTimeSec { get; set; }
-            public bool SolvedSuccessfully { get; set; }
-        }
-
-        public class TopologyCandidateEntry
-        {
-            public int Rank { get; set; }
-            public string SequenceSignature { get; set; }
-            public List<string> FlybyChain { get; set; } = new List<string>();
-            public string Sequence { get; set; }
-            public bool IsFeasible { get; set; }
-            public bool IsPhysicallyReachable { get; set; }
-            public double TotalDeficitMs { get; set; }
-            public double TotalEnergyDeficitMs { get; set; }
-            public double EstimatedLaunchDvMs { get; set; }
-            public double EstimatedTotalDvMs { get; set; }
-            public int ResonanceCount { get; set; }
-            public string SummaryRationale { get; set; }
-            public double MaxSingleLegDeficitMs { get; set; }
-            public List<LegReachabilityMetric> Legs { get; set; } = new List<LegReachabilityMetric>();
-        }
-
-        public class LegReachabilityMetric
-        {
-            public int LegIndex { get; set; }
-            public string FromBody { get; set; }
-            public string ToBody { get; set; }
-            public bool IsResonance { get; set; }
-            public double R1Au { get; set; }
-            public double R2Au { get; set; }
-            public double ATransAu { get; set; }
-            public double VReqKms { get; set; }
-            public double VMaxKms { get; set; }
-            public double EnergyDeficitMs { get; set; }
-            public double ReqTurnDeg { get; set; }
-            public double AvailTurnDeg { get; set; }
-            public double TurnDeficitMs { get; set; }
-            public double PhaseDeltaDeg { get; set; }
-            public double TotalLegDeficitMs { get; set; }
-            public bool IsFeasible { get; set; }
-            public string Rationale { get; set; }
-        }
-
-        public class IslandConvergenceRecord
-        {
-            public int TopologyIndex { get; set; }
-            public string TopologyName { get; set; }
-            public int IslandIndex { get; set; }
-            public string EpochStr { get; set; }
-            public double BestTotalDvMs { get; set; }
-            public double LaunchDvMs { get; set; }
-            public double DsmDvMs { get; set; }
-            public bool IsConverged { get; set; }
-        }
-
-        public class LegBoundsMetric
-        {
-            public int LegIndex { get; set; }
-            public string LegName { get; set; }
-            public string TransferType { get; set; }
-            public double RefPeriodDays { get; set; }
-            public double MinToFDays { get; set; }
-            public double MaxToFDays { get; set; }
-            public double MinRatio { get; set; }
-            public double MaxRatio { get; set; }
-            public string StatusNote { get; set; }
-        }
-
-        public class LegMechanicsRecord
-        {
-            public int LegIndex { get; set; }
-            public string LegName { get; set; }
-            public string FromBody { get; set; }
-            public string ToBody { get; set; }
-            public double DepEpochUT { get; set; }
-            public double ArrEpochUT { get; set; }
-            public string DepUtcStr { get; set; }
-            public string ArrUtcStr { get; set; }
-            public double ToFDays { get; set; }
-            public double VInfInKms { get; set; }
-            public double VInfOutKms { get; set; }
-            public double DeltaVInfKms { get; set; }
-            public double ActualTurnDeg { get; set; }
-            public double MaxTurnDeg { get; set; }
-            public double TurnAngleDeg { get; set; }
-            public double RpKm { get; set; }
-            public double RSafeKm { get; set; }
-            public double FlybyAltKm { get; set; }
-            public double SafeAltMarginKm { get; set; }
-            public double FlybyDvMs { get; set; }
-            public double DsmDvMs { get; set; }
-            public double DsmEta { get; set; }
-            public double DsmRadiusAu { get; set; }
-            public double BMagKm { get; set; }
-            public bool IsFlybyPhysical { get; set; }
-            public bool IsFeasible { get; set; }
-            public string Note { get; set; }
-        }
-
-        public class RootCauseFinding
-        {
-            public string Severity { get; set; }
-            public string Stage { get; set; }
-            public string Description { get; set; }
         }
 
         public static void PrintConsoleSummary()

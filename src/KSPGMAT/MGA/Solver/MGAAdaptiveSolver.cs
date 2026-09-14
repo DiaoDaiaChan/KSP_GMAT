@@ -273,7 +273,7 @@ namespace KSPGMAT.MGA
     /// </summary>
     public static class MGAAdaptiveSolver
     {
-        public static Telemetry.MGAPipelineTelemetryProbe.ReportData LastPipelineReport { get; set; }
+        public static Telemetry.MGAPipelineTelemetryProbe.ReportData LastPipelineReport => Telemetry.MGAPipelineTelemetryProbe.ReportData.Instance;
 
         /// <summary>
         /// 判定是否为"深井爬升"任务: 出发内行星 → 途经显著内深势阱天体(如 Mercury) → 到达远外行星。
@@ -335,22 +335,17 @@ namespace KSPGMAT.MGA
 
             MGAStepProfiler.Reset();
             Telemetry.MGAPipelineTelemetryProbe.Reset();
+            Telemetry.MGAPipelineTelemetryProbe.StartMission(
+                config.DeparturePlanet,
+                config.ArrivalPlanet,
+                config.FlybySequence,
+                config.SearchStartUT,
+                (config.SearchEndUT - config.SearchStartUT) / 86400.0,
+                (config.ConstrainByVesselDeltaV && config.VesselMaxDeltaVMs > 0) ? config.VesselMaxDeltaVMs : 4000.0,
+                config.MaxDsmDeltaVMs > 0 ? config.MaxDsmDeltaVMs : 500.0,
+                0.0
+            );
             var reportSw = System.Diagnostics.Stopwatch.StartNew();
-            var mathReport = new Telemetry.MGAPipelineTelemetryProbe.ReportData();
-            LastPipelineReport = mathReport;
-
-            mathReport.Mission = new Telemetry.MGAPipelineTelemetryProbe.MissionHeader
-            {
-                DeparturePlanet = config.DeparturePlanet,
-                ArrivalPlanet = config.ArrivalPlanet,
-                UserGoalWaypoints = config.FlybySequence != null ? new List<string>(config.FlybySequence) : new List<string>(),
-                DepartureEpochUT = config.SearchStartUT,
-                DepartureEpochStr = GMATClient.FormatUtcGregorian(config.SearchStartUT),
-                SearchSpanDays = (config.SearchEndUT - config.SearchStartUT) / 86400.0,
-                VesselMaxDeltaVMs = (config.ConstrainByVesselDeltaV && config.VesselMaxDeltaVMs > 0) ? config.VesselMaxDeltaVMs : 4000.0,
-                MaxDsmDeltaVMs = config.MaxDsmDeltaVMs > 0 ? config.MaxDsmDeltaVMs : 500.0,
-                NoInsertionBurn = config.NoInsertionBurn
-            };
 
             // 终端捕获模型物理对齐 (GUI 预留接口统一自适应推导)
             if (config.ArrivalOrbitType == MGAArrivalOrbitType.Flyby || config.NoInsertionBurn)
@@ -464,54 +459,7 @@ namespace KSPGMAT.MGA
                 }
             }
 
-            // 记录已评估候选拓扑与物理赤字明细至数学诊断报表
-            if (MGAEphemerisReachabilityAnalyzer.LastEvaluatedChains != null)
-            {
-                int rk = 1;
-                foreach (var ec in MGAEphemerisReachabilityAnalyzer.LastEvaluatedChains)
-                {
-                    var topoEntry = new Telemetry.MGAPipelineTelemetryProbe.TopologyCandidateEntry
-                    {
-                        Rank = rk++,
-                        SequenceSignature = string.Join("-", ec.FlybyChain),
-                        FlybyChain = new List<string>(ec.FlybyChain),
-                        IsFeasible = ec.IsFeasible,
-                        TotalDeficitMs = ec.TotalDeficitMs,
-                        EstimatedLaunchDvMs = ec.EstimatedLaunchDvMs,
-                        EstimatedTotalDvMs = ec.EstimatedTotalDvMs,
-                        ResonanceCount = ec.ResonanceCount,
-                        SummaryRationale = ec.SummaryRationale
-                    };
-                    if (ec.LegReports != null)
-                    {
-                        int legIdx = 1;
-                        foreach (var lr in ec.LegReports)
-                        {
-                            topoEntry.Legs.Add(new Telemetry.MGAPipelineTelemetryProbe.LegReachabilityMetric
-                            {
-                                LegIndex = legIdx++,
-                                FromBody = lr.FromBody,
-                                ToBody = lr.ToBody,
-                                IsResonance = lr.IsResonance,
-                                R1Au = lr.FromRadiusAu,
-                                R2Au = lr.ToRadiusAu,
-                                ATransAu = (lr.FromRadiusAu + lr.ToRadiusAu) * 0.5,
-                                VReqKms = lr.ReqHeliocentricSpeedKms,
-                                VMaxKms = lr.MaxAchievableHeliocentricSpeedKms,
-                                EnergyDeficitMs = lr.EnergyDeficitMs,
-                                ReqTurnDeg = lr.ReqTurnDeg,
-                                AvailTurnDeg = lr.AvailTurnDeg,
-                                TurnDeficitMs = lr.TurnDeficitMs,
-                                PhaseDeltaDeg = lr.PhaseDeltaDeg,
-                                TotalLegDeficitMs = lr.EnergyDeficitMs,
-                                IsFeasible = lr.EnergyDeficitMs <= mathReport.Mission.MaxDsmDeltaVMs,
-                                Rationale = lr.Rationale
-                            });
-                        }
-                    }
-                    mathReport.EvaluatedTopologies.Add(topoEntry);
-                }
-            }
+            // 候选拓扑评估完成，进入演化计算阶段
 
             var allRawSolutions = new List<MGASolution>();
             int totalTopos = candidateChains.Count;
@@ -615,57 +563,7 @@ namespace KSPGMAT.MGA
                     }
                 }
 
-                // 记录搜索空间与 ToF 边界
-                if (subCfg.LegToFBounds != null && mathReport.SearchBounds.Count == 0)
-                {
-                    var fullLegBodies = new List<string> { subCfg.DeparturePlanet };
-                    if (subCfg.FlybySequence != null) fullLegBodies.AddRange(subCfg.FlybySequence);
-                    fullLegBodies.Add(subCfg.ArrivalPlanet);
 
-                    for (int lb = 0; lb < subCfg.LegToFBounds.Count && lb < fullLegBodies.Count - 1; lb++)
-                    {
-                        string fBody = fullLegBodies[lb];
-                        string tBody = fullLegBodies[lb + 1];
-                        var (bMin, bMax) = subCfg.LegToFBounds[lb];
-
-                        bool isRes = fBody.Equals(tBody, StringComparison.OrdinalIgnoreCase);
-                        var pF = SolarSystemCatalog.GetPlanet(fBody);
-                        var pT = SolarSystemCatalog.GetPlanet(tBody);
-                        double refP = 365.25;
-                        string tType = "异星转移";
-                        if (isRes && pF != null && pF.SMA > 0)
-                        {
-                            tType = "同星共振";
-                            refP = 2.0 * Math.PI * Math.Sqrt(Math.Pow(pF.SMA, 3.0) / SolarSystemCatalog.SunMu) / 86400.0;
-                        }
-                        else if (pF != null && pT != null && pF.SMA > 0 && pT.SMA > 0)
-                        {
-                            double aH = (pF.SMA + pT.SMA) * 0.5;
-                            refP = Math.PI * Math.Sqrt(Math.Pow(aH, 3.0) / SolarSystemCatalog.SunMu) / 86400.0;
-                            tType = (Math.Max(pF.SMA, pT.SMA) / Math.Min(pF.SMA, pT.SMA) <= MGADefaults.AdjacentTransferSmaRatioThreshold) ? "相邻内行星单弧霍曼" : "跨越/外行星高能转移";
-                        }
-
-                        lock (aggLock)
-                        {
-                            // 仅首个拓扑填充一次，避免拓扑并发下重复/竞态写入
-                            if (mathReport.SearchBounds.Count == 0)
-                            {
-                                mathReport.SearchBounds.Add(new Telemetry.MGAPipelineTelemetryProbe.LegBoundsMetric
-                                {
-                                    LegIndex = lb + 1,
-                                    LegName = $"{fBody} ➔ {tBody}",
-                                    TransferType = tType,
-                                    RefPeriodDays = refP,
-                                    MinToFDays = bMin,
-                                    MaxToFDays = bMax,
-                                    MinRatio = refP > 0 ? (bMin / refP) : 0,
-                                    MaxRatio = refP > 0 ? (bMax / refP) : 0,
-                                    StatusNote = $"已锁定开普勒基准 [{bMin:F1}, {bMax:F1}] 天"
-                                });
-                            }
-                        }
-                    }
-                }
 
                 string firstTarget = null;
                 if (subCfg.FlybySequence != null && subCfg.FlybySequence.Count > 0)
@@ -743,7 +641,7 @@ namespace KSPGMAT.MGA
                         }
                     }
 
-                    // 共享聚合态 (globalBest / mathReport.IslandRecords / allRawSolutions) 统一锁保护：
+                    // 共享聚合态 (globalBest / allRawSolutions) 统一锁保护：
                     // 仅保护共享内存集合更新与标量刷新，严禁在临界区内包裹物理耗时演化与自愈重计算！
                     lock (aggLock)
                     {
@@ -760,20 +658,7 @@ namespace KSPGMAT.MGA
                             }
                         }
 
-                        int islIdx = 1;
-                        foreach (var s in rawSols.Deterministic().Take(2))
-                        {
-                            mathReport.IslandRecords.Add(new Telemetry.MGAPipelineTelemetryProbe.IslandConvergenceRecord
-                            {
-                                TopologyIndex = tIdx + 1,
-                                TopologyName = topoSummary,
-                                IslandIndex = islIdx++,
-                                EpochStr = GMATClient.FormatUtcGregorian(s.DepartureUT),
-                                BestTotalDvMs = s.TotalDeltaVKms * 1000.0,
-                                LaunchDvMs = s.LaunchDeltaVKms * 1000.0,
-                                DsmDvMs = s.TotalDsmDeltaVKms * 1000.0
-                            });
-                        }
+
 
                         foreach (var s in rawSols)
                         {
@@ -789,9 +674,8 @@ namespace KSPGMAT.MGA
             if (allRawSolutions.Count == 0)
             {
                 reportSw.Stop();
-                mathReport.Mission.TotalComputeTimeSec = reportSw.Elapsed.TotalSeconds;
-                mathReport.DeduceRootCauses();
-                mathReport.ExportToFile("reports/mga_math_diagnostic_report.md");
+                Telemetry.MGAPipelineTelemetryProbe.EndMission(false);
+                Telemetry.MGAPipelineTelemetryProbe.ExportReportToFile("reports/mga_math_diagnostic_report.md");
                 return allRawSolutions;
             }
 
@@ -941,67 +825,12 @@ namespace KSPGMAT.MGA
             if (bestSol != null)
             {
                 MGAFlybyDynamicsHelper.EnrichSolutionFlybyDynamics(bestSol);
-                mathReport.BestLaunchDvMs = bestSol.LaunchDeltaVKms * 1000.0;
-                mathReport.BestTotalDsmMs = bestSol.TotalDsmDeltaVKms * 1000.0;
-                mathReport.BestTotalDvMs = bestSol.TotalDeltaVKms * 1000.0;
-                mathReport.BestTotalFlightDays = bestSol.TotalFlightDays;
-                mathReport.BestDepartureEpochStr = GMATClient.FormatUtcGregorian(bestSol.DepartureUT);
-                mathReport.Mission.SolvedSuccessfully = bestSol.TotalDeltaVKms * 1000.0 <= mathReport.Mission.VesselMaxDeltaVMs;
-
-                if (bestSol.Legs != null)
-                {
-                    for (int i = 0; i < bestSol.Legs.Count; i++)
-                    {
-                        var l = bestSol.Legs[i];
-                        var nextL = (i + 1 < bestSol.Legs.Count) ? bestSol.Legs[i + 1] : null;
-                        var pObj = SolarSystemCatalog.GetPlanet(l.ToBody);
-                        double rSafe = (pObj != null && pObj.SafeRadiusKm > 0) ? pObj.SafeRadiusKm : MGADefaults.GetBodySafeRadiusKm(l.ToBody);
-                        double pMu = pObj != null ? pObj.Mu : MGADefaults.GetBodyMu(l.ToBody);
-                        double maxTurn = MGAFlybyDynamicsHelper.ComputeMaxTurnAngleDeg(pMu, rSafe, l.VInfArrivalKms.magnitude);
-
-                        double vIn = l.VInfArrivalKms.magnitude;
-                        double vOut = nextL != null ? nextL.VInfDepartureKms.magnitude : vIn;
-                        double deltaVinf = Math.Abs(vIn - vOut);
-                        double dsmVal = l.DSM != null ? l.DSM.DeltaVMs : 0.0;
-                        double dsmRad = l.DSM != null ? (l.DSM.PositionKm.magnitude / MGADefaults.AU_KM) : 0.0;
-                        double dsmEta = (l.DSM != null && l.ToFDays > 0) ? (l.DSM.EpochOffsetSec / (l.ToFDays * MGADefaults.SecondsPerDay)) : 0.0;
-                        double bMag = l.BPlane != null ? l.BPlane.BMagKm : 0.0;
-
-                        bool isPhys = l.FlybyDeltaVKms < 0.001 && l.FlybyTurningAngleDeg <= (maxTurn + 1.0) && l.FlybyPeriapsisRadiusKm >= (rSafe - 100.0);
-
-                        mathReport.BestSolutionLegs.Add(new Telemetry.MGAPipelineTelemetryProbe.LegMechanicsRecord
-                        {
-                            LegIndex = i + 1,
-                            FromBody = l.FromBody,
-                            ToBody = l.ToBody,
-                            DepEpochUT = l.DepartureUT,
-                            ArrEpochUT = l.ArrivalUT,
-                            DepUtcStr = GMATClient.FormatUtcGregorian(l.DepartureUT),
-                            ArrUtcStr = GMATClient.FormatUtcGregorian(l.ArrivalUT),
-                            ToFDays = l.ToFDays,
-                            VInfInKms = vIn,
-                            VInfOutKms = vOut,
-                            DeltaVInfKms = deltaVinf,
-                            ActualTurnDeg = l.FlybyTurningAngleDeg,
-                            MaxTurnDeg = maxTurn,
-                            RpKm = l.FlybyPeriapsisRadiusKm,
-                            RSafeKm = rSafe,
-                            FlybyDvMs = l.FlybyDeltaVKms * 1000.0,
-                            DsmDvMs = dsmVal,
-                            DsmRadiusAu = dsmRad,
-                            DsmEta = dsmEta,
-                            BMagKm = bMag,
-                            IsFlybyPhysical = isPhys,
-                            Note = isPhys ? "100% 物理闭环" : "需调相或增加共振"
-                        });
-                    }
-                }
             }
 
             reportSw.Stop();
-            mathReport.Mission.TotalComputeTimeSec = reportSw.Elapsed.TotalSeconds;
-            mathReport.DeduceRootCauses();
-            mathReport.ExportToFile("reports/mga_math_diagnostic_report.md");
+            Telemetry.MGAPipelineTelemetryProbe.RecordFinalSolutions(finalSolutions);
+            Telemetry.MGAPipelineTelemetryProbe.EndMission(finalSolutions.Count > 0);
+            Telemetry.MGAPipelineTelemetryProbe.ExportReportToFile("reports/mga_math_diagnostic_report.md");
 
             // 打印全流程细粒度步骤耗时排名与最大瓶颈诊断
             MGAStepProfiler.PrintSummary();
