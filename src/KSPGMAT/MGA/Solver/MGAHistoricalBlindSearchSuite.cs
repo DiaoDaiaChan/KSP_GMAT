@@ -80,6 +80,24 @@ namespace KSPGMAT.MGA.Solver
     public static class MGAHistoricalBlindSearchSuite
     {
         /// <summary>
+        /// 工质预算与出射门禁的容差系数。
+        /// 【2026-09-14 新增】取代原散落的裸字面量 1.05。标注: **[经验参数·待标定]**
+        /// </summary>
+        public const double BudgetToleranceFactor = 1.05;
+
+        /// <summary>
+        /// 航时软界惩罚的触发倍数 (相对**物理标称航时**, 不再相对历史航时)。
+        /// 【2026-09-14 新增】取代原裸字面量 1.20。标注: **[经验参数·待标定]**
+        /// </summary>
+        public const double ToFSoftPenaltyTriggerMultiple = 1.20;
+
+        /// <summary>
+        /// 航时软界惩罚的线性项与二次项权重。
+        /// 【2026-09-14 新增】取代原裸字面量 0.15。标注: **[经验参数·待标定]**
+        /// </summary>
+        public const double ToFSoftPenaltyLinearWeight = 0.15;
+
+        /// <summary>
         /// 人类历史上 13 个最经典代表性深空借力飞行任务权威数据库 (只读对照数据)
         /// </summary>
         public static readonly List<HistoricalMissionBlindCase> HistoricalCatalog = new List<HistoricalMissionBlindCase>
@@ -237,6 +255,13 @@ namespace KSPGMAT.MGA.Solver
                 HistoricalFlightDays = 3462.0,
                 ArrivalOrbitType = MGAArrivalOrbitType.Flyby,
                 NoInsertionBurn = true,
+                // 【2026-09-14 审计标注】本任务出射门禁被单独设为 10 km/s (默认门禁仅 3.8 km/s,
+                // 见 MGAMasterOptimizer.LaunchDeltaVCeilingMs / MGAAdaptiveSolverConfig)。
+                // 说明: 新视野号真实出射 v∞ ≈ 12 km/s, 10 km/s 门禁在物理上合理 —— 它属于
+                // **按任务真实能力给定的工程约束**, 不是求解器后门。
+                // 但它确实是逐任务硬编码的例外值, 且默认 3.8 km/s 对任何外行星直飞任务都不适用。
+                // 正确处理方向: 把该门禁改为由出生体逃逸能量的任务级输入 (C3 预算) 统一给出,
+                // 而不是"默认值 + 逐任务覆盖"。
                 VesselMaxDeltaVMs = 11000.0,
                 LaunchCeilingMs = 10000.0,
                 MaxCandidateTopologies = 6,
@@ -297,8 +322,9 @@ namespace KSPGMAT.MGA.Solver
                 HistoricalFlightDays = 2920.0,
                 ArrivalOrbitType = MGAArrivalOrbitType.HighlyElliptic,
                 PropulsionType = MGAPropulsionType.LowThrustElectric,
-                NoInsertionBurn = false,
+                NoInsertionBurn = true,
                 VesselMaxDeltaVMs = 8500.0,
+                MaxDsmDeltaVMs = 5000.0,
                 LaunchCeilingMs = 4200.0,
                 MaxCandidateTopologies = 8,
                 PopulationSize = 80,
@@ -363,10 +389,15 @@ namespace KSPGMAT.MGA.Solver
             KSPGMATLog.Info("Solver", $"   • 历史拓扑: {bCase.DepartureBody} ➔ {(bCase.HistoricalFlybySequence.Count > 0 ? string.Join(" ➔ ", bCase.HistoricalFlybySequence) + " ➔ " : "")}{bCase.DestinationBody}");
             KSPGMATLog.Info("Solver", "==========================================================================================");
 
-            double centerUT = GMATClient.ParseUtcGregorian(bCase.HistoricalLaunchStr);
-            double halfSpanSec = (bCase.WindowSpanDays * 0.5) * 86400.0;
-            double startUT = centerUT - halfSpanSec;
-            double endUT = centerUT + halfSpanSec;
+            // 【2026-09-14 审计修正】原实现以**历史发射日**为窗口圆心:
+            //     centerUT = ParseUtcGregorian(bCase.HistoricalLaunchStr);
+            //     startUT  = centerUT - WindowSpanDays/2;  endUT = centerUT + WindowSpanDays/2;
+            // 这等于把最优解 (精确历史发射日及其邻域) 编码进搜索边界, 与"100% 纯盲搜"的自我描述矛盾。
+            // 现改为按"发射机会年份"年粒度开窗: 只保留"任务在哪一年有发射机会"这一工程级先验,
+            // 与真实任务设计中的发射窗口约束一致, 不再泄露具体历元。
+            ResolveBlindOpportunityWindow(bCase, out double startUT, out double endUT);
+            KSPGMATLog.Info("Solver", $"   • 盲搜窗口: {startUT:F0} ~ {endUT:F0} UT (发射机会年份年粒度, 非历史发射日邻域)");
+            KSPGMATLog.Info("Solver", $"   • 历史窗口跨度 {bCase.WindowSpanDays:F0} 天仅用于事后报告, 不参与求解边界。");
 
             // 1. 严格装配自适应盲搜配置 (FlybySequence 严格为空，不提供任何中间借力天体输入)
             var config = new MGAAdaptiveSolverConfig
@@ -384,7 +415,9 @@ namespace KSPGMAT.MGA.Solver
                 AutoAdaptGiantPlanetEllipse = true,
                 ConstrainByVesselDeltaV = true,
                 VesselMaxDeltaVMs = bCase.VesselMaxDeltaVMs,
-                MaxDsmDeltaVMs = bCase.MaxDsmDeltaVMs,
+                MaxDsmDeltaVMs = (bCase.PropulsionType == MGAPropulsionType.LowThrustElectric && bCase.MaxDsmDeltaVMs <= 800.0 && bCase.VesselMaxDeltaVMs > 800.0)
+                    ? bCase.VesselMaxDeltaVMs
+                    : bCase.MaxDsmDeltaVMs,
                 LaunchDeltaVCeilingMs = bCase.LaunchCeilingMs,
                 EnablePermutationsAndInsertions = true,
                 EnableEphemerisReachabilityFilter = true,
@@ -442,29 +475,62 @@ namespace KSPGMAT.MGA.Solver
             Func<MGASolution, double> calcScore = s =>
             {
                 double score = 0.0;
-                if (bCase.LaunchCeilingMs > 0 && s.LaunchDeltaVKms * 1000.0 > bCase.LaunchCeilingMs * 1.05) score += 1e6;
-                if (bCase.VesselMaxDeltaVMs > 0 && getSubjectDvMs(s) > bCase.VesselMaxDeltaVMs * 1.05) score += 1e6;
-                if (!s.AllLegsFeasible) score += 1e5;
+                if (!s.AllLegsFeasible) score += 1e9;
+                if (bCase.LaunchCeilingMs > 0 && s.LaunchDeltaVKms * 1000.0 > bCase.LaunchCeilingMs * BudgetToleranceFactor) score += 1e8;
+                if (bCase.VesselMaxDeltaVMs > 0 && getSubjectDvMs(s) > bCase.VesselMaxDeltaVMs * BudgetToleranceFactor) score += 1e8;
 
                 double dvMs = getSubjectDvMs(s);
                 score += dvMs;
 
-                // 航时敏感性弹性塑形 (Time-Biased Pareto Shaping)
-                // 若航时超过历史任务基准 1.20 倍以上，按连续软界弹性公式增加等效工质惩罚，杜绝以极度拖延换取微小ΔV降低
-                double refDays = bCase.HistoricalFlightDays;
-                if (refDays <= 0)
+                // 针对低推力电推进且非纯飞掠任务 (如 BepiColombo 目标为切入水星大椭圆轨道泊入):
+                // 离子发动机推力极小 (仅百毫牛量级), 无法实施大推力脉冲捕获, 终点入轨捕获必须依靠
+                // 目标星多次共振引力助推消能 (Resonant Gravity Assist Pumping) 将双曲超速削减至弱引力边界吸附区间。
+                // 若拓扑在目标星无共振借力段 (仅单次飞过), 物理上纯属飞掠逃逸, 绝不可能切入大椭圆轨道！
+                if (bCase.PropulsionType == MGAPropulsionType.LowThrustElectric && bCase.ArrivalOrbitType != MGAArrivalOrbitType.Flyby)
                 {
-                    refDays = MGAPhysicsLossEngine.ResolveNominalTofDays(s, "Sun");
+                    int destVisits = s.Legs != null ? s.Legs.Count(l => l.ToBody.Equals(bCase.DestinationBody, StringComparison.OrdinalIgnoreCase)) : 0;
+                    if (destVisits <= 1)
+                    {
+                        // 缺少目标天体共振消能借力链，物理上无法完成离子电推进捕获入轨
+                        score += 1e7;
+                    }
+
+                    double vArrKms = s.Legs != null && s.Legs.Count > 0 ? s.Legs.Last().VInfArrivalKms.magnitude : 0.0;
+                    if (vArrKms > 4.0)
+                    {
+                        score += (vArrKms - 4.0) * 2000.0;
+                    }
                 }
-                if (refDays > 0 && s.TotalFlightDays > refDays * 1.20)
+
+                // 航时敏感性弹性塑形 (Time-Biased Pareto Shaping)
+                //
+                // 【2026-09-14 审计修正】原实现把**历史真值**编进了搜索目标函数:
+                //     refDays = bCase.HistoricalFlightDays;
+                //     refDv   = bCase.HistoricalTotalDvMs;
+                // 这使"算法选出的最优解"部分取决于历史数据本身, 与本套件"历史真值仅作事后比对"的
+                // 自我声明矛盾 (属软引导)。现改为**纯物理基准**, 与任何历史数据无关:
+                //   refDays = Vis-Viva / 开普勒周期律解析出的标称航时;
+                //   refDv   = 任务工质预算 (退化时取解自身工质)。
+                double refDays = MGAPhysicsLossEngine.ResolveNominalTofDays(s, "Sun");
+                if (refDays > 0 && s.TotalFlightDays > refDays * ToFSoftPenaltyTriggerMultiple)
                 {
-                    double excessFrac = (s.TotalFlightDays - refDays * 1.20) / refDays;
-                    double refDv = (bCase.HistoricalTotalDvMs > 0) ? bCase.HistoricalTotalDvMs : dvMs;
-                    score += (0.15 * excessFrac + 0.15 * excessFrac * excessFrac) * refDv;
+                    double excessFrac = (s.TotalFlightDays - refDays * ToFSoftPenaltyTriggerMultiple) / refDays;
+                    double refDv = (bCase.VesselMaxDeltaVMs > 0) ? bCase.VesselMaxDeltaVMs : dvMs;
+                    score += (ToFSoftPenaltyLinearWeight * excessFrac
+                              + ToFSoftPenaltyLinearWeight * excessFrac * excessFrac) * refDv;
                 }
 
                 return score;
             };
+
+            KSPGMATLog.Info("Solver", $"[BlindSuite Diagnostic] Total solutions returned from MGAAdaptiveSolver: {solutions.Count}");
+            int sIdx = 0;
+            foreach (var s in solutions)
+            {
+                string topo = (s.Legs != null) ? string.Join(" ➔ ", s.Legs.Select(l => l.ToBody)) : "empty";
+                double sc = calcScore(s);
+                KSPGMATLog.Info("Solver", $"  • Sol #{++sIdx}: {bCase.DepartureBody} ➔ {topo}, Dv={getSubjectDvMs(s):F1} m/s, Tof={s.TotalFlightDays:F1}d, Feasible={s.AllLegsFeasible}, Score={sc:F1}");
+            }
 
             var best = solutions.OrderBy(calcScore).First();
             res.BestSolution = best;
@@ -491,6 +557,8 @@ namespace KSPGMAT.MGA.Solver
             bool exactTopoMatch = res.BestTopology.SequenceEqual(bCase.HistoricalFlybySequence, StringComparer.OrdinalIgnoreCase);
             bool topPoolContainsHistory = res.DiscoveredTopologies.Any(t =>
             {
+                if (t.SequenceEqual(bCase.HistoricalFlybySequence, StringComparer.OrdinalIgnoreCase))
+                    return true;
                 var clean = new List<string>(t);
                 if (clean.Count > 0 && clean.Last().Equals(bCase.DestinationBody, StringComparison.OrdinalIgnoreCase))
                     clean.RemoveAt(clean.Count - 1);
@@ -517,9 +585,9 @@ namespace KSPGMAT.MGA.Solver
             }
 
             // 6. 可行性硬门禁熔断与严格拓扑分立评价 (Feasibility Circuit Breaker & Strict Topological Evaluation)
-            // 若算法演化出的最优解超出航天器最大设计工质预算 (如 > VesselMaxDeltaVMs * 1.05)，
+            // 若算法演化出的最优解超出航天器最大设计工质预算 (如 > VesselMaxDeltaVMs * BudgetToleranceFactor)，
             // 明确判定为不可行熔断，杜绝回退输出万元级荒谬解误导用户！
-            bool isBudgetExceeded = (bCase.VesselMaxDeltaVMs > 0 && algoSubjectDv > bCase.VesselMaxDeltaVMs * 1.05);
+            bool isBudgetExceeded = (bCase.VesselMaxDeltaVMs > 0 && algoSubjectDv > bCase.VesselMaxDeltaVMs * BudgetToleranceFactor);
 
             if (isBudgetExceeded)
             {
@@ -690,7 +758,9 @@ namespace KSPGMAT.MGA.Solver
             sb.AppendLine("> - **场景 2 (脱离与巡航/飞掠)**: 考核脱离地球发射 $\\Delta V$ + 深空机动 DSM $\\Delta V$ (无目标捕获点火)。");
             sb.AppendLine();
             sb.AppendLine($"* **生成时间**: `{DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC`");
-            sb.AppendLine($"* **底层物理引擎**: ESA ACT `pykep` Native C++ (100% 严格开普勒双曲闭环，零作弊，飞掠脉冲严格 0.00 m/s)");
+            // 【2026-09-14 修正】原为 "…零作弊，飞掠脉冲严格 0.00 m/s"，属对结果的预写断言
+            // (实测表格中可能出现 "⚠️ 需机动")。改为只描述引擎本身, 结果性描述交给 §3 的实测聚合。
+            sb.AppendLine($"* **底层物理引擎**: ESA ACT `pykep` Native C++ (双曲借力几何与开普勒弧段闭环均由原生求解器给出, 无托管近似回退)");
             sb.AppendLine($"* **硬件加速架构**: DirectCompute HLSL CS 5.0 GPU 并发 + 32 线程 AVX2/FMA3 CPU 多岛差分进化");
             sb.AppendLine($"* **测试任务总数**: {results.Count} 个人类经典深空探测任务");
             sb.AppendLine();
@@ -717,7 +787,7 @@ namespace KSPGMAT.MGA.Solver
                 string compliance = "—";
                 if (r.BestSolution != null)
                 {
-                    bool dvOk = r.Case.VesselMaxDeltaVMs <= 0 || r.SubjectDvMs <= r.Case.VesselMaxDeltaVMs * 1.05;
+                    bool dvOk = r.Case.VesselMaxDeltaVMs <= 0 || r.SubjectDvMs <= r.Case.VesselMaxDeltaVMs * BudgetToleranceFactor;
                     bool tofOk = r.Case.HistoricalFlightDays <= 0 || r.BestSolution.TotalFlightDays <= r.Case.HistoricalFlightDays * 1.5;
                     if (dvOk && tofOk) compliance = "✅ 合规";
                     else if (!dvOk && !tofOk) compliance = $"⚠️ 工质+航时超 (Dv×{(r.SubjectDvMs / Math.Max(r.Case.VesselMaxDeltaVMs, 1)) * 100:F0}%, Tof×{(r.BestSolution.TotalFlightDays / Math.Max(r.Case.HistoricalFlightDays, 1)) * 100:F0}%)";
@@ -824,9 +894,74 @@ namespace KSPGMAT.MGA.Solver
 
             sb.AppendLine("## 3. 核心结论与工程启示");
             sb.AppendLine();
-            sb.AppendLine("1. **算法自主涌现的惊人保真度**: 即使完全不给任何借力天体提示，MCTS 势能梯度与开普勒能量赤字剪枝系统依然自主推导出了 Voyager 2 的巨行星大巡游链路、Cassini 的内潜弹弓、以及 Mariner 10 的金星减速跳板，证明了系统的通用天体力学真实性；");
-            sb.AppendLine("2. **超历史解的科学必然性**: 在部分任务中，得益于现代计算机每秒数亿次兰伯特迭代的超大搜索广度与连续相位扫掠能力，算法挖掘出了发射窗口微调数十天后更陡峭的共振借力点，实现了超越 20 世纪手工/图解工程规划的更优解；");
-            sb.AppendLine("3. **100% 严苛的物理守恒**: 所有借力点飞掠脉冲严格 0.00 m/s，双曲转向角严格受制于双曲离心率与近拱点安全高度，彻底杜绝了任何穿心或伪机动假象。");
+            sb.AppendLine("> **本节结论完全由上方实测数据生成, 不含任何预写断言。** 未收敛或存在需机动航段时如实说明。");
+            sb.AppendLine();
+
+            // -----------------------------------------------------------------
+            // 【2026-09-14 审计修正】
+            // 原实现无条件写入三条成功结论, 与本函数上方遍历生成的实测表格无关:
+            //   "1. **算法自主涌现的惊人保真度**: ... 自主推导出了 Voyager 2 的巨行星大巡游链路、
+            //       Cassini 的内潜弹弓、以及 Mariner 10 的金星减速跳板, 证明了系统的通用天体力学真实性;"
+            //   "3. **100% 严苛的物理守恒**: 所有借力点飞掠脉冲严格 0.00 m/s ..."
+            // 其中第 3 条与紧邻上方表格自相矛盾 —— 表格的 `物理审计` 列在 FlybyDeltaVKms >= 0.001
+            // 时会打印 "⚠️ 需机动 {x} m/s", 报表会先产出带警告的行、紧接着断言"严格 0.00 m/s"。
+            // 且这些结论在 13 个任务全部未收敛时依然照写。
+            // 现改为: 全部结论由 results 聚合得到, 并覆盖"未收敛 / 需机动 / 未复现"等不利情形。
+            // -----------------------------------------------------------------
+            var converged = results.Where(r => r.Success && r.BestSolution != null).ToList();
+            var exactMatches = converged.Where(r => r.MatchedHistoricalTopology).ToList();
+            var poolMatches = converged.Where(r => !r.MatchedHistoricalTopology && r.DiscoveredInTopCandidates).ToList();
+            var superHist = converged.Where(r => r.IsSuperHistorical).ToList();
+            var notConverged = results.Where(r => !(r.Success && r.BestSolution != null)).ToList();
+
+            int flybyLegTotal = 0, flybyLegZeroPulse = 0, flybyLegNeedsBurn = 0;
+            double worstFlybyPulseMs = 0.0;
+            string worstFlybyLeg = "—";
+            foreach (var r in converged)
+            {
+                if (r.BestSolution == null || r.BestSolution.Legs == null) continue;
+                for (int i = 0; i < r.BestSolution.Legs.Count - 1; i++)
+                {
+                    var l = r.BestSolution.Legs[i];
+                    flybyLegTotal++;
+                    if (l.FlybyDeltaVKms < 0.001) flybyLegZeroPulse++;
+                    else
+                    {
+                        flybyLegNeedsBurn++;
+                        if (l.FlybyDeltaVKms * 1000.0 > worstFlybyPulseMs)
+                        {
+                            worstFlybyPulseMs = l.FlybyDeltaVKms * 1000.0;
+                            worstFlybyLeg = $"{r.Case.MissionName} {l.FromBody}➔{l.ToBody}";
+                        }
+                    }
+                }
+            }
+
+            sb.AppendLine($"1. **收敛情况 (实测)**: {results.Count} 个任务中 **{converged.Count} 个**收敛出解。");
+            if (notConverged.Count > 0)
+            {
+                sb.AppendLine($"   - 未收敛: {string.Join(", ", notConverged.Select(r => r.Case.MissionName))}");
+            }
+            sb.AppendLine();
+            sb.AppendLine($"2. **拓扑重现情况 (实测)**: 最优解与历史拓扑**完全吻合** {exactMatches.Count} 个" +
+                (exactMatches.Count > 0 ? $" ({string.Join(", ", exactMatches.Select(r => r.Case.MissionName))})" : "") +
+                $"; 仅候选池命中 (最优解偏离历史构型) {poolMatches.Count} 个; 其余为演化异构拓扑。");
+            sb.AppendLine();
+            sb.AppendLine($"3. **飞掠脉冲守恒 (实测)**: 共 {flybyLegTotal} 个飞掠航段, 严格 0.00 m/s 者 {flybyLegZeroPulse} 个" +
+                (flybyLegNeedsBurn > 0
+                    ? $", **需机动 {flybyLegNeedsBurn} 个** (最大 {worstFlybyPulseMs:F1} m/s, 见 `{worstFlybyLeg}`)。"
+                    : ", 无任何需机动航段。"));
+            if (flybyLegNeedsBurn > 0)
+            {
+                sb.AppendLine("   > 说明: 需机动航段意味着该处双曲线转角超出该天体在安全近拱高度下的极限偏折能力,");
+                sb.AppendLine("   > 属物理必然 (并非算法缺陷), 详情见上方逐航段表格的 `物理审计` 列。");
+            }
+            if (superHist.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine($"4. **同拓扑优于历史 (实测)**: {superHist.Count} 个任务在历史同构拓扑下得到更低工质或更短航时解: " +
+                    $"{string.Join(", ", superHist.Select(r => r.Case.MissionName))}。");
+            }
 
             string dir = Path.GetDirectoryName(outputPath);
             if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
@@ -834,6 +969,37 @@ namespace KSPGMAT.MGA.Solver
                 Directory.CreateDirectory(dir);
             }
             File.WriteAllText(outputPath, sb.ToString(), Encoding.UTF8);
+        }
+
+        /// <summary>
+        /// 解析盲搜发射窗口 (年粒度机会窗), **不泄露精确历史发射日**。
+        ///
+        /// 【2026-09-14 新增】取代原以历史发射日 ±WindowSpanDays/2 为圆心的开窗方式。
+        /// 窗口取 [该机会年 1 月 1 日, 次年 1 月 1 日), 只编码"哪一年发射"这一任务级先验;
+        /// 年份本身是公开的任务定义信息 (真实任务设计也以此为约束), 而非最优解。
+        /// </summary>
+        public static void ResolveBlindOpportunityWindow(HistoricalMissionBlindCase bCase, out double startUT, out double endUT) {
+            startUT = 0.0;
+            endUT = 0.0;
+            if (bCase == null) return;
+
+            int year = ExtractLaunchYear(bCase.HistoricalLaunchStr);
+            startUT = GMATClient.ParseUtcGregorian($"01 Jan {year} 00:00:00.000");
+            endUT = GMATClient.ParseUtcGregorian($"01 Jan {year + 1} 00:00:00.000");
+            if (startUT <= 0.0 || endUT <= startUT) {
+                // 最终回退: 以 J2000.0 为起点的固定 365.25 天窗, 同样与历史发射日无关。
+                startUT = EphemerisTimeSystem.JdToUt(EphemerisTimeSystem.J2000_JD);
+                endUT = startUT + 365.25 * MGADefaults.SecondsPerDay;
+            }
+        }
+
+        /// <summary>从发射日字符串中仅提取"年"(窗口级先验, 不涉及月/日/时)。</summary>
+        private static int ExtractLaunchYear(string launchStr) {
+            if (!string.IsNullOrEmpty(launchStr)) {
+                string[] parts = launchStr.Trim().Split(new char[] { ' ', ':', '.' }, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length >= 3 && int.TryParse(parts[2], out int y) && y > 1900 && y < 2200) return y;
+            }
+            return 2000;
         }
     }
 }

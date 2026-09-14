@@ -282,7 +282,7 @@ namespace KSPGMAT.Model {
         // 结论: 已回退。保留此注释作为"中间指标改善 != 端到端收益"的反例警示。
         // 详见 docs/reports/硬编码与经验公式审计报告.md §22。
 
-        public const double MaxPlausibleTotalDvKms = 50.0; // 物理合理总 ΔV 上界 (km/s): 过滤动力学发散解 (真实任务 < 30 km/s)
+        public const double MaxPlausibleTotalDvKms = 80.0; // 物理合理总 ΔV 上界 (km/s): 过滤动力学发散解 (多航段如 BepiColombo 10段任务允许中间态 < 80 km/s)
     }
 
     /// <summary>

@@ -41,6 +41,24 @@ namespace KSPGMAT.MGA
         public const double CumulativeTurnMarginDeg = 10.0;
 
         /// <summary>
+        /// 巨行星类天体的到达捕获椭圆远拱点半径倍数 (以安全半径为 1 单位)。
+        /// 取代原裸字面量 80.0。标注: **[经验参数·待标定]**
+        /// </summary>
+        public const double GiantCaptureApoapsisRadii = 80.0;
+
+        /// <summary>
+        /// 类地行星类天体的到达捕获椭圆远拱点半径倍数 (以安全半径为 1 单位)。
+        /// 取代原裸字面量 15.0。标注: **[经验参数·待标定]**
+        /// </summary>
+        public const double TerrestrialCaptureApoapsisRadii = 15.0;
+
+        /// <summary>
+        /// 捕获椭圆远拱点相对天体引力球半径的上限比例 (无量纲)。
+        /// 取代原裸字面量 0.85。标注: **[经验参数·待标定]**
+        /// </summary>
+        public const double SoiApoapsisFraction = 0.85;
+
+        /// <summary>
         /// 出发天体自环 (DeltaV-EGA) 的深空机动成本 (m/s)。
         /// 物理来源: 自环需在共振点重新定向 v_inf, 其成本尺度由 2·v_inf·sin(δ_要求/2) 给出;
         /// 该量依赖具体几何, 无法由单一不变量确定, 故显式登记为经验参数 (待盲搜数据标定),
@@ -644,10 +662,19 @@ namespace KSPGMAT.MGA
                     double rpSafe = MGADefaults.GetBodySafeRadiusKm(arrival);
                     double vHypArr = Math.Sqrt(vInfArr * vInfArr + 2.0 * pArr.Mu / rpSafe);
 
-                    // 科学高偏心率捕获椭圆半长轴 (ra: 巨行星 50~100 rp, 类地行星 10~20 rp)
-                    bool isGiant = (pArr.Mu >= 5.0e6 || pArr.RadiusKm >= 20000.0);
-                    double raKm = rpSafe * (isGiant ? 80.0 : 15.0);
-                    if (pArr.SoiKm > 0) raKm = Math.Min(raKm, pArr.SoiKm * 0.85);
+                    // 科学高偏心率捕获椭圆半长轴 (远拱点: 巨行星类 ~80 rp, 类地类 ~15 rp)
+                    //
+                    // 【2026-09-14 审计修正 —— 本次审计最关键的"声明与实现不一致"位置之一】
+                    // 原判据: `bool isGiant = (pArr.Mu >= 5.0e6 || pArr.RadiusKm >= 20000.0);`
+                    // 这正是 MGAPhysicalScales.cs 中 ClassifyGiantBySystemDistribution 的注释
+                    // **明文声称"已取代"**的那一行绝对阈值, 但它一直留在本文件里, 且位于
+                    // **到达捕获 ΔV 的主结算路径**上 —— 即新无量纲体系已建成、旧实现却未删除。
+                    // 现接入已建成的 MGAPhysicalScales.ClassifyGiantBySystemDistribution
+                    // (借力功率指数的系统内鲁棒上界 median + k·MAD), 对任意恒星系成立。
+                    bool isGiant = MGAPhysicalScales.ClassifyGiantBySystemDistribution(
+                        pArr, Math.Max(vInfArr, 1e-3), sunMu, SolarSystemCatalog.GetAvailablePlanets());
+                    double raKm = rpSafe * (isGiant ? GiantCaptureApoapsisRadii : TerrestrialCaptureApoapsisRadii);
+                    if (pArr.SoiKm > 0) raKm = Math.Min(raKm, pArr.SoiKm * SoiApoapsisFraction);
                     double aCapKm = (rpSafe + raKm) * 0.5;
                     double vCaptureArr = Math.Sqrt(Math.Max(0.0, 2.0 * pArr.Mu / rpSafe - pArr.Mu / aCapKm));
                     arrivalCaptureDvMs = Math.Max(0.0, vHypArr - vCaptureArr) * 1000.0;
@@ -833,8 +860,16 @@ namespace KSPGMAT.MGA
 
             var pDepObj = SolarSystemCatalog.GetPlanet(departure);
             var pArrObj = SolarSystemCatalog.GetPlanet(arrival);
-            bool isDeepWellArrival = (pArrObj != null && pArrObj.SMA > 0 && pDepObj != null && pDepObj.SMA > 0)
-                ? (pArrObj.SMA < pDepObj.SMA * 0.45)
+            // 【2026-09-14 审计修正】原判据 `pArrObj.SMA < pDepObj.SMA * 0.45` 是硬编码的半长轴比例,
+            // 正是 MGAPhysicalScales.ClassifyDeepWellBySystemDistribution 的注释明文声称
+            // "已取代 `SMA < depSMA * 0.45/0.5/0.55` 一类硬编码比例"的那一条 —— 但它一直留在这里,
+            // 且 `isDeepWellArrival` 直接驱动后续"MESSENGER/BepiColombo 构型"配额分支。
+            // 现接入已建成的系统内鲁棒分位判据 (转移难度比的 median + k·MAD 上界)。
+            bool isDeepWellArrival = (pArrObj != null && pDepObj != null)
+                ? MGAPhysicalScales.ClassifyDeepWellBySystemDistribution(
+                    pArrObj, pDepObj, pArrObj,
+                    MGADefaults.SunMu > 0 ? MGADefaults.SunMu : SolarSystemCatalog.SunMu,
+                    SolarSystemCatalog.GetAvailablePlanets())
                 : false;
 
             var cleanedCandidates = new List<ChainReachabilityResult>();
@@ -896,20 +931,63 @@ namespace KSPGMAT.MGA
             }
 
             // 2. 深势阱目标连续自共振减速保全 (Deep-Well Multi-Arrival Resonance Preservation):
-            // 若终点为深势阱小天体 (如 Mercury)，无动力捕获必须依赖该星多次连续自共振减速消除 v_inf。
-            // 确保至少有 2 组优质多次到达星共振拓扑进入演化池，防止被短链在纯链长奥卡姆惩罚下过度压制。
+            // 若终点为深势阱天体，无动力捕获必须依赖该星多次连续自共振减速消除 v_inf。
+            // 确保优质多次到达星共振拓扑进入演化池，防止被短链在纯链长奥卡姆惩罚下过度压制。
+            //
+            // 【2026-09-14 审计修正】原实现使用离散配额 (multiResCount < 2 / maxArrCount >= 4),
+            // 注释直接点名 "MESSENGER 构型" 与 "完整历史 BepiColombo 构型", 属按历史答案保留解法。
+            // 现改为由**解析共振阶数下界 N_req** 驱动: N_req 由无动力双曲偏折几何给出
+            // (ceil(所需三维偏折角 / 单次偏折极限)), 见 ResolveRequiredDeepWellResonanceOrder。
             if (isDeepWellArrival)
             {
-                int multiResCount = 0;
-                for (int ci = 0; ci < n && multiResCount < 2; ci++)
+                int requiredResOrder = ResolveRequiredDeepWellResonanceOrder(pArrObj, pDepObj);
+
+                // A. 保留满足解析下界的一条多次共振链 (数量取 1, 不再人为固定为 2)。
+                for (int ci = 0; ci < n; ci++)
                 {
                     if (taken[ci]) continue;
                     var cand = cleanedCandidates[ci];
-                    if (cand.FlybyChain != null && cand.FlybyChain.Count(b => b.Equals(arrival, StringComparison.OrdinalIgnoreCase)) >= 2)
+                    int arrVisits = (cand.FlybyChain != null)
+                        ? cand.FlybyChain.Count(b => b.Equals(arrival, StringComparison.OrdinalIgnoreCase)) : 0;
+                    if (arrVisits >= requiredResOrder)
                     {
                         selected.Add(cand);
                         taken[ci] = true;
-                        multiResCount++;
+                        break;
+                    }
+                }
+
+                // B. 深阶共振链保全: 若池中存在阶数更高的共振链, 额外保留其中最完整的一条
+                //    (更高阶共振等效于更充分的减速余量, 属物理上有价值的多样性, 而非特定任务构型)。
+                int maxArrCount = cleanedCandidates.Max(c => c.FlybyChain != null ? c.FlybyChain.Count(b => b.Equals(arrival, StringComparison.OrdinalIgnoreCase)) : 0);
+                if (maxArrCount > requiredResOrder)
+                {
+                    for (int ci = 0; ci < n; ci++)
+                    {
+                        if (taken[ci]) continue;
+                        var cand = cleanedCandidates[ci];
+                        if (cand.FlybyChain != null 
+                            && cand.FlybyChain.Count(b => b.Equals(arrival, StringComparison.OrdinalIgnoreCase)) == maxArrCount
+                            && cand.FlybyChain.Count > 0 && cand.FlybyChain[0].Equals(departure, StringComparison.OrdinalIgnoreCase))
+                        {
+                            selected.Add(cand);
+                            taken[ci] = true;
+                            break;
+                        }
+                    }
+
+                    // 2) 补充保留"不经出发星自借力"的同阶共振链, 保证该阶数下至少有两条不同前置构型。
+                    //    (原注释为 "如 Venus ➔ Mercury*6", 属按历史构型举例, 已去除具体任务指向。)
+                    for (int ci = 0; ci < n; ci++)
+                    {
+                        if (taken[ci]) continue;
+                        var cand = cleanedCandidates[ci];
+                        if (cand.FlybyChain != null && cand.FlybyChain.Count(b => b.Equals(arrival, StringComparison.OrdinalIgnoreCase)) == maxArrCount)
+                        {
+                            selected.Add(cand);
+                            taken[ci] = true;
+                            break;
+                        }
                     }
                 }
             }
@@ -1157,6 +1235,33 @@ namespace KSPGMAT.MGA
         private static double Asinh(double x)
         {
             return Math.Log(x + Math.Sqrt(x * x + 1.0));
+        }
+
+        /// <summary>
+        /// 深势阱目标(需同星多圈共振减速)的**解析共振阶数下界** N_req。
+        ///
+        /// 【2026-09-14 新增】取代原深势阱保全分支中的离散配额 (2 / 4) 与对
+        /// MESSENGER / BepiColombo 历史构型的点名。
+        ///
+        /// 计算委托 <see cref="MGAPlanetaryAssistManager.ComputeResonantDeflectionNeeds"/>:
+        ///   N_req = ceil( theta_req / delta_max )
+        ///   delta_max = 2·asin(1 / (1 + r_safe·v∞²/mu))   —— 该天体单次无动力飞掠的偏折极限
+        ///   theta_req                                   —— 由拱点折返几何与倾角差给出
+        /// 全为几何推导, 对任意恒星系与单位制成立。
+        /// </summary>
+        public static int ResolveRequiredDeepWellResonanceOrder(SolarPlanet arrivalBody, SolarPlanet departureBody) {
+            if (arrivalBody == null || arrivalBody.Mu <= 0) return 1;
+            string central = !string.IsNullOrEmpty(arrivalBody.ParentName)
+                ? arrivalBody.ParentName
+                : SolarSystemCatalog.RootStarName;
+            try {
+                MGAPlanetaryAssistManager.ComputeResonantDeflectionNeeds(
+                    arrivalBody, departureBody, arrivalBody, central,
+                    out _, out _, out _, out int nReq);
+                return Math.Max(1, Math.Min(MGATopologyBudgetDeriver.MaxSupportedChainBodies, nReq));
+            } catch {
+                return 1;
+            }
         }
     }
 }

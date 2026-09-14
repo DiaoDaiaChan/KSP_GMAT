@@ -87,16 +87,31 @@ namespace KSPGMAT.MGA.AI
             double aHohmannM = aHohmannKm * 1000.0;
             double minTofHohmannSec = Math.PI * Math.Sqrt((aHohmannM * aHohmannM * aHohmannM) / muM);
 
-            // 即使双曲超速极限，航行时间通常也不低于极值开普勒下界的 15%
-            double absoluteMinTofSec = minTofHohmannSec * 0.15;
+            // 【2026-09-14 审计修正】原实现为裸字面量, 且注释与代码自相矛盾
+            // (注释写"通常不应该超过 4 倍霍曼周期", 代码却是 `* 6.0`)。现命名化并更正注释。
+            // 下界: 即使取双曲超速极限, 航行时间也不低于极值开普勒下界的该比例
+            double absoluteMinTofSec = minTofHohmannSec * MinToFHohmannShrinkFactor;
             if (tofSec < absoluteMinTofSec) return false;
 
-            // 上界：通常不应该超过 4 倍霍曼周期（避免多圈长时间死滞）
-            double absoluteMaxTofSec = minTofHohmannSec * 6.0;
+            // 上界: 不超过霍曼半周期的该倍数 (避免多圈长时间死滞)
+            double absoluteMaxTofSec = minTofHohmannSec * MaxToFHohmannStretchFactor;
             if (tofSec > absoluteMaxTofSec) return false;
 
             return true;
         }
+
+        /// <summary>
+        /// 航时下界相对霍曼半周期的收窄系数 (双曲超速极限)。
+        /// 【2026-09-14 新增】取代原裸字面量 0.15。标注: **[经验参数·待标定]**
+        /// </summary>
+        public const double MinToFHohmannShrinkFactor = 0.15;
+
+        /// <summary>
+        /// 航时上界相对霍曼半周期的放大幅度。
+        /// 【2026-09-14 新增】取代原裸字面量 6.0 —— 原注释误写为"4 倍", 已更正。
+        /// 标注: **[经验参数·待标定]**
+        /// </summary>
+        public const double MaxToFHohmannStretchFactor = 6.0;
 
         /// <summary>
         /// 快速符号损失代数惩罚：在未执行严苛 Lambert 时快速估算几何违背程度

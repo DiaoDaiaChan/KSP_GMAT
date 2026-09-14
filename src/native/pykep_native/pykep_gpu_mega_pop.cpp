@@ -325,7 +325,7 @@ void CSMain(uint3 id : SV_DispatchThreadID) {
 
         if (!is_1dsm) {
             if (!solve_lambert(r1, r2, tof_sec, central_mu, vDep, vArr)) {
-                penalty += 100000.0f;
+                penalty += 100.0f;
                 break;
             }
         } else {
@@ -338,16 +338,25 @@ void CSMain(uint3 id : SV_DispatchThreadID) {
             if (leg == 0) {
                 float3 vL0, vL1;
                 if (!solve_lambert(r1, r2, tof_sec, central_mu, vL0, vL1)) {
-                    penalty += 100000.0f;
-                    break;
+                    // 首航段同星共振 (如 Juno/Rosetta Earth->Earth DeltaV-EGA) 采用顺行出射切向初值
+                    float3 v1_dir = (length(v1) > 1e-4f) ? (v1 / length(v1)) : float3(1, 0, 0);
+                    vL0 = v1 + v1_dir * 3.5f;
                 }
                 vDepInit = vL0;
             } else {
                 float3 vInfIn = prev_v_arr - prev_body_v;
                 float vInMag = length(vInfIn);
                 float3 vL0, vL1;
-                solve_lambert(r1, r2, tof_sec, central_mu, vL0, vL1);
-                float3 vInfOut = vL0 - v1;
+                bool lam_init_ok = solve_lambert(r1, r2, tof_sec, central_mu, vL0, vL1);
+                float3 vInfOut;
+                if (lam_init_ok) {
+                    vInfOut = vL0 - v1;
+                } else {
+                    // 同星共振借力 (bFrom == bTo) 或平飞几何退化时，以纯开普勒顺行切向偏折构造出场超速，避免0圈重合奇点
+                    float3 v1_dir = (length(v1) > 1e-4f) ? (v1 / length(v1)) : float3(1, 0, 0);
+                    vInfOut = v1_dir * max(1.0f, vInMag);
+                    vL0 = v1 + vInfOut;
+                }
                 float vOutMag = length(vInfOut);
 
                 if (vInMag > 1e-4f && vOutMag > 1e-4f) {
@@ -360,7 +369,7 @@ void CSMain(uint3 id : SV_DispatchThreadID) {
                     if (reqTurn > maxTurn + 1e-4f) {
                         float excess = reqTurn - maxTurn;
                         total_dv += 2.0f * vRef * sin(excess * 0.5f) + abs(vInMag - vOutMag);
-                        penalty += 2500.0f * excess * excess;
+                        penalty += 2.5f * excess * excess;
                     } else {
                         total_dv += abs(vInMag - vOutMag);
                     }
@@ -370,13 +379,13 @@ void CSMain(uint3 id : SV_DispatchThreadID) {
 
             float3 r_dsm, v_dsm_minus;
             if (!propagate_kepler(r1, vDepInit, t1, central_mu, r_dsm, v_dsm_minus)) {
-                penalty += 100000.0f;
+                penalty += 100.0f;
                 break;
             }
 
             float3 v_dsm_plus, vArrLeg;
             if (!solve_lambert(r_dsm, r2, t2, central_mu, v_dsm_plus, vArrLeg)) {
-                penalty += 100000.0f;
+                penalty += 100.0f;
                 break;
             }
 
@@ -412,7 +421,7 @@ void CSMain(uint3 id : SV_DispatchThreadID) {
                 if (reqTurn > maxTurn + 1e-4f) {
                     float excess = reqTurn - maxTurn;
                     total_dv += 2.0f * vRef * sin(excess * 0.5f) + abs(vInMag - vOutMag);
-                    penalty += 2500.0f * excess * excess;
+                    penalty += 2.5f * excess * excess;
                 } else {
                     total_dv += abs(vInMag - vOutMag);
                 }
@@ -432,16 +441,16 @@ void CSMain(uint3 id : SV_DispatchThreadID) {
     }
 
     // 连续二次平滑势垒惩罚与 L1 正则化 (与 CPU MGAPhysicsLossEngine.ComputeLoss 严格对齐)
-    float barrier_scale = (quadratic_barrier_scale > 0.0f) ? quadratic_barrier_scale : 25000.0f;
+    float barrier_scale = (quadratic_barrier_scale > 0.0f) ? quadratic_barrier_scale : 10.0f;
 
     // 1. 发射时间窗边界平滑二次惩罚
     if (earliest_dep_ut > 0.0f && t0 < earliest_dep_ut) {
         float violation_days = (earliest_dep_ut - t0) / 86400.0f;
-        penalty += violation_days * 100.0f + 0.5f * barrier_scale * (violation_days / 30.0f) * (violation_days / 30.0f);
+        penalty += violation_days * 0.1f + 0.5f * barrier_scale * (violation_days / 30.0f) * (violation_days / 30.0f);
     }
     if (latest_dep_ut > earliest_dep_ut && t0 > latest_dep_ut) {
         float violation_days = (t0 - latest_dep_ut) / 86400.0f;
-        penalty += violation_days * 100.0f + 0.5f * barrier_scale * (violation_days / 30.0f) * (violation_days / 30.0f);
+        penalty += violation_days * 0.1f + 0.5f * barrier_scale * (violation_days / 30.0f) * (violation_days / 30.0f);
     }
 
     // 2. 发射上限平滑二次势垒
@@ -572,13 +581,13 @@ EXPORT_API int pykep_evaluate_population_gpu(
     cbData.leg_count = leg_count;
     cbData.gene_dim = gene_dim;
     cbData.max_total_dv_kms = 10.0f;
-    cbData.penalty_base = 500.0f;
+    cbData.penalty_base = 5.0f;
     cbData.flyby_only = (flyby_only != 0) ? 1.0f : 0.0f;
     cbData.launch_ceiling_kms = launch_ceiling_kms;
     cbData.vessel_budget_kms = vessel_budget_kms;
     cbData.dsm_budget_kms = dsm_budget_kms;
-    cbData.quadratic_barrier_scale = 25000.0f;
-    cbData.l1_dsm_scale = 0.85f;
+    cbData.quadratic_barrier_scale = 10.0f;
+    cbData.l1_dsm_scale = 0.05f;
     cbData.earliest_dep_ut = earliest_dep_ut;
     cbData.latest_dep_ut = latest_dep_ut;
     cbData.pad1 = 0.0f;

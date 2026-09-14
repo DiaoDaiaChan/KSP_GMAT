@@ -54,7 +54,8 @@ namespace KSPGMAT.MGA.AI
         /// <summary>可行性分类头是否达门禁 (主要用途: 作为大规模预筛的可行性判据)</summary>
         public bool FeasibilityAccepted;
 
-        /// <summary>ΔV 回归头是否具备"粗筛量级"可用性 (R^2 >= 0.15)。仅用于排序前置过滤, 不可用于精细排序。</summary>
+        /// <summary>ΔV 回归头是否具备"粗筛量级"可用性 (R^2 >= DvHeadUsableR2, 当前为 0.50)。仅用于排序前置过滤, 不可用于精细排序。
+        /// 【2026-09-14 审计修正】原文硬编码 "R^2 >= 0.15", 与常量 DvHeadUsableR2 (已从 0.15 收紧到 0.50) 不一致, 现改为引用常量。</summary>
         public bool DvHeadUsable;
 
         /// <summary>整体是否采纳 (等价于可行性分类头达门禁, 即 IsTrained)</summary>

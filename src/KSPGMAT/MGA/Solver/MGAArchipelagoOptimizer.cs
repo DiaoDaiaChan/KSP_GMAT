@@ -88,7 +88,8 @@ namespace KSPGMAT.MGA
             // 依据候选窗口数动态划定窗口级并发度 (winWorkers) 与单窗口内 DE 变异交叉并发度 (perWindowPopulation)，
             // 保证 winParallel * perWindowPopulation 紧密跑满全部核预算，彻底杜绝单核空转与嵌套超订。
             bool explicitParallelBudget = (maxWindowParallelism > 0);
-            int totalBudget = explicitParallelBudget ? Math.Max(1, maxWindowParallelism) : Environment.ProcessorCount;
+            int usableCores = Math.Max(1, Environment.ProcessorCount - 1);
+            int totalBudget = explicitParallelBudget ? Math.Max(1, maxWindowParallelism) : usableCores;
             int winWorkers = Math.Min(totalWindows, totalBudget);
             int winParallel = winWorkers;
             int perWindowPopulation = Math.Max(1, totalBudget / winWorkers);
@@ -156,7 +157,7 @@ namespace KSPGMAT.MGA
                     KSPGMATLog.Info("Solver", $"     [岛屿 {wIdx + 1,2}/{totalWindows}] 历元 {GMATClient.FormatUtcGregorian(w.WindowStartUT)}: 最佳总ΔV = {b.TotalDeltaVKms * 1000.0,7:F0} m/s (始发={b.LaunchDeltaVKms * 1000.0,6:F0} m/s, DSM={b.TotalDsmDeltaVKms * 1000.0,7:F0} m/s)");
                     foreach (var s in sols)
                     {
-                        if (s != null && !double.IsNaN(s.TotalDeltaVKms) && s.TotalDeltaVKms < MGADefaults.MaxPlausibleTotalDvKms) // 过滤 >50 km/s 的动力学发散解
+                        if (s != null && !double.IsNaN(s.TotalDeltaVKms) && s.TotalDeltaVKms < MGADefaults.MaxPlausibleTotalDvKms) // 过滤 >80 km/s 的动力学发散解
                         {
                             allSolutions.Add(s);
                         }

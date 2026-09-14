@@ -118,10 +118,24 @@ namespace KSPGMAT.MGA
         /// </summary>
         public static MGASolution SelectParetoKneeSolution(IEnumerable<MGASolution> paretoFront, MGAConfig config)
         {
-            return SelectParetoKneeSolution(paretoFront, config?.CentralBody ?? "Sun");
+            double dvRefKms = MGAPhysicsLossEngine.LossReferenceCache.Get(config);
+            return SelectParetoKneeSolution(paretoFront, config?.CentralBody ?? "Sun", dvRefKms);
         }
 
-        public static MGASolution SelectParetoKneeSolution(IEnumerable<MGASolution> paretoFront, string centralBody = "Sun")
+        /// <summary>
+        /// 帕累托膝部选解。
+        ///
+        /// 【2026-09-14 第二轮审计修正 —— 消除"目标函数不一致"】
+        /// 原实现在此处**就地重写**了一份与 <c>MGAPhysicsLossEngine</c> 形式不同的航时软界:
+        ///     此处   : `dvKms += (0.15*e + 0.15*e²) * dvKms`   ← 乘在**解自身 ΔV** 上
+        ///     损失侧 : `loss  += (0.15*e + 0.15*e²)`           ← 加在**预算单位**上
+        /// 后果: 优化器最小化的目标与最终选解所用的排序**不是同一个函数** —— 同一个解在两个阶段的
+        /// 相对优劣可能相反; 且乘性形式会**对高 ΔV 解施加更大的绝对惩罚**, 与"压制低 ΔV 长航时退化解"
+        /// 的初衷方向相反。
+        /// 现改为: 两处共用 <see cref="MGAPhysicsLossEngine.ToFSoftExcessPenalty"/>, 并统一为
+        /// **以参考预算 <paramref name="dvRefKms"/> 为单位的加性惩罚**。
+        /// </summary>
+        public static MGASolution SelectParetoKneeSolution(IEnumerable<MGASolution> paretoFront, string centralBody = "Sun", double dvRefKms = 0.0)
         {
             if (paretoFront == null) return null;
             var list = paretoFront.Where(s => s != null && s.AllLegsFeasible).ToList();
@@ -131,16 +145,19 @@ namespace KSPGMAT.MGA
             double nominalDays = MGAPhysicsLossEngine.ResolveNominalTofDays(list[0], centralBody);
             if (nominalDays <= 0) return list.OrderBy(s => s.TotalDeltaVKms).First();
 
+            // 参考预算未知时退化为"以本前沿中位 ΔV 为尺度" —— 仍在同一量纲上加性,
+            // 只是尺度来自当前解集而非任务预算; 该退化路径已在报告中登记。
+            double penaltyScaleKms = dvRefKms;
+            if (penaltyScaleKms <= 1e-9)
+            {
+                var ordered = list.OrderBy(s => s.TotalDeltaVKms).ToList();
+                penaltyScaleKms = ordered[ordered.Count / 2].TotalDeltaVKms;
+            }
+            if (penaltyScaleKms <= 1e-9) penaltyScaleKms = 1.0;
+
             return list
-                .OrderBy(s => {
-                    double dvKms = s.TotalDeltaVKms;
-                    if (s.TotalFlightDays > nominalDays * 1.20)
-                    {
-                        double excess = (s.TotalFlightDays - nominalDays * 1.20) / nominalDays;
-                        dvKms += (0.15 * excess + 0.15 * excess * excess) * dvKms;
-                    }
-                    return dvKms;
-                })
+                .OrderBy(s => s.TotalDeltaVKms
+                              + MGAPhysicsLossEngine.ToFSoftExcessPenalty(s.TotalFlightDays, nominalDays) * penaltyScaleKms)
                 .ThenBy(s => s.TotalDeltaVKms)
                 .ThenBy(s => s.TotalFlightDays)
                 .First();

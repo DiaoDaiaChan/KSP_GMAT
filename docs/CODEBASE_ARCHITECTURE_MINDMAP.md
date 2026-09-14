@@ -1147,20 +1147,20 @@ flowchart TD
 ---
 ### 7.4.2 MGAAdaptiveSolver.cs
 - **【文件路径】**：[`src/KSPGMAT/MGA/Solver/MGAAdaptiveSolver.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/Solver/MGAAdaptiveSolver.cs)
-- **【核心职责】**：自适应行星际多重引力助推主求解器。结合 Izzo 2015 兰伯特、广义岛屿模型与 G&CNets 理论，组装自适应求解流水线；支持自由发射（模式 1）与在轨锁死停泊轨道（模式 2）；解析并调度 Stage 1~4 全生命周期求解。
+- **【核心职责】**：自适应行星际多重引力助推主求解器。结合 Izzo 2015 兰伯特、广义岛屿模型与 G&CNets 理论，组装自适应求解流水线；支持自由发射（模式 1）与在轨锁死停泊轨道（模式 2）；解析并调度 Stage 1~4 全生命周期求解；严格限制 Stage 1 拓扑并发度为 `Environment.ProcessorCount - 1`，彻底杜绝 CPU 核心满载导致的操作系统冻结。
 - **【关键类与方法】**：`public static class MGAAdaptiveSolver`（`SolveAdaptiveAsync()`, `SolveAdaptive()`）；`public sealed class MGAAdaptiveSolverConfig`；`public enum ToFEncodingMode`；`public enum DepartureModePolicy`。
 - **【上游调用方/依赖方】**：`MGAMasterOptimizer`, `TabMGA`。
 - **【下游依赖】**：[`MGAArchipelagoOptimizer`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/Solver/MGAArchipelagoOptimizer.cs)、[`MGADifferentialEvolution`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/Solver/MGADifferentialEvolution.cs)、[`MGASelfHealingEngine`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/Solver/MGASelfHealingEngine.cs)。
-- **【基线规范约束】**：**官方 C++ 闭环动力学**：底层 100% 官方 ESA kep3 Native C++ 闭环动力学，零托管数学公式自编。
+- **【基线规范约束】**：**官方 C++ 闭环动力学与防饥饿并发**：底层 100% 官方 ESA kep3 Native C++ 闭环动力学，零托管数学公式自编；顶层求解管线执行核心保留原则（Reserve 1 Core for OS/UI）。
 
 ---
 ### 7.4.3 MGAArchipelagoOptimizer.cs
 - **【文件路径】**：[`src/KSPGMAT/MGA/Solver/MGAArchipelagoOptimizer.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/Solver/MGAArchipelagoOptimizer.cs)
-- **【核心职责】**：跨会合周期多窗口并行差分进化群岛演化器（PaGMO Izzo 2010）。将发射搜索全时域按会合周期切分为独立窗口，并发调度各岛屿演化，定期执行环形最优拓扑迁移。
+- **【核心职责】**：跨会合周期多窗口并行差分进化群岛演化器（PaGMO Izzo 2010）。将发射搜索全时域按会合周期切分为独立窗口，并发调度各岛屿演化，定期执行环形最优拓扑迁移。全局总并发线程预算严格受 `usableCores = Environment.ProcessorCount - 1` 约束，防止嵌套并发产生指数级线程超订。
 - **【关键类与方法】**：`public static class MGAArchipelagoOptimizer`（`EvolveWindows(MGAAdaptiveSolverConfig, ...)`）。
 - **【上游调用方/依赖方】**：`MGAAdaptiveSolver`, `MGAMasterOptimizer`。
 - **【下游依赖】**：[`MGADifferentialEvolution`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/Solver/MGADifferentialEvolution.cs)、[`CPUMonitor`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/CPUMonitor.cs)。
-- **【基线规范约束】**：**无嵌套并发饥饿**：窗口并发度动态适配 CPU 物理核数，避免线程池过度竞争导致的性能下降。
+- **【基线规范约束】**：**无嵌套并发饥饿**：窗口并发度动态适配 CPU 物理核数并保留系统关键核心，避免线程池过度竞争导致的性能下降与宿主假死。
 
 ---
 ### 7.4.4 MGAConstraintManager.cs
@@ -1174,11 +1174,11 @@ flowchart TD
 ---
 ### 7.4.5 MGADifferentialEvolution.cs
 - **【文件路径】**：[`src/KSPGMAT/MGA/Solver/MGADifferentialEvolution.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/Solver/MGADifferentialEvolution.cs)
-- **【核心职责】**：**单时间窗口差分进化寻优内核**（2300+ 行高性能核心）。管理种群初始化、启发式注种、前向步进合成、pbest-DE 变异循环、Memetic Hooke-Jeeves 打磨及多阶段收敛选解；底层动力学完全委托 Native kep3。
+- **【核心职责】**：**单时间窗口差分进化寻优内核**（2300+ 行高性能核心）。管理种群初始化、启发式注种、前向步进合成、pbest-DE 变异循环、Memetic Hooke-Jeeves 打磨及多阶段收敛选解；底层动力学完全委托 Native kep3；在启发式注种并行循环中严格约束最大并行度为 `ProcessorCount / 2`，在主进化代际循环中周期性主动执行 `Thread.Yield()` 协作调度，保障 Windows UI 消息循环畅通。
 - **【关键类与方法】**：`public static class MGADifferentialEvolution`（`RunWindow()`, `MutateAndCrossover()`, `MemeticLocalSearch()`）；`public class Individual`。
 - **【上游调用方/依赖方】**：`MGAArchipelagoOptimizer`, `MGAAdaptiveSolver`。
 - **【下游依赖】**：[`PykepBridge`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/PykepBridge.cs)、[`MGABanditHyperparameterTuner`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/AI/MGABanditHyperparameterTuner.cs)。
-- **【基线规范约束】**：**结果可逐位复现**：支持固定随机种子（默认 42）以保障基准 A/B 回归对比的逐位一致性。
+- **【基线规范约束】**：**结果可逐位复现与协作调度**：支持固定随机种子（默认 42）以保障基准 A/B 回归对比的逐位一致性；严格实行代际协作出让，杜绝主进程死锁。
 
 ---
 ### 7.4.6 MGAEphemerisReachabilityAnalyzer.cs
@@ -1484,20 +1484,20 @@ flowchart TB
 ---
 ### 9.1 pykep_bridge.cpp
 - **【文件路径】**：[`src/native/pykep_native/pykep_bridge.cpp`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/native/pykep_native/pykep_bridge.cpp)
-- **【核心职责】**：原生 C++ 核心库的 Master Root 统一编译单元（Unity Build）。通过单个源码文件以 `#include` 方式囊括所有 17 个细分功能 translation units，消除跨 translation unit 的函数链接开销与全局状态冗余；统一对外暴露经过严格内存打包（8-byte struct packing）与 C-ABI 修饰（`extern "C" __declspec(dllexport)`）的纯 C 导出符号，彻底杜绝 C++ Name Mangling 跨编译器损坏。
+- **【核心职责】**：原生 C++ 核心库的 Master Root 统一编译单元（Unity Build）。通过单个源码文件以 `#include` 方式囊括所有 17 个细分功能 translation units，消除跨 translation unit 的函数链接开销与全局状态冗余；统一对外暴露经过严格内存打包（8-byte struct packing）与 C-ABI 修饰（`extern "C" __declspec(dllexport)`）的纯 C 导出符号，彻底杜绝 C++ Name Mangling 跨编译器损坏；在全局入口与初始化中严格注入 `OMP_WAIT_POLICY=PASSIVE` 策略，彻底杜绝 MSVC OpenMP 默认忙自旋（Busy-Waiting Spinlock）吃满宿主 CPU 导致的 Windows UI/DWM 冻结。
 - **【关键类与方法】**：`pykep_bridge.cpp`（主编译单元入口，集中导出所有动力学符号）。
 - **【上游调用方/依赖方】**：[`PykepNative.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/PykepNative.cs)（通过 `[DllImport("pykep_native")]` 进行跨平台 P/Invoke 绑定）。
 - **【下游依赖】**：[`pykep_common.h`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/native/pykep_native/pykep_common.h) 以及各子模块 C++ 源文件。
-- **【基线规范约束】**：**Unity Compilation & C-ABI**：所有对托管层暴露的 API 必须全部收敛在 `pykep_bridge.cpp` 的编译流中，严禁在子模块中独立链接导致导出符号冲突或 CRT 多实例崩溃。
+- **【基线规范约束】**：**Unity Compilation & C-ABI & 协作退让**：所有对托管层暴露的 API 必须全部收敛在 `pykep_bridge.cpp` 的编译流中，严禁在子模块中独立链接导致导出符号冲突或 CRT 多实例崩溃；全局 OpenMP 必须采用被动等待策略，禁止长时间占用内核自旋。
 
 ---
 ### 9.2 pykep_common.h
 - **【文件路径】**：[`src/native/pykep_native/pykep_common.h`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/native/pykep_native/pykep_common.h)
-- **【核心职责】**：原生公共基础设施头文件与底层硬件适配层。严格定义托管 C# 与非托管 C++ 间 8 字节内存对齐（`#pragma pack(push, 8)`）的核心数据交换契约（`PykepVector3`, `PykepOrbitElements`, `PykepMGAProblemDef`, `PykepTransferWindowResult` 等）；集成运行时 CPUID 硬件指令集探测逻辑（自动嗅探 CPU 是否支持 AVX2、FMA、SSE2 并建立 100% 零崩溃 Fallback 兜底机制）；封装通用的矢量运算模板函数与角动量转换算子。
-- **【关键类与方法】**：`struct CPUFeatures` (`detect_cpu_features()`), `EXPORT_API`, `PykepVector3`, `PykepMGAProblemDef`。
+- **【核心职责】**：原生公共基础设施头文件与底层硬件适配层。严格定义托管 C# 与非托管 C++ 间 8 字节内存对齐（`#pragma pack(push, 8)`）的核心数据交换契约（`PykepVector3`, `PykepOrbitElements`, `PykepMGAProblemDef`, `PykepTransferWindowResult` 等）；集成运行时 CPUID 硬件指令集探测逻辑（自动嗅探 CPU 是否支持 AVX2、FMA、SSE2 并建立 100% 零崩溃 Fallback 兜底机制）；封装高性能 AVX2 + FMA 4-wide 256-bit 双精度并行向量数学库（`batch_vec3_dot4_avx2`, `batch_vec3_norm4_avx2`, `batch_vec3_diff_norm4_avx2` 与低延迟 `vec3_dot_fast`），实现超高吞吐 3D 几何与角动量计算。
+- **【关键类与方法】**：`struct CPUFeatures` (`detect_cpu_features()`), `EXPORT_API`, `PykepVector3`, `PykepMGAProblemDef`, `batch_vec3_dot4_avx2`, `batch_vec3_norm4_avx2`, `batch_vec3_diff_norm4_avx2`。
 - **【上游调用方/依赖方】**：所有 `src/native/pykep_native/*.cpp` 源码文件。
-- **【下游依赖】**：`<immintrin.h>`, `<intrin.h>`, ESA `kep3` 核心库头文件。
-- **【基线规范约束】**：**零拷贝与内存对齐规范**：所有通过 P/Invoke 跨语言传递的结构体必须在 C++ 与 C# 保持绝对一致的 8 字节边界对齐，字段顺序与大小严格一致，杜绝内存偏移截断。
+- **【下游依赖】**：`<immintrin.h>`, `<intrin.h>`, `<omp.h>`, ESA `kep3` 核心库头文件。
+- **【基线规范约束】**：**零拷贝、内存对齐与 AVX2 向量对齐**：所有通过 P/Invoke 跨语言传递的结构体必须在 C++ 与 C# 保持绝对一致的 8 字节边界对齐，字段顺序与大小严格一致；AVX2 SIMD 指令处理数组时严格遵守跨步边界，避免非对齐越界异常。
 
 ---
 ### 9.3 kep3_core_bundle.cpp
@@ -1556,11 +1556,11 @@ flowchart TB
 ---
 ### 9.9 pykep_gpu_porkchop.cpp
 - **【文件路径】**：[`src/native/pykep_native/pykep_gpu_porkchop.cpp`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/native/pykep_native/pykep_gpu_porkchop.cpp)
-- **【核心职责】**：Porkchop 猪排图高通量并行生成引擎。利用 AVX2 指令集与 OpenMP 多核并发，对发射历元与到达历元二维时间网格进行稠密扫描，执行万级 Izzo Lambert 轨道力学求解，生成包含发射 C3、到达 $v_\infty$、单程飞行时间与总 $\Delta v$ 的完整热力图栅格矩阵，计算速度较托管 C# 提升 50~100 倍。
-- **【关键类与方法】**：`EXPORT_API int pykep_gpu_generate_porkchop(...)`。
-- **【上游调用方/依赖方】**：[`PykepNative.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/PykepNative.cs)、[`MGAScriptGenerator`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/Service/MGAScriptGenerator.cs)。
+- **【核心职责】**：Porkchop 猪排图高通量并行生成引擎。集成 GPU（DirectCompute）与原生 CPU OpenMP + AVX2 双轨架构；原生 CPU 批处理求解器（`pykep_porkchop_cpu_evaluate`）引入发射历元列缓存（Column Caching）与紧凑网格光栅化，在非 GPU 环境下将 100 万次托管 C# 到 C++ 的频繁 P/Invoke 跨语言开销彻底消除，计算速度较托管纯 C# 提升 50~100 倍。
+- **【关键类与方法】**：`EXPORT_API int pykep_gpu_generate_porkchop(...)`, `EXPORT_API int pykep_porkchop_cpu_evaluate(...)`。
+- **【上游调用方/依赖方】**：[`PykepNative.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/PykepNative.cs)、[`PorkchopGenerator.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/PorkchopGenerator.cs)、[`MGAScriptGenerator`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/Service/MGAScriptGenerator.cs)。
 - **【下游依赖】**：[`pykep_common.h`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/native/pykep_native/pykep_common.h)、`kep3` Lambert 算子。
-- **【基线规范约束】**：**无等待并行**：采用动态 OpenMP 调度（`#pragma omp parallel for schedule(dynamic)`），防止长转移计算导致的线程不均木桶效应。
+- **【基线规范约束】**：**无等待并行与系统核心保留**：采用动态 OpenMP 调度（`#pragma omp parallel for schedule(dynamic)`），防止长转移计算导致的木桶效应；同时严格限制最多使用 `omp_get_num_procs() - 1` 核心，保证宿主响应。
 
 ---
 ### 9.10 pykep_gpu_sims_flanagan.cpp
@@ -1574,7 +1574,7 @@ flowchart TB
 ---
 ### 9.11 pykep_mee.cpp
 - **【文件路径】**：[`src/native/pykep_native/pykep_mee.cpp`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/native/pykep_native/pykep_mee.cpp)
-- **【核心职责】**：修正等效开普勒根数（Modified Equinoctial Elements, MEE）转换与长期动力学传播器。将笛卡尔状态矢量或经典轨道六根数映射至非奇异的 MEE 空间（$p, f, g, h, k, L$），消除近圆轨道与赤道轨道的退化奇异性，为连续低推力与高精度积分提供数值稳定的坐标底盘。
+- **【核心职责】**：修正等效开普勒根数（Modified Equinoctial Elements, MEE）转换与长期动力学传播器。将笛卡尔状态矢量或经典轨道六根数映射至非奇异的 MEE空间（$p, f, g, h, k, L$），消除近圆轨道与赤道轨道的退化奇异性，为连续低推力与高精度积分提供数值稳定的坐标底盘。
 - **【关键类与方法】**：`EXPORT_API int pykep_cartesian_to_mee(...)`, `EXPORT_API int pykep_mee_to_cartesian(...)`。
 - **【上游调用方/依赖方】**：[`PykepNative.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/PykepNative.cs)。
 - **【下游依赖】**：[`pykep_common.h`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/native/pykep_native/pykep_common.h)。
@@ -1592,11 +1592,11 @@ flowchart TB
 ---
 ### 9.13 pykep_mga_hybrid.cpp
 - **【文件路径】**：[`src/native/pykep_native/pykep_mga_hybrid.cpp`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/native/pykep_native/pykep_mga_hybrid.cpp)
-- **【核心职责】**：深空机动与混合引力助推求解器（MGA-1DSM）。在两段引力飞越之间引入单次深空机动脉冲（DSM），优化无机动弧段与非共振交会窗口，利用局部非线性梯度下降优化机动发生时刻与矢量方向，大幅扩展可行搜索空间。
-- **【关键类与方法】**：`EXPORT_API int pykep_solve_mga_hybrid(...)`。
+- **【核心职责】**：深空机动与混合引力助推求解器（MGA-1DSM）。在两段引力飞越之间引入单次深空机动脉冲（DSM），优化无机动弧段与非共振交会窗口。创新引入两阶段多圈剪枝（Two-Phase Multi-Rev Pruning）：粗筛与坐标下降阶段仅解算 0-rev（共振最多 1-rev），消灭 17 个多圈分支求根爆炸；终选最优角单次执行完整 `nmax` 求解；支持批量 OpenMP 加速（`pykep_mga_hybrid_evaluate_batch`），内置嵌套禁用与核心保留控制。
+- **【关键类与方法】**：`EXPORT_API int pykep_solve_mga_hybrid(...)`, `EXPORT_API int pykep_mga_hybrid_evaluate_batch(...)`。
 - **【上游调用方/依赖方】**：[`PykepNative.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/PykepNative.cs)、[`MGASolverStage2`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/Solver/MGASolverStage2.cs)。
 - **【下游依赖】**：[`pykep_common.h`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/native/pykep_native/pykep_common.h)。
-- **【基线规范约束】**：**脉冲最优性**：若优化结果显示 DSM 脉冲趋近于零，自动向纯弹道模型退化以节省解算时间。
+- **【基线规范约束】**：**脉冲最优性与防卡死剪枝**：若优化结果显示 DSM 脉冲趋近于零，自动向纯弹道模型退化；必须实行两阶段剪枝，严禁在密集网格粗筛中盲目求解全多圈分支。
 
 ---
 ### 9.14 pykep_primer_vector.cpp

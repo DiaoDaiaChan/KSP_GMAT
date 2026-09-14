@@ -70,8 +70,10 @@ namespace KSPGMAT.MGA.AI
                 activeDir[0] = 1.0;
             }
 
-            // 3. 在主敏感轴上执行高斯过程 / 抛物线收敛探索 (Line & Subspace Bayesian Polishing)
-            // 采样主方向不同步长 [-2.0, -1.0, -0.5, 0.5, 1.0, 2.0]
+            // 3. 在主敏感轴上执行一维线搜索与二次极值内插 (Line Search + Quadratic Vertex Interpolation)
+            //    【2026-09-14 审计修正】原注释写作 "高斯过程 / 抛物线收敛探索 (Line & Subspace Bayesian Polishing)" ——
+            //    本类没有任何高斯过程、核函数、协方差矩阵或 EI 采集函数, 该表述属虚假学术包装。已剥离。
+            //    采样主方向不同步长 [-2.0, -1.0, -0.5, 0.5, 1.0, 2.0]
             double[] trialAlphas = new double[] { 0.25, 0.5, 1.0, 1.5, 2.0, -0.25, -0.5, -1.0 };
             int evalsUsed = dim; // 前面求梯度消耗了 dim 次评估
 

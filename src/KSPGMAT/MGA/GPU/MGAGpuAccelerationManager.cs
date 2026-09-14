@@ -153,6 +153,15 @@ namespace KSPGMAT.MGA.GPU
             if (!IsGpuAvailable || !EnableDeArchipelagoGpu) return false;
             if (population == null || population.Count == 0 || fullChain == null || fullChain.Count < 2) return false;
 
+            // 检查链中是否包含同星共振段 (如 Earth->Earth, Venus->Venus, Mercury->Mercury).
+            // GPU HLSL CS 5.0 0圈兰伯特内核无法在同星共振位置重合/奇点处 (c ~= 0) 正确求解跨周期 1-DSM，
+            // 此时严格交由 CPU 原生 ESA ACT PyKEP (OpenMP + AVX2 多核批处理器) 执行双精度精确动力学解算！
+            for (int i = 0; i < fullChain.Count - 1; i++) {
+                if (fullChain[i].Equals(fullChain[i + 1], StringComparison.OrdinalIgnoreCase)) {
+                    return false;
+                }
+            }
+
             int popSize = population.Count;
             int legCount = fullChain.Count - 1;
             int gpuDim = optDsmEta ? (1 + 2 * legCount) : fullChain.Count;
@@ -222,6 +231,15 @@ namespace KSPGMAT.MGA.GPU
 
                 if (ret == 0)
                 {
+                    // 统一无量纲化归一化 (与 CPU MGAPhysicsLossEngine.ComputeLoss 严格对齐)
+                    double dvRefKms = MGAPhysicsLossEngine.LossReferenceCache.Get(config);
+                    if (dvRefKms <= 1e-9) dvRefKms = 1.0;
+                    float invDvRef = (float)(1.0 / dvRefKms);
+                    for (int i = 0; i < popSize; i++)
+                    {
+                        gpuResults[i] *= invDvRef;
+                    }
+
                     outLosses = gpuResults;
                     _consecutiveFailures = 0;
                     metric.Record(popSize, sw.Elapsed.TotalMilliseconds, false);

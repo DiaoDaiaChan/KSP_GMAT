@@ -194,8 +194,18 @@ namespace KSPGMAT.MGA {
     }
 
     /// <summary>
-    /// 纯粹的 PyKEP 官方 C++ 原生动力学桥接层与数据转换器
-    /// (Pure Native PyKEP Bridge & Data Marshaler - 0 Custom Math Calculation in C#)
+    /// PyKEP 官方 C++ 原生动力学桥接层与数据转换器 (Native PyKEP Bridge &amp; Data Marshaler)。
+    ///
+    /// 【2026-09-14 审计修正 · 声明与现实对齐】
+    ///   原类头声称 "0 Custom Math Calculation in C#", 但本类中的
+    ///   <see cref="GetSynodicPeriodDays"/> 是在 C# 层手写的会合周期代数恒等式
+    ///   T_syn = 1 / |1/T1 − 1/T2|, 且被 MGAAdaptiveSolver 在生产路径上高频调用 (会合窗口切分)。
+    ///   该声明因此不成立, 现更正为如下准确表述:
+    ///
+    ///   现状: 所有会产出 ΔV / ToF / v∞ 的**动力学**计算均委托原生 C++ (kep3);
+    ///         失败路径返回 null / NaN / false, **不填充任何托管近似公式**。
+    ///         C# 层只做单位换算、结构体编组、代数恒等式 (会合周期) 与判据统计 ——
+    ///         这满足基线对"零托管动力学"的要求, 但**不等于**"零托管数学", 特此澄清。
     /// </summary>
     public static class PykepBridge {
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]

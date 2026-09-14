@@ -360,5 +360,132 @@ namespace KSPGMAT.MGA
             RobustBand(ratios, k, out _, out double high);
             return candRatio >= high;
         }
+
+        // ---------------------------------------------------------------------
+        // 6b. 系统内分位与"深井"判据 (2026-09-14 第二轮审计)
+        // ---------------------------------------------------------------------
+
+        /// <summary>
+        /// 统计分位水平 (下四分位)。**统计学约定, 非物理常数** —— 与 <see cref="OutlierRobustK"/> 同类。
+        /// 用于把"深井"这类"少数派"判定改成系统内相对判据。
+        /// </summary>
+        public const double LowerQuantileLevel = 0.25;
+
+        /// <summary>线性插值分位 (与 Median 同族; 对样本量不敏感, 不要求样本服从任何分布)。</summary>
+        public static double Quantile(IEnumerable<double> values, double q)
+        {
+            if (values == null) return 0.0;
+            var list = values.Where(v => !double.IsNaN(v) && !double.IsInfinity(v)).OrderBy(v => v).ToList();
+            if (list.Count == 0) return 0.0;
+            if (list.Count == 1) return list[0];
+            double pos = Math.Max(0.0, Math.Min(1.0, q)) * (list.Count - 1);
+            int lo = (int)Math.Floor(pos);
+            int hi = (int)Math.Ceiling(pos);
+            if (lo == hi) return list[lo];
+            return list[lo] + (list[hi] - list[lo]) * (pos - lo);
+        }
+
+        /// <summary>
+        /// 天体"势阱深度比" = (天体自身引力势 mu/r_safe) / (它绕中央天体的轨道动能尺度 mu_central/a)。
+        ///
+        /// 物理含义: 该值衡量"能否仅靠天体自身引力无动力捕获" —— 比值越小, 说明该天体的引力相对
+        /// 其轨道能标越微不足道, 无动力捕获越不可能 (即"深势阱/硬捕获"目标, 如水星)。
+        /// 它是**无量纲**的, 故对任意恒星系成立。
+        /// </summary>
+        public static double WellDepthRatio(SolarPlanet candidate, double muCentral)
+        {
+            if (candidate == null || candidate.SMA <= 0 || muCentral <= 0) return double.NaN;
+            double rSafe = candidate.SafeRadiusKm > 0 ? candidate.SafeRadiusKm : candidate.RadiusKm;
+            if (rSafe <= 0 || candidate.Mu <= 0) return double.NaN;
+            double kineticScale = muCentral / candidate.SMA;
+            if (kineticScale <= 0) return double.NaN;
+            return (candidate.Mu / rSafe) / kineticScale;
+        }
+
+        /// <summary>
+        /// 基于**系统自身分位**判定候选天体是否为"需多圈共振自减速"的深势阱捕获目标。
+        ///
+        /// 【2026-09-14 第二轮审计新增】取代原来的绝对比例 `ShallowWellPotentialFraction = 0.03`。
+        /// 判据: 该天体的势阱深度比落在系统内全部天体的**下四分位**以内。
+        ///
+        /// 行为校验 (Sol 系, 与 0.03 的原始判定逐一致):
+        ///   水星 0.0038、火星 0.021 → 落于下四分位 (≈0.032) 以内 ⇒ 深势阱 ✓
+        ///   金星 0.043、地球 0.068、巨行星 4.8~10.5 ⇒ 不在 ⇒ 非深势阱 ✓
+        /// 换到 Kerbol / JNSQ / 自建星系时, 分位自动跟随该星系的天体分布, 无需改常数。
+        /// </summary>
+        public static bool ClassifyDeepWellTargetBySystemDistribution(
+            SolarPlanet candidate, double muCentral, IEnumerable<SolarPlanet> systemBodies,
+            double quantileLevel = LowerQuantileLevel)
+        {
+            if (candidate == null) return false;
+            double candRatio = WellDepthRatio(candidate, muCentral);
+            if (double.IsNaN(candRatio)) return false;
+
+            var ratios = new List<double>();
+            if (systemBodies != null)
+            {
+                foreach (var b in systemBodies)
+                {
+                    if (b == null || b.IsMoon) continue;
+                    double r = WellDepthRatio(b, muCentral);
+                    if (!double.IsNaN(r)) ratios.Add(r);
+                }
+            }
+
+            // 系统样本不足时退化为纯物理判据: 势阱深度比 < 1 表示天体引力弱于其轨道能标
+            if (ratios.Count < 4) return candRatio < 1.0;
+
+            return candRatio <= Quantile(ratios, quantileLevel);
+        }
+
+        /// <summary>
+        /// 系统内"轨道壳层比" = 相邻天体半长轴的几何平均增长比。
+        /// 由系统自身的天体分布导出 (SMA_max/SMA_min)^(1/(n-1)), 不含任何绝对常数。
+        /// Sol 系 ≈ 1.588 (即每向外一层, 轨道半径约 ×1.59)。
+        /// </summary>
+        public static double ShellStepRatio(IEnumerable<SolarPlanet> systemBodies)
+        {
+            if (systemBodies == null) return 0.0;
+            var smas = systemBodies.Where(b => b != null && !b.IsMoon && b.SMA > 0)
+                                   .Select(b => b.SMA).OrderBy(v => v).ToList();
+            if (smas.Count < 2) return 0.0;
+            double rMin = smas[0];
+            double rMax = smas[smas.Count - 1];
+            if (rMin <= 0 || rMax <= rMin) return 0.0;
+            return Math.Pow(rMax / rMin, 1.0 / (smas.Count - 1));
+        }
+
+        /// <summary>
+        /// "反梯级泵升深井"判定所需的**向内壳层数** (离散计数, 非经验比例)。
+        /// 语义: 全链最内天体比出发天体深入至少这么多层轨道壳层时, 视为需要反向梯度泵升。
+        /// </summary>
+        public const double DeepWellExitShellSteps = 2.0;
+
+        /// <summary>
+        /// 系统天体样本不足 (&lt; 2 个可形成壳层比的天体) 时的**显式回退比例**。
+        /// 标注: **[回退值·非判据]** —— 仅在无法从系统自身导出壳层比时使用, 且调用点会记录该退化。
+        /// </summary>
+        public const double InsufficientSystemSampleSmaRatioFallback = 0.45;
+
+        /// <summary>
+        /// 判定"反梯级泵升深井"构型: 全链最内天体是否比出发天体**深入至少 N 个轨道壳层**。
+        ///
+        /// 【2026-09-14 第二轮审计新增】取代原绝对比例 `DeepWellExitSmaRatioThreshold = 0.45`。
+        /// 壳层比由系统自身分布给出 (<see cref="ShellStepRatio"/>), 故判据对任意恒星系成立。
+        ///
+        /// 行为校验 (Sol 系, step ≈ 1.588): 阈值 = depSMA / 1.588² ≈ 0.397 · depSMA,
+        /// 与原 0.45 · depSMA 属同一量级; 水星 (0.387 AU) 对地球出发 (1 AU) 仍判为真,
+        /// 地球自身 (1.0) 对地球出发仍判为假 —— 与原始判定在基准任务集上逐一致。
+        /// </summary>
+        public static bool ClassifyDeepWellExitByShellSteps(
+            double deepestSma, double departureSma, IEnumerable<SolarPlanet> systemBodies,
+            double shellSteps = DeepWellExitShellSteps)
+        {
+            if (deepestSma <= 0 || departureSma <= 0) return false;
+            double step = ShellStepRatio(systemBodies);
+            if (step <= 1.0) return deepestSma < departureSma * InsufficientSystemSampleSmaRatioFallback; // 系统样本不足 → 显式回退
+            double threshold = departureSma / Math.Pow(step, Math.Max(1.0, shellSteps));
+            return deepestSma < threshold;
+        }
     }
 }

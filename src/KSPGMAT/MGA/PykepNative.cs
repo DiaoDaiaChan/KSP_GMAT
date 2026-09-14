@@ -331,6 +331,7 @@ namespace KSPGMAT.MGA {
 
         private static PykepCheckGpuComputeSupportDelegate _fnCheckGpuComputeSupport;
         private static PykepPorkchopGpuEvaluateDelegate _fnPorkchopGpuEvaluate;
+        private static PykepPorkchopGpuEvaluateDelegate _fnPorkchopCpuEvaluate;
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate int PykepMgaCorridorGpuEvaluateDelegate(
@@ -437,6 +438,55 @@ namespace KSPGMAT.MGA {
             }
         }
 
+        /// <summary>
+        /// 在相对路径与工作目录上溯均未命中时, 按 Steam 标准库结构解析 native 目录。
+        ///
+        /// 【2026-09-14 新增】取代原开发机私有绝对路径
+        /// `C:\Program Files (x86)\Steam\steamapps\common\Kerbal Space Program_newmod\GameData\KSPGMAT\native`。
+        /// 解析顺序:
+        ///   1. 环境变量 `KSPGMAT_NATIVE_DIR` 显式指定 (最高优先级, 便于多实例部署);
+        ///   2. 环境变量 `KSP_ROOT` / `KSP_DIR` 指向的安装根;
+        ///   3. 常见 Steam 库根目录下的 `steamapps/common/&lt;含 "Kerbal" 的任一安装目录&gt;/GameData/KSPGMAT/native`
+        ///      —— 安装目录名通过枚举匹配, **不写死**任何一个具体名称。
+        /// 全部未命中时返回空串, 调用方据此判定原生引擎不可用, 不再加载任何来源不明的 DLL。
+        /// </summary>
+        private static string ResolveSteamLibraryNativeDir() {
+            try {
+                string explicitDir = Environment.GetEnvironmentVariable("KSPGMAT_NATIVE_DIR");
+                if (!string.IsNullOrEmpty(explicitDir) && Directory.Exists(explicitDir)) return explicitDir;
+
+                string kspRoot = Environment.GetEnvironmentVariable("KSP_ROOT");
+                if (string.IsNullOrEmpty(kspRoot)) kspRoot = Environment.GetEnvironmentVariable("KSP_DIR");
+                if (!string.IsNullOrEmpty(kspRoot)) {
+                    string cand = Path.Combine(kspRoot, "GameData", "KSPGMAT", "native");
+                    if (Directory.Exists(cand)) return cand;
+                }
+
+                var libraryRoots = new List<string>();
+                string programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+                string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+                if (!string.IsNullOrEmpty(programFilesX86)) libraryRoots.Add(Path.Combine(programFilesX86, "Steam", "steamapps"));
+                if (!string.IsNullOrEmpty(programFiles)) libraryRoots.Add(Path.Combine(programFiles, "Steam", "steamapps"));
+                string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                if (!string.IsNullOrEmpty(home)) {
+                    libraryRoots.Add(Path.Combine(home, ".steam", "steam", "steamapps"));
+                    libraryRoots.Add(Path.Combine(home, ".local", "share", "Steam", "steamapps"));
+                }
+
+                foreach (string steamApps in libraryRoots) {
+                    string commonDir = Path.Combine(steamApps, "common");
+                    if (!Directory.Exists(commonDir)) continue;
+                    foreach (string kspInstall in Directory.GetDirectories(commonDir)) {
+                        string installName = Path.GetFileName(kspInstall);
+                        if (installName.IndexOf("Kerbal", StringComparison.OrdinalIgnoreCase) < 0) continue;
+                        string cand = Path.Combine(kspInstall, "GameData", "KSPGMAT", "native");
+                        if (Directory.Exists(cand)) return cand;
+                    }
+                }
+            } catch { }
+            return "";
+        }
+
         private static void InitializeNativeEngine() {
             try {
                 string root = "";
@@ -458,8 +508,12 @@ namespace KSPGMAT.MGA {
                     }
                 }
                 if (!Directory.Exists(nativeDir)) {
-                    string fallbackSteam = @"C:\Program Files (x86)\Steam\steamapps\common\Kerbal Space Program_newmod\GameData\KSPGMAT\native";
-                    if (Directory.Exists(fallbackSteam)) nativeDir = fallbackSteam;
+                    // 【2026-09-14 审计修正】此处原为**开发机私有 Steam 库绝对路径**:
+                    //     @"C:\Program Files (x86)\Steam\steamapps\common\Kerbal Space Program_newmod\GameData\KSPGMAT\native"
+                    // 该路径对除作者以外的任何机器都无意义; 更糟的是, 若某台机器恰好存在同名目录,
+                    // 会**静默加载该目录下的 DLL**, 形成不可预期的原生库来源。
+                    // 现改为按 KSP 安装约定扫描 Steam 标准库位置, 并支持环境变量显式指定。
+                    nativeDir = ResolveSteamLibraryNativeDir();
                 }
 
                 if (Directory.Exists(nativeDir)) {
@@ -625,6 +679,12 @@ namespace KSPGMAT.MGA {
                                     GpuDeviceName = "DirectCompute Unavailable";
                                     KSPGMATLog.Info("[PykepNative] 通用 GPU 加速探针: DirectCompute 不可用，将安全回退至多核 CPU (AVX2)");
                                 }
+                            }
+
+                            IntPtr pCpuPorkchop = GetProcAddress(_dllHandle, "pykep_porkchop_cpu_evaluate");
+                            if (pCpuPorkchop != IntPtr.Zero) {
+                                _fnPorkchopCpuEvaluate = (PykepPorkchopGpuEvaluateDelegate)Marshal.GetDelegateForFunctionPointer(pCpuPorkchop, typeof(PykepPorkchopGpuEvaluateDelegate));
+                                KSPGMATLog.Info("[PykepNative] 原生多核 CPU (OpenMP + AVX2) Porkchop 算子: ✅ 已挂载");
                             }
 
                             IntPtr pMgaCorridor = GetProcAddress(_dllHandle, "pykep_mga_corridor_gpu_evaluate");
@@ -1484,6 +1544,41 @@ namespace KSPGMAT.MGA {
             } catch (Exception ex) {
                 KSPGMATLog.Error("PykepNative", $"GPU 计算异常回退: {ex.Message}", ex);
                 return -3;
+            }
+        }
+
+        /// <summary>
+        /// 原生多核 CPU (OpenMP + AVX2) Porkchop 批处理高通量求解入口
+        /// (C++ 内部多核并发计算，消灭百万次 P/Invoke 与托管垃圾回收，具备核心数保留防卡死保护)
+        /// </summary>
+        public static int PorkchopCpuEvaluate(
+            ref GpuPlanetElements p1,
+            ref GpuPlanetElements p2,
+            double centralMu,
+            double depStartUt,
+            double depSpanSec,
+            double tofMinSec,
+            double tofMaxSec,
+            int width,
+            int height,
+            bool flybyOnly,
+            float[] outTotDv,
+            float[] outC3)
+        {
+            EnsureLoaded();
+            if (!_isAvailable || _fnPorkchopCpuEvaluate == null) return -2;
+            try {
+                return _fnPorkchopCpuEvaluate(
+                    ref p1, ref p2,
+                    centralMu,
+                    depStartUt, depSpanSec,
+                    tofMinSec, tofMaxSec,
+                    width, height,
+                    flybyOnly ? 1 : 0,
+                    outTotDv, outC3);
+            } catch (Exception ex) {
+                KSPGMATLog.Error("PykepNative", $"原生 CPU Porkchop 计算异常: {ex.Message}", ex);
+                return -99;
             }
         }
 

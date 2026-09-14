@@ -55,6 +55,7 @@ namespace MGADebugRunner
                 { "topologies", new HistoricalTopologiesDiagnosisTest() },
                 { "porkchop_bench", new PorkchopScalesBenchmarkTest() },
                 { "gpu_verify", new GpuAccelerationValidationTest() },
+                { "tof_bounds", new ToFBoundDiagnosticsTest() },
                 { "surrogate", new SurrogateTrainingTest() },
                 { "galileo", new GalileoEvaluationTest() },
                 { "juno", new JunoEvaluationTest() },

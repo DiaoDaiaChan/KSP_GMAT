@@ -135,8 +135,8 @@ namespace MGADebugRunner.TestSuites
             int[] testBatchSizes = new int[] { 128, 1024, 8192, 32768, 65536 };
             bool casePassed = true;
 
-            Console.WriteLine(string.Format("{0,-12} | {1,-10} | {2,-12} | {3,-18} | {4,-15} | {5,-10}",
-                "批处理规模", "HLSL状态", "GPU耗时", "GPU吞吐量", "标称共振Loss", "奇点误报?"));
+            Console.WriteLine(string.Format("{0,-12} | {1,-10} | {2,-12} | {3,-18} | {4,-22} | {5,-10}",
+                "批处理规模", "HLSL状态", "GPU耗时", "GPU吞吐量", "[回放基线]Loss", "奇点误报?"));
             Console.WriteLine(new string('-', 88));
 
             Random rand = new Random(42);
@@ -144,7 +144,7 @@ namespace MGADebugRunner.TestSuites
             foreach (int popSize in testBatchSizes)
             {
                 var pop = new List<double[]>(popSize);
-                pop.Add((double[])nominalGene.Clone()); // #0 为标称共振个体
+                pop.Add((double[])nominalGene.Clone()); // #0 为 [回放基线] 个体 (物理已知可行点, 用作奇点误报参照)
 
                 for (int i = 1; i < popSize; i++)
                 {
@@ -183,7 +183,6 @@ namespace MGADebugRunner.TestSuites
 
                 Console.WriteLine(string.Format("{0,-12} | {1,-10} | {2,-12} | {3,-18} | {4,-15} | {5,-10}",
                     $"{popSize:N0}", "✅ SUCCESS", $"{timeMs:F2} ms", $"{throughput:N0} evals/s", $"{nominalLoss:F2} m/s", singStr));
-
                 if (isSingularityMisfire || !isFinite)
                 {
                     casePassed = false;
@@ -232,7 +231,12 @@ namespace MGADebugRunner.TestSuites
             int legCount = fullChain.Count - 1; // 4 legs
             int geneDim = 1 + 2 * legCount;     // 1 + 4 + 4 = 9
 
-            // 标称双重同星共振染色体 (4 航段)
+            // [回放基线] 标称双重同星共振染色体 (4 航段) = MESSENGER 历史构型的近似值。
+            //
+            // 【2026-09-14 审计标注】同 Case 2: 本用例是 GPU 数值鲁棒性探针,
+            // 基线个体用于给出"该物理可行点不应触发 100000 奇点罚项"的参照,
+            // 不代表 GPU 自主求解出了该构型。
+            //
             // Leg 0: Earth -> Venus (~155d)
             // Leg 1: Venus -> Venus (~224.7d, 金星 1:1 同星共振段)
             // Leg 2: Venus -> Mercury (~130d)
@@ -248,8 +252,8 @@ namespace MGADebugRunner.TestSuites
             int[] testBatchSizes = new int[] { 128, 1024, 8192, 32768, 65536 };
             bool casePassed = true;
 
-            Console.WriteLine(string.Format("{0,-12} | {1,-10} | {2,-12} | {3,-18} | {4,-15} | {5,-10}",
-                "批处理规模", "HLSL状态", "GPU耗时", "GPU吞吐量", "标称共振Loss", "奇点误报?"));
+            Console.WriteLine(string.Format("{0,-12} | {1,-10} | {2,-12} | {3,-18} | {4,-22} | {5,-10}",
+                "批处理规模", "HLSL状态", "GPU耗时", "GPU吞吐量", "[回放基线]Loss", "奇点误报?"));
             Console.WriteLine(new string('-', 88));
 
             Random rand = new Random(101);
@@ -349,6 +353,9 @@ namespace MGADebugRunner.TestSuites
             for (int i = 0; i < candidateCount; i++)
             {
                 double[] g = new double[geneDim];
+                // [数值探针] 本批处理围绕**已知可行的回放基线**做小幅摄动 (±15 天 / ±1.5% 航时),
+                // 目的是在物理量级正确的邻域内检验 GPU 核的数值鲁棒性,
+                // 而非把该区域当作"搜索域"(本用例不做寻优)。基线值不参与任何通过判定。
                 g[0] = launchUT + (rand.NextDouble() - 0.5) * 30.0 * 86400.0;
                 g[1] = (150.0 + rand.NextDouble() * 100.0) * 86400.0; // Earth->Venus
                 g[2] = (200.0 + rand.NextDouble() * 60.0) * 86400.0;  // Venus->Venus (1:1 共振槽)

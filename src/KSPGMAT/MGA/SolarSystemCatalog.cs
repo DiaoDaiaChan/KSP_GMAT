@@ -690,6 +690,14 @@ namespace KSPGMAT.MGA
                 }
 
                 string defaultIcon = GetDefaultIcon(name);
+                // 【2026-09-14 第二轮审计】轨道要素未解析时明确标记, 不再伪装成地球。
+                // Mu/RadiusKm 的兜底仅作为**数值保护** (避免下游除零), 但标志位会让消费侧拒绝物理推导。
+                bool orbitUnresolved = (sma <= 0);
+                if (orbitUnresolved) {
+                    KSPGMATLog.Warn("Catalog",
+                        $"[天体解析] 名称 '{name}' 在 SPICE 与标准后备库中均无轨道要素 —— 已标记 IsOrbitUnresolved。" +
+                        "该天体不得参与任何航时/ΔV/共振推导 (原实现会静默退化为地球 1 AU)。");
+                }
                 var fallbackPlanet = new SolarPlanet {
                     Name = name,
                     DisplayName = I18n.T("body_" + name, name),
@@ -708,6 +716,7 @@ namespace KSPGMAT.MGA
                     EpochJ2000 = J2000_RSS_UT,
                     ParentName = parentFallback,
                     IsMoon = isMoonFallback,
+                    IsOrbitUnresolved = orbitUnresolved,
                     SourceScheme = EphemerisScheme.Scheme1_SpiceDE440
                 };
                 if (StandardSolarBodyNames.Any(s => s.Equals(name, StringComparison.OrdinalIgnoreCase))) {
@@ -772,7 +781,15 @@ namespace KSPGMAT.MGA
                 return (413970000.0, 0.07580000, 10.59000, 62.63, 473.0);
             if (upper.Contains("VESTA") || upper.Contains("灶神星"))
                 return (353320000.0, 0.08870000, 7.14000, 17.29, 262.7);
-            return (149598023.0, 0.0167, 0.0, 398600.4418, 6378.14);
+
+            // 【2026-09-14 第二轮审计修正 —— 消除"未识别天体伪装成地球"】
+            // 原实现为 `return (149598023.0, 0.0167, 0.0, 398600.4418, 6378.14);`
+            // 即: 任何不在上表的名称都会**静默变成地球** (1 AU、μ_Earth、R_Earth)。
+            // 后果: 在 Kerbol 缩尺星系 / JNSQ / 自建星球包下, 所有自定义天体的轨道半径、
+            // 引力常数、半径与地球完全一致 —— 由此算出的航时、ΔV、共振阶数全部是伪值,
+            // 且没有任何断言能发现它 (因为"地球值"本身自洽)。
+            // 现改为返回全零: SMA <= 0 使调用侧可**识别并拒绝**, 而不是拿到一个看似合法的地球。
+            return (0.0, 0.0, 0.0, 0.0, 0.0);
         }
 
         /// <summary>

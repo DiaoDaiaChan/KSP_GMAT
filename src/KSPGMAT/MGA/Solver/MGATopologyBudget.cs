@@ -246,6 +246,14 @@ namespace KSPGMAT.MGA
                 ? searchWindowDays
                 : MGADefaults.InterplanetarySearchDays;
 
+            // 区分发射搜索窗(如180天)与深井/远外天体长周期星际巡航飞行历时:
+            // 深度势阱(水星)或远外行星(木星以远)的多圈引力减速/加速共振巡航飞行历时通常在 2500~3500 天以上。
+            // 若未提供全局 TOF 上限或传入仅为发射窗口，依轨道半长轴比保障真实巡航共振时间预算
+            if (pArr != null && pDep != null && (pArr.SMA < pDep.SMA * 0.55 || pArr.SMA > pDep.SMA * 2.0))
+            {
+                windowDays = Math.Max(windowDays, 3000.0);
+            }
+
             // 额外共振额度 = 搜索窗内该天体还能完成多少次公转 (物理时间预算, 非人为上限)
             int extraResonances = (int)Math.Floor(windowDays / bodyPeriodDays);
             budget.MaxResonances = Math.Max(

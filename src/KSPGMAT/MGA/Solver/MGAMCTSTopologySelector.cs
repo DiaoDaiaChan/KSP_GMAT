@@ -53,42 +53,130 @@ namespace KSPGMAT.MGA
         /// <param name="arrivalPlanet">到达天体</param>
         /// <param name="searchWindowDays">发射搜索窗口跨度 (天); &lt;=0 时使用默认星际搜索跨度</param>
         /// <param name="centralBody">中心天体 (默认 Sun)</param>
-        /// <summary>候选拓扑的能量赤字接纳倍数 (无量纲): 赤字不超过该倍数×预算者仍进入候选池, 供优化器实测淘汰。</summary>
+        /// <summary>候选拓扑的能量赤字接纳倍数 (无量纲): 赤字不超过该倍数×预算者仍进入候选池, 供优化器实测淘汰。
+        /// 标注: **[经验参数·待标定]**</summary>
         public const double DeficitAcceptanceMultiple = 2.0;
 
         /// <summary>
         /// 帕累托折算率 (km/s 每 年): 航时每增加 1 年, 相当于付出多少 km/s 的速度增量代价。
         /// 取代原先分散在 ParetoScore 中的 1.2 / 0.3 两个无量纲汇率。
+        /// 标注: **[经验参数·待标定]** —— 该汇率是工程偏好, 不是物理量。
         /// </summary>
         public const double TradeoffKmsPerYear = 0.3;
 
-        /// <summary>深潜内行星任务的向外可达包络倍率 (相对出发星轨道半长轴)。工程包络策略, 非物理常数。</summary>
+        /// <summary>深潜内行星任务的向外可达包络倍率 (相对出发星轨道半长轴)。工程包络策略, 非物理常数。
+        /// 标注: **[经验参数·待标定]**</summary>
         public const double InwardMissionOutwardEnvelope = 1.6;
 
-        /// <summary>外向任务的可达包络倍率 (相对目标星轨道半长轴)。工程包络策略, 非物理常数。</summary>
+        /// <summary>外向任务的可达包络倍率 (相对目标星轨道半长轴)。工程包络策略, 非物理常数。
+        /// 标注: **[经验参数·待标定]**</summary>
         public const double OutwardMissionOutwardEnvelope = 1.25;
 
         /// <summary>
         /// 航时上限相对霍曼基准航时的倍数。物理依据: 双体转移的 T ~ a^(3/2),
         /// 超过该倍数的解所需半长轴已远超两端天体轨道, 属"绕远路"而非有效捷径。
+        /// 标注: **[经验参数·待标定]** —— 8.0 这个具体倍数仍是工程口径。
         /// </summary>
         public const double MaxFlightDaysToHohmannMultiple = 8.0;
 
         /// <summary>
         /// 巨行星弹弓后的航时收缩系数: 飞掠后的等效日心速度由该天体的实际
         /// 引力增益给出 (v_M + delta_v_fb), 取代原手拍的 14.0 km/s 常数速度。
+        /// 标注: **[经验参数·待标定]**
         /// </summary>
         public const double GiantSlingshotToFRelaxation = 1.35;
 
-        /// <summary>巨行星弹弓航时的相对下限系数 (与转移弧标称航时取小者)。</summary>
+        /// <summary>巨行星弹弓航时的相对下限系数 (与转移弧标称航时取小者)。
+        /// 标注: **[经验参数·待标定]**</summary>
         public const double GiantSlingshotToFMinFactor = 0.35;
 
         /// <summary>
-        /// 浅势阱目标判定比例 (无量纲): 天体安全半径引力势 mu/r_safe 低于
-        /// 其轨道动能尺度 mu_central/a 的该比例时, 视为"无动力捕获不可行"的深势阱目标。
-        /// 0.03 使判据在太阳系中复现原有行为 (水星/Mars 命中, 金星/木星/土星不命中)。
+        /// 【2026-09-14 第二轮审计：本常量已删除】
+        ///
+        /// 原为 `ShallowWellPotentialFraction = 0.03` —— 天体安全半径引力势 mu/r_safe 低于其轨道
+        /// 动能尺度 mu_central/a 的该比例时判为"深势阱捕获目标"。第一轮审计把它的注释里
+        /// "使判据在太阳系中复现原有行为 (水星/Mars 命中, 金星/木星/土星不命中)" 删除并登记为待标定,
+        /// 但**阈值本身仍是绝对比例**。
+        ///
+        /// 第二轮已切换为**系统内分位自标定**判据, 见
+        /// <see cref="MGAPhysicalScales.ClassifyDeepWellTargetBySystemDistribution"/>
+        /// (下四分位, 统计学约定, 对任意恒星系成立)。
         /// </summary>
-        public const double ShallowWellPotentialFraction = 0.03;
+
+        /// <summary>
+        /// 深势阱目标"本星自减速共振"的候选展开阶数上限。
+        ///
+        /// 【2026-09-14 审计修正】原为裸字面量 `extraRes &lt;= 6`, 注释直接点名
+        /// "MESSENGER / BepiColombo 机制" —— 6 恰为 BepiColombo 的历史共振次数。
+        /// 现命名化并登记其真实状态:
+        ///   标注: **[经验参数·待标定]** 正确形式应为"解析共振下界 N_req + 探索余量"。
+        ///   已具备的解析对照: MGAFlybyDynamicsHelper.ComputeRequiredResonantPhasingCount
+        ///   以 90° 转角需求与水星参数计算得约 6 阶 (与 BepiColombo 一致), 量级吻合;
+        ///   该 API 尚未接入本分支, 接入后应以 N_req 取代本固定值。
+        ///   上限 6 同时与 ResonanceRatioCandidates 的最高槽 (6:1) 对齐。
+        /// </summary>
+        public const int DeepWellResonanceExpansionOrder = 6;
+
+        /// <summary>
+        /// 深势阱共振候选的航时评分权重 (每 1 儒略年)。
+        /// 取代原裸字面量 0.15。标注: **[经验参数·待标定]**
+        /// </summary>
+        public const double DeepWellResonanceToFScoreWeight = 0.15;
+
+        /// <summary>
+        /// 天体半径缺失时, 用于堆砌安全半径的绝对余量 (km)。
+        /// 取代原散落的裸字面量 100.0 / 200.0。标注: **[经验参数·待标定]**
+        /// </summary>
+        public const double SafeRadiusFallbackMarginKm = 100.0;
+
+        /// <summary>儒略年天数 (与 MGADefaults / EphemerisTimeSystem 口径一致)。</summary>
+        public const double DaysPerJulianYear = 365.25;
+
+        /// <summary>
+        /// 【2026-09-14 第二轮审计：本常量已删除】
+        ///
+        /// 原为 `DeepWellExitSmaRatioThreshold = 0.45` —— 全链最内天体半长轴深于出发天体该比例时,
+        /// 判为需反向梯度泵升的深井构型。仍是一个绝对比例, 对非 Sol 星系无依据。
+        ///
+        /// 第二轮已切换为**系统内轨道壳层计数**判据, 见
+        /// <see cref="MGAPhysicalScales.ClassifyDeepWellExitByShellSteps"/>
+        /// (壳层比由系统自身分布导出, 仅保留一个离散壳层数 `DeepWellExitShellSteps = 2`)。
+        /// </summary>
+
+        /// <summary>
+        /// 深势阱捕获的**最少会合次数** (物理下界, 非经验分档)。
+        ///
+        /// 【2026-09-14 新增】取代原裸字面量 2 (其注释曾点名 "MESSENGER / BepiColombo 机制")。
+        /// 物理含义: 单次会合只能无动力飞掠通过, 无法削减 v_inf; 要削减 v_inf 必须多次会合,
+        /// 故深势阱捕获在构造上至少需要 2 次会合 —— 与具体任务无关。
+        /// 该值不是可调参数, 而是构造性下界。
+        /// </summary>
+        public const int MinimumDeepWellCaptureVisits = 2;
+
+        /// <summary>
+        /// 深势阱共振拓扑保全的取样条数上限。
+        /// 【2026-09-14 新增】取代原裸字面量 3。标注: **[经验参数·待标定]**
+        /// </summary>
+        public const int DeepWellQuotaTake = 3;
+
+        /// <summary>
+        /// 非深势阱天体允许的共振阶数上限 (单阶: 仅 1:1 调相环)。
+        /// 【2026-09-14 新增】取代原 `? 6 : 1` 中的裸字面量 1。
+        /// </summary>
+        public const int SingleResonanceOrderLimit = 1;
+
+        /// <summary>
+        /// 巨行星 / 类地行星在排列组合展开时的共振阶数上限 (原为 `IsDeepWell ? 3 : (IsGiant ? 1 : 2)`)。
+        /// 【2026-09-14 新增】取代原裸字面量 3 / 1 / 2。
+        /// 标注: **[经验参数·待标定]**
+        /// </summary>
+        public const int ExpansionResonanceOrderDeepWell = 3;
+
+        /// <summary>见 <see cref="ExpansionResonanceOrderDeepWell"/>。原裸字面量 1。</summary>
+        public const int ExpansionResonanceOrderGiant = 1;
+
+        /// <summary>见 <see cref="ExpansionResonanceOrderDeepWell"/>。原裸字面量 2。</summary>
+        public const int ExpansionResonanceOrderDefault = 2;
 
         /// <summary>
         /// 巨行星弹弓后的等效日心飞行速度 (km/s)。
@@ -527,8 +615,11 @@ namespace KSPGMAT.MGA
                             }
                             else
                             {
-                                // 深势阱小天体 (如水星/Moho) 允许连续自共振减速 (MESSENGER / BepiColombo 机制: 1:1, 2:3, 3:4 等共振降轨)
-                                if (resCount >= 6) continue;
+                                // 深势阱天体允许连续自共振减速 (1:1, 2:3, 3:4 等共振降轨)。
+                                // 【2026-09-14 审计修正】原为裸字面量 `if (resCount >= 6) continue;`,
+                                // 且注释点名 "MESSENGER / BepiColombo 机制" —— 6 即 BepiColombo 的历史共振次数。
+                                // 现改用已命名并登记标定状态的 DeepWellResonanceExpansionOrder。
+                                if (resCount >= DeepWellResonanceExpansionOrder) continue;
                             }
 
                             // 根节点出发若第一步即自环，允许深势阱内行星或外行星任务实施 ΔV-EGA 共振调相 (如 Juno)
@@ -719,16 +810,22 @@ namespace KSPGMAT.MGA
                                 ParetoScore = score
                             });
 
-                            // 若目标是深势阱小天体 (如水星/墨霍)，自动在其后展开 1~6 次目标本星自减速共振 (MESSENGER / BepiColombo 机制)
+                            // 若目标是深势阱天体，自动在其后展开目标本星自减速共振候选
+                            // (MESSENGER / BepiColombo 属此类构型, 但本分支不再按天体名或任务名特判)。
+                            //
+                            // 【2026-09-14 审计修正】原实现为裸字面量 `for (extraRes = 1; extraRes <= 6; extraRes++)`,
+                            // 且注释直接点名 "MESSENGER / BepiColombo 机制" —— 上界 6 恰为 BepiColombo 的历史
+                            // 共振次数, 属按历史答案生成候选。现命名化并登记其标定状态 (见
+                            // DeepWellResonanceExpansionOrder 的标注: 应替换为解析 N_req)。
                             if (arrNode.IsDeepWell && chain.Count > 0)
                             {
                                 var pArr = SolarSystemCatalog.GetPlanet(arrNode.Name);
                                 double deltaTurn = (pArr != null)
                                     ? MGAPhysicalScales.MaxTurnAngleRad(pArr, Math.Max(vInfArrival, 1e-3))
-                                    : MGAPhysicalScales.MaxTurnAngleRad((arrNode.SafeRadiusKm > 0 ? arrNode.SafeRadiusKm : arrNode.RadiusKm + 100.0) * Math.Pow(Math.Max(vInfArrival, 1e-3), 2.0) / Math.Max(1.0, arrNode.Mu));
+                                    : MGAPhysicalScales.MaxTurnAngleRad((arrNode.SafeRadiusKm > 0 ? arrNode.SafeRadiusKm : arrNode.RadiusKm + SafeRadiusFallbackMarginKm) * Math.Pow(Math.Max(vInfArrival, 1e-3), 2.0) / Math.Max(1.0, arrNode.Mu));
                                 double decayRatio = Math.Max(0.5, Math.Min(0.95, 1.0 - Math.Sin(deltaTurn * 0.5)));
 
-                                for (int extraRes = 1; extraRes <= 6; extraRes++)
+                                for (int extraRes = 1; extraRes <= DeepWellResonanceExpansionOrder; extraRes++)
                                 {
                                     var resonantChain = new List<string>(chain);
                                     for (int er = 0; er < extraRes; er++) resonantChain.Add(arrival);
@@ -736,7 +833,8 @@ namespace KSPGMAT.MGA
                                     // 深势阱天体共振自减速物理边际效益递减规律 (Vis-Viva Diminishing Returns):
                                     // 基于目标天体真实双曲转角 delta 计算边际相对速度削减率，杜绝经验拟合
                                     double decelBonus = vInfArrival * (1.0 - Math.Pow(decayRatio, extraRes));
-                                    double decelScore = score - decelBonus + (extraRes * arrNode.PeriodDays / 365.25) * 0.15;
+                                    double decelScore = score - decelBonus
+                                        + (extraRes * arrNode.PeriodDays / DaysPerJulianYear) * DeepWellResonanceToFScoreWeight;
                                     int resLegs = legs + extraRes;
                                     string resCat = (resonantChain.Count >= 4) ? "GrandTour" : "Multi";
 
@@ -953,21 +1051,17 @@ namespace KSPGMAT.MGA
                 // 1. 直达拓扑保留策略: 仅在非深势阱小天体 (即目标不是水星/Moho) 时作为基础保留
                 //    对于水星等深势阱天体，直达需消耗 >25 km/s 纯脉冲，属于不可行方案，绝不占用首发宝贵名额！
                 var arrP = SolarSystemCatalog.GetPlanet(arrival);
-                // 深势阱目标判定 (无量纲): 该天体安全半径处的引力势 mu/r_safe 是否远低于
-                // 其绕中心天体的**轨道动能尺度** mu_central/a。
-                // 判据 `mu/r_safe < ShallowWellPotentialFraction * mu_central/a` 的物理含义:
-                // 停泊轨道速度远大于天体表面引力所能提供的制动力矩 ⇒ 无动力捕获不可行,
+                // 深势阱目标判定 (无量纲 + **系统内分位自标定**): 该天体安全半径处的引力势 mu/r_safe
+                // 相对其绕中心天体的轨道动能尺度 mu_central/a 的比值, 是否落在系统内全部天体的下四分位以内。
+                // 物理含义: 停泊轨道速度远大于天体表面引力所能提供的制动力矩 ⇒ 无动力捕获不可行,
                 // 必须依赖借力减速 (如水星/Mars), 而大行星因势阱深不满足该式。
-                // 取代原 `Mu/RadiusKm < 25.0 && SMA < 1.0e8` 的绝对阈值。
+                // 取代原 `Mu/RadiusKm < 25.0 && SMA < 1.0e8` 的绝对阈值, 以及第一轮审计后仍残留的
+                // 绝对比例 `ShallowWellPotentialFraction = 0.03`。
                 double muCentralForWell = SolarSystemCatalog.GetCentralMu(centralBodyForSelection);
                 if (muCentralForWell <= 0) muCentralForWell = SolarSystemCatalog.SunMu;
-                bool isDeepWellTarget = false;
-                if (arrP != null && arrP.SMA > 0)
-                {
-                    double wellDepth = arrP.Mu / Math.Max(1.0, MGAPhysicalScales.SafeRadiusKm(arrP));
-                    double orbitKineticScale = muCentralForWell / arrP.SMA;
-                    isDeepWellTarget = wellDepth < ShallowWellPotentialFraction * orbitKineticScale;
-                }
+                bool isDeepWellTarget = arrP != null && arrP.SMA > 0 &&
+                    MGAPhysicalScales.ClassifyDeepWellTargetBySystemDistribution(
+                        arrP, muCentralForWell, SolarSystemCatalog.GetAvailablePlanets());
                 var directCand = directBucket.FirstOrDefault();
                 if (!isDeepWellTarget && directCand.FlybyChain != null)
                 {
@@ -977,15 +1071,28 @@ namespace KSPGMAT.MGA
                 // 【已移除】原 AddDiverseFromBucket 局部函数 (首天体聚类 + 构型家族轮询 + 跨天体轮询),
                 // 随四桶流派机制一并退出求解链, 理由见下方分桶移除说明。
 
-                // 2. 深势阱小天体多次自共振减速拓扑保全 (Deep-Well Resonance Chain Quota: MESSENGER / BepiColombo 机制):
-                // 若目标为深势阱小天体，直达捕获需要极大工质，必须依靠多次目标本星连续自共振削减 v_inf。
-                // 确保至少保留 2 组含有目标连续自共振 (>= 2 次同星借力) 的优质代表性拓扑进入演化池。
+                // 2. 深势阱天体多次自共振减速拓扑保全 (Deep-Well Resonance Chain Quota):
+                // 若目标为深势阱天体, 直达捕获需要极大工质, 必须依靠多次目标本星连续自共振削减 v_inf。
+                //
+                // 【2026-09-14 审计修正】原实现为离散配额 (`>= 2` 次同星借力 + `.Take(3)`),
+                // 且注释点名 "MESSENGER / BepiColombo 机制", 属按历史构型保留解法。
+                // 现改为由**物理下界**驱动:
+                //   最少会合次数 = max( MinimumDeepWellCaptureVisits, 解析共振阶数下界 N_req )
+                //   · MinimumDeepWellCaptureVisits = 2 的物理含义: 单次会合只能无动力飞掠通过,
+                //     无法削减 v_inf, 故深势阱捕获**在构造上**至少需要 2 次会合 —— 与具体任务无关;
+                //   · N_req 由无动力双曲偏折几何解析给出 (ceil(所需转角 / 单次偏折极限))。
                 if (isDeepWellTarget)
                 {
+                    int minResOrder = Math.Max(
+                        MinimumDeepWellCaptureVisits,
+                        MGAEphemerisReachabilityAnalyzer.ResolveRequiredDeepWellResonanceOrder(
+                            SolarSystemCatalog.GetPlanet(arrival), null));
+
                     var multiResCandidates = distinctList
-                        .Where(c => c.FlybyChain != null && c.FlybyChain.Count(b => b.Equals(arrival, StringComparison.OrdinalIgnoreCase)) >= 2)
+                        .Where(c => c.FlybyChain != null
+                                    && c.FlybyChain.Count(b => b.Equals(arrival, StringComparison.OrdinalIgnoreCase)) >= minResOrder)
                         .OrderBy(c => c.ParetoScore)
-                        .Take(3);
+                        .Take(DeepWellQuotaTake);
                     foreach (var rc in multiResCandidates)
                     {
                         var rRoute = new List<string>(rc.FlybyChain);
@@ -1146,7 +1253,11 @@ namespace KSPGMAT.MGA
                         bool isRes = n.Name.Equals(node.BodyName, StringComparison.OrdinalIgnoreCase);
                         if (isRes)
                         {
-                            int allowedRes = (n.IsDeepWell || n.Name.Equals(arrNode.Name, StringComparison.OrdinalIgnoreCase)) ? 6 : 1;
+                            // 【2026-09-14 审计修正】原为 `? 6 : 1` 的裸字面量分档 (6 即深势阱多圈共振阶数)。
+                            // 现改用已命名并登记标定状态的 DeepWellResonanceExpansionOrder 与单阶上限。
+                            int allowedRes = (n.IsDeepWell || n.Name.Equals(arrNode.Name, StringComparison.OrdinalIgnoreCase))
+                                ? DeepWellResonanceExpansionOrder
+                                : SingleResonanceOrderLimit;
                             if (node.ResonancesCount >= allowedRes) continue;
                         }
 
@@ -1405,8 +1516,11 @@ namespace KSPGMAT.MGA
                     if (current.IsTerminal)
                     {
                         // 到达目标天体: 结合始发逃逸速度与总借力赤字计算真实任务总 ΔV
-                        // 始发逃逸速度: 首个非出发天体由霍曼 v∞ 推导; 出发天体自环起手 (EGA) 保留历史名义 C3 (Juno/Galileo 级 ~3.5 km/s)
-                        double vInfDep = 3.5;
+                        // 始发逃逸速度: 首个非出发天体由霍曼 v∞ 推导; 出发天体自环起手 (ΔV-EGA) 由 2:1 共振泵升解析给出。
+                        // 【2026-09-14 审计修正】原为裸字面量 3.5, 注释自陈 "保留历史名义 C3
+                        // (Juno/Galileo 级 ~3.5 km/s)" —— 属按历史任务取值。现改为 Vis-Viva 解析推导,
+                        // 对地球出发得 ~3.21 km/s (与原 3.5 同量级, 但不再依赖任务清单)。
+                        double vInfDep = SelfResonanceEgaVInfKms(muCentral, depNode.SMA);
                         var rootChild = current;
                         while (rootChild.Parent != null && rootChild.Parent.Parent != null) rootChild = rootChild.Parent;
                         if (rootChild != null && !rootChild.BodyName.Equals(depNode.Name, StringComparison.OrdinalIgnoreCase))
@@ -1466,7 +1580,8 @@ namespace KSPGMAT.MGA
                         // 粗估始发发射机动
                         var firstB = flybysOnly.Count > 0 ? flybysOnly[0] : arrNode.Name;
                         var pFirst = nodes.FirstOrDefault(x => x.Name.Equals(firstB, StringComparison.OrdinalIgnoreCase));
-                        double vInfDep = 3.5;
+                        // 【2026-09-14 审计修正】原为裸字面量 3.5 (见上处说明), 改为 2:1 共振泵升解析值。
+                        double vInfDep = SelfResonanceEgaVInfKms(muCentral, depNode.SMA);
                         if (pFirst != null && !pFirst.Name.Equals(depNode.Name, StringComparison.OrdinalIgnoreCase))
                         {
                             KeplerAdjacencyGraphEngine.CalcHohmannLeg(depNode.SMA, pFirst.SMA, muCentral, out vInfDep, out _, out _);
@@ -1564,7 +1679,9 @@ namespace KSPGMAT.MGA
                 // 拓扑搜索预算: 100% 由物理图 (可用梯级数) + 解析共振下界 + 真实搜索窗跨度导出。
                 // 【重构】取代原 isDeepInnerInit (rArr < rDep*0.55) / isFarOuterInit (>6.0) 分档,
                 // 以及三处固定值 maxTreeLegs = 12/8、maxMctsDepth = 11/8。
-                double windowDaysForBudget = (config.SearchEndUT - config.SearchStartUT) / MGADefaults.SecondsPerDay;
+                double windowDaysForBudget = config.TotalToFMaxDays > 0 
+                    ? config.TotalToFMaxDays 
+                    : (config.SearchEndUT - config.SearchStartUT) / MGADefaults.SecondsPerDay;
                 var topoBudget = MGATopologyBudgetDeriver.Derive(
                     config.DeparturePlanet, config.ArrivalPlanet, central, windowDaysForBudget);
 
@@ -1636,7 +1753,7 @@ namespace KSPGMAT.MGA
                 if (filtered != null && filtered.Count > 0)
                 {
                     sequences = filtered.Select(f => f.FlybyChain).ToList();
-                    int poolLimit = Math.Max(maxChains, Math.Min(24, sequences.Count));
+                    int poolLimit = Math.Min(maxChains, sequences.Count);
                     return sequences.Take(poolLimit).ToList();
                 }
             }
@@ -1746,7 +1863,11 @@ namespace KSPGMAT.MGA
                         var node = nodes.FirstOrDefault(n => n.Name.Equals(bodyName, StringComparison.OrdinalIgnoreCase));
                         if (node != null)
                         {
-                            int resMax = node.IsDeepWell ? 3 : (node.IsGiant ? 1 : 2);
+                            // 【2026-09-14 审计修正】原为裸字面量分档 `IsDeepWell ? 3 : (IsGiant ? 1 : 2)`。
+                            // 现改用已命名的常量 (标注见各自声明处)。
+                            int resMax = node.IsDeepWell
+                                ? ExpansionResonanceOrderDeepWell
+                                : (node.IsGiant ? ExpansionResonanceOrderGiant : ExpansionResonanceOrderDefault);
                             for (int n = 1; n <= resMax; n++)
                             {
                                 var resChain = new List<string>(baseChain);
@@ -1873,7 +1994,9 @@ namespace KSPGMAT.MGA
                 ? SolarSystemCatalog.GetCentralMu(centralBody) 
                 : (SolarSystemCatalog.SunMu > 0 ? SolarSystemCatalog.SunMu : MGADefaults.FallbackSunMu)) * 1e9;
 
-            // 反梯级泵升深井识别: 全链最内天体 (如 Scenario 9 的水星 0.387 AU) 是否深于出发星 45%
+            // 反梯级泵升深井识别: 全链最内天体是否显著深于出发天体 (需反向梯度泵升)。
+            // 【2026-09-14 审计修正】原注释以内部**测试场景编号** "Scenario 9 的水星 0.387 AU"
+            // 作为取值依据, 属按测试集标定; 该表述已删除, 阈值命名化并加注标定状态。
             var depObjBounds = SolarSystemCatalog.GetPlanet(departure);
             double depSmaBounds = (depObjBounds != null && depObjBounds.SMA > 0) ? depObjBounds.SMA : MGADefaults.AU_KM;
             double deepestSma = double.MaxValue;
@@ -1882,7 +2005,11 @@ namespace KSPGMAT.MGA
                 var bp = SolarSystemCatalog.GetPlanet(bn);
                 if (bp != null && bp.SMA > 0) deepestSma = Math.Min(deepestSma, bp.SMA);
             }
-            bool deepWellExitMode = (deepestSma < depSmaBounds * 0.45);
+            // 【2026-09-14 第二轮审计修正】原为绝对比例 `deepestSma < depSmaBounds * 0.45`。
+            // 现改为"深入至少 N 个**系统内轨道壳层**"—— 壳层比由系统自身分布导出
+            // (Sol 系 ≈ 1.588), 故对 Kerbol / JNSQ / 自建星系同样成立。
+            bool deepWellExitMode = MGAPhysicalScales.ClassifyDeepWellExitByShellSteps(
+                deepestSma, depSmaBounds, SolarSystemCatalog.GetAvailablePlanets());
 
             for (int k = 0; k < fullChain.Count - 1; k++)
             {
@@ -1908,15 +2035,19 @@ namespace KSPGMAT.MGA
                     }
 
                     double muCentralKmS = muCentralM * 1e-9;
-                    var (minLeg, maxLeg, _) = MGAFlybyDynamicsHelper.DerivePhysicalResonantBounds(p1, pDownstream, muCentralKmS);
+                    // 【2026-09-14 修正】同样传入中央天体名, 使 "SMA 是否与该 μ 同参考系" 可被校验。
+                    var (minLeg, maxLeg, _) = MGAFlybyDynamicsHelper.DerivePhysicalResonantBounds(
+                        p1, pDownstream, muCentralKmS, 0.0, centralBody);
                     bounds.Add((minLeg, maxLeg));
                 }
                 else
                 {
                     // 异星转移段: 100% 由欧拉-兰伯特方程与极值动力学几何数学自动推导
                     double muCentralKmS = muCentralM * 1e-9;
+                    // 【2026-09-14 修正】必须把中央天体名传入, 否则函数无法判断各天体的 SMA 是否
+                    // 与该 μ 同参考系 (原地月任务的 53.8 年航时上界即由此产生)。
                     var (minLeg, maxLeg) = MGAFlybyDynamicsHelper.DerivePhysicalInterplanetaryBounds(
-                        p1, p2, muCentralKmS, k == 0, depMinFactor, depMaxFactor);
+                        p1, p2, muCentralKmS, k == 0, depMinFactor, depMaxFactor, centralBody);
                     bounds.Add((minLeg, maxLeg));
                 }
             }
@@ -2056,6 +2187,43 @@ namespace KSPGMAT.MGA
             return GenerateCandidateSequences(cfg);
         }
 
+        /// <summary>
+        /// 出发天体自环起手 (ΔV-EGA) 的逃逸双曲过剩速度 v∞ (km/s), 由 2:1 共振泵升解析给出。
+        ///
+        /// 【2026-09-14 新增】取代原两处裸字面量 `double vInfDep = 3.5;`
+        /// (原文注释自陈取自 "Juno/Galileo 级 ~3.5 km/s" 的历史名义 C3)。
+        ///
+        /// 物理: 自环需先把轨道半长轴抬到 2:1 共振轨道 a_res = a_dep · 2^(2/3),
+        /// 故 v∞ = |v_trans(a_res) − v_circ(a_dep)| (Vis-Viva)。
+        /// 对地球出发解得 ~3.21 km/s, 与原取值同量级但不再引用任何任务清单。
+        /// </summary>
+        internal static double SelfResonanceEgaVInfKms(double muCentral, double depSmaKm) {
+            if (muCentral <= 0 || depSmaKm <= 0) return 0.0;
+            double aResKm = depSmaKm * Math.Pow(2.0, 2.0 / 3.0);
+            return MGAPhysicalScales.HohmannVInfKms(muCentral, depSmaKm, aResKm);
+        }
+
+        /// <summary>
+        /// 判定天体是否构成"有效引力助推源" (无量纲判据)。
+        ///
+        /// 【2026-09-14 新增】取代原 `p.Mu >= 500.0` (BFS 天体过滤) 与
+        /// `destPlanet.Mu >= 1000.0` (目标天体强引力判定) 两个绝对阈值。
+        ///
+        /// 判据: 借力功率指数 rho_assist = delta_v_fb / v_M >= DefaultMinAssistPowerIndex。
+        /// 即该天体单次无动力飞掠的日心速度增益, 至少要达到当地公转速度的 1%
+        /// (否则贡献会被转移弧段的 Lambert 时间自由度完全吸收, 数值上不可辨识)。
+        /// 到达 v_inf 以参考出发天体的霍曼标称值估算。
+        /// </summary>
+        /// <param name="body">待判定天体</param>
+        /// <param name="referenceDepSmaKm">参考出发天体的日心半长轴 (km)</param>
+        /// <param name="muCentral">中心天体引力常数 (km^3/s^2)</param>
+        public static bool IsEffectiveAssistSource(SolarPlanet body, double referenceDepSmaKm, double muCentral) {
+            if (body == null || body.Mu <= 0 || body.SMA <= 0 || referenceDepSmaKm <= 0 || muCentral <= 0) return false;
+            double vInf = MGAPhysicalScales.HohmannVInfKms(muCentral, referenceDepSmaKm, body.SMA);
+            return MGAPhysicalScales.AssistPowerIndex(body, Math.Max(vInf, 1e-3), muCentral)
+                   >= MGAPhysicalScales.DefaultMinAssistPowerIndex;
+        }
+
         public static List<List<string>> GenerateCandidateSequences(MGAConfig config) {
             var results = new List<List<string>>();
             if (config == null || string.IsNullOrEmpty(config.DepartureBody) || string.IsNullOrEmpty(config.DestinationBody))
@@ -2076,13 +2244,19 @@ namespace KSPGMAT.MGA
             if (allPlanets == null || allPlanets.Count == 0) return results;
 
             // 过滤有效引力助推天体：
-            // 仅保留出发天体、目标天体或引力常数 Mu >= 500.0 km^3/s^2 的有效引力源，
-            // 彻底剔除 Ryugu, Eros, Bennu 等质量微小、偏转角近乎为0的微型小行星干扰，确保火星与金星排在队列首位
+            // 【2026-09-14 审计修正】原判据 `p.Mu >= 500.0` 是以 km^3/s^2 标定的**绝对阈值**,
+            // 且注释以"确保火星与金星排在队列首位"说明其被调过。现改用与
+            // KeplerAdjacencyGraphEngine.GetSystemNodes 完全一致的**无量纲借力功率指数**判据:
+            // 该天体单次无动力飞掠可提供的日心速度增益, 占当地公转速度的比例是否达到可辨识下限
+            // (MGAPhysicalScales.DefaultMinAssistPowerIndex)。该判据对任意恒星系与单位制成立,
+            // 可同样剔除 Ryugu / Eros / Bennu / Ceres 等微型天体, 且不再有 Sol 系专用阈值。
+            var refDepPlanet = SolarSystemCatalog.GetPlanet(origin);
+            double refDepSmaKm = (refDepPlanet != null && refDepPlanet.SMA > 0) ? refDepPlanet.SMA : MGADefaults.AU_KM;
             var planetList = allPlanets.Where(p =>
                 !string.IsNullOrEmpty(p.Name) &&
                 (p.Name.Equals(origin, StringComparison.OrdinalIgnoreCase) ||
                  p.Name.Equals(dest, StringComparison.OrdinalIgnoreCase) ||
-                 p.Mu >= 500.0)
+                 IsEffectiveAssistSource(p, refDepSmaKm, bfsMuCentral))
             ).ToList();
 
             var bodyIndexMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -2103,7 +2277,8 @@ namespace KSPGMAT.MGA
             int visitedCount = 0;
 
             var destPlanet = SolarSystemCatalog.GetPlanet(dest);
-            bool destHasStrongGravity = (destPlanet != null && destPlanet.Mu >= 1000.0);
+            // 【2026-09-14 审计修正】原判据 `destPlanet.Mu >= 1000.0` 为绝对阈值, 现改用同一无量纲判据。
+            bool destHasStrongGravity = (destPlanet != null && IsEffectiveAssistSource(destPlanet, refDepSmaKm, bfsMuCentral));
 
             while (queue.Count > 0) {
                 // 安全熔断上限，严防异常分支造成游戏卡死

@@ -57,6 +57,18 @@ namespace KSPGMAT.MGA
     /// </summary>
     public sealed class MGAAdaptiveSolverConfig
     {
+        // =====================================================================
+        // 【2026-09-14 审计标注 · 本配置块中经验参数的统一说明】
+        // 下属全部数值默认值 (停泊高度 200 km、出射门禁 3800 m/s、搜索窗 3 年、
+        // DE 种群 80 / 代数 150 / F 0.7 / CR 0.85、停滞限 15、群岛 4 岛 10 代迁移、
+        // MCTS ε 0.02 / 网格 22.5° / 5 万次 rollout、Hohmann 能量上限 1.35、
+        // 自愈窗口 30 天 / 网格 0.5 天、B 平面 3σ 初值 10 km / 0.05 m/s 等)
+        // 均为**以太阳系内行星际任务标定的经验默认值**, 尚未完成有监督标定。
+        //
+        // 已集中登记于 MGAEmpiricalRegistry (见 "Model/MGAStateManager.cs (MGADefaults)" 条目
+        // 及各项对应条目), 请勿在此处继续新增未登记的裸数字。
+        // 物理常数 (AU、秒/天、角度换算) 与数值保护 (除零钳位) 不属经验参数。
+        // =====================================================================
         // 1. 轨道动力学与几何
         public string CentralBody { get; set; } = SolarSystemCatalog.RootStarName;
         public string DeparturePlanet { get; set; } = SolarSystemCatalog.DefaultDepartureBody;
@@ -379,11 +391,27 @@ namespace KSPGMAT.MGA
             }
 
             double userSpecifiedMaxToF = (config != null && config.TotalToFMaxDays > 0) ? config.TotalToFMaxDays : -1.0;
+            double userSpecifiedMinToF = (config != null && config.TotalToFMinDays > 0) ? config.TotalToFMinDays : -1.0;
             if (config.AutoTuneToFBounds)
             {
                 var (dynMin, dynMax) = MGAMCTSTopologySelector.CalculateAdaptiveToFBounds(config.DeparturePlanet, config.ArrivalPlanet, config.FlybySequence);
-                config.TotalToFMinDays = dynMin;
-                config.TotalToFMaxDays = (userSpecifiedMaxToF > 0) ? userSpecifiedMaxToF : dynMax;
+
+                // 【2026-09-14 第二轮审计修正 —— 调用方指定的航时边界必须是**约束**而非"建议"】
+                //
+                // 原实现为**无条件赋值**:
+                //     config.TotalToFMinDays = dynMin;
+                //     config.TotalToFMaxDays = (userSpecifiedMaxToF > 0) ? userSpecifiedMaxToF : dynMax;
+                // 即: 上界虽尊重调用方, **下界一律被覆盖**; 而 `AutoTuneToFBounds` 在
+                // `MGAAdaptiveSolverConfig.FromMGAConfig` 中被**硬编码为 true** ——
+                // 于是所有经 MGAConfig 进入的路径 (GUI 预设、基准套件、盲搜套件) 传入的
+                // `MinToFDays` / `MaxToFDays` 派生的总航时下界全部被静默丢弃, 上界仅在调用方
+                // 显式给出 TotalToFMaxDays 时才生效。
+                // 实测后果: GUI 预设路径在 New Horizons 上产出 **49950 天 (136.8 年)** 的解,
+                // 而调用方给出的物理包络只有 6978 天 —— 边界完全没有约束力。
+                //
+                // 现改为**仅在没有明确指定时补默认值** (fill-in, 不覆盖)。
+                if (userSpecifiedMinToF <= 0) config.TotalToFMinDays = dynMin;
+                if (userSpecifiedMaxToF <= 0) config.TotalToFMaxDays = dynMax;
             }
 
             var candidateChains = new List<List<string>>();
@@ -404,8 +432,8 @@ namespace KSPGMAT.MGA
                 }
                 if (sequences != null && sequences.Count > 0)
                 {
-                    int poolCapacity = Math.Max(config.MaxCandidateTopologies > 0 ? config.MaxCandidateTopologies : 8, Math.Min(24, sequences.Count));
-                    int maxChainsToEval = Math.Min(poolCapacity, sequences.Count);
+                    int targetLimit = config.MaxCandidateTopologies > 0 ? config.MaxCandidateTopologies : 8;
+                    int maxChainsToEval = Math.Min(targetLimit, sequences.Count);
                     for (int c = 0; c < maxChainsToEval; c++)
                     {
                         var chain = sequences[c];
@@ -490,9 +518,10 @@ namespace KSPGMAT.MGA
             // 将外层拓扑并发度限制为 2~3，避免外层拓扑与内层多岛差分进化/前向注种/C++ OpenMP 产生多层嵌套超订 (Over-subscription)，
             // 确保每个活跃拓扑能充分享受全部 CPU 核心的高速缓存与 AVX2 算力。
             var aggLock = new object();
-            int maxOuterTopo = (Environment.ProcessorCount >= 16) ? 2 : 1;
+            int usableCores = Math.Max(1, Environment.ProcessorCount - 1);
+            int maxOuterTopo = (usableCores >= 16) ? 2 : 1;
             int topoParallel = Math.Min(totalTopos, maxOuterTopo);
-            int perTopoWindowParallel = Math.Max(1, Environment.ProcessorCount / Math.Max(1, topoParallel));
+            int perTopoWindowParallel = Math.Max(1, usableCores / Math.Max(1, topoParallel));
 
             // 纯解析开普勒 Vis-Viva 霍曼物理基准用于健康度门禁 (0 源码硬编码，对任意恒星系通用)。
             // 提前至并行循环外计算一次: 逐链自愈 (Stage 4 per-topology) 需要在链内使用同一基准,
@@ -622,9 +651,19 @@ namespace KSPGMAT.MGA
                     }
                 }
 
-                string firstTarget = (subCfg.FlybySequence != null && subCfg.FlybySequence.Count > 0)
-                    ? subCfg.FlybySequence[0]
-                    : subCfg.ArrivalPlanet;
+                string firstTarget = null;
+                if (subCfg.FlybySequence != null && subCfg.FlybySequence.Count > 0)
+                {
+                    foreach (var b in subCfg.FlybySequence)
+                    {
+                        if (!string.IsNullOrEmpty(b) && !b.Equals(subCfg.DeparturePlanet, StringComparison.OrdinalIgnoreCase))
+                        {
+                            firstTarget = b;
+                            break;
+                        }
+                    }
+                }
+                if (string.IsNullOrEmpty(firstTarget)) firstTarget = subCfg.ArrivalPlanet;
 
                 double synodicDays = PykepBridge.GetSynodicPeriodDays(subCfg.DeparturePlanet, firstTarget);
                 if (synodicDays <= 0 || double.IsNaN(synodicDays)) synodicDays = 365.25;
@@ -665,8 +704,31 @@ namespace KSPGMAT.MGA
                         .ThenBy(x => Math.Round(x.DepartureUT * 1000.0))
                         .ThenBy(x => Math.Round(x.TotalFlightDays * 10000.0))
                         .FirstOrDefault();
+                    // [优化] 逐链自愈 (Stage 4 per-topology 自适应质量调度):
+                    // 绝望无潜力剪枝: 若拓扑最优解显著劣于当前全局最优 (且已有有效解) 或严重超出飞船预算，则跳过昂贵的二次演化自愈
+                    bool isHopeless = (topoBest == null)
+                        || (globalBestDvMs < 1e7 && topoBest.TotalDeltaVKms * 1000.0 > globalBestDvMs * 1.6)
+                        || (subCfg.VesselMaxDeltaVMs > 0 && topoBest.TotalDeltaVKms * 1000.0 > subCfg.VesselMaxDeltaVMs * 2.5);
+
+                    bool fastTier = (topoBest != null && subCfg.VesselMaxDeltaVMs > 0 && topoBest.TotalDeltaVKms * 1000.0 > subCfg.VesselMaxDeltaVMs * 1.5)
+                                    || (tIdx >= Math.Max(4, totalTopos / 2));
+
+                    if (!isHopeless)
+                    {
+                        var healedSols = MGASelfHealingEngine.AuditAndHeal(subCfg, rawSols, depHohmann, totHohmann, ct, fastTier);
+                        if (healedSols != null && healedSols.Count > 0)
+                        {
+                            rawSols = healedSols;
+                            topoBest = rawSols
+                                .OrderBy(x => (subCfg.LaunchDeltaVCeilingMs > 0 && x.LaunchDeltaVKms * 1000.0 > (subCfg.LaunchDeltaVCeilingMs + subLaunchTol) ? 1e6 : 0.0) + x.TotalDeltaVKms)
+                                .ThenBy(x => Math.Round(x.DepartureUT * 1000.0))
+                                .ThenBy(x => Math.Round(x.TotalFlightDays * 10000.0))
+                                .FirstOrDefault();
+                        }
+                    }
+
                     // 共享聚合态 (globalBest / mathReport.IslandRecords / allRawSolutions) 统一锁保护：
-                    // 拓扑层并行后这些可写集合/变量跨线程访问，必须串行化，避免竞态与 List 并发破坏。
+                    // 仅保护共享内存集合更新与标量刷新，严禁在临界区内包裹物理耗时演化与自愈重计算！
                     lock (aggLock)
                     {
                         if (topoBest != null)
@@ -696,14 +758,6 @@ namespace KSPGMAT.MGA
                                 DsmDvMs = s.TotalDsmDeltaVKms * 1000.0
                             });
                         }
-
-                        // [优化] 逐链自愈 (Stage 4 per-topology 自适应质量调度):
-                        // 依据: 根据解的物理合规性与速度增量离散度自适应确定自愈算力层级，
-                        // 具备高潜力且合规的拓扑解分配完整精修算力，次优拓扑采用快速自愈层，彻底消灭写死的 tIdx 序号歧视。
-                        bool fastTier = (topoBest != null && subCfg.VesselMaxDeltaVMs > 0 && topoBest.TotalDeltaVKms * 1000.0 > subCfg.VesselMaxDeltaVMs * 1.5)
-                                        || (tIdx >= Math.Max(4, totalTopos / 2));
-                        var healedSols = MGASelfHealingEngine.AuditAndHeal(subCfg, rawSols, depHohmann, totHohmann, ct, fastTier);
-                        if (healedSols != null && healedSols.Count > 0) rawSols = healedSols;
 
                         foreach (var s in rawSols)
                         {
@@ -750,9 +804,17 @@ namespace KSPGMAT.MGA
                     ct);
             }
 
-            // 方案去重与候选池精选 (Top 10)
+            KSPGMATLog.Info("Solver", $"[AuditedSolutions Count] rawSolutions: {rawSolutions.Count}, auditedSolutions: {auditedSolutions.Count}");
+            foreach (var r in auditedSolutions)
+            {
+                KSPGMATLog.Info("Solver", $"  • AuditedSol: {r.FlybyChainSummary}, TotalDv={r.TotalDeltaVKms * 1000.0:F1} m/s, LaunchDv={r.LaunchDeltaVKms * 1000.0:F1} m/s, Epoch={GMATClient.FormatUtcGregorian(r.DepartureUT)}");
+            }
+
+            // 方案去重与候选池精选: 实施拓扑配额保护 (每种独立借力拓扑至多 2 个最优解进入候选池)，
+            // 彻底防止单一短周期拓扑因微小发射历元采样离散垄断全部候选池席位，确保深空大借力拓扑顺利交付。
             var finalSolutions = new List<MGASolution>();
             var seenKeys = new HashSet<string>();
+            var topoCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
             double finalBudgetMs = (config.ConstrainByVesselDeltaV && config.VesselMaxDeltaVMs > 0) ? config.VesselMaxDeltaVMs : double.MaxValue;
             double finalDsmBudgetMs = (config.MaxDsmDeltaVMs > 0) ? config.MaxDsmDeltaVMs : finalBudgetMs;
@@ -763,9 +825,26 @@ namespace KSPGMAT.MGA
 
             foreach (var sol in auditedSolutions)
             {
-                if (finalBudgetMs < 1e8 && sol.TotalDeltaVKms * 1000.0 > (finalBudgetMs + dvTol)) continue;
-                if (finalDsmBudgetMs < 1e8 && (sol.TotalDsmDeltaVKms * 1000.0 > (finalDsmBudgetMs + dsmTol) || (sol.Legs != null && sol.Legs.Any(l => l.DSM != null && l.DSM.DeltaVMs > (finalDsmBudgetMs + dsmTol))))) continue;
-                if (userSpecifiedMaxToF > 0 && sol.TotalFlightDays > (userSpecifiedMaxToF + tofTol)) continue;
+                if (finalBudgetMs < 1e8 && sol.TotalDeltaVKms * 1000.0 > (finalBudgetMs + dvTol))
+                {
+                    continue;
+                }
+                if (finalDsmBudgetMs < 1e8 && (sol.TotalDsmDeltaVKms * 1000.0 > (finalDsmBudgetMs + dsmTol) || (sol.Legs != null && sol.Legs.Any(l => l.DSM != null && l.DSM.DeltaVMs > (finalDsmBudgetMs + dsmTol)))))
+                {
+                    continue;
+                }
+                if (userSpecifiedMaxToF > 0 && sol.TotalFlightDays > (userSpecifiedMaxToF + tofTol))
+                {
+                    continue;
+                }
+
+                string chainKey = sol.FlybyChainSummary ?? "";
+                topoCounts.TryGetValue(chainKey, out int chainCount);
+                if (chainCount >= 2)
+                {
+                    continue;
+                }
+
                 // 1. 挂载 B 平面协方差分析与导航鲁棒性
                 if (config.EnableBPlaneCovarianceAnalysis && sol.Legs != null && sol.Legs.Count > 1 && sol.BPlane == null)
                 {
@@ -823,7 +902,6 @@ namespace KSPGMAT.MGA
                     }
                 }
 
-                string chainKey = sol.FlybyChainSummary ?? "";
                 int utBucket = (int)(sol.DepartureUT / 43200.0);
                 int tofBucket = (int)(sol.TotalFlightDays / 1.0);
                 string compositeKey = $"{chainKey}@{utBucket}_{tofBucket}";
@@ -832,8 +910,9 @@ namespace KSPGMAT.MGA
                 {
                     seenKeys.Add(compositeKey);
                     finalSolutions.Add(sol);
+                    topoCounts[chainKey] = chainCount + 1;
                 }
-                if (finalSolutions.Count >= 12) break;
+                if (finalSolutions.Count >= 24) break;
             }
 
             if (finalSolutions.Count == 0 && auditedSolutions.Count > 0)
@@ -998,7 +1077,8 @@ namespace KSPGMAT.MGA
             int finished = 0;
             var lockObj = new object();
 
-            Parallel.For(0, candidateChains.Count, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount }, cIdx =>
+            int stage1Parallel = Math.Min(candidateChains.Count, (Environment.ProcessorCount >= 16) ? 3 : ((Environment.ProcessorCount >= 8) ? 2 : 1));
+            Parallel.For(0, candidateChains.Count, new ParallelOptions { MaxDegreeOfParallelism = stage1Parallel }, cIdx =>
             {
                 if (ct.IsCancellationRequested) return;
 
@@ -1031,7 +1111,7 @@ namespace KSPGMAT.MGA
                 {
                     foreach (var s in sols)
                     {
-                        if (s != null && !double.IsNaN(s.TotalDeltaVKms) && s.TotalDeltaVKms < MGADefaults.MaxPlausibleTotalDvKms) // 过滤 >50 km/s 的动力学发散解
+                        if (s != null && !double.IsNaN(s.TotalDeltaVKms) && s.TotalDeltaVKms < MGADefaults.MaxPlausibleTotalDvKms) // 过滤 >80 km/s 的动力学发散解
                         {
                             allSols.Add(s);
                         }
@@ -1071,7 +1151,10 @@ namespace KSPGMAT.MGA
                 }
             }
             result.ParetoFrontSolutions = pareto;
-            result.BestSolution = MGASolutionOrdering.SelectParetoKneeSolution(pareto, baseConfig?.CentralBody ?? "Sun") ?? rankedFuel.FirstOrDefault();
+            // 【2026-09-14 修正】取出与损失函数**同一个**参考预算 dvRef, 使"优化目标"与"选解排序"
+            // 使用完全一致的航时软界尺度 (原为两处各自拍定的不同形式: 加性 vs 乘性)。
+            double dvRefKmsForOrder = MGAPhysicsLossEngine.LossReferenceCache.Get(baseConfig);
+            result.BestSolution = MGASolutionOrdering.SelectParetoKneeSolution(pareto, baseConfig?.CentralBody ?? "Sun", dvRefKmsForOrder) ?? rankedFuel.FirstOrDefault();
 
             sw.Stop();
             result.TotalElapsedMs = sw.ElapsedMilliseconds;
@@ -1096,25 +1179,22 @@ namespace KSPGMAT.MGA
             return result;
         }
 
-        /// <summary>
-        /// 将自主求解得到的最优解直接应用到 MGAConfig 配置与任务执行流中，并导出各航段详细物理参数
-        /// </summary>
-        public static bool ApplySolutionToConfig(MGASolution solution, MGAConfig config)
-        {
-            if (solution == null || config == null || solution.Legs == null || solution.Legs.Count == 0)
-                return false;
-
-            config.EarliestDepartureUT = solution.DepartureUT;
-            config.LatestDepartureUT = solution.DepartureUT + 86400.0;
-            config.FlybySequence = solution.Legs.Select(l => l.ToBody).ToList();
-            if (config.FlybySequence.Count > 0)
-            {
-                config.DestinationBody = config.FlybySequence[config.FlybySequence.Count - 1];
-            }
-            config.MinToFDays = solution.Legs.Select(l => Math.Max(5.0, l.ToFDays * 0.9)).ToList();
-            config.MaxToFDays = solution.Legs.Select(l => l.ToFDays * 1.1).ToList();
-            return true;
-        }
+        // ---------------------------------------------------------------------
+        // 【2026-09-14 审计处置 —— 已删除 public static bool ApplySolutionToConfig(...)】
+        //
+        // 原实现把**已收敛解**的物理量回写为下一轮搜索的边界:
+        //     config.EarliestDepartureUT = solution.DepartureUT;
+        //     config.LatestDepartureUT   = solution.DepartureUT + 86400.0;
+        //     config.MinToFDays = solution.Legs.Select(l => Math.Max(5.0, l.ToFDays * 0.9)).ToList();
+        //     config.MaxToFDays = solution.Legs.Select(l => l.ToFDays * 1.1).ToList();
+        // 这正是历史审计声称"已清除"的**航时 ±10% 夹逼**的实际形态 ——
+        // 它把任意一次求解的输出变成下一次求解的窄邻域, 使后续"寻优"退化为在已知解附近精修。
+        //
+        // 处置: 删除。理由: (1) 全仓 (src/ + tests/) 0 个调用点; (2) 属未受保护的 API,
+        // 一旦被接线即构成作弊路径 (把答案喂回搜索域)。
+        // 若后续确有"从已得解热启动"的需求, 必须新建**显式命名**的 API
+        // (如 WarmStartFromSolution(...)), 并在 MGAEmpiricalRegistry 登记其使用条件与风险。
+        // ---------------------------------------------------------------------
 
         /// <summary>
         /// 全自动自主求解异步门面方法 (包装 SolveAutonomous 至后台线程)

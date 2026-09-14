@@ -351,7 +351,12 @@ namespace KSPGMAT.MGA.Solver
                 Type = MGAConstraintType.MaxSolarDistance,
                 Name = "航天器最大远日点能源上限",
                 Category = MGAConstraintCategory.EnvironmentalCorridor,
-                IsHardConstraint = (hp.MaxSolarDistanceAu > 0 && hp.MaxSolarDistanceAu < 50.0),
+                // 【2026-09-14 审计修正】原为 `hp.MaxSolarDistanceAu > 0 && hp.MaxSolarDistanceAu < 50.0`,
+                // 即用 **50 AU** 这个绝对值决定该约束是"硬"还是"软"。50 AU 无普适物理意义
+                // (约为冥王星轨道外一点), 且造成约束性质在 50 AU 附近突跳。
+                // 现改为: 只要用户显式配置了该约束 (阈值 > 0) 即为硬约束 ——
+                // 是否"软"应由独立的策略标志表达, 而不是由一个拍定的距离分界决定。
+                IsHardConstraint = (hp.MaxSolarDistanceAu > 0),
                 IsEnabled = (hp.MaxSolarDistanceAu > 0),
                 ThresholdValue = hp.MaxSolarDistanceAu,
                 ToleranceValue = 0.1,

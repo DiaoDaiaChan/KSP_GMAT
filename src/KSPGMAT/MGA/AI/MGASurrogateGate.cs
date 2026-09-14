@@ -118,9 +118,36 @@ namespace KSPGMAT.MGA.AI
         private readonly Random _rng;
         private readonly MGAPhysicsSurrogateNetwork _net;
 
-        public MGASurrogateGate(int seed = 20260911)
+        /// <summary>
+        /// 默认随机种子。
+        ///
+        /// 【2026-09-14 审计修正】原为 `MGASurrogateGate(int seed = 20260911)`, 即一个形如日期的
+        /// 硬编码种子。它使 8% 的"随机"对照组成为**确定性可复现**序列 —— 本身有利于复现性,
+        /// 但同时也意味着"随机对照"可被种子选择操纵, 从而影响误杀率统计与熔断/标定判定。
+        /// 现改为: 默认种子可由环境变量 `KSPGMAT_SURROGATE_GATE_SEED` 覆盖;
+        /// 置 0 表示使用非确定性的时间种子 (用于统计有效性验证)。
+        /// 默认值保持 20260911 以维持既有基准的逐位可复现性。
+        /// </summary>
+        public const int DefaultGateSeed = 20260911;
+
+        /// <summary>解析有效随机种子 (支持环境变量覆盖, 0 表示非确定性)。</summary>
+        private static int ResolveGateSeed(int requestedSeed)
         {
-            _rng = new System.Random(seed);
+            try
+            {
+                string env = Environment.GetEnvironmentVariable("KSPGMAT_SURROGATE_GATE_SEED");
+                if (!string.IsNullOrEmpty(env) && int.TryParse(env, out int parsed))
+                {
+                    return (parsed == 0) ? Environment.TickCount : parsed;
+                }
+            }
+            catch { }
+            return (requestedSeed == 0) ? Environment.TickCount : requestedSeed;
+        }
+
+        public MGASurrogateGate(int seed = DefaultGateSeed)
+        {
+            _rng = new System.Random(ResolveGateSeed(seed));
             _net = MGAPhysicsSurrogateNetwork.Default;
             Enabled = _net.IsTrained;
         }

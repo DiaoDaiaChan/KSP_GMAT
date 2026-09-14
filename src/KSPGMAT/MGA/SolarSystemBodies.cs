@@ -64,6 +64,16 @@ namespace KSPGMAT.MGA {
         public double EpochJ2000 { get; set; } = 0.0; // UT of reference epoch
         public string ParentName { get; set; } = ""; // Reference central body name
         public bool IsMoon { get; set; } = false; // Whether this is a moon / secondary satellite
+        /// <summary>
+        /// 该天体的轨道要素**未能解析** (SPICE 与标准后备库均无此天体名, SMA 保持 &lt;= 0)。
+        ///
+        /// 【2026-09-14 第二轮审计新增】原实现在此**静默退化为地球** (1 AU / μ_Earth / R_Earth),
+        /// 使任何未识别天体 (Kerbol 缩尺星系、JNSQ、自建星球包中的天体) 在物理上与地球等价 ——
+        /// 由此产生的轨道、航时与 ΔV 全部是伪值, 且**不会被任何断言发现**。
+        /// 现改为: 明确置位本标志, 且 SMA &lt;= 0, 由消费侧**拒绝**参与物理推导
+        /// (见 MGADefaults / MGAFlybyDynamicsHelper.ResolveOrbitalRadiusKm 的参考系一致性门)。
+        /// </summary>
+        public bool IsOrbitUnresolved { get; set; } = false;
         public EphemerisScheme SourceScheme { get; set; } = EphemerisScheme.Scheme2_FlightGlobals;
         public EphemerisScheme ActiveEvaluationScheme { get; set; } = EphemerisScheme.Scheme2_FlightGlobals;
 

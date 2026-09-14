@@ -59,6 +59,75 @@ namespace KSPGMAT.MGA
         /// <summary>选解阶段可接受的最差损失 (仍允许 4 倍基准预算的候选进入最终审计)。</summary>
         public const double SelectionLossCeiling = 4.0;
 
+        // =====================================================================
+        // 航时软界阻尼 (ToF Soft Bound Damping) —— **单一真值源**
+        //
+        // 【2026-09-14 第二轮审计修正】原实现在两处各写了一遍, 且**形式不同**:
+        //   · 本文件 ComputeLoss        : `loss  += 0.15*e + 0.15*e²`          (在"预算单位"上加性惩罚)
+        //   · MGASolutionOrdering       : `dvKms += (0.15*e + 0.15*e²) * dvKms` (在"解自身 ΔV 上"乘性惩罚)
+        // 优化器最小化的目标与最终选解所用的排序**不是同一个函数**, 属目标不一致 (相同解在不同阶段的
+        // 相对优劣可能相反)。现把阈值与系数收敛到下方三个常量 + 一个 helper, 两处共用, 且**同用加性、
+        // 同为预算单位**, 消除了这个不一致。
+        //
+        // 物理作用: 双体转移在 T → ∞ 时出射能量单调递减。若目标函数不含时间惩罚, 优化器必然滑向
+        // "航时无限拉长换取微小 ΔV 降低"的无界极值 (实测退化解航时可达 20 万天)。
+        // 该阻尼项正是抑制此类退化解的机制, 因此它必须在**优化与选解两侧一致生效**。
+        // =====================================================================
+
+        /// <summary>航时软界的起罚倍数 (实际航时 / 标称物理航时)。</summary>
+        public const double ToFSoftBoundMultiple = 1.20;
+
+        /// <summary>航时软界的一阶惩罚系数 (无量纲, 以"超出比例"为单位)。</summary>
+        public const double ToFSoftPenaltyLinear = 0.15;
+
+        /// <summary>航时软界的二阶惩罚系数 (无量纲, 以"超出比例的平方"为单位)。</summary>
+        public const double ToFSoftPenaltyQuadratic = 0.15;
+
+        /// <summary>
+        /// 航时软界阻尼项 (无量纲, 以**参考预算**为单位)。
+        ///
+        /// 返回 0 表示未触发; 返回 1.0 表示"相当于多花了一个参考预算的代价"。
+        /// 优化 (损失) 与选解 (排序) **必须**都调用本方法, 不得就地重写。
+        /// </summary>
+        public static double ToFSoftExcessPenalty(double actualDays, double nominalDays)
+        {
+            if (nominalDays <= 0.0 || actualDays <= 0.0) return 0.0;
+            double threshold = nominalDays * ToFSoftBoundMultiple;
+            if (actualDays <= threshold) return 0.0;
+            double excessFrac = (actualDays - threshold) / nominalDays;
+            return ToFSoftPenaltyLinear * excessFrac + ToFSoftPenaltyQuadratic * excessFrac * excessFrac;
+        }
+
+        // =====================================================================
+        // 标称航时 (Nominal ToF) 推导参数 —— 2026-09-14 第二轮审计命名化
+        //
+        // ⚠ 诚实标注: 下方的 `NominalToFDeepSpaceThresholdDays` 是一个**绝对天数**阈值。
+        //   同样的 2500 天, 对"地球出发"(≈ 到土星) 与对"木星出发"(木星本身周期已 11.9 年)
+        //   含义完全不同。审计曾试图把它换成无量纲比值, 但**无法在不改变行为的前提下做到**:
+        //   该分支的语义是"当霍曼时间已长到不再是有意义的单弧转移标称值时, 改用抛物线/极速巡航基准",
+        //   而"长到不再有意义"本身就是一个**工程口径的时间量**, 不是轨道几何的比例量。
+        //   故此处选择: **显式命名 + 记录出处 + 登记待标定**, 而不是换成另一个同样拍定的比值。
+        // =====================================================================
+
+        /// <summary>
+        /// 判定"霍曼时间已不再是有效单弧标称航时"的绝对天数阈值 (工程口径, 非物理常数)。
+        /// 取代原裸字面量 `2500.0`。约等于地球→土星的霍曼时间 (2223 天)。
+        /// 标注: **[工程口径·待标定]**
+        /// </summary>
+        public const double NominalToFDeepSpaceThresholdDays = 2500.0;
+
+        /// <summary>深空转移下极速巡航基准的加权系数 (相对 直线距离 / 逃逸速度 时间)。取代原 `1.15`。</summary>
+        public const double NominalToFFastCruiseFactor = 1.15;
+
+        /// <summary>深空转移下抛物线 (逃逸) 转移时间的加权系数。取代原 `0.55`。</summary>
+        public const double NominalToFParabolicFactor = 0.55;
+
+        /// <summary>同星共振航段的标称航时倍数 (以该天体公转周期为单位)。取代原 `1.5`。</summary>
+        public const double NominalResonantLegPeriodMultiple = 1.5;
+
+        /// <summary>标称航时的绝对下限 (天), 仅防止除零与病态小值。取代原 `10.0`。</summary>
+        public const double MinNominalToFDays = 10.0;
+
         /// <summary>
         /// 倾角锁定对准容差 (deg)。这是**工程规格**, 不是物理常数: 它表达"发射倾角
         /// 允许偏离目标几度"。惩罚量以该容差自身为尺度归一化 (越界 1 倍容差 => g_hat = 1),
@@ -116,6 +185,36 @@ namespace KSPGMAT.MGA
                         config.DeparturePeAKm, config.DestinationPeAKm);
                     double tot = benchmark.TotHohmannKms;
                     // 霍曼基准不可用时退化为 1 km/s (仅防止除零, 不参与物理判断)
+                    return (tot > 1e-6 && !double.IsNaN(tot)) ? tot : 1.0;
+                });
+            }
+
+            /// <summary>
+            /// 自适应求解配置下的参考预算 (与 <see cref="Get(MGAConfig)"/> 使用**同一套**语义与缓存)。
+            ///
+            /// 【2026-09-14 新增】选解阶段 (<c>MGASolutionOrdering.SelectParetoKneeSolution</c>) 在
+            /// <c>MGAAdaptiveSolver</c> 路径上只有 <c>MGAAdaptiveSolverConfig</c>, 而航时软界必须与
+            /// 损失函数取同一个 dvRef 才能保证"优化目标 = 选解排序"。此前该路径只能退化到
+            /// "用解集自身中位 ΔV 当尺度", 两者不一致。本重载消除了该差异。
+            /// </summary>
+            public static double Get(MGAAdaptiveSolverConfig config)
+            {
+                if (config == null) return 1.0;
+
+                if (config.ConstrainByVesselDeltaV && config.VesselMaxDeltaVMs > 0)
+                {
+                    return config.VesselMaxDeltaVMs / 1000.0;
+                }
+
+                string key = $"{config.DeparturePlanet ?? "?"}|{config.ArrivalPlanet ?? "?"}|{config.DepPeKm:F0}|{config.ArrPeKm:F0}";
+                if (_cache.Count > MaxEntries) _cache.Clear();
+
+                return _cache.GetOrAdd(key, _ =>
+                {
+                    var benchmark = MGAMCTSTopologySelector.CalculateUniversalHohmannBenchmark(
+                        config.DeparturePlanet, config.ArrivalPlanet,
+                        config.DepPeKm, config.ArrPeKm);
+                    double tot = benchmark.TotHohmannKms;
                     return (tot > 1e-6 && !double.IsNaN(tot)) ? tot : 1.0;
                 });
             }
@@ -241,13 +340,11 @@ namespace KSPGMAT.MGA
                     loss += DurationTieBreakerWeight * (sol.TotalFlightDays / maxTofDays);
                 }
 
-                // 连续软界航时阻尼: 凡超出标称物理航时 1.20 倍者，施加弹性惩罚，彻底消除 Pareto 前沿以极度拖延换取微小ΔV降低的伪最优解
+                // 连续软界航时阻尼 (单一真值源: ToFSoftExcessPenalty, 与选解侧共用)。
+                // 凡超出标称物理航时 ToFSoftBoundMultiple 倍者施加弹性惩罚,
+                // 抑制 Pareto 前沿以"极度拖延换微小 ΔV 降低"的伪最优解。
                 double nomTofDays = ResolveNominalTofDays(config, sol);
-                if (nomTofDays > 0 && sol.TotalFlightDays > nomTofDays * 1.20)
-                {
-                    double excessFrac = (sol.TotalFlightDays - nomTofDays * 1.20) / nomTofDays;
-                    loss += (0.15 * excessFrac + 0.15 * excessFrac * excessFrac);
-                }
+                loss += ToFSoftExcessPenalty(sol.TotalFlightDays, nomTofDays);
             }
 
             // =================================================================
@@ -360,14 +457,25 @@ namespace KSPGMAT.MGA
                 if (leg == null) continue;
                 var pF = SolarSystemCatalog.GetPlanet(leg.FromBody);
                 var pT = SolarSystemCatalog.GetPlanet(leg.ToBody);
-                double rF = (pF != null && pF.SMA > 0) ? pF.SMA : MGADefaults.AU_KM;
-                double rT = (pT != null && pT.SMA > 0) ? pT.SMA : MGADefaults.AU_KM;
+
+                // 【2026-09-14 第二轮审计修正 —— 消除"未识别天体伪装成地球 1 AU"】
+                // 原实现为 `(p != null && p.SMA > 0) ? p.SMA : MGADefaults.AU_KM` ——
+                // 即: 轨道要素不可用时**静默代入 1 AU**。于是任何未识别天体都被当作地球处理,
+                // 标称航时 (以及由它派生的航时软界惩罚) 全部基于伪值, 且完全不可见。
+                // 现改为: 无法解析轨道要素时**不做判定** (返回 0), 由调用方跳过航时相关项。
+                if (pF == null || pT == null || pF.SMA <= 0 || pT.SMA <= 0 ||
+                    pF.IsOrbitUnresolved || pT.IsOrbitUnresolved)
+                {
+                    return 0.0;
+                }
+                double rF = pF.SMA;
+                double rT = pT.SMA;
 
                 if (!string.IsNullOrEmpty(leg.FromBody) &&
                     leg.FromBody.Equals(leg.ToBody, StringComparison.OrdinalIgnoreCase))
                 {
-                    // 同星共振段: 标称 1~2 个公转周期
-                    nominalDays += 1.5 * MGAPhysicalScales.BodyPeriodSec(pF, muC) / MGADefaults.SecondsPerDay;
+                    // 同星共振段: 标称 1~2 个公转周期 (取 1.5 为其中值)
+                    nominalDays += NominalResonantLegPeriodMultiple * MGAPhysicalScales.BodyPeriodSec(pF, muC) / MGADefaults.SecondsPerDay;
                 }
                 else
                 {
@@ -378,11 +486,13 @@ namespace KSPGMAT.MGA
                     double vFastCruise = Math.Sqrt(2.0 * muC / Math.Max(1.0, a1));
                     double tFastDays = (distKm / Math.Max(1.0, vFastCruise)) / 86400.0;
 
-                    // 针对深空外太阳系飞掠 (tH > 2500d)，标称航时采用双曲逃逸与抛物线极速巡航基准，避免霍曼时间膨胀
-                    if (tH > 2500.0)
+                    // 针对深空外太阳系飞掠，标称航时采用双曲逃逸与抛物线极速巡航基准，避免霍曼时间膨胀。
+                    // 注: 该分档为**绝对天数**工程阈值, 已命名并登记 (见 NominalToFDeepSpaceThresholdDays)。
+                    if (tH > NominalToFDeepSpaceThresholdDays)
                     {
                         double tPara = (2.0 / (3.0 * Math.Sqrt(2.0 * muC))) * (Math.Pow(a2, 1.5) - Math.Pow(a1, 1.5)) / 86400.0;
-                        nominalDays += Math.Min(tH, Math.Max(tFastDays * 1.15, tPara * 0.55));
+                        nominalDays += Math.Min(tH,
+                            Math.Max(tFastDays * NominalToFFastCruiseFactor, tPara * NominalToFParabolicFactor));
                     }
                     else
                     {
@@ -390,7 +500,7 @@ namespace KSPGMAT.MGA
                     }
                 }
             }
-            return Math.Max(10.0, nominalDays);
+            return Math.Max(MinNominalToFDays, nominalDays);
         }
 
         private static double ResolveMaxTofDays(MGAConfig config, MGASolution sol)

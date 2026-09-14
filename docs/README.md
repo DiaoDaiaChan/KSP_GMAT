@@ -29,6 +29,12 @@ docs/
 │   ├── benchmark_new_native.txt    # kep3 原生 C++ 互操作桥接实测报告
 │   ├── benchmark_optimized_output.txt # 多窗口差分进化并发寻优测试
 │   └── benchmark_output.txt        # 基础基准运行输出
+├── papers/                         # 学术前沿文献、算法原著 PDF 与技术解析
+│   ├── 1004.3824_Izzo_PaGMO_Parallel_Optimization.pdf
+│   ├── 1104.4731_Vasile_Inflationary_DE.pdf
+│   ├── Revisiting_Lambert_Izzo_2015.pdf
+│   ├── IJCAI2015_MCTS_Interplanetary.pdf
+│   └── ...                         # 轨道转移优化、机器学习航天动力学等研报
 └── reports/                        # 工程历史报告与演进记录
     ├── todolist.md                 # 项目功能清单与路线图
     └── walkthrough.md              # 架构演进与最近迭代实施验证报告

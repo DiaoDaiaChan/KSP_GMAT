@@ -184,8 +184,8 @@ namespace KSPGMAT.MGA
                 LaunchDeltaVCeilingMs = config.LaunchDeltaVCeilingMs,
                 ConstraintProfile = config.ConstraintProfile,
                 LambertMaxRevs = config.LambertMaxRevs,
-                PopulationSize = fastTier ? Math.Max(36, config.PopulationSize / 2) : Math.Max(60, config.PopulationSize),
-                MaxGenerations = fastTier ? Math.Max(50, config.MaxGenerations / 2) : Math.Max(120, config.MaxGenerations),
+                PopulationSize = fastTier ? Math.Max(24, config.PopulationSize / 3) : Math.Max(36, config.PopulationSize / 2),
+                MaxGenerations = fastTier ? Math.Max(30, config.MaxGenerations / 3) : Math.Max(40, config.MaxGenerations / 2),
                 MinToFDays = healBounds.Select(b => b.MinDays).ToList(),
                 MaxToFDays = healBounds.Select(b => b.MaxDays).ToList()
             };

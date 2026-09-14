@@ -23,6 +23,28 @@ namespace KSPGMAT.MGA
     /// </summary>
     public static class MGASurrogatePreFilter
     {
+        /// <summary>
+        /// 触发"自共振启航"多槽评估所需的出发天体最小公转周期 (秒)。
+        ///
+        /// 【2026-09-14 新增】取代原裸字面量 `10.0 * 86400.0`。
+        /// 物理含义: 公转周期过短的出发天体, 其自共振调相在发射窗口内反复出现,
+        /// 逐槽评估没有增量信息。标注: **[经验参数·待标定]**
+        /// </summary>
+        public const double SelfResonantMinDepPeriodSec = 10.0 * 86400.0;
+
+        /// <summary>
+        /// 自共振启航可供评估的低阶有理共振泵升槽 (>= 1:1)。
+        ///
+        /// 【2026-09-14 新增】取自 <see cref="MGAFlybyDynamicsHelper.ResonanceRatioCandidates"/>,
+        /// 取代原写死的 `{1.0, 1.5}` —— 后者是按 MESSENGER(1 年) 与 BepiColombo(1.5 年)
+        /// 两个历史测试任务挑出的偏移量, 而注释里提到的 Juno(2 年) 并未被列入。
+        /// </summary>
+        public static double[] GetSelfResonantRatioSlots() {
+            return MGAFlybyDynamicsHelper.ResonanceRatioCandidates
+                .Where(r => r >= MGAFlybyDynamicsHelper.NoShrinkResonanceRatio)
+                .ToArray();
+        }
+
         public struct SynodicWindowCandidate
         {
             public double WindowStartUT;
@@ -101,15 +123,65 @@ namespace KSPGMAT.MGA
             int gridW = Math.Max(64, Math.Min(256, (int)(totalSpanDays / 3.0)));
             int gridH = 64;
 
-            bool gpuSuccess = PykepBridge.EvaluateSurrogateGpuGrid(
-                p1, p2, centralMu,
-                config.SearchStartUT, depSpanSec,
-                tofMinSec, tofMaxSec,
-                gridW, gridH,
-                config.DepPeKm, config.ArrPeKm,
-                config.NoInsertionBurn,
-                out float[] gpuTotDv,
-                out _);
+            bool isSelfResonantDep = (config.FlybySequence != null && config.FlybySequence.Count > 0 &&
+                config.FlybySequence[0].Equals(config.DeparturePlanet, StringComparison.OrdinalIgnoreCase));
+            double tDepOrbSec = (p1 != null && sma1 > 0) ? PykepBridge.CalcOrbitPeriodSec(sma1, centralMu) : 365.25 * 86400.0;
+
+            bool gpuSuccess = false;
+            float[] gpuTotDv = null;
+
+            if (isSelfResonantDep && tDepOrbSec > SelfResonantMinDepPeriodSec)
+            {
+                // 自共振启航: 航天器首段通过开普勒共振调相蓄能, 在重遇出发天体时才飞向出口天体。
+                // 联合评估多阶共振偏移下的出口特征面, 取各发射历元对应的最小转移能量。
+                //
+                // 【2026-09-14 审计修正】原实现只在写死的 {1.0x, 1.5x} 两个偏移上评估, 且注释
+                // 直接点名 "MESSENGER 1年 EGA, BepiColombo 1.5年 EGA, Juno 2年 EGA" ——
+                // 即偏移值是按已知历史测试任务挑出的, 且 Juno 的 2 年根本没被列入。
+                // 现改为评估**全部低阶有理共振泵升槽** (ResonanceRatioCandidates 中 >= 1:1 的部分),
+                // 由开普勒第三定律给出候选, 与任何具体任务无关。该变更只扩大评估范围, 不排除可行解。
+                double[] resRatios = GetSelfResonantRatioSlots();
+                foreach (double r in resRatios)
+                {
+                    double resShiftSec = r * tDepOrbSec;
+                    bool ok = PykepBridge.EvaluateSurrogateGpuGrid(
+                        p1, p2, centralMu,
+                        config.SearchStartUT + resShiftSec, depSpanSec,
+                        tofMinSec, tofMaxSec,
+                        gridW, gridH,
+                        config.DepPeKm, config.ArrPeKm,
+                        config.NoInsertionBurn,
+                        out float[] curDv,
+                        out _);
+                    if (ok && curDv != null && curDv.Length == gridW * gridH)
+                    {
+                        if (gpuTotDv == null)
+                        {
+                            gpuTotDv = (float[])curDv.Clone();
+                            gpuSuccess = true;
+                        }
+                        else
+                        {
+                            for (int i = 0; i < gpuTotDv.Length; i++)
+                            {
+                                if (curDv[i] < gpuTotDv[i]) gpuTotDv[i] = curDv[i];
+                            }
+                        }
+                    }
+                }
+            }
+            else
+            {
+                gpuSuccess = PykepBridge.EvaluateSurrogateGpuGrid(
+                    p1, p2, centralMu,
+                    config.SearchStartUT, depSpanSec,
+                    tofMinSec, tofMaxSec,
+                    gridW, gridH,
+                    config.DepPeKm, config.ArrPeKm,
+                    config.NoInsertionBurn,
+                    out gpuTotDv,
+                    out _);
+            }
 
             if (gpuSuccess && gpuTotDv != null && gpuTotDv.Length == gridW * gridH)
             {
@@ -181,36 +253,46 @@ namespace KSPGMAT.MGA
                 double muP2 = (p2 != null && p2.Mu > 0) ? p2.Mu : MGADefaults.GetBodyMu(toBody);
                 double vPark2 = Math.Sqrt(muP2 / Math.Max(1.0, rp2));
 
+                // 【2026-09-14 审计修正】原为写死的 {1.0 × T_dep, 1.5 × T_dep} 两个自共振偏移
+                // (对应 MESSENGER/BepiColombo 历史构型)。现改为遍历全部低阶有理共振泵升槽。
+                double[] resOffsets = (isSelfResonantDep && tDepOrbSec > SelfResonantMinDepPeriodSec)
+                    ? GetSelfResonantRatioSlots().Select(r => r * tDepOrbSec).ToArray()
+                    : new double[] { 0.0 };
+
                 for (double ut = cycleStart; ut <= cycleEnd; ut += coarseStepDays * 86400.0)
                 {
-                    p1.GetRelativeState(central, ut, out Vector3d r1, out Vector3d v1);
-                    foreach (double tD in coarseToFs)
+                    foreach (double resShift in resOffsets)
                     {
-                        double arrUT = ut + tD * 86400.0;
-                        p2.GetRelativeState(central, arrUT, out Vector3d r2, out Vector3d v2);
-
-                        // 符号开普勒与角动量极值门禁 (Symbolic Keplerian Bound Filter)
-                        if (!MGASymbolicPhysicsConstraints.IsToFKeplerianFeasible(r1.magnitude, r2.magnitude, tD * 86400.0, centralMu))
-                            continue;
-
-                        if (PykepNative.SolveLambert(r1, r2, tD * 86400.0, centralMu, false, out Vector3d vDep, out Vector3d vArr))
+                        double depUT = ut + resShift;
+                        p1.GetRelativeState(central, depUT, out Vector3d r1, out Vector3d v1);
+                        foreach (double tD in coarseToFs)
                         {
-                            Vector3d vInf = vDep - v1;
-                            double vHyp = Math.Sqrt(vInf.sqrMagnitude + 2.0 * muP1 / Math.Max(1.0, rp1));
-                            double dv = (vHyp - vPark1) * 1000.0;
+                            double arrUT = depUT + tD * 86400.0;
+                            p2.GetRelativeState(central, arrUT, out Vector3d r2, out Vector3d v2);
 
-                            if (!config.NoInsertionBurn)
-                            {
-                                Vector3d vInfArr = vArr - v2;
-                                double vHypArr = Math.Sqrt(vInfArr.sqrMagnitude + 2.0 * muP2 / Math.Max(1.0, rp2));
-                                dv += (vHypArr - vPark2) * 1000.0;
-                            }
+                            // 符号开普勒与角动量极值门禁 (Symbolic Keplerian Bound Filter)
+                            if (!MGASymbolicPhysicsConstraints.IsToFKeplerianFeasible(r1.magnitude, r2.magnitude, tD * 86400.0, centralMu))
+                                continue;
 
-                            if (dv < coarseBestDv)
+                            if (PykepNative.SolveLambert(r1, r2, tD * 86400.0, centralMu, false, out Vector3d vDep, out Vector3d vArr))
                             {
-                                coarseBestDv = dv;
-                                coarseBestUT = ut;
-                                coarseBestTof = tD;
+                                Vector3d vInf = vDep - v1;
+                                double vHyp = Math.Sqrt(vInf.sqrMagnitude + 2.0 * muP1 / Math.Max(1.0, rp1));
+                                double dv = (vHyp - vPark1) * 1000.0;
+
+                                if (!config.NoInsertionBurn)
+                                {
+                                    Vector3d vInfArr = vArr - v2;
+                                    double vHypArr = Math.Sqrt(vInfArr.sqrMagnitude + 2.0 * muP2 / Math.Max(1.0, rp2));
+                                    dv += (vHypArr - vPark2) * 1000.0;
+                                }
+
+                                if (dv < coarseBestDv)
+                                {
+                                    coarseBestDv = dv;
+                                    coarseBestUT = ut;
+                                    coarseBestTof = tD;
+                                }
                             }
                         }
                     }
@@ -225,21 +307,24 @@ namespace KSPGMAT.MGA
 
                 for (double ut = refineStartUT; ut <= refineEndUT; ut += 5.0 * 86400.0)
                 {
-                    p1.GetRelativeState(central, ut, out Vector3d r1, out Vector3d v1);
-                    for (double tD = Math.Max(minTofD, coarseBestTof - 30.0); tD <= Math.Min(maxTofD, coarseBestTof + 30.0); tD += 5.0)
+                    foreach (double resShift in resOffsets)
                     {
-                        double arrUT = ut + tD * 86400.0;
-                        p2.GetRelativeState(central, arrUT, out Vector3d r2, out Vector3d v2);
-
-                        // 符号开普勒与角动量极值门禁 (Symbolic Keplerian Bound Filter)
-                        if (!MGASymbolicPhysicsConstraints.IsToFKeplerianFeasible(r1.magnitude, r2.magnitude, tD * 86400.0, centralMu))
-                            continue;
-
-                        if (PykepNative.SolveLambert(r1, r2, tD * 86400.0, centralMu, false, out Vector3d vDep, out Vector3d vArr))
+                        double depUT = ut + resShift;
+                        p1.GetRelativeState(central, depUT, out Vector3d r1, out Vector3d v1);
+                        for (double tD = Math.Max(minTofD, coarseBestTof - 30.0); tD <= Math.Min(maxTofD, coarseBestTof + 30.0); tD += 5.0)
                         {
-                            Vector3d vInf = vDep - v1;
-                            double vHyp = Math.Sqrt(vInf.sqrMagnitude + 2.0 * muP1 / Math.Max(1.0, rp1));
-                            double dv = (vHyp - vPark1) * 1000.0;
+                            double arrUT = depUT + tD * 86400.0;
+                            p2.GetRelativeState(central, arrUT, out Vector3d r2, out Vector3d v2);
+
+                            // 符号开普勒与角动量极值门禁 (Symbolic Keplerian Bound Filter)
+                            if (!MGASymbolicPhysicsConstraints.IsToFKeplerianFeasible(r1.magnitude, r2.magnitude, tD * 86400.0, centralMu))
+                                continue;
+
+                            if (PykepNative.SolveLambert(r1, r2, tD * 86400.0, centralMu, false, out Vector3d vDep, out Vector3d vArr))
+                            {
+                                Vector3d vInf = vDep - v1;
+                                double vHyp = Math.Sqrt(vInf.sqrMagnitude + 2.0 * muP1 / Math.Max(1.0, rp1));
+                                double dv = (vHyp - vPark1) * 1000.0;
 
                             if (!config.NoInsertionBurn)
                             {
@@ -256,6 +341,7 @@ namespace KSPGMAT.MGA
                             }
                         }
                     }
+                }
                 }
 
                 candidates.Add(new SynodicWindowCandidate

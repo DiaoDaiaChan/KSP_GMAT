@@ -19,6 +19,9 @@
 #include <random>
 #include <intrin.h>
 #include <immintrin.h>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 #include <kep3/epoch.hpp>
 #include <kep3/lambert_problem.hpp>
@@ -79,8 +82,18 @@ EXPORT_API inline int pykep_check_cpu_features(int* out_sse2, int* out_avx, int*
 }
 
 // ============================================================================
-// AVX2 / FMA Optimized Vector Math Helpers
+// AVX2 / FMA Optimized Vector Math Helpers (4-wide SIMD & Fast Dot/Norm)
 // ============================================================================
+namespace {
+    struct OpenMpInitConfig {
+        OpenMpInitConfig() {
+            // 彻底杜绝 OpenMP 空闲线程在 Windows 上的 100% 自旋空转，防止系统假死/死锁
+            _putenv("OMP_WAIT_POLICY=PASSIVE");
+        }
+    };
+    static OpenMpInitConfig g_omp_init_config;
+}
+
 inline double vec3_dot(const double* a, const double* b) {
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }
@@ -113,6 +126,88 @@ inline void vec3_cross(const double* a, const double* b, double* out) {
 
 inline std::array<double, 3> vec3_cross(const std::array<double, 3>& a, const std::array<double, 3>& b) {
     return { a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0] };
+}
+
+// 4 组 3 维矢量点积并行求解 (AVX2 + FMA 4-wide SIMD: out[i] = ax[i]*bx[i] + ay[i]*by[i] + az[i]*bz[i])
+inline void batch_vec3_dot4_avx2(
+    const double* ax, const double* ay, const double* az,
+    const double* bx, const double* by, const double* bz,
+    double* out_dots)
+{
+#if defined(__AVX2__)
+    __m256d vax = _mm256_loadu_pd(ax);
+    __m256d vay = _mm256_loadu_pd(ay);
+    __m256d vaz = _mm256_loadu_pd(az);
+    __m256d vbx = _mm256_loadu_pd(bx);
+    __m256d vby = _mm256_loadu_pd(by);
+    __m256d vbz = _mm256_loadu_pd(bz);
+    __m256d dots = _mm256_fmadd_pd(vax, vbx, _mm256_fmadd_pd(vay, vby, _mm256_mul_pd(vaz, vbz)));
+    _mm256_storeu_pd(out_dots, dots);
+#else
+    for (int i = 0; i < 4; ++i) {
+        out_dots[i] = ax[i] * bx[i] + ay[i] * by[i] + az[i] * bz[i];
+    }
+#endif
+}
+
+// 4 组 3 维矢量模长并行求解 (AVX2 + FMA: out[i] = sqrt(x[i]^2 + y[i]^2 + z[i]^2))
+inline void batch_vec3_norm4_avx2(
+    const double* x, const double* y, const double* z,
+    double* out_norms)
+{
+#if defined(__AVX2__)
+    __m256d vx = _mm256_loadu_pd(x);
+    __m256d vy = _mm256_loadu_pd(y);
+    __m256d vz = _mm256_loadu_pd(z);
+    __m256d nsq = _mm256_fmadd_pd(vx, vx, _mm256_fmadd_pd(vy, vy, _mm256_mul_pd(vz, vz)));
+    __m256d norms = _mm256_sqrt_pd(nsq);
+    _mm256_storeu_pd(out_norms, norms);
+#else
+    for (int i = 0; i < 4; ++i) {
+        out_norms[i] = std::sqrt(x[i]*x[i] + y[i]*y[i] + z[i]*z[i]);
+    }
+#endif
+}
+
+// 4 组 3 维矢量几何差值欧氏距离并行求解 (AVX2 + FMA: out[i] = ||a[i] - b[i]||)
+inline void batch_vec3_diff_norm4_avx2(
+    const double* ax, const double* ay, const double* az,
+    const double* bx, const double* by, const double* bz,
+    double* out_dists)
+{
+#if defined(__AVX2__)
+    __m256d dx = _mm256_sub_pd(_mm256_loadu_pd(ax), _mm256_loadu_pd(bx));
+    __m256d dy = _mm256_sub_pd(_mm256_loadu_pd(ay), _mm256_loadu_pd(by));
+    __m256d dz = _mm256_sub_pd(_mm256_loadu_pd(az), _mm256_loadu_pd(bz));
+    __m256d dsq = _mm256_fmadd_pd(dx, dx, _mm256_fmadd_pd(dy, dy, _mm256_mul_pd(dz, dz)));
+    _mm256_storeu_pd(out_dists, _mm256_sqrt_pd(dsq));
+#else
+    for (int i = 0; i < 4; ++i) {
+        double dx = ax[i] - bx[i];
+        double dy = ay[i] - by[i];
+        double dz = az[i] - bz[i];
+        out_dists[i] = std::sqrt(dx*dx + dy*dy + dz*dz);
+    }
+#endif
+}
+
+// 单个 3 维矢量的低延迟 SIMD 点积
+inline double vec3_dot_fast(const double* a, const double* b) {
+#if defined(__AVX2__)
+    __m256d va = _mm256_setr_pd(a[0], a[1], a[2], 0.0);
+    __m256d vb = _mm256_setr_pd(b[0], b[1], b[2], 0.0);
+    __m256d prod = _mm256_mul_pd(va, vb);
+    __m128d lo = _mm256_castpd256_pd128(prod);
+    __m128d hi = _mm256_extractf128_pd(prod, 1);
+    __m128d sum = _mm_add_pd(lo, hi);
+    return _mm_cvtsd_f64(_mm_hadd_pd(sum, sum));
+#else
+    return a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+#endif
+}
+
+inline double vec3_norm_fast(const double* a) {
+    return std::sqrt(vec3_dot_fast(a, a));
 }
 
 static const double SUN_MU = 1.32712440018e11; // km^3/s^2 (NASA/JPL standard)

@@ -34,6 +34,31 @@ namespace KSPGMAT.MGA
         public const double LaunchAscentLossFactor = 0.05;
 
         /// <summary>
+        /// 深势阱目标同星共振链的阶数上限 (求解器链长与数值稳定性约束)。
+        /// 【2026-09-14 新增】取代原 `Math.Min(8, ...)` 中的 8。标注: **[经验参数·待标定]**
+        /// </summary>
+        public const int DeepWellResonanceOrderCeiling = 8;
+
+        /// <summary>
+        /// 在解析共振下界 N_req 之上额外展开的探索余量阶数。
+        ///
+        /// 【2026-09-14 新增】取代原 `Math.Max(nArrReq, 6)` 中写死的下界 6 ——
+        /// 该 6 与 N_req 无关 (水星 N_req 约 1), 实为 BepiColombo 的历史共振次数。
+        /// 现改为"N_req + 固定探索余量", 使下界随天体物理量变化。
+        /// 标注: **[经验参数·待标定]**
+        /// </summary>
+        public const int ResonanceExplorationHeadroom = 2;
+
+        /// <summary>
+        /// 判断出发天体自身是否构成显著借力源时所用的 v∞ 参考值 (km/s)。
+        /// 【2026-09-14 新增】取代原裸字面量 5.0。标注: **[经验参数·待标定]**
+        /// </summary>
+        public const double ReferenceVInfForAssistSignificanceKms = 5.0;
+
+        /// <summary>未知天体捕获边界所用的周期回退值 (天)。取代原裸字面量 365.25。</summary>
+        public const double FallbackPeriodDays = 365.25;
+
+        /// <summary>
         /// 获取给定中心天体系统下的“引力必吃榜” (纯物理势深降序排列)
         /// </summary>
         public static List<(SolarPlanet Body, double Ratio, double PotentialDepth)> GetGravityAssistRankings(string centralBody)
@@ -141,7 +166,7 @@ namespace KSPGMAT.MGA
                             !r.Body.Name.Equals(pDep.Name, StringComparison.OrdinalIgnoreCase) &&
                             !r.Body.Name.Equals(pArr.Name, StringComparison.OrdinalIgnoreCase) &&
                             // 无量纲借力显著性门槛: 仅保留具显著引力助推能力的爬升跳板 (弱小天体不足以承担能量梯级)
-                            MGAPhysicalScales.IsSignificantAssist(r.Body, 5.0, SolarSystemCatalog.GetCentralMu(centralBody)))
+                            MGAPhysicalScales.IsSignificantAssist(r.Body, ReferenceVInfForAssistSignificanceKms, SolarSystemCatalog.GetCentralMu(centralBody)))
                 .Select(r => r.Body);
 
             if (isOutward)
@@ -490,7 +515,7 @@ namespace KSPGMAT.MGA
                     list.Add(withRes);
 
                     // 出发星自共振蓄能/调相梯级 (ΔV-EGA, 如 Juno 模式 Dep -> Dep -> Outward, 或 MESSENGER 模式 Dep -> Dep -> Inward):
-                    bool hasDepAssist = MGAPhysicalScales.IsSignificantAssist(pDep, 5.0, SolarSystemCatalog.GetCentralMu(centralBody));
+                    bool hasDepAssist = MGAPhysicalScales.IsSignificantAssist(pDep, ReferenceVInfForAssistSignificanceKms, SolarSystemCatalog.GetCentralMu(centralBody));
                     if (hasDepAssist)
                     {
                         var depResList = new List<string> { pDep.Name };
@@ -498,13 +523,24 @@ namespace KSPGMAT.MGA
                         if (!list.Any(x => x.SequenceEqual(depResList))) list.Add(depResList);
                     }
 
-                    // 深度势阱目标 (如 Earth -> Mercury / Moho):
-                    // 解析推导到达天体所需无动力双曲偏折次数 N_req, 并派生目标天体多次同星减速共振链
-                    if (pArr.SMA < pDep.SMA * 0.55)
+                    // 深度势阱目标:
+                    // 解析推导到达天体所需无动力双曲偏折次数 N_req, 并派生目标天体多次同星减速共振链。
+                    //
+                    // 【2026-09-14 审计修正】原实现有两处问题:
+                    //   (a) 门限 `pArr.SMA < pDep.SMA * 0.55` 为硬编码半长轴比例 ——
+                    //       已改用 MGAPhysicalScales.ClassifyDeepWellBySystemDistribution (系统内鲁棒分位);
+                    //   (b) `int maxArrRes = Math.Min(8, Math.Max(nArrReq, 6));` 中的下界 6 与 N_req 无关,
+                    //       实为 BepiColombo 的历史共振次数 (本文件他处注释曾声称已移除该写死值,
+                    //       但场景 B 一直保留)。现改为纯由 nArrReq + 探索余量给出。
+                    bool isDeepWellArrivalLocal = (pArr != null && pDep != null) &&
+                        MGAPhysicalScales.ClassifyDeepWellBySystemDistribution(
+                            pArr, pDep, pArr, SolarSystemCatalog.GetCentralMu(centralBody),
+                            SolarSystemCatalog.GetAvailablePlanets());
+                    if (isDeepWellArrivalLocal)
                     {
                         ComputeResonantDeflectionNeeds(pArr, forwardBodies.Last(), null, centralBody,
                             out _, out _, out _, out int nArrReq);
-                        int maxArrRes = Math.Max(2, Math.Min(4, nArrReq));
+                        int maxArrRes = Math.Min(DeepWellResonanceOrderCeiling, nArrReq + ResonanceExplorationHeadroom);
 
                         for (int r = 1; r <= maxArrRes; r++)
                         {
@@ -532,7 +568,7 @@ namespace KSPGMAT.MGA
 
                 // 纯出发星自共振蓄能直达目标星梯级 (ΔV-EGA, 如 Juno: Earth -> Earth -> Jupiter):
                 // 仅当出发星具备显著借力效能且为外向转移时，无论中间是否存在中继行星，纯出发星 2:1 共振均可大幅削减出发逃逸能量赤字
-                if (isOutwardTransfer && MGAPhysicalScales.IsSignificantAssist(pDep, 5.0, SolarSystemCatalog.GetCentralMu(centralBody)))
+                if (isOutwardTransfer && MGAPhysicalScales.IsSignificantAssist(pDep, ReferenceVInfForAssistSignificanceKms, SolarSystemCatalog.GetCentralMu(centralBody)))
                 {
                     var pureDepRes = new List<string> { pDep.Name };
                     if (!list.Any(x => x.SequenceEqual(pureDepRes))) list.Add(pureDepRes);
