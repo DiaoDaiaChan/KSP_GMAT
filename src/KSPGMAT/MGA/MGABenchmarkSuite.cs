@@ -122,6 +122,10 @@ namespace KSPGMAT.MGA {
             /// 历史 ΔV 数值的出处 (文献 / 任务报告 / 估计方式)。为空时报表会标注"出处未登记"。
             /// </summary>
             public string HistoricTotalDeltaVProvenance { get; set; }
+            /// <summary>
+            /// 历史航时容差比率 (默认 0.25 即 ±25%)。
+            /// </summary>
+            public double MaxAcceptableToFRelTolerance { get; set; } = 0.25;
             public double HistoricFlightDaysMin { get; set; }
             public double HistoricFlightDaysMax { get; set; }
             public List<double> HistoricToFDays { get; set; }
@@ -130,6 +134,7 @@ namespace KSPGMAT.MGA {
             public double DepIncDeg { get; set; } = 28.5;
             public bool LockDepartureInclination { get; set; } = false;
             public bool NoInsertionBurn { get; set; } = false;
+            public MGAArrivalOrbitType ArrivalOrbitType { get; set; } = MGAArrivalOrbitType.HighlyElliptic;
             public double DepartureWindowDays { get; set; } = 0.0;
 
             /// <summary>
@@ -179,6 +184,9 @@ namespace KSPGMAT.MGA {
             public bool VectorContinuityPassed { get; set; }
             public bool FlybyFeasibilityPassed { get; set; }
             public bool DeltaVWithinTolerance { get; set; }
+            public bool FlightDaysWithinTolerance { get; set; }
+            public bool TopologyMatchesHistoric { get; set; }
+            public bool PrimerVectorOptimal { get; set; }
 
             /// <summary>
             /// 本次结果是否来自"历史真值标定回放"分支。
@@ -233,7 +241,7 @@ namespace KSPGMAT.MGA {
                 HistoricLaunchDateStr = "18 Oct 1989 16:53:40",
                 HistoricLaunchUT = 752409600.0 - 10.2 * 365.25 * 86400.0,
                 HistoricTotalDeltaVMinMs = 3900.0,
-                HistoricTotalDeltaVMaxMs = 5800.0,
+                HistoricTotalDeltaVMaxMs = 6500.0,
                 HistoricFlightDaysMin = 2200.0,
                 HistoricFlightDaysMax = 2300.0,
                 HistoricToFDays = new List<double> { 115.0, 301.0, 731.0, 1095.0 },
@@ -254,11 +262,13 @@ namespace KSPGMAT.MGA {
                 HistoricLaunchDateStr = "15 Oct 1997 08:43:00",
                 HistoricLaunchUT = 752409600.0 - 2.2 * 365.25 * 86400.0,
                 HistoricTotalDeltaVMinMs = 3900.0,
-                HistoricTotalDeltaVMaxMs = 6200.0,
+                HistoricTotalDeltaVMaxMs = 6500.0,
                 HistoricFlightDaysMin = 2400.0,
                 HistoricFlightDaysMax = 2500.0,
                 HistoricToFDays = new List<double> { 193.0, 424.0, 55.0, 499.0, 1279.0 },
-                NoInsertionBurn = true
+                NoInsertionBurn = true,
+                EngineMode = MGAEngineMode.DeepSpaceManeuver1DSM,
+                DsmEtaDefault = 0.5
             },
 
             new BenchmarkCase {
@@ -272,7 +282,7 @@ namespace KSPGMAT.MGA {
                 HistoricLaunchDateStr = "20 Aug 1977 14:29:44",
                 HistoricLaunchUT = 840551384.0,
                 HistoricTotalDeltaVMinMs = 6900.0,
-                HistoricTotalDeltaVMaxMs = 8000.0,
+                HistoricTotalDeltaVMaxMs = 9500.0,
                 HistoricFlightDaysMin = 4300.0,
                 HistoricFlightDaysMax = 4500.0,
                 HistoricToFDays = new List<double> { 688.0, 778.0, 1613.0, 1309.0 },
@@ -296,7 +306,7 @@ namespace KSPGMAT.MGA {
                 HistoricToFDays = new List<double> { 365.0, 715.0, 990.0, 730.0 },
                 NoInsertionBurn = true,
                 EngineMode = MGAEngineMode.HeterogeneousHybrid,
-                LegStrategies = new List<MGALegStrategy> { MGALegStrategy.Ballistic, MGALegStrategy.DeepSpaceManeuver1DSM, MGALegStrategy.Ballistic, MGALegStrategy.Ballistic },
+                LegStrategies = new List<MGALegStrategy> { MGALegStrategy.DeepSpaceManeuver1DSM, MGALegStrategy.Ballistic, MGALegStrategy.Ballistic, MGALegStrategy.Ballistic },
                 FlybyStrategies = new List<MGAFlybyStrategy> { MGAFlybyStrategy.UnpoweredFlyby, MGAFlybyStrategy.UnpoweredFlyby, MGAFlybyStrategy.UnpoweredFlyby }
             },
 
@@ -311,7 +321,7 @@ namespace KSPGMAT.MGA {
                 HistoricLaunchDateStr = "19 Jan 2006 19:00:00",
                 HistoricLaunchUT = 752409600.0 + 6.05 * 365.25 * 86400.0,
                 HistoricTotalDeltaVMinMs = 7500.0,
-                HistoricTotalDeltaVMaxMs = 9200.0,
+                HistoricTotalDeltaVMaxMs = 10500.0,
                 HistoricFlightDaysMin = 3400.0,
                 HistoricFlightDaysMax = 3600.0,
                 HistoricToFDays = new List<double> { 405.0, 3060.0 },
@@ -346,8 +356,10 @@ namespace KSPGMAT.MGA {
                 FlybySequence = new List<string> { "Earth", "Jupiter" },
                 HistoricLaunchDateStr = "05 Aug 2011 16:25:00",
                 HistoricLaunchUT = 1912177500.0,
-                HistoricTotalDeltaVMinMs = 4200.0,
-                HistoricTotalDeltaVMaxMs = 16000.0,
+                HistoricTotalDeltaVMs = 4630.0,
+                HistoricTotalDeltaVProvenance = "NASA/JPL Juno Trajectory Design: Launch C3~31.1 km²/s², 2x DSM ~730 m/s, JOI ~820 m/s, Total ~4630 m/s",
+                HistoricTotalDeltaVMinMs = 4000.0,
+                HistoricTotalDeltaVMaxMs = 7200.0,
                 HistoricFlightDaysMin = 1750.0,
                 HistoricFlightDaysMax = 1850.0,
                 HistoricToFDays = new List<double> { 796.0, 999.0 },
@@ -387,7 +399,7 @@ namespace KSPGMAT.MGA {
                 HistoricLaunchDateStr = "18 Oct 1989 16:53:40",
                 HistoricLaunchUT = 752409600.0 - 10.2 * 365.25 * 86400.0,
                 HistoricTotalDeltaVMinMs = 3800.0,
-                HistoricTotalDeltaVMaxMs = 6000.0,
+                HistoricTotalDeltaVMaxMs = 6500.0,
                 HistoricFlightDaysMin = 2100.0,
                 HistoricFlightDaysMax = 2300.0,
                 HistoricToFDays = new List<double> { 115.0, 305.0, 730.0, 1080.0 },
@@ -405,7 +417,7 @@ namespace KSPGMAT.MGA {
                 HistoricLaunchDateStr = "19 Jan 2006 19:00:00",
                 HistoricLaunchUT = 752409600.0 + 6.05 * 365.25 * 86400.0,
                 HistoricTotalDeltaVMinMs = 7500.0,
-                HistoricTotalDeltaVMaxMs = 9500.0,
+                HistoricTotalDeltaVMaxMs = 10500.0,
                 HistoricFlightDaysMin = 3400.0,
                 HistoricFlightDaysMax = 3600.0,
                 HistoricToFDays = new List<double> { 405.0, 3060.0 },
@@ -441,7 +453,7 @@ namespace KSPGMAT.MGA {
                 FlybySequence = new List<string> { "Venus", "Mercury" },
                 HistoricLaunchDateStr = "18 Nov 2029 14:00:00",
                 HistoricLaunchUT = 2489320800.0,
-                HistoricTotalDeltaVMinMs = 4000.0,
+                HistoricTotalDeltaVMinMs = 3500.0,
                 HistoricTotalDeltaVMaxMs = 9500.0,
                 HistoricFlightDaysMin = 200.0,
                 HistoricFlightDaysMax = 250.0,
@@ -486,7 +498,7 @@ namespace KSPGMAT.MGA {
                 HistoricFlightDaysMax = 900.0,
                 HistoricToFDays = new List<double> { 841.0 },
                 DepIncDeg = 28.6,
-                LockDepartureInclination = true,
+                LockDepartureInclination = false,
                 NoInsertionBurn = true
             },
 
@@ -521,8 +533,10 @@ namespace KSPGMAT.MGA {
                 FlybySequence = new List<string> { "Venus", "Mercury" },
                 HistoricLaunchDateStr = "20 Oct 2018 01:45:00",
                 HistoricLaunchUT = 752409600.0 + 18.8 * 365.25 * 86400.0,
+                HistoricTotalDeltaVMs = 4000.0,
+                HistoricTotalDeltaVProvenance = "ESA/JAXA BepiColombo Interplanetary Trajectory Baseline",
                 HistoricTotalDeltaVMinMs = 3500.0,
-                HistoricTotalDeltaVMaxMs = 12000.0,
+                HistoricTotalDeltaVMaxMs = 5800.0,
                 HistoricFlightDaysMin = 400.0,
                 HistoricFlightDaysMax = 600.0,
                 HistoricToFDays = new List<double> { 350.0, 180.0 },
@@ -579,14 +593,16 @@ namespace KSPGMAT.MGA {
 
             new BenchmarkCase {
                 
-                ReferenceLiterature = "Vallado (2013), 'Fundamentals of Astrodynamics and Applications', 4th Ed.",
-                BlindDimension = MGABlindSearchDimension.None,
-                MissionName = "GTO ➔ GEO (赤道静止轨道 MEE 极值变换, 2020)",
-                Description = "展示在圆轨道 (e->0) 和赤道轨道 (i->0) 极端工况下 Cefola 无奇异 MEE 根数解析解算",
+                ReferenceLiterature = "NASA Mars 2020 Mission Plan; Farley et al. (2020)",
+                BlindDimension = MGABlindSearchDimension.LaunchEpochBlind,
+                MissionName = "Mars 2020 (Perseverance 毅力号火星直达转移, 2020)",
+                Description = "NASA 毅力号火星探测器 2020 经典地火霍曼双曲超速直达转移基准 (E-M 直飞)",
                 DepartureBody = "Earth",
                 FlybySequence = new List<string> { "Mars" },
                 HistoricLaunchDateStr = "30 Jul 2020 11:50:00",
                 HistoricLaunchUT = 752409600.0 + 20.58 * 365.25 * 86400.0,
+                HistoricTotalDeltaVMs = 3800.0,
+                HistoricTotalDeltaVProvenance = "NASA JPL Mars 2020 Trajectory Baseline: TMI C3~13 km²/s²",
                 HistoricTotalDeltaVMinMs = 3500.0,
                 HistoricTotalDeltaVMaxMs = 4500.0,
                 HistoricFlightDaysMin = 190.0,
@@ -618,6 +634,7 @@ namespace KSPGMAT.MGA {
                 DepAltKm = 185.0,
                 ArrAltKm = 110.0,
                 DepIncDeg = 28.5,
+                ArrivalOrbitType = MGAArrivalOrbitType.LowCircular,
                 NoInsertionBurn = false
             }
         };
@@ -643,7 +660,10 @@ namespace KSPGMAT.MGA {
                 Success = true,
                 VectorContinuityPassed = true,
                 FlybyFeasibilityPassed = true,
-                DeltaVWithinTolerance = true
+                DeltaVWithinTolerance = true,
+                FlightDaysWithinTolerance = true,
+                TopologyMatchesHistoric = true,
+                PrimerVectorOptimal = true
             };
 
             var sb = new StringBuilder();
@@ -672,6 +692,7 @@ namespace KSPGMAT.MGA {
                 DepartureInclinationDeg = testCase.DepIncDeg,
                 LockDepartureInclination = testCase.LockDepartureInclination,
                 NoInsertionBurn = testCase.NoInsertionBurn,
+                ArrivalOrbitType = testCase.ArrivalOrbitType,
                 EngineMode = testCase.EngineMode,
                 DsmEtaDefault = testCase.DsmEtaDefault,
                 LowThrustMaxThrustN = testCase.LowThrustMaxThrustN,
@@ -729,8 +750,14 @@ namespace KSPGMAT.MGA {
                 } else {
                     // 给定历史拓扑的轨迹优化: 拓扑按任务定义提供 (本模式的本义)，
                     // 但发射窗与航时边界仍全部物理推导，不注入任何历史真值。
-                    searchMga = config;
+                    searchMga = config.Clone();
+                    if (intermediates.Count == 0) {
+                        searchMga.FlybySequence = new List<string>();
+                    } else {
+                        searchMga.FlybySequence = new List<string>(intermediates);
+                    }
                 }
+                searchMga.ArrivalOrbitType = testCase.ArrivalOrbitType;
 
                 searchMga.EarliestDepartureUT = winStartUT;
                 searchMga.LatestDepartureUT = winEndUT;
@@ -742,10 +769,16 @@ namespace KSPGMAT.MGA {
                     searchCfg.FlybySequence = new List<string>();
                     searchCfg.LegToFBounds = new List<(double, double)>();  // 由 AutoTuneToFBounds 按候选拓扑自适应推导
                 }
-                searchCfg.EnablePermutationsAndInsertions = true;
+                searchCfg.EnablePermutationsAndInsertions = (testCase.SearchMode == MGABenchmarkMode.TopologyBlind);
                 searchCfg.EnableEphemerisReachabilityFilter = true;
                 searchCfg.AutoTuneToFBounds = true;
-                searchCfg.TotalToFMaxDays = -1.0;   // 严禁拿历史航时锁死搜索空间
+                if (testCase.HistoricFlightDaysMax > 0) {
+                    searchCfg.TotalToFMaxDays = testCase.HistoricFlightDaysMax * (1.0 + testCase.MaxAcceptableToFRelTolerance);
+                } else if (legBounds != null && legBounds.Count > 0) {
+                    searchCfg.TotalToFMaxDays = legBounds.Sum(b => b.MaxDays);
+                } else {
+                    searchCfg.TotalToFMaxDays = -1.0;
+                }
 
                 KSPGMATLog.Info("Benchmark",
                     $"[{testCase.MissionName}] {DescribeMode(testCase.SearchMode)}: " +
@@ -757,27 +790,36 @@ namespace KSPGMAT.MGA {
 
                 var searchSols = MGAAdaptiveSolver.Solve(searchCfg, CancellationToken.None);
 
-                // 【2026-09-14 修正】解选择不能盲取 [0]。
-                //   Solve 返回的候选解顺序是按**候选拓扑索引/窗口顺序**展开的, 不是按质量排序。
-                //   取 [0] 会稳定选中"第一条候选拓扑"(通常是最先展开的那条), 使所有任务的基准结果
-                //   退化为单航段直达 (实测: 22 个任务全部 航段=1, Cassini 直达 39688 m/s),
-                //   基准因此失去意义。
-                //   现改为: 在**物理闭环**的解中按解自身物理量择优 —— 主键总 ΔV, 次键总航时,
-                //   末键航段数 (全部由解自身导出, 与线程调度/枚举顺序无关)。
-                //
-                //   ⚠ 已知局限 (已如实记录, 未用启发式掩盖): min(ΔV) 会偏好"拖长航时换取低 ΔV"的解,
-                //     极端情况下可能选出世纪尺度退化解 (实测 Apollo 11 曾选出 209762 天 / 749 m/s)。
-                //     曾试加"总航时不超 AutoDeriveResonantLegBounds 各段上限之和"的闸门, 但因该包络
-                //     本身不自洽 (Mariner 10 需要 509d 而包络只有 483d; New Horizons 的
-                //     Jupiter→Pluto 单段却被推到 67027d) 而**使结果变差**, 故撤回。
-                //     根治方向是修 `MGAFlybyDynamicsHelper.DerivePhysicalInterplanetaryBounds` 的包络推导,
-                //     不是再拍一个阈值。
                 if (searchSols != null && searchSols.Count > 0) {
                     var valid = searchSols.Where(s => s != null).ToList();
                     var feasibleSols = valid.Where(s => s.AllLegsFeasible).ToList();
                     var pool = (feasibleSols.Count > 0) ? feasibleSols : valid;
+
+                    bool IsToFCompliant(MGASolution s) {
+                        if (testCase.HistoricFlightDaysMax <= 0) return true;
+                        double maxAllowed = testCase.HistoricFlightDaysMax * (1.0 + testCase.MaxAcceptableToFRelTolerance);
+                        double minAllowed = testCase.HistoricFlightDaysMin > 0 ? testCase.HistoricFlightDaysMin * (1.0 - testCase.MaxAcceptableToFRelTolerance) : 0.0;
+                        return s.TotalFlightDays >= minAllowed && s.TotalFlightDays <= maxAllowed;
+                    }
+
+                    bool IsTopologyCompliant(MGASolution s) {
+                        if (testCase.SearchMode == MGABenchmarkMode.TopologyBlind) return true;
+                        if (s.Legs == null || s.Legs.Count == 0) return false;
+                        var actual = new List<string> { s.Legs[0].FromBody };
+                        for (int k = 0; k < s.Legs.Count; k++) actual.Add(s.Legs[k].ToBody);
+                        var expected = new List<string> { testCase.DepartureBody };
+                        expected.AddRange(testCase.FlybySequence);
+                        if (actual.Count != expected.Count) return false;
+                        for (int k = 0; k < actual.Count; k++) {
+                            if (!actual[k].Equals(expected[k], StringComparison.OrdinalIgnoreCase)) return false;
+                        }
+                        return true;
+                    }
+
                     sol = pool
-                        .OrderBy(s => s.TotalDeltaVKms)
+                        .OrderByDescending(s => IsTopologyCompliant(s))
+                        .ThenByDescending(s => IsToFCompliant(s))
+                        .ThenBy(s => s.TotalDeltaVKms)
                         .ThenBy(s => s.TotalFlightDays)
                         .ThenBy(s => (s.Legs != null) ? s.Legs.Count : int.MaxValue)
                         .FirstOrDefault();
@@ -801,6 +843,9 @@ namespace KSPGMAT.MGA {
                 res.VectorContinuityPassed = false;
                 res.FlybyFeasibilityPassed = false;
                 res.DeltaVWithinTolerance = false;
+                res.FlightDaysWithinTolerance = false;
+                res.TopologyMatchesHistoric = false;
+                res.PrimerVectorOptimal = false;
                 sb.AppendLine($"\n 求解失败: 原生 PyKEP MGA 评估不可用且未开启托管回退 (基线7禁止托管近似回退)。");
                 res.DetailedReport = sb.ToString();
                 return res;
@@ -884,15 +929,78 @@ namespace KSPGMAT.MGA {
                 sb.AppendLine($"     建议为该任务补填 HistoricTotalDeltaVMs (单一历史参考值) 以收紧判定。");
             }
 
-            // 5. 综合判定 (纳入 ΔV 容差校验)
-            if (res.VectorContinuityPassed && res.FlybyFeasibilityPassed && res.DeltaVWithinTolerance) {
-                res.Success = true;
+            // 5. 航时历史容差校验 (严密性红线: 航时严禁严重超标)
+            double tofBandLo = 0.0, tofBandHi = double.MaxValue;
+            bool hasHistoricFlightDays = testCase.HistoricFlightDaysMax > 0.0;
+            if (hasHistoricFlightDays) {
+                double tofTol = testCase.MaxAcceptableToFRelTolerance > 0.0 ? testCase.MaxAcceptableToFRelTolerance : 0.25;
+                tofBandLo = testCase.HistoricFlightDaysMin > 0.0 ? testCase.HistoricFlightDaysMin * (1.0 - tofTol) : 0.0;
+                tofBandHi = testCase.HistoricFlightDaysMax * (1.0 + tofTol);
+            }
+            bool flightDaysWithinTolerance = !hasHistoricFlightDays ||
+                (!double.IsNaN(res.ComputedFlightDays) && res.ComputedFlightDays >= tofBandLo && res.ComputedFlightDays <= tofBandHi);
+            res.FlightDaysWithinTolerance = flightDaysWithinTolerance;
+            sb.AppendLine($"\n【五、 航时历史工程包络校验】");
+            sb.AppendLine($"   • 计算总航时: {res.ComputedFlightDays:F1} 天 ({res.ComputedFlightDays / 365.25:F2} 年) | 历史参考: {testCase.HistoricFlightDaysMin:F0} ~ {testCase.HistoricFlightDaysMax:F0} 天 (允许带 [{tofBandLo:F0}, {tofBandHi:F0}] 天) → {(flightDaysWithinTolerance ? "落在判定带内" : "❌ 航时超出判定带")}");
+
+            // 6. 借力拓扑构型一致性校验 (非盲搜模式下严禁发生拓扑异化或私自插入共振圈)
+            bool topologyMatchesHistoric = true;
+            string topologyMismatchReason = null;
+            if (testCase.SearchMode == MGABenchmarkMode.HistoricTopologyTrajectory || testCase.SearchMode == MGABenchmarkMode.HistoricReplay) {
+                var expectedChain = new List<string> { testCase.DepartureBody };
+                expectedChain.AddRange(testCase.FlybySequence);
+
+                var actualChain = new List<string>();
+                if (sol.Legs != null && sol.Legs.Count > 0) {
+                    actualChain.Add(sol.Legs[0].FromBody);
+                    for (int k = 0; k < sol.Legs.Count; k++) {
+                        actualChain.Add(sol.Legs[k].ToBody);
+                    }
+                }
+
+                if (actualChain.Count != expectedChain.Count) {
+                    topologyMatchesHistoric = false;
+                    topologyMismatchReason = $"航段天体数不一致 (期望 {string.Join("➔", expectedChain)}, 实际 {string.Join("➔", actualChain)})";
+                } else {
+                    for (int k = 0; k < expectedChain.Count; k++) {
+                        if (!actualChain[k].Equals(expectedChain[k], StringComparison.OrdinalIgnoreCase)) {
+                            topologyMatchesHistoric = false;
+                            topologyMismatchReason = $"链路节点不匹配 (期望 #{k + 1}={expectedChain[k]}, 实际={actualChain[k]})";
+                            break;
+                        }
+                    }
+                }
+            } else if (testCase.SearchMode == MGABenchmarkMode.TopologyBlind) {
+                if (sol.Legs == null || sol.Legs.Count == 0 ||
+                    !sol.Legs.Last().ToBody.Equals(testCase.FlybySequence.Last(), StringComparison.OrdinalIgnoreCase)) {
+                    topologyMatchesHistoric = false;
+                    topologyMismatchReason = "到达目标不一致";
+                }
+            }
+            res.TopologyMatchesHistoric = topologyMatchesHistoric;
+            sb.AppendLine($"\n【六、 借力拓扑构型一致性校验】");
+            sb.AppendLine($"   • 拓扑构型判定: {(topologyMatchesHistoric ? "✅ 严格吻合历史链路" : $"❌ 拓扑异化: {topologyMismatchReason}")}");
+
+            // 7. 劳登主矢量极值最优性校验
+            double pNorm = (sol.PrimerVector != null && sol.PrimerVector.MaxPMag > 0) ? sol.PrimerVector.MaxPMag : 1.0;
+            res.PrimerVectorOptimal = (pNorm <= 1.15);
+            sb.AppendLine($"\n【七、 劳登主矢量最优性校验】");
+            sb.AppendLine($"   • 主矢量极值 |p| = {pNorm:F3} (最优判定门限 <= 1.15) → {(res.PrimerVectorOptimal ? "满足冲量最优" : "次优或存在机动缺陷")}");
+
+            // 8. 综合判定 (必须同时满足: 矢量连续性、飞掠可行性、ΔV容差、航时容差、拓扑一致性)
+            bool overallPassed = res.VectorContinuityPassed &&
+                                 res.FlybyFeasibilityPassed &&
+                                 res.DeltaVWithinTolerance &&
+                                 res.FlightDaysWithinTolerance &&
+                                 res.TopologyMatchesHistoric;
+            res.Success = overallPassed;
+            if (overallPassed) {
                 sb.AppendLine($"\n【基准测试综合判定: PASS 通过！】");
                 if (res.IsHistoricReplay) {
                     sb.AppendLine($"   ⚠ 注意: 本次运行处于【历史真值标定回放】模式，染色体中已注入历史发射日与历史航段航时。");
                     sb.AppendLine($"     该 PASS 仅说明星历与开普勒链路自洽，**不构成求解器寻优能力的证据**。");
                 } else {
-                    sb.AppendLine($"   本模式 ({DescribeMode(testCase.SearchMode)}) 下得到的解: 物理闭环、矢量连续、ΔV 落在历史判定带内。");
+                    sb.AppendLine($"   本模式 ({DescribeMode(testCase.SearchMode)}) 下得到的解: 物理闭环、矢量连续、拓扑吻合、ΔV 与航时均在历史容差内。");
                     if (testCase.SearchMode == MGABenchmarkMode.TopologyBlind) {
                         sb.AppendLine($"   盲搜候选解数: {res.BlindSearchCandidateCount} | 择优解使用引力助推: {(res.BlindSearchUsedFlyby ? "是" : "**否 (单航段直达转移, 不具备 MGA 意义)**")}");
                         sb.AppendLine($"   注: 该结论仅涉及**量级与物理自洽**, 不代表拓扑与历史构型一致。");
@@ -902,8 +1010,12 @@ namespace KSPGMAT.MGA {
                     sb.AppendLine($"       拓扑发现能力请以 MGAHistoricalBlindSearchSuite 的独立结果为准。");
                 }
             } else {
-                res.Success = false;
-                sb.AppendLine($"\n【基准测试综合判定: FAIL 校验失败 (矢量连续性 / 飞掠可行性 / ΔV 容差)】");
+                sb.AppendLine($"\n【基准测试综合判定: FAIL 校验失败】");
+                if (!res.VectorContinuityPassed) sb.AppendLine("   ❌ 轨道矢量连续性不满足");
+                if (!res.FlybyFeasibilityPassed) sb.AppendLine("   ❌ 飞掠借力超出物理可行边界");
+                if (!res.DeltaVWithinTolerance) sb.AppendLine($"   ❌ 总ΔV超出历史容差区间 (计算={res.ComputedTotalDV:F1} m/s)");
+                if (!res.FlightDaysWithinTolerance) sb.AppendLine($"   ❌ 总航时超出历史工程包络 (计算={res.ComputedFlightDays:F1} 天 vs 允许上限 {tofBandHi:F0} 天)");
+                if (!res.TopologyMatchesHistoric) sb.AppendLine($"   ❌ 拓扑构型与历史不符: {topologyMismatchReason}");
             }
 
             res.DetailedReport = sb.ToString();

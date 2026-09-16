@@ -61,7 +61,8 @@ namespace MGADebugRunner
                 { "juno", new JunoEvaluationTest() },
                 { "cassini", new CassiniEvaluationTest() },
                 { "eval_nh", new NewHorizonsEvaluationTest() },
-                { "eval_messenger", new MessengerEvaluationTest() }
+                { "eval_messenger", new MessengerEvaluationTest() },
+                { "ulysses", new UlyssesBenchmarkTest() }
             };
 
             bool isScenario9Only = false;
@@ -98,6 +99,12 @@ namespace MGADebugRunner
                     if ((clean == "test" || clean == "t") && i + 1 < args.Length)
                     {
                         selectedTest = args[i + 1].Trim().ToLowerInvariant();
+                        i++;
+                        continue;
+                    }
+                    if ((clean == "filter" || clean == "item" || clean == "query" || clean == "mission") && i + 1 < args.Length)
+                    {
+                        HistoricalBenchmarkMissionsTest.MissionFilter = args[i + 1].Trim();
                         i++;
                         continue;
                     }

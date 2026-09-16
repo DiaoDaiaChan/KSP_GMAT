@@ -17,7 +17,7 @@
     "destination_pe_km": 200.0,
     "destination_ap_km": 200.0,
     "no_insertion_burn": true,
-    "engine_mode": 0,
+    "engine_mode": 1,
     "leg_strategies": [],
     "flyby_strategies": [],
     "earliest_departure_date": "15 Oct 1997 08:43:00",

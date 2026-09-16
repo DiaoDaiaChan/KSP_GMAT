@@ -291,6 +291,20 @@ namespace MGADebugRunner
         public void SaveReport(string outputDir = "reports/test_reports")
         {
             _report.ExportMarkdown(outputDir);
+            try
+            {
+                var probe = KSPGMAT.MGA.Telemetry.MGAPipelineTelemetryProbe.Instance;
+                if (probe.Mission != null && !string.IsNullOrEmpty(probe.Mission.DepartureBody))
+                {
+                    KSPGMAT.MGA.Telemetry.MGAPipelineTelemetryProbe.ExportReportToFile(
+                        System.IO.Path.Combine(outputDir, $"pipeline_{_report.ModuleId}_telemetry.md"));
+                    KSPGMAT.MGA.MGAStepProfiler.PrintSummary();
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Telemetry] 探针报表导出跳过: {ex.Message}");
+            }
         }
 
         public void Dispose()
