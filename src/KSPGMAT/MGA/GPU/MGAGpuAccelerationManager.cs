@@ -78,9 +78,9 @@ namespace KSPGMAT.MGA.GPU
 
         // --- 全局功能开关与参数配置 ---
         public static bool EnableGpu { get; set; } = true;
-        public static bool EnableDeArchipelagoGpu { get; set; } = true;
-        public static bool EnableDeSeedingGpu { get; set; } = true;
-        public static bool EnablePorkchopGpu { get; set; } = true;
+        public static bool EnableDeArchipelagoGpu { get; set; } = false; // DE 种群采用 64 位高精度 Native OpenMP/AVX2 双曲偏折解算
+        public static bool EnableDeSeedingGpu { get; set; } = false;     // 前向注种采用 64 位高精度 Native 步进动力学校验
+        public static bool EnablePorkchopGpu { get; set; } = false;      // 猪排图采用 64 位双精度 Native OpenMP/AVX2 高通量求解 (彻底杜绝 32 位 HLSL 历元时间截断误差)
         public static bool EnableCorridorGpu { get; set; } = true;
         public static bool EnableRadarGpu { get; set; } = true;
         public static bool EnableBPlaneGpu { get; set; } = true;
@@ -147,19 +147,51 @@ namespace KSPGMAT.MGA.GPU
             MGAConfig config,
             double centralMu,
             bool optDsmEta,
-            out float[] outLosses)
+            out float[] outLosses,
+            Func<MGASolution, double> fitnessFunc = null)
         {
             outLosses = null;
             if (!IsGpuAvailable || !EnableDeArchipelagoGpu) return false;
             if (population == null || population.Count == 0 || fullChain == null || fullChain.Count < 2) return false;
 
-            // 检查链中是否包含同星共振段 (如 Earth->Earth, Venus->Venus, Mercury->Mercury).
+            // 物理第一性原理防线 1: 检查链中是否包含同星共振段 (如 Earth->Earth, Venus->Venus, Mercury->Mercury).
             // GPU HLSL CS 5.0 0圈兰伯特内核无法在同星共振位置重合/奇点处 (c ~= 0) 正确求解跨周期 1-DSM，
             // 此时严格交由 CPU 原生 ESA ACT PyKEP (OpenMP + AVX2 多核批处理器) 执行双精度精确动力学解算！
+            bool hasResonantBlock = false;
             for (int i = 0; i < fullChain.Count - 1; i++) {
                 if (fullChain[i].Equals(fullChain[i + 1], StringComparison.OrdinalIgnoreCase)) {
-                    return false;
+                    hasResonantBlock = true;
+                    break;
                 }
+            }
+
+            // 物理第一性原理防线 2: 检查链中是否包含外太阳系天体 (SMA > 2.0 AU, 如 Jupiter, Saturn, Uranus, Neptune 等).
+            // GPU HLSL CS 5.0 简易开普勒模型基于单精度 float 无摄动外推，在数十年的大时间跨度下累积星历偏差高达数千万公里 (如木星偏差达 3557 万公里)，
+            // 且外行星大跨度霍曼转移角接近 180° 极易遭遇兰伯特共线奇异点与伪逆行翻转；
+            // 必须严格交由 CPU 原生 ESA ACT PyKEP (双精度 + NASA JPL SPICE DE440 真实星历 + Householder 4阶解算器) 保障保真度！
+            bool hasOuterPlanet = false;
+            for (int i = 0; i < fullChain.Count; i++) {
+                var p = SolarSystemCatalog.GetPlanet(fullChain[i]);
+                if (p != null && p.SMA > 2.0 * MGADefaults.AU_KM) {
+                    hasOuterPlanet = true;
+                    break;
+                }
+            }
+
+            if (hasResonantBlock || hasOuterPlanet)
+            {
+                var swCpu = Stopwatch.StartNew();
+                var sols = PykepBridge.BuildBatchSolutions(population, fullChain, config);
+                var cpuLosses = new float[population.Count];
+                System.Threading.Tasks.Parallel.For(0, population.Count, i =>
+                {
+                    cpuLosses[i] = (float)(fitnessFunc != null ? fitnessFunc(sols[i]) : MGAPhysicsLossEngine.ComputeLoss(sols[i], config));
+                });
+                outLosses = cpuLosses;
+                swCpu.Stop();
+                _kernelMetrics[GpuKernelType.DifferentialEvolutionMegaPop].Record(population.Count, swCpu.Elapsed.TotalMilliseconds, false);
+                MGAPipelineTelemetryProbe.RecordGpuExecution("DirectCompute DE Mega-Pop (CPU Safe Fallback)", swCpu.Elapsed.TotalMilliseconds, population.Count, true);
+                return true;
             }
 
             int popSize = population.Count;
@@ -237,6 +269,10 @@ namespace KSPGMAT.MGA.GPU
                     float invDvRef = (float)(1.0 / dvRefKms);
                     for (int i = 0; i < popSize; i++)
                     {
+                        if (float.IsNaN(gpuResults[i]) || float.IsInfinity(gpuResults[i]))
+                        {
+                            gpuResults[i] = 100000.0f;
+                        }
                         gpuResults[i] *= invDvRef;
                     }
 
@@ -253,7 +289,16 @@ namespace KSPGMAT.MGA.GPU
                     metric.Record(popSize, sw.Elapsed.TotalMilliseconds, true);
                     MGAPipelineTelemetryProbe.RecordGpuExecution("DirectCompute DE Mega-Pop", sw.Elapsed.TotalMilliseconds, popSize, false);
                     CheckFailureThreshold();
-                    return false;
+
+                    // 平滑回退至 CPU 多核批处理
+                    var sols = PykepBridge.BuildBatchSolutions(population, fullChain, config);
+                    var cpuLosses = new float[population.Count];
+                    System.Threading.Tasks.Parallel.For(0, population.Count, i =>
+                    {
+                        cpuLosses[i] = (float)MGAPhysicsLossEngine.ComputeLoss(sols[i], config);
+                    });
+                    outLosses = cpuLosses;
+                    return true;
                 }
             }
             catch (Exception ex)
@@ -263,7 +308,22 @@ namespace KSPGMAT.MGA.GPU
                 metric.Record(popSize, sw.Elapsed.TotalMilliseconds, true);
                 KSPGMATLog.Error("GPU", $"[MGAGpuManager] DE 种群 GPU 批处理异常: {ex.Message}", ex);
                 CheckFailureThreshold();
-                return false;
+
+                try
+                {
+                    var sols = PykepBridge.BuildBatchSolutions(population, fullChain, config);
+                    var cpuLosses = new float[population.Count];
+                    System.Threading.Tasks.Parallel.For(0, population.Count, i =>
+                    {
+                        cpuLosses[i] = (float)MGAPhysicsLossEngine.ComputeLoss(sols[i], config);
+                    });
+                    outLosses = cpuLosses;
+                    return true;
+                }
+                catch
+                {
+                    return false;
+                }
             }
         }
 

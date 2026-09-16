@@ -282,14 +282,17 @@ namespace KSPGMAT.MGA {
         /// </summary>
         public const double MinVInfOfCircularSpeed = 0.20;
 
-        /// <summary>异星转移段绝对最小天数地板。</summary>
+        /// <summary>异星转移段绝对最小天数地板 (行星系统内部/卫星转移使用)。</summary>
+        public const double MinPlanetocentricLegToFFloorDays = 0.5;
+
+        /// <summary>异星转移段绝对最小天数地板 (日心际星际转移使用)。</summary>
         public const double MinLegToFFloorDays = 5.0;
 
         /// <summary>边界展宽用的最小天数偏置 (天)。</summary>
         public const double MinLegToFSpanDays = 10.0;
 
         /// <summary>出发段最小航时相对霍曼的标准比例。</summary>
-        public const double DepartureLegMinToFFactor = 0.65;
+        public const double DepartureLegMinToFFactor = 0.58;
 
         /// <summary>出发段最大航时相对霍曼的标准比例。</summary>
         public const double DepartureLegMaxToFFactor = 1.50;
@@ -545,6 +548,10 @@ namespace KSPGMAT.MGA {
             // 该"取小"对出发段与中段一视同仁 —— 原实现对两者用了两套互不相容的规则。
             double maxTransferDays = MaxTransferToFYears * DaysPerJulianYear;
 
+            bool isRootStar = central.Equals(SolarSystemCatalog.RootStarName, StringComparison.OrdinalIgnoreCase);
+            double legFloor = isRootStar ? MinLegToFFloorDays : Math.Min(MinPlanetocentricLegToFFloorDays, tHohmannDays * 0.1);
+            double minSpan = isRootStar ? MinLegToFSpanDays : 1.0;
+
             if (isDepartureLeg)
             {
                 double effDepMinFactor = depMinFactor;
@@ -554,21 +561,22 @@ namespace KSPGMAT.MGA {
                 {
                     effDepMinFactor = Math.Min(effDepMinFactor, WideSpanDepartureMinToFFactor);
                 }
-                double minDepDays = Math.Max(MinLegToFFloorDays, tHohmannDays * effDepMinFactor);
+                double minDepDays = Math.Max(legFloor, tHohmannDays * effDepMinFactor);
                 double maxDepDays = Math.Min(
-                    Math.Max(minDepDays + MinLegToFSpanDays, tHohmannDays * Math.Max(DepartureLegMaxToFFloorFactor, depMaxFactor)),
+                    Math.Max(minDepDays + minSpan, tHohmannDays * Math.Max(DepartureLegMaxToFFloorFactor, depMaxFactor)),
                     maxTransferDays);
                 if (maxDepDays < minDepDays * ToFMinSpanGuard) maxDepDays = minDepDays * ToFMinSpanFactor;
                 return (minDepDays, maxDepDays);
             }
 
-            // 欧拉-兰伯特抛物线转移极小航时与恒星逃逸动能极速巡航界 (Euler-Lambert Parabolic & Star Escape Bounds)
+            // 欧拉-兰伯特抛物线转移极小航时界 (Euler-Lambert Parabolic Bounds)
+            // 180° 抛物线转移时间 tParabolic = (4 / 3pi) * tHohmann ≈ 0.4244 * tHohmann
             double tParabolicDays = (Math.Sqrt(2.0) / 3.0) * Math.Pow(a1 + a2, 1.5) / Math.Sqrt(muCentralKmS) / 86400.0;
-            double distKm = Math.Abs(a2 - a1);
-            double vFastCruise = Math.Sqrt(2.0 * muCentralKmS / Math.Max(1.0, Math.Min(a1, a2)));
-            double tFastCruiseDays = (distKm / Math.Max(1.0, vFastCruise)) / 86400.0;
-            double minDays = Math.Max(MinLegToFFloorDays,
-                Math.Min(tParabolicDays * ParabolicToFShrinkFactor, tFastCruiseDays * FastCruiseToFShrinkFactor));
+            // 外太阳系或超大跨度双曲借力快弧 (如 Voyager 2 掠过天王星/海王星) 的快弧缩放因子
+            // 内太阳系受太阳深引力势阱与行星偏折角极限约束，严禁采用直线极速逃逸投影 (直线投影会给内行星给出 8 天伪极值)
+            bool isOuterOrWideSpan = Math.Min(a1, a2) > 2.5 * MGADefaults.AU_KM || (Math.Max(a1, a2) / Math.Min(a1, a2)) > 2.0;
+            double shrinkFactor = isOuterOrWideSpan ? 0.12 : ParabolicToFShrinkFactor; // 0.12 * 0.4244 ≈ 0.051 霍曼 (覆盖 Voyager 2 双曲逃逸 0.058 霍曼)
+            double minDays = Math.Max(legFloor, tParabolicDays * shrinkFactor);
 
             // 中间借力连接段: 航天器可采用单弧霍曼、双曲借力加速、或通过深空机动进行 1~2 圈多圈调相以闭合行星相位。
             //
@@ -655,12 +663,6 @@ namespace KSPGMAT.MGA {
             if (minToFDays > 0 && maxToFDays >= minToFDays) {
                 return PickNominalResonanceRatio(periodDays * 86400.0, minToFDays * 86400.0, maxToFDays * 86400.0);
             }
-            return PumpResonanceSlotRatio;
-        }
-
-        [Obsolete("periodDays is insufficient to uniquely determine resonance ratio. Call GetResonanceToFMultiplier() or GetResonanceToFMultiplier(minToFDays, maxToFDays, periodDays).")]
-        public static double GetResonanceToFMultiplier(double periodDays) {
-            if (periodDays <= 0) return NoShrinkResonanceRatio;
             return PumpResonanceSlotRatio;
         }
 

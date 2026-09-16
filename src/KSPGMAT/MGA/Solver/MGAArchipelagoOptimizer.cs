@@ -38,39 +38,40 @@ namespace KSPGMAT.MGA
         {
             var allSolutions = new ConcurrentBag<MGASolution>();
             if (windows == null || windows.Count == 0) return new List<MGASolution>();
+            var stage3Sw = System.Diagnostics.Stopwatch.StartNew();
 
-            // 落地 PaGMO (Izzo 2010) 多保真度漏斗思想：按估算发射能量排序，聚焦最具潜力的前 K 个黄金窗口
-            // 基础 2 个窗口；若任务覆盖时段超过 2 个会合周期且未显式指定，动态提升至 3-4 个窗口，兼顾长周期任务解完整性
-            int maxEvalWindows = (config != null && config.MaxWindows > 0) ? config.MaxWindows : 2;
-            if (config != null && config.MaxWindows <= 0 && windows.Count > 2)
+            // 落地 PaGMO (Izzo 2010) 多保真度漏斗思想：
+            // 对多借力 (MGA) 任务，首段 2-body 能量无法代表下游多星共振与大巡游排列，
+            // 必须在时域上均匀保留各发射窗口候选 (至多 8 个窗口并发探索)；
+            // 纯直达任务则聚焦能量最低的前 K 个黄金窗口。
+            bool isMGA = (config != null && config.FlybySequence != null && config.FlybySequence.Count > 0);
+            int defaultMaxWindows = Math.Min(8, windows.Count);
+            int maxEvalWindows = (config != null && config.MaxWindows > 0) ? config.MaxWindows : defaultMaxWindows;
+
+            List<MGASurrogatePreFilter.SynodicWindowCandidate> prioritizedWindows;
+            if (windows.Count <= maxEvalWindows)
             {
-                var depP = SolarSystemCatalog.GetPlanet(config.DeparturePlanet);
-                var arrP = SolarSystemCatalog.GetPlanet(config.ArrivalPlanet);
-                if (depP != null && arrP != null)
+                prioritizedWindows = new List<MGASurrogatePreFilter.SynodicWindowCandidate>(windows);
+            }
+            else if (isMGA)
+            {
+                // 多借力 (MGA) 任务：首段 2-body 转移能量无法预知后续多体引力偏折排列，
+                // 必须在时域上均匀铺开（保留不同时段的候选窗口并发探索），避免好窗口被 2-body 能量误杀
+                prioritizedWindows = new List<MGASurrogatePreFilter.SynodicWindowCandidate>();
+                for (int i = 0; i < maxEvalWindows; i++)
                 {
-                    double sma1 = PykepBridge.GetRelativeSMA(depP, config.CentralBody, 0.0);
-                    double sma2 = PykepBridge.GetRelativeSMA(arrP, config.CentralBody, 0.0);
-                    double muSun = SolarSystemCatalog.GetCentralMu(config.CentralBody ?? "Sun");
-                    double t1 = PykepBridge.CalcOrbitPeriodSec(sma1, muSun);
-                    double t2 = PykepBridge.CalcOrbitPeriodSec(sma2, muSun);
-                    if (t1 > 0 && t2 > 0 && Math.Abs(t1 - t2) > 1.0)
-                    {
-                        double tSynSec = Math.Abs(t1 * t2 / (t1 - t2));
-                        double searchSpanSec = config.SearchEndUT - config.SearchStartUT;
-                        if (searchSpanSec > 2.5 * tSynSec)
-                        {
-                            maxEvalWindows = Math.Min(4, windows.Count);
-                        }
-                    }
+                    int idx = (int)Math.Round(i * (windows.Count - 1.0) / (maxEvalWindows - 1.0));
+                    prioritizedWindows.Add(windows[idx]);
                 }
             }
-            // 确定性次级键: 窗口候选集由并行粗筛产生, 估算能量并列时选取哪 K 个窗口
-            // 会随线程时序变化 —— 这是影响最大的一处不可复现点 (决定进入 DE 的搜索区间)。
-            var prioritizedWindows = windows
-                .OrderBy(w => w.EstimatedMinDvKms)
-                .ThenBy(w => Math.Round(w.WindowStartUT * 1000.0))
-                .ThenBy(w => Math.Round(w.WindowEndUT * 1000.0))
-                .Take(maxEvalWindows).ToList();
+            else
+            {
+                prioritizedWindows = windows
+                    .OrderBy(w => w.EstimatedMinDvKms)
+                    .ThenBy(w => Math.Round(w.WindowStartUT * 1000.0))
+                    .ThenBy(w => Math.Round(w.WindowEndUT * 1000.0))
+                    .Take(maxEvalWindows).ToList();
+            }
             int totalWindows = prioritizedWindows.Count;
             int finishedCount = 0;
             var lockObj = new object();
@@ -103,6 +104,8 @@ namespace KSPGMAT.MGA
                 var subCfg = config.Clone();
                 subCfg.SearchStartUT = w.WindowStartUT;
                 subCfg.SearchEndUT = w.WindowEndUT;
+                subCfg.SeedEpochUT = w.BestEpochUT;
+                subCfg.SeedToFDays = w.NominalToFDays;
 
                 var legBounds = (subCfg.LegToFBounds != null && subCfg.LegToFBounds.Count > 0)
                     ? subCfg.LegToFBounds
@@ -117,15 +120,21 @@ namespace KSPGMAT.MGA
                     FlybySequence = subCfg.FlybySequence,
                     EarliestDepartureUT = subCfg.SearchStartUT,
                     LatestDepartureUT = subCfg.SearchEndUT,
+                    SeedEpochUT = subCfg.SeedEpochUT,
+                    SeedToFDays = subCfg.SeedToFDays,
                     DeparturePeAKm = subCfg.DepPeKm,
                     DepartureApAKm = subCfg.DepApKm,
                     DepartureInclinationDeg = subCfg.DepIncDeg, // -1 触发纯切向
                     DepartureMode = (subCfg.DeparturePolicy == DepartureModePolicy.FreeLaunch) 
                         ? MGADepartureMode.PreLaunchFreeOrbit 
                         : MGADepartureMode.InOrbitLockedOrbit,
+                    LockDepartureInclination = (subCfg.DeparturePolicy == DepartureModePolicy.OrbitLocked),
                     DestinationPeAKm = subCfg.ArrPeKm,
                     DestinationApAKm = subCfg.ArrApKm,
+                    ArrivalOrbitType = subCfg.ArrivalOrbitType,
                     NoInsertionBurn = subCfg.NoInsertionBurn,
+                    EnableMaxDuration = (subCfg.TotalToFMaxDays > 0),
+                    MaxDurationDays = (subCfg.TotalToFMaxDays > 0) ? subCfg.TotalToFMaxDays : 0.0,
                     EngineMode = subCfg.EngineMode,
                     LegStrategies = subCfg.LegStrategies != null ? new List<MGALegStrategy>(subCfg.LegStrategies) : null,
                     FlybyStrategies = subCfg.FlybyStrategies != null ? new List<MGAFlybyStrategy>(subCfg.FlybyStrategies) : null,
@@ -155,6 +164,16 @@ namespace KSPGMAT.MGA
                 {
                     var b = sols[0];
                     KSPGMATLog.Info("Solver", $"     [岛屿 {wIdx + 1,2}/{totalWindows}] 历元 {GMATClient.FormatUtcGregorian(w.WindowStartUT)}: 最佳总ΔV = {b.TotalDeltaVKms * 1000.0,7:F0} m/s (始发={b.LaunchDeltaVKms * 1000.0,6:F0} m/s, DSM={b.TotalDsmDeltaVKms * 1000.0,7:F0} m/s)");
+                    Telemetry.MGAPipelineTelemetryProbe.RecordIslandConvergence(
+                        $"Window_{w.WindowStartUT:F0}",
+                        (subCfg.FlybySequence != null && subCfg.FlybySequence.Count > 0) ? string.Join("->", subCfg.FlybySequence) : config.ArrivalPlanet,
+                        w.WindowStartUT,
+                        0,
+                        b.TotalDeltaVKms,
+                        b.TotalDeltaVKms * 1000.0,
+                        b.LaunchDeltaVKms * 1000.0,
+                        b.TotalDsmDeltaVKms * 1000.0,
+                        sols.Count > 0);
                     foreach (var s in sols)
                     {
                         if (s != null && !double.IsNaN(s.TotalDeltaVKms) && s.TotalDeltaVKms < MGADefaults.MaxPlausibleTotalDvKms) // 过滤 >80 km/s 的动力学发散解
@@ -173,6 +192,13 @@ namespace KSPGMAT.MGA
                     onProgress?.Invoke(p, $"多岛全局寻优: {finishedCount}/{totalWindows} 周期岛屿完成 ({bestStr})");
                 }
             });
+
+            stage3Sw.Stop();
+            Telemetry.MGAPipelineTelemetryProbe.RecordStage3Overall(
+                totalWindows,
+                (int)Telemetry.MGAPipelineTelemetryProbe.TotalGenerationsCount,
+                (int)Telemetry.MGAPipelineTelemetryProbe.TotalLambertEvaluationsCount,
+                stage3Sw.Elapsed.TotalMilliseconds);
 
             return allSolutions.Deterministic().ToList();
         }

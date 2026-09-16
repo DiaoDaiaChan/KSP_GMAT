@@ -10,6 +10,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using KSPGMAT.Model;
+using KSPGMAT.MGA.Solver;
 using KSPGMAT.MGA.Telemetry;
 
 namespace KSPGMAT.MGA
@@ -156,6 +157,17 @@ namespace KSPGMAT.MGA
                     ? config.LegToFBounds
                     : MGAMCTSTopologySelector.AutoDeriveResonantLegBounds(config.DeparturePlanet, config.ArrivalPlanet, bestFlybys, config.CentralBody));
 
+            if (config.TotalToFMaxDays > 0 && healBounds != null && healBounds.Count > 0)
+            {
+                double sumMin = healBounds.Sum(b => b.MinDays);
+                healBounds = healBounds.Select(b => {
+                    double otherMins = sumMin - b.MinDays;
+                    double maxAllowedByTotal = config.TotalToFMaxDays - otherMins;
+                    double effectiveMax = Math.Max(b.MinDays + 5.0, Math.Min(b.MaxDays, maxAllowedByTotal));
+                    return (MinDays: b.MinDays, MaxDays: effectiveMax);
+                }).ToList();
+            }
+
             var fineCfg = new MGAConfig
             {
                 CentralBody = config.CentralBody,
@@ -171,9 +183,9 @@ namespace KSPGMAT.MGA
                 DestinationPeAKm = config.ArrPeKm,
                 DestinationApAKm = config.ArrApKm,
                 NoInsertionBurn = config.NoInsertionBurn,
-                EngineMode = (hasLawdenViolation && config.EngineMode == MGAEngineMode.BallisticImpulsive)
-                    ? MGAEngineMode.DeepSpaceManeuver1DSM
-                    : config.EngineMode,
+                EnableMaxDuration = (config.TotalToFMaxDays > 0),
+                MaxDurationDays = (config.TotalToFMaxDays > 0) ? config.TotalToFMaxDays : 0.0,
+                EngineMode = config.EngineMode,
                 LegStrategies = config.LegStrategies != null ? new List<MGALegStrategy>(config.LegStrategies) : null,
                 FlybyStrategies = config.FlybyStrategies != null ? new List<MGAFlybyStrategy>(config.FlybyStrategies) : null,
                 DsmEtas = config.DsmEtas != null ? new List<double>(config.DsmEtas) : null,
@@ -189,12 +201,9 @@ namespace KSPGMAT.MGA
                 MinToFDays = healBounds.Select(b => b.MinDays).ToList(),
                 MaxToFDays = healBounds.Select(b => b.MaxDays).ToList()
             };
-            if (hasLawdenViolation && bestSol.PrimerVector.MaxPTimeSec > 0 && bestSol.Legs != null && bestSol.Legs.Count > 0)
+            if (config.EngineMode != MGAEngineMode.BallisticImpulsive && hasLawdenViolation)
             {
-                // 基于劳登引向量峰值时刻直接对齐最优机动历元，放宽至全物理可行区间 (0.01 ~ 0.99)
-                double nomEta = Math.Max(0.01, Math.Min(0.99, bestSol.PrimerVector.MaxPTimeSec / Math.Max(1.0, bestSol.Legs[0].ToFDays * 86400.0)));
-                fineCfg.DsmEtas = new List<double> { nomEta };
-                fineCfg.DsmEtaDefault = nomEta;
+                MGALegStrategyManager.TryInsertDSMByPrimerVector(fineCfg, bestSol, out _, out _);
             }
 
             double auditBudgetMs = (config.ConstrainByVesselDeltaV && config.VesselMaxDeltaVMs > 0) ? config.VesselMaxDeltaVMs : double.MaxValue;

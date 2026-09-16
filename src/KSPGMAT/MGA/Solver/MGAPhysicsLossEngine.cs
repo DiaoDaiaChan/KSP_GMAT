@@ -26,8 +26,10 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using KSPGMAT.Model;
 using KSPGMAT.MGA.AI;
+using KSPGMAT.MGA.Solver;
 using UnityEngine;
 
 namespace KSPGMAT.MGA
@@ -314,13 +316,13 @@ namespace KSPGMAT.MGA
 
                 // =============================================================
                 // 约束 5: 飞掠近心点安全半径 (归一化尺度 = 安全半径, 尺度无关)
-                //   注: 飞掠发生在该航段的**到达**天体 (leg.ToBody), 而非出发天体。
+                //   注: 飞掠发生在该航段的出发天体 (leg.FromBody = leg[k-1].ToBody), 而非到达天体。
                 // =============================================================
                 foreach (var leg in sol.Legs)
                 {
                     double rp = leg.FlybyPeriapsisRadiusKm;
                     if (rp <= 0) continue;
-                    double rSafe = MGADefaults.GetBodySafeRadiusKm(leg.ToBody);
+                    double rSafe = MGADefaults.GetBodySafeRadiusKm(leg.FromBody);
                     if (rSafe <= 0) continue;
                     double fracViolation = (rSafe - rp) / rSafe;
                     loss += lam.Penalty(MGAConstraint.SafePeriapsis,
@@ -334,8 +336,11 @@ namespace KSPGMAT.MGA
                 if (maxTofDays > 0)
                 {
                     double overDays = sol.TotalFlightDays - maxTofDays;
-                    loss += lam.Penalty(MGAConstraint.MissionDuration,
-                        MGAPhysicalScales.NormalizedViolation(overDays, maxTofDays));
+                    if (overDays > 0)
+                    {
+                        double overFrac = overDays / maxTofDays;
+                        loss += 5.0 * overFrac + 10.0 * overFrac * overFrac + lam.Penalty(MGAConstraint.MissionDuration, overFrac);
+                    }
                     // 航时决胜正则 (无量纲)
                     loss += DurationTieBreakerWeight * (sol.TotalFlightDays / maxTofDays);
                 }
@@ -424,6 +429,31 @@ namespace KSPGMAT.MGA
                     loss += lam.Penalty(MGAConstraint.FlybyDeflection,
                         MGAPhysicalScales.NormalizedViolation(turnDvExcess, dvRefKms));
                 }
+            }
+
+            // =================================================================
+            // 约束 9: 全任务总航时上限 (MissionDuration)
+            // =================================================================
+            double maxAllowedTofDays = -1.0;
+            if (config.EnableMaxDuration && config.MaxDurationDays > 0)
+            {
+                maxAllowedTofDays = config.MaxDurationDays;
+            }
+            else if (config.ConstraintProfile != null && config.ConstraintProfile.IsEnabled(MGAConstraintType.MaxMissionDuration))
+            {
+                maxAllowedTofDays = config.ConstraintProfile.GetThreshold(MGAConstraintType.MaxMissionDuration);
+            }
+            else if (config.MaxToFDays != null && config.MaxToFDays.Count > 0)
+            {
+                maxAllowedTofDays = config.MaxToFDays.Sum();
+            }
+
+            if (maxAllowedTofDays > 0 && sol.TotalFlightDays > maxAllowedTofDays)
+            {
+                double overDays = sol.TotalFlightDays - maxAllowedTofDays;
+                double tofScaleDays = Math.Max(30.0, maxAllowedTofDays * 0.25);
+                loss += lam.Penalty(MGAConstraint.MissionDuration,
+                    MGAPhysicalScales.NormalizedViolation(overDays, tofScaleDays));
             }
 
             return loss;

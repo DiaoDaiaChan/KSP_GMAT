@@ -334,8 +334,13 @@ namespace KSPGMAT.MGA.Telemetry
         // 探针数据收集与上报 API
         // ====================================================================
 
+        private static long s_totalLambert;
+        private static long s_totalGenerations;
+
         public static void Reset()
         {
+            Interlocked.Exchange(ref s_totalLambert, 0);
+            Interlocked.Exchange(ref s_totalGenerations, 0);
             lock (Instance._lock)
             {
                 Instance.Mission = new MissionMetadata();
@@ -345,6 +350,15 @@ namespace KSPGMAT.MGA.Telemetry
                 Instance.Stage4 = new Stage4HealingTelemetry();
             }
         }
+
+        /// <summary>记录一次原生 PyKEP Lambert 求解（线程安全）。</summary>
+        public static void RecordLambertEval() { Interlocked.Increment(ref s_totalLambert); }
+        /// <summary>记录一次 DE 演化代数（线程安全）。</summary>
+        public static void RecordGeneration() { Interlocked.Increment(ref s_totalGenerations); }
+        /// <summary>本任务累计原生 Lambert 求解次数。</summary>
+        public static long TotalLambertEvaluationsCount => Interlocked.Read(ref s_totalLambert);
+        /// <summary>本任务累计 DE 演化代数。</summary>
+        public static long TotalGenerationsCount => Interlocked.Read(ref s_totalGenerations);
 
         public static void StartMission(string departure, string arrival, List<string> flybys, double depUT, double spanDays, double maxDv, double maxDsm, double safeMarginKm)
         {
@@ -503,6 +517,19 @@ namespace KSPGMAT.MGA.Telemetry
                     double bMag = s.BPlane != null ? s.BPlane.BMagKm : 0.0;
                     double arrVInf = s.Legs != null && s.Legs.Count > 0 ? s.Legs.Last().VInfArrivalKms.magnitude : 0.0;
 
+                    double minClearance = 0.0;
+                    if (s.Legs != null && s.Legs.Count > 1)
+                    {
+                        var flybyAlts = s.Legs.Skip(1)
+                            .Where(l => l.FlybyPeriapsisAltitudeKm > 0 && l.FlybyPeriapsisAltitudeKm < 1e7)
+                            .Select(l => l.FlybyPeriapsisAltitudeKm)
+                            .ToList();
+                        if (flybyAlts.Count > 0)
+                        {
+                            minClearance = flybyAlts.Min();
+                        }
+                    }
+
                     var solEntry = new FinalSolutionTelemetry
                     {
                         Rank = rank++,
@@ -517,7 +544,7 @@ namespace KSPGMAT.MGA.Telemetry
                         ArrivalC3Km2S2 = arrVInf * arrVInf,
                         LawdenOptimal = primerOpt,
                         MaxPrimerVectorNorm = primerMax,
-                        MinPericenterClearanceKm = 0.0,
+                        MinPericenterClearanceKm = minClearance,
                         BPlaneMagnitudeKm = bMag,
                         BPlaneCollisionProb = 0.0
                     };
@@ -527,6 +554,25 @@ namespace KSPGMAT.MGA.Telemetry
                         int legIdx = 1;
                         foreach (var l in s.Legs)
                         {
+                            double maxTurnDeg = 0.0;
+                            if (legIdx > 1)
+                            {
+                                var planet = SolarSystemCatalog.GetPlanet(l.FromBody);
+                                if (planet != null && planet.Mu > 0)
+                                {
+                                    double vInf = l.VInfArrivalKms.magnitude > 1e-4 ? l.VInfArrivalKms.magnitude : l.VInfDepartureKms.magnitude;
+                                    if (vInf > 1e-4)
+                                    {
+                                        double safeR = planet.SafeRadiusKm > 0 ? planet.SafeRadiusKm : (planet.RadiusKm + 100.0);
+                                        double denom = 1.0 + safeR * vInf * vInf / planet.Mu;
+                                        if (denom >= 1.0)
+                                        {
+                                            maxTurnDeg = 2.0 * Math.Asin(1.0 / denom) * (180.0 / Math.PI);
+                                        }
+                                    }
+                                }
+                            }
+
                             solEntry.Legs.Add(new FinalLegTelemetry
                             {
                                 LegIndex = legIdx++,
@@ -536,7 +582,7 @@ namespace KSPGMAT.MGA.Telemetry
                                 FlybyAltitudeKm = l.FlybyPeriapsisAltitudeKm,
                                 SafeAltitudeMarginKm = 0.0,
                                 TurnAngleDeg = l.FlybyTurningAngleDeg,
-                                MaxTurnAngleDeg = 0.0,
+                                MaxTurnAngleDeg = maxTurnDeg,
                                 FlybyDvMs = l.FlybyDeltaVKms * 1000.0,
                                 DsmDvMs = l.DSM != null ? l.DSM.DeltaVMs : 0.0,
                                 DsmRadiusAu = l.DSM != null ? l.DSM.PositionKm.magnitude / MGADefaults.AU_KM : 0.0,
@@ -594,7 +640,11 @@ namespace KSPGMAT.MGA.Telemetry
                 sb.AppendLine("### Stage 1 入选拓扑序列清单:");
                 for (int i = 0; i < Stage1.FinalSelectedSequences.Count; i++)
                 {
-                    sb.AppendLine($"  {i + 1}. `{Mission.DepartureBody} -> {Stage1.FinalSelectedSequences[i]} -> {Mission.ArrivalBody}`");
+                    string seq = Stage1.FinalSelectedSequences[i];
+                    string seqDisplay = string.IsNullOrWhiteSpace(seq)
+                        ? $"{Mission.DepartureBody} -> {Mission.ArrivalBody}"
+                        : $"{Mission.DepartureBody} -> {seq} -> {Mission.ArrivalBody}";
+                    sb.AppendLine($"  {i + 1}. `{seqDisplay}`");
                 }
                 sb.AppendLine();
             }
@@ -665,7 +715,7 @@ namespace KSPGMAT.MGA.Telemetry
                 sb.AppendLine($"- **总速度增量 ΔV**: **{top.TotalDvMs:F1} m/s** (始发脉冲: {top.LaunchDvMs:F1} m/s, 中途 DSM: {top.TotalDsmDvMs:F1} m/s)");
                 sb.AppendLine($"- **到达双曲超额速度 $V_\\infty$**: {top.ArrivalVInfKms:F3} km/s ($C_3$ = {top.ArrivalC3Km2S2:F2} km²/s²)");
                 sb.AppendLine($"- **劳登最优性 (Lawden Primer Vector Norm)**: {top.MaxPrimerVectorNorm:F3} ({(top.LawdenOptimal ? "✅ 冲量在时间与方向上严格最优" : "⚠️ 存在微小优化空间")})");
-                sb.AppendLine($"- **最低净空安全裕度**: {top.MinPericenterClearanceKm:F1} km");
+                sb.AppendLine($"- **最低净空安全裕度**: {(top.MinPericenterClearanceKm > 0 ? $"{top.MinPericenterClearanceKm:F1} km" : "无中继借力")}");
                 if (top.BPlaneMagnitudeKm > 0)
                 {
                     sb.AppendLine($"- **B平面瞄准范数**: {top.BPlaneMagnitudeKm:F1} km (碰撞概率 = {top.BPlaneCollisionProb:E2})");
@@ -679,9 +729,14 @@ namespace KSPGMAT.MGA.Telemetry
                     sb.AppendLine("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |");
                     foreach (var l in top.Legs)
                     {
-                        string turns = $"{l.TurnAngleDeg:F1}° / {l.MaxTurnAngleDeg:F1}°";
+                        bool isFlybyLeg = l.LegIndex > 1 && l.FlybyAltitudeKm > 0 && l.FlybyAltitudeKm < 1e7;
+                        string altStr = isFlybyLeg ? $"{l.FlybyAltitudeKm:F0}" : "-";
+                        string turns = (l.LegIndex > 1 && l.MaxTurnAngleDeg > 0.01)
+                            ? $"{l.TurnAngleDeg:F1}° / {l.MaxTurnAngleDeg:F1}°"
+                            : "-";
+                        string flybyDvStr = l.LegIndex > 1 ? $"{l.FlybyDvMs:F1}" : "-";
                         string status = l.IsPhysicallyFeasible ? "✅ 物理合规" : "❌ 违例";
-                        sb.AppendLine($"| Leg {l.LegIndex} | {l.FromBody} -> {l.ToBody} | {l.ToFDays:F1} | {l.FlybyAltitudeKm:F0} | {turns} | {l.FlybyDvMs:F1} | {l.DsmDvMs:F1} | {l.DsmRadiusAu:F2} | {status} |");
+                        sb.AppendLine($"| Leg {l.LegIndex} | {l.FromBody} -> {l.ToBody} | {l.ToFDays:F1} | {altStr} | {turns} | {flybyDvStr} | {l.DsmDvMs:F1} | {l.DsmRadiusAu:F2} | {status} |");
                     }
                     sb.AppendLine();
                 }

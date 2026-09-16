@@ -907,49 +907,8 @@ namespace KSPGMAT.Model {
 
         private readonly object _syncLock = new object();
         public void SyncStrategiesWithChain(int legCount, List<string> fullChain = null) {
-            int fbCount = Math.Max(0, legCount - 1);
-            if (LegStrategies != null && LegStrategies.Count == legCount &&
-                FlybyStrategies != null && FlybyStrategies.Count == fbCount) {
-                if (fullChain != null && fullChain.Count > 1 && fullChain[0].Equals(fullChain[1], StringComparison.OrdinalIgnoreCase)) {
-                    if (LegStrategies[0] != MGALegStrategy.DeepSpaceManeuver1DSM) {
-                        LegStrategies[0] = MGALegStrategy.DeepSpaceManeuver1DSM;
-                    }
-                }
-                return;
-            }
             lock (_syncLock) {
-                // 构造拓扑链路以推导物理动力学策略
-                List<string> chain = fullChain;
-                if (chain == null || chain.Count < legCount + 1) {
-                    chain = new List<string>();
-                    if (!string.IsNullOrEmpty(DepartureBody)) chain.Add(DepartureBody);
-                    if (FlybySequence != null) chain.AddRange(FlybySequence);
-                    if (!string.IsNullOrEmpty(DestinationBody)) chain.Add(DestinationBody);
-                }
-
-                if (LegStrategies == null) LegStrategies = new List<MGALegStrategy>();
-                while (LegStrategies.Count < legCount) LegStrategies.Add(MGALegStrategy.Ballistic);
-                if (LegStrategies.Count > legCount) LegStrategies.RemoveRange(legCount, LegStrategies.Count - legCount);
-
-                for (int k = 0; k < legCount; k++) {
-                    bool isFirstLeg = (k == 0);
-                    bool isResonantLeg = (chain != null && k + 1 < chain.Count && chain[k].Equals(chain[k + 1], StringComparison.OrdinalIgnoreCase));
-                    MGALegStrategy strat;
-                    if (EngineMode == MGAEngineMode.LowThrustSimsFlanagan) {
-                        strat = MGALegStrategy.ContinuousLowThrust;
-                    } else if (isFirstLeg && !isResonantLeg) {
-                        strat = MGALegStrategy.Ballistic;
-                    } else {
-                        strat = MGALegStrategy.DeepSpaceManeuver1DSM;
-                    }
-                    LegStrategies[k] = strat;
-                }
-
-                if (FlybyStrategies == null) FlybyStrategies = new List<MGAFlybyStrategy>();
-                while (FlybyStrategies.Count < fbCount) {
-                    FlybyStrategies.Add(MGAFlybyStrategy.UnpoweredFlyby);
-                }
-                if (FlybyStrategies.Count > fbCount) FlybyStrategies.RemoveRange(fbCount, FlybyStrategies.Count - fbCount);
+                MGALegStrategyManager.Synchronize(this, legCount, fullChain);
             }
         }
 
@@ -981,6 +940,8 @@ namespace KSPGMAT.Model {
 
         public double EarliestDepartureUT { get; set; }
         public double LatestDepartureUT { get; set; }
+        public double SeedEpochUT { get; set; } = 0.0;
+        public double SeedToFDays { get; set; } = 0.0;
         public double DepartureSearchDays {
             get => (LatestDepartureUT > EarliestDepartureUT) ? (LatestDepartureUT - EarliestDepartureUT) / MGADefaults.SecondsPerDay : (IsHeliocentric ? MGADefaults.InterplanetarySearchDays : MGADefaults.SystemSearchDays);
             set {
@@ -991,7 +952,7 @@ namespace KSPGMAT.Model {
         }
         
         public MGADepartureMode DepartureMode { get; set; } = MGADepartureMode.PreLaunchFreeOrbit;
-        public double DepartureAltitudeKm { get => DeparturePeAKm; set => DeparturePeAKm = value; }
+        public double DepartureAltitudeKm { get => DeparturePeAKm; set { DeparturePeAKm = value; DepartureApAKm = value; } }
         public double DeparturePeAKm { get; set; } = MGADefaults.DepartureAltitudeKm;
         public double DepartureApAKm { get; set; } = MGADefaults.DepartureAltitudeKm;
         public double DepartureInclinationDeg { get; set; } = MGADefaults.DefaultEarthInclinationDeg;
@@ -1001,7 +962,7 @@ namespace KSPGMAT.Model {
         public bool LockDepartureInclination { get; set; } = false;
         public bool LockDepartureRAAN { get; set; } = false;
 
-        public double DestinationAltitudeKm { get => DestinationPeAKm; set => DestinationPeAKm = value; }
+        public double DestinationAltitudeKm { get => DestinationPeAKm; set { DestinationPeAKm = value; DestinationApAKm = value; } }
         public double DestinationPeAKm { get; set; } = MGADefaults.DestinationAltitudeKm;
         public double DestinationApAKm { get; set; } = MGADefaults.DestinationAltitudeKm;
         public bool NoInsertionBurn { get; set; } = false;

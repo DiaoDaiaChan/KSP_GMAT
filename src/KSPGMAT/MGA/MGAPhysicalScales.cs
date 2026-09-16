@@ -306,7 +306,7 @@ namespace KSPGMAT.MGA
             double muCentral, IEnumerable<SolarPlanet> systemBodies,
             double k = OutlierRobustK)
         {
-            if (candidate == null || candidate.Mu <= 0) return false;
+            if (candidate == null || candidate.Mu <= 0 || candidate.IsMoon) return false;
 
             double vRef = Math.Max(vInfKms, 1e-3);
             double candIndex = AssistPowerIndex(candidate, vRef, muCentral);

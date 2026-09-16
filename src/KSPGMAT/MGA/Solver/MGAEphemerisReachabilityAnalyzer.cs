@@ -528,7 +528,7 @@ namespace KSPGMAT.MGA
                         if (r2 > r1)
                         {
                             // 严格基于 Vis-Viva 二体机械能与开普勒方程推导真实航时 (淘汰经验拟合公式与 14 km/s 经验近似):
-                            double vDepActual = Math.Min(vReq, vMaxAchievable);
+                            double vDepActual = (k >= 1 && vMaxAchievable > vReq) ? vMaxAchievable : Math.Min(vReq, vMaxAchievable);
                             double energyDep = 0.5 * vDepActual * vDepActual - sunMu / r1;
                             if (energyDep > 0)
                             {
@@ -831,15 +831,36 @@ namespace KSPGMAT.MGA
         /// 计算候选链路的无偏连续物理质量标度 Q(c)
         /// 综合能量赤字严格惩罚、推进工质能耗、合理航时与精炼链长 (奥卡姆剃刀)
         /// </summary>
-        public static double ComputeQualityScore(ChainReachabilityResult c)
+        public static double ComputeQualityScore(ChainReachabilityResult c, double refHohmannDays = 0.0)
         {
             double deficitPenalty = c.TotalDeficitMs * 0.001;                          // 1 km/s deficit = -1.0 (等价于 1 km/s 推进剂工质能耗)
             double dvPenalty = c.EstimatedTotalDvMs * 0.001;                           // 1 km/s delta-v = -1.0
-            double tofPenalty = (c.EstimatedToFDays / 365.25) * 0.35;                  // 1 年 = -0.35 (深空航时成本)
+            
+            // 无量纲航时惩罚: 若提供了目标基准霍曼航时 refHohmannDays，则以航时比 (ToF / ToF_Hohmann) 评估惩罚;
+            // 航时短于霍曼转移为引力助推加速收益 (0.8 * normToF); 航时超过霍曼转移 (normToF > 1.0) 意味深空漂泊过久，施加逐级累进惩罚;
+            // 避免外太阳系长周期任务 (如 Voyager 2: 海王星霍曼航时 ~30年) 因绝对年份过大而被线性扣分刷出多样性池。
+            double tofPenalty;
+            if (refHohmannDays > 0)
+            {
+                double normToF = c.EstimatedToFDays / refHohmannDays;
+                if (normToF <= 1.0)
+                {
+                    tofPenalty = normToF * 0.80;
+                }
+                else
+                {
+                    tofPenalty = 0.80 + (normToF - 1.0) * 2.0;
+                }
+            }
+            else
+            {
+                tofPenalty = (c.EstimatedToFDays / 365.25) * 0.35;                  // 1 年 = -0.35 (深空航时成本)
+            }
+
             // 阶段链长与同星共振区分: 异星转移增加深空导航与交会风险，而同星共振自减速/调相系纯二体引力耗散
             int totalLegs = (c.FlybyChain != null ? c.FlybyChain.Count : 0);
             double effectiveLegs = Math.Max(0.0, totalLegs - c.ResonanceCount * 0.65);
-            double complexityPenalty = effectiveLegs * 0.60;                           // 0.60 per effective leg
+            double complexityPenalty = effectiveLegs * 0.25;                           // 0.25 per effective leg
             return -(deficitPenalty + dvPenalty + tofPenalty + complexityPenalty);
         }
 
@@ -871,6 +892,19 @@ namespace KSPGMAT.MGA
                     MGADefaults.SunMu > 0 ? MGADefaults.SunMu : SolarSystemCatalog.SunMu,
                     SolarSystemCatalog.GetAvailablePlanets())
                 : false;
+
+            // 计算出发星到到达星的无量纲基准霍曼转移时间 (days)
+            double refHohmannDays = 0.0;
+            if (pDepObj != null && pArrObj != null && pDepObj.SMA > 0 && pArrObj.SMA > 0)
+            {
+                string centralBody = (!string.IsNullOrEmpty(pDepObj.ParentName) && pDepObj.ParentName.Equals(pArrObj.ParentName, StringComparison.OrdinalIgnoreCase))
+                    ? pDepObj.ParentName
+                    : "Sun";
+                double centralMu = SolarSystemCatalog.GetCentralMu(centralBody);
+                if (centralMu <= 0) centralMu = SolarSystemCatalog.SunMu;
+                double aH = 0.5 * (pDepObj.SMA + pArrObj.SMA);
+                refHohmannDays = Math.PI * Math.Sqrt(Math.Pow(aH, 3) / centralMu) / 86400.0;
+            }
 
             var cleanedCandidates = new List<ChainReachabilityResult>();
             foreach (var c in candidates)
@@ -908,7 +942,7 @@ namespace KSPGMAT.MGA
             foreach (var c in cleanedCandidates)
             {
                 featureVectors[c] = ComputeAstrodynamicFeatureVector(c, departure, arrival, maxBudgetMs);
-                qualityScores[c] = ComputeQualityScore(c);
+                qualityScores[c] = ComputeQualityScore(c, refHohmannDays);
             }
 
             // 确定性提取: 按 cleanedCandidates 固定列表序遍历, 用布尔标记代替 HashSet 移除。
@@ -988,6 +1022,47 @@ namespace KSPGMAT.MGA
                             taken[ci] = true;
                             break;
                         }
+                    }
+                }
+            }
+
+            // 2.5 门禁与拓扑尺度生态位保全 (Gateway & Scale Niching / MAP-Elites):
+            // 为每个具有物理可行性的始发跳板天体 (如 Direct, Jupiter, Venus, Mars, Earth)，
+            // 分别保留其物理质量最高的一条单借力拓扑 (Chain.Count <= 1) 与一条多级接力巡游拓扑 (Chain.Count > 1)，
+            // 确保不同尺度构型 (单跳助推 vs 多重连珠大巡游) 均能在演化池中保有独立生态位，
+            // 彻底杜绝短链对长阶梯多体重力助推的单调挤出，且名额上限仅占 ~6-8 席，留足 Q-D 相空间发散余量。
+            var gatewayGroups = cleanedCandidates
+                .Where(c => c.IsFeasible)
+                .GroupBy(c => (c.FlybyChain != null && c.FlybyChain.Count > 0) ? c.FlybyChain[0] : "Direct")
+                .ToList();
+
+            foreach (var g in gatewayGroups)
+            {
+                // 1) 单借力/直达代表 (Count <= 1)
+                var singleBest = g.Where(c => (c.FlybyChain?.Count ?? 0) <= 1)
+                                  .OrderByDescending(c => qualityScores[c])
+                                  .FirstOrDefault();
+                if (singleBest != null && selected.Count < maxPoolSize)
+                {
+                    int bIdx = cleanedCandidates.IndexOf(singleBest);
+                    if (bIdx >= 0 && !taken[bIdx])
+                    {
+                        selected.Add(singleBest);
+                        taken[bIdx] = true;
+                    }
+                }
+
+                // 2) 多级接力巡游代表 (Count > 1)
+                var multiBest = g.Where(c => (c.FlybyChain?.Count ?? 0) > 1)
+                                 .OrderByDescending(c => qualityScores[c])
+                                 .FirstOrDefault();
+                if (multiBest != null && selected.Count < maxPoolSize)
+                {
+                    int bIdx = cleanedCandidates.IndexOf(multiBest);
+                    if (bIdx >= 0 && !taken[bIdx])
+                    {
+                        selected.Add(multiBest);
+                        taken[bIdx] = true;
                     }
                 }
             }

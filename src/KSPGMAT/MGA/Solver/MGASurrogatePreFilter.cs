@@ -51,6 +51,7 @@ namespace KSPGMAT.MGA
             public double WindowEndUT;
             public double NominalToFDays;
             public double EstimatedMinDvKms;
+            public double BestEpochUT;
         }
 
         /// <summary>
@@ -65,10 +66,11 @@ namespace KSPGMAT.MGA
             double synodicPeriodDays)
         {
             var candidates = new List<SynodicWindowCandidate>();
+            var stage2Sw = System.Diagnostics.Stopwatch.StartNew();
             double totalSpanDays = (config.SearchEndUT - config.SearchStartUT) / MGADefaults.SecondsPerDay;
             if (totalSpanDays <= 0) return candidates;
 
-            double synDays = (synodicPeriodDays > 20.0 && !double.IsNaN(synodicPeriodDays)) 
+            double synDays = (synodicPeriodDays > 0.5 && !double.IsNaN(synodicPeriodDays)) 
                 ? synodicPeriodDays 
                 : 365.25;
 
@@ -104,13 +106,20 @@ namespace KSPGMAT.MGA
             double minTofD = Math.Max(10.0, nomTofDays * 0.60);
             double maxTofD = nomTofDays * 1.50;
 
-            // 1. 将搜索空间严格划分为 N 个连续无缝的物理会合周期时区
-            // 确保相邻窗口严密无缝拼接，首尾严格对齐 [SearchStartUT, SearchEndUT]，零截断丢失
+            // 1. 将搜索空间划分为连续物理候选时区
+            // 对于多借力 MGA 任务或大跨度搜索，单窗口步长不应超过典型发射机会跨度 (45天)，
+            // 避免整年被过大天体间会合周期 (如地金 584d, 地火 780d, 地木 399d) 坍缩为单一窗口，
+            // 导致其它月份的真正多星共振/大巡游排列被首段二体波谷完全屏蔽。
+            double maxWindowStepDays = (config.FlybySequence != null && config.FlybySequence.Count > 0)
+                ? 45.0
+                : Math.Min(synDays, 60.0);
+            double sliceDays = Math.Min(synDays, Math.Max(25.0, maxWindowStepDays));
+
             var cycleIntervals = new List<(double startUT, double endUT)>();
             double curStart = config.SearchStartUT;
             while (curStart < config.SearchEndUT)
             {
-                double curEnd = Math.Min(config.SearchEndUT, curStart + synDays * 86400.0);
+                double curEnd = Math.Min(config.SearchEndUT, curStart + sliceDays * 86400.0);
                 cycleIntervals.Add((curStart, curEnd));
                 curStart = curEnd;
             }
@@ -216,17 +225,28 @@ namespace KSPGMAT.MGA
                         WindowStartUT = cycleStart,
                         WindowEndUT = cycleEnd,
                         NominalToFDays = bestTofD,
-                        EstimatedMinDvKms = (minDvInCycle < 1e7) ? (minDvInCycle / 1000.0) : 0.0
+                        EstimatedMinDvKms = (minDvInCycle < 1e7) ? (minDvInCycle / 1000.0) : 0.0,
+                        BestEpochUT = bestEpochUT
                     });
                 }
 
-                int totalEstimatedWindows = cycleIntervals.Count * 12;
-                Telemetry.MGAPipelineTelemetryProbe.AiMetrics.RecordSurrogate(totalEstimatedWindows, candidates.Count);
+                int totalGridPoints = gridW * gridH;
+                int passedGridPoints = 0;
+                for (int i = 0; i < gpuTotDv.Length; i++)
+                {
+                    if (gpuTotDv[i] < 20000.0f && !float.IsNaN(gpuTotDv[i]) && gpuTotDv[i] > 0)
+                        passedGridPoints++;
+                }
+                Telemetry.MGAPipelineTelemetryProbe.AiMetrics.RecordSurrogate(totalGridPoints, candidates.Count);
+                stage2Sw.Stop();
+                Telemetry.MGAPipelineTelemetryProbe.RecordStage2Windows(synDays, totalGridPoints, passedGridPoints, candidates, stage2Sw.Elapsed.TotalMilliseconds);
                 return candidates.OrderBy(c => c.EstimatedMinDvKms > 0 ? c.EstimatedMinDvKms : double.MaxValue).ToList();
             }
 
             // 3. CPU 优雅平滑降级分支：针对各会合时区执行两级自适应稀疏特征网格扫描 (Coarse-to-Fine Grid Search)
             // 一级粗扫以 30 天步长快速定位波谷，二级精扫仅在波谷邻域细化，提速百倍以上
+            int totalCpuSampled = 0;
+            int totalCpuPassed = 0;
             foreach (var interval in cycleIntervals)
             {
                 double cycleStart = interval.startUT;
@@ -271,6 +291,7 @@ namespace KSPGMAT.MGA
                             p2.GetRelativeState(central, arrUT, out Vector3d r2, out Vector3d v2);
 
                             // 符号开普勒与角动量极值门禁 (Symbolic Keplerian Bound Filter)
+                            totalCpuSampled++;
                             if (!MGASymbolicPhysicsConstraints.IsToFKeplerianFeasible(r1.magnitude, r2.magnitude, tD * 86400.0, centralMu))
                                 continue;
 
@@ -286,6 +307,8 @@ namespace KSPGMAT.MGA
                                     double vHypArr = Math.Sqrt(vInfArr.sqrMagnitude + 2.0 * muP2 / Math.Max(1.0, rp2));
                                     dv += (vHypArr - vPark2) * 1000.0;
                                 }
+
+                                if (dv < 20000.0) totalCpuPassed++;
 
                                 if (dv < coarseBestDv)
                                 {
@@ -317,6 +340,7 @@ namespace KSPGMAT.MGA
                             p2.GetRelativeState(central, arrUT, out Vector3d r2, out Vector3d v2);
 
                             // 符号开普勒与角动量极值门禁 (Symbolic Keplerian Bound Filter)
+                            totalCpuSampled++;
                             if (!MGASymbolicPhysicsConstraints.IsToFKeplerianFeasible(r1.magnitude, r2.magnitude, tD * 86400.0, centralMu))
                                 continue;
 
@@ -326,22 +350,24 @@ namespace KSPGMAT.MGA
                                 double vHyp = Math.Sqrt(vInf.sqrMagnitude + 2.0 * muP1 / Math.Max(1.0, rp1));
                                 double dv = (vHyp - vPark1) * 1000.0;
 
-                            if (!config.NoInsertionBurn)
-                            {
-                                Vector3d vInfArr = vArr - v2;
-                                double vHypArr = Math.Sqrt(vInfArr.sqrMagnitude + 2.0 * muP2 / Math.Max(1.0, rp2));
-                                dv += (vHypArr - vPark2) * 1000.0;
-                            }
+                                if (!config.NoInsertionBurn)
+                                {
+                                    Vector3d vInfArr = vArr - v2;
+                                    double vHypArr = Math.Sqrt(vInfArr.sqrMagnitude + 2.0 * muP2 / Math.Max(1.0, rp2));
+                                    dv += (vHypArr - vPark2) * 1000.0;
+                                }
 
-                            if (dv < minDvInCycle)
-                            {
-                                minDvInCycle = dv;
-                                bestEpochUT = ut;
-                                bestTofD = tD;
+                                if (dv < 20000.0) totalCpuPassed++;
+
+                                if (dv < minDvInCycle)
+                                {
+                                    minDvInCycle = dv;
+                                    bestEpochUT = ut;
+                                    bestTofD = tD;
+                                }
                             }
                         }
                     }
-                }
                 }
 
                 candidates.Add(new SynodicWindowCandidate
@@ -349,12 +375,14 @@ namespace KSPGMAT.MGA
                     WindowStartUT = cycleStart,
                     WindowEndUT = cycleEnd,
                     NominalToFDays = bestTofD,
-                    EstimatedMinDvKms = (minDvInCycle < 1e7) ? (minDvInCycle / 1000.0) : 0.0
+                    EstimatedMinDvKms = (minDvInCycle < 1e7) ? (minDvInCycle / 1000.0) : 0.0,
+                    BestEpochUT = bestEpochUT
                 });
             }
 
-            int totalCpuEstimatedWindows = cycleIntervals.Count * 12;
-            Telemetry.MGAPipelineTelemetryProbe.AiMetrics.RecordSurrogate(totalCpuEstimatedWindows, candidates.Count);
+            Telemetry.MGAPipelineTelemetryProbe.AiMetrics.RecordSurrogate(Math.Max(1, totalCpuSampled), candidates.Count);
+            stage2Sw.Stop();
+            Telemetry.MGAPipelineTelemetryProbe.RecordStage2Windows(synDays, Math.Max(1, totalCpuSampled), totalCpuPassed, candidates, stage2Sw.Elapsed.TotalMilliseconds);
             return candidates.OrderBy(c => c.EstimatedMinDvKms > 0 ? c.EstimatedMinDvKms : double.MaxValue).ToList();
         }
 
