@@ -15,6 +15,7 @@ namespace KSPGMAT.Tools.ComplianceChecker.Analyzers {
 
         private static readonly HashSet<string> MGAExemptFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
             "MGAStateManager.cs",
+            "MGADefaults.cs",
             "SolarSystemBodies.cs",
             "SolarSystemCatalog.cs",
             "PykepBridge.cs"
