@@ -2,7 +2,7 @@
 
 > **文档版本**：R2026a Production Master Specification  
 > **工程目录**：`c:\Users\43701\gmat-win-R2026a\bin\KSP_GMAT`  
-> **核心源码**：`src/KSPGMAT/MGA`、`src/native/pykep_native`、`pykep_sourcecode`  
+> **核心源码**：`src/KSPGMAT/MGA`（下辖 `Native/`, `Optimizers/`, `Numerics/`, `Data/`, `Solver/`, `AI/`, `GPU/`, `Telemetry/` 八大子模块及 `MGABenchmarkSuite.cs`）、`src/native/pykep_native`、`pykep_sourcecode`  
 > **动力学底座**：ESA ACT PyKEP v3 (`kep3`) 原生 C++ 动力学引擎 + NASA GMAT 高精微分校正打靶 + Principia N 体引力执行器
 
 ---
@@ -180,7 +180,7 @@ $$c^* = \arg\max_{c \in \mathcal{U}} \left[ Q(c) + \lambda_{\text{div}} \cdot \m
 
 ### 1.4 无量纲增广拉格朗日损失场 (Augmented Lagrangian & Physics Loss Engine)
 
-核心实现：[`src/KSPGMAT/MGA/Solver/MGAPhysicsLossEngine.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/Solver/MGAPhysicsLossEngine.cs)、[`src/KSPGMAT/MGA/MGAAugmentedLagrangian.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/MGAAugmentedLagrangian.cs)。
+核心实现：[`src/KSPGMAT/MGA/Solver/MGAPhysicsLossEngine.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/Solver/MGAPhysicsLossEngine.cs)、[`src/KSPGMAT/MGA/Optimizers/MGAAugmentedLagrangian.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/Optimizers/MGAAugmentedLagrangian.cs)。
 
 #### 1.4.1 Powell-Hestenes-Rockafellar 无量纲增广拉格朗日公式
 $$J(x) = \hat{f}(x) + \sum_{k \in \mathcal{C}} \left[ \lambda_k \hat{g}_k(x) + \frac{\rho_k}{2} \hat{g}_k(x)^2 \right]$$
@@ -233,7 +233,7 @@ $$\rho_k^{(t+1)} = \begin{cases} \min\left(\rho_{\max}, \;\beta \cdot \rho_k^{(t
 
 ### 1.6 B 平面动力学投影与停泊轨道射出对齐 (B-Plane & Injection Alignment)
 
-核心实现：[`src/KSPGMAT/MGA/MGAFlybyDynamicsHelper.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/MGAFlybyDynamicsHelper.cs)、[`src/KSPGMAT/MGA/MGAInjectionAligner.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/MGAInjectionAligner.cs)。
+核心实现：[`src/KSPGMAT/MGA/Numerics/MGAFlybyDynamicsHelper.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/Numerics/MGAFlybyDynamicsHelper.cs)、[`src/KSPGMAT/MGA/Numerics/MGAInjectionAligner.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/Numerics/MGAInjectionAligner.cs)。
 
 #### 1.6.1 进场渐近几何与 B 平面坐标基
 - **进场渐近单位矢量**：$\hat{\mathbf{S}} = \frac{\mathbf{v}_{\infty,\text{in}}}{\|\mathbf{v}_{\infty,\text{in}}\|}$
@@ -255,7 +255,7 @@ $$\rho_k^{(t+1)} = \begin{cases} \min\left(\rho_{\max}, \;\beta \cdot \rho_k^{(t
 
 ### 2.1 连续空间差分进化内核 (MGADifferentialEvolution)
 
-核心实现：[`src/KSPGMAT/MGA/Solver/MGADifferentialEvolution.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/Solver/MGADifferentialEvolution.cs)。
+核心实现：[`src/KSPGMAT/MGA/Optimizers/MGADifferentialEvolution.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/Optimizers/MGADifferentialEvolution.cs)。
 
 #### 2.1.1 染色体决策变量混合编码
 设天体序列为 $[B_0, B_1, \dots, B_N]$（航段数 $N$）：
@@ -281,7 +281,7 @@ $$\rho_k^{(t+1)} = \begin{cases} \min\left(\rho_{\max}, \;\beta \cdot \rho_k^{(t
 
 ### 2.2 广义群岛模型与多层并行调度 (MGAArchipelagoOptimizer)
 
-核心实现：[`src/KSPGMAT/MGA/Solver/MGAArchipelagoOptimizer.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/Solver/MGAArchipelagoOptimizer.cs)。
+核心实现：[`src/KSPGMAT/MGA/Optimizers/MGAArchipelagoOptimizer.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/Optimizers/MGAArchipelagoOptimizer.cs)。
 
 #### 2.2.1 环形群岛并行架构与异构岛屿
 种群划分为固定 4 个异构子岛屿，分工协作：
@@ -353,7 +353,7 @@ $$\mu_F^{(g+1)} = (1 - c)\mu_F^{(g)} + c \frac{\sum w_k F_k^2}{\sum w_k F_k}, \q
 
 ### 2.6 确定性多级排序与 Pareto 前沿扫描 (MGASolutionOrdering)
 
-核心实现：[`src/KSPGMAT/MGA/MGASolutionOrdering.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/MGASolutionOrdering.cs)。
+核心实现：[`src/KSPGMAT/MGA/Numerics/MGASolutionOrdering.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/Numerics/MGASolutionOrdering.cs)。
 
 #### 2.6.1 解决痛点与多级确定性次键
 为根除多线程并发合并解时因调度交错导致解出现毫秒级数值抖动（如卡西尼任务出现 78.7 m/s 扰动），系统实施位级确定性排序：
@@ -477,7 +477,7 @@ flowchart TD
 
 ### 4.1 原生动态库分发与安全加载架构 (PykepNative)
 
-核心实现：[`src/KSPGMAT/MGA/PykepNative.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/PykepNative.cs)、[`src/native/pykep_native`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/native/pykep_native)。
+核心实现：[`src/KSPGMAT/MGA/Native/PykepNative.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/Native/PykepNative.cs)、[`src/native/pykep_native`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/native/pykep_native)。
 
 ```
 [GameData/KSPGMAT/native/*.bin] (避免 Unity 资源系统误加载)
@@ -576,7 +576,7 @@ $$\Delta v_{\text{prograde}} = \Delta \mathbf{V} \cdot \hat{\mathbf{v}}, \quad \
 
 ### 4.5 太阳系天体数据库与高精度双方案星历系统
 
-核心实现：[`src/KSPGMAT/MGA/SolarSystemBodies.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/SolarSystemBodies.cs)、[`src/KSPGMAT/MGA/SolarSystemCatalog.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/SolarSystemCatalog.cs)、[`src/KSPGMAT/MGA/EphemerisTimeSystem.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/EphemerisTimeSystem.cs)。
+核心实现：[`src/KSPGMAT/MGA/Data/SolarSystemBodies.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/Data/SolarSystemBodies.cs)、[`src/KSPGMAT/MGA/Data/SolarSystemCatalog.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/Data/SolarSystemCatalog.cs)、[`src/KSPGMAT/MGA/Data/EphemerisTimeSystem.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/Data/EphemerisTimeSystem.cs)（辅以 [`MGAPhysicalScales.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/Data/MGAPhysicalScales.cs)、[`MGAEmpiricalRegistry.cs`](file:///c:/Users/43701/gmat-win-R2026a/bin/KSP_GMAT/src/KSPGMAT/MGA/Data/MGAEmpiricalRegistry.cs)）。
 
 #### 4.5.1 双方案星历动态切换
 - **方案 2（游戏运行时基准 - `Scheme2_FlightGlobals`）**：
@@ -607,31 +607,36 @@ $$\Delta v_{\text{prograde}} = \Delta \mathbf{V} \cdot \hat{\mathbf{v}}, \quad \
 
 ## 5. 核心类与数据流全景图 (Architecture & Dataflow Matrix)
 
-| 功能领域 | 核心实现类 | 关键方法 / 符号 | 输入与输出 | 理论与算法基础 |
-| :--- | :--- | :--- | :--- | :--- |
-| **任务工程门面** | `MGAMasterOptimizer` | `SolveMasterTask` | **入**: `MGAHighValueParameters`<br>**出**: `MGAMasterOptimizationResult` | 航天工程任务分级转译与统一调度门面 |
-| **流水线调度器** | `MGAAdaptiveSolver` | `Solve`, `SolveAutonomous` | **入**: 求解器配置与天体历元<br>**出**: 全局最优解集 | 四阶段自适应流水线、线程去超订 |
-| **拓扑预算推导** | `MGATopologyBudgetDeriver` | `Derive` | **入**: 天体引力势、任务时间跨度<br>**出**: 借力深度、共振上限、折返限制 | 开普勒邻接图、能量闭合比分析 |
-| **爬升链合成器** | `MGAPlanetaryAssistManager` | `SynthesizePhysicalClimbingChains` | **入**: 恒星系星历<br>**出**: 候选拓扑链路家族 | 无硬编码星系引力势深排序、天体角色推选 |
-| **星历可达性分析** | `MGAEphemerisReachabilityAnalyzer` | `AnalyzeChainReachability`<br>`SelectQualityDiversityTopologies` | **入**: 拓扑链路与历元<br>**出**: 能量合规拓扑、7维 QD 精英拓扑集 | Vis-Viva 动能定理、Max-Min 散度选择 |
-| **增广拉格朗日法** | `MGAAugmentedLagrangian` | `ComputeAugmentedObjective`<br>`EndIteration` | **入**: 各约束违约量<br>**出**: 惩罚评价值、更新后的乘子 $\lambda, \rho$ | Powell-Hestenes-Rockafellar ALM 对偶上升 |
-| **物理损失引擎** | `MGAPhysicsLossEngine` | `ComputeLoss` | **入**: 染色体与物理状态<br>**出**: 无量纲总损失 $J(x)$ | 11 项动力学约束归一化、L1 稀疏正则 |
-| **智能自愈引擎** | `MGASelfHealingEngine` | `AuditAndHeal` | **入**: DE 收敛解<br>**出**: 修复后的高精无违例解 | 劳登主矢量理论、B 平面 3σ 弥散、阶梯打靶 |
-| **连续差分进化** | `MGADifferentialEvolution` | `RunWindow`, `EvolveGenerations` | **入**: 单时间窗口、拓扑链<br>**出**: 最优连续染色体向量 | pbest-DE、柯西盆地跳跃、IDEA 膨胀排斥禁区 |
-| **环形群岛调度** | `MGAArchipelagoOptimizer` | `EvolveWindows` | **入**: 候选窗口集、CPU 核心预算<br>**出**: 跨窗口演化解集 | 广义群岛模型、环形迁移拓扑、双层并发调度 |
-| **MCTS 拓扑搜索** | `MGAMCTSTopologySelector` | `GenerateOptimalFlybySequences` | **入**: 出发/到达天体、历元区间<br>**出**: 帕累托排名前 $K$ 的借力序列 | AlphaZero PUCT 公式、Contraction 剪枝 |
-| **老虎机调参器** | `MGABanditHyperparameterTuner` | `SelectStrategy`, `AdaptHyperparameters` | **入**: 代际适应度增益、种群方差<br>**出**: 变异策略臂、变异率 $F$、交叉率 $CR$ | UCB1 离散臂、JADE/SHADE 莱维均值、香农熵 |
-| **子空间局部抛光** | `MGABayesianSubspacePolisher`<br>`Memetic Hooke-Jeeves` | `PolishSolution`<br>`HookeJeevesPatternSearch` | **入**: 差分进化粗解<br>**出**: 压降残差后的极限解 | Active Subspaces 降维、抛物线内插、顺流相位补偿 |
-| **解集排序优选** | `MGASolutionOrdering` | `Deterministic`, `ExtractParetoFront` | **入**: 原始解集合<br>**出**: 确定性排序解集、Pareto 前沿 | 位级可复现排序、$\mathcal{O}(M \log M)$ 非支配排序 |
-| **物理代理网络** | `MGAPhysicsSurrogateNetwork` | `Forward`, `AnalyticFallback` | **入**: 4 维无量纲特征向量<br>**出**: 可行性概率 $P$、估算 $\Delta V$ | 4-8-8-2 双头 MLP、解析开普勒退化契约 |
-| **手写训练系统** | `MGASurrogateTrainer` | `GenerateAndTrain` | **入**: 行星轨道分布<br>**出**: 训练好的网络权重 | C++ 兰伯特标签标定、手写 Adam、ROC-AUC 门禁 |
-| **在线安全门控** | `MGASurrogateGate` | `ScreenTransfer`, `ReportOutcome` | **入**: 候选转移轨道<br>**出**: 筛选决策 (Pass/Skip/Control) | 8% 对照组抽样、乘性阈值反馈、自动硬熔断 |
-| **策略-价值指引** | `MGAPolicyValueGuide` | `ComputeActionPriorProbabilities`<br>`EvaluateSequenceValue` | **入**: MCTS 树节点搜索状态<br>**出**: 动作先验分布 $P(s,a)$、状态价值 $V(s)$ | 天体力学引力势能评分、AlphaZero 树先验引导 |
-| **符号物理约束** | `MGASymbolicPhysicsConstraints` | `ComputeMaxDeflectionAngleRad`<br>`IsFlybyTurnFeasible` | **入**: 双曲超速、天体引力常数<br>**出**: 偏折角极限、动力机动下界 | 渐近几何极值定律、PINN $C^1$ 连续二次势垒 |
-| **代理网格预筛** | `MGASurrogatePreFilter` | `FilterPromisingWindows`<br>`MgaCorridorGpuEvaluate` | **入**: 全域搜索时间区间<br>**出**: 候选会合周期时区列表 | 会合周期切分、DirectCompute 131,072 并发 |
-| **原生加载接口** | `PykepNative` | `EnsureLoaded`, `InitializeNativeEngine` | **入**: Native bin 文件<br>**出**: 非托管 C++ 函数指针委托表 | PE 拓扑预加载、进程隔离沙盒、安全双检锁 |
-| **底层动力学桥** | `PykepBridge` | `SolveLambert`, `EvaluateMGA`<br>`CalculateBPlaneCoordinates` | **入**: C# 托管天体与历元数据<br>**出**: 兰伯特速度矢量、Frenet分解分量 | 8字节对齐零拷贝、Izzo Householder-4 兰伯特 |
-| **高精星历系统** | `SolarSystemCatalog`<br>`EphemerisTimeSystem` | `GetPlanetState`, `RecalibrateFrameOffset`<br>`UtToJd`, `JdToUt` | **入**: 历元 UT<br>**出**: 天体日心位置与速度矢量 | Principia 与 SPICE DE440 双方案、圆周平均对齐 |
+| 功能领域 | 子模块归属 | 核心实现类 | 关键方法 / 符号 | 输入与输出 | 理论与算法基础 |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **任务工程门面** | `Optimizers/` | `MGAMasterOptimizer` | `SolveMasterTask` | **入**: `MGAHighValueParameters`<br>**出**: `MGAMasterOptimizationResult` | 航天工程任务分级转译与统一调度门面 |
+| **流水线调度器** | `Solver/` | `MGAAdaptiveSolver` | `Solve`, `SolveAutonomous` | **入**: 求解器配置与天体历元<br>**出**: 全局最优解集 | 四阶段自适应流水线、线程去超订 |
+| **航段策略管理** | `Solver/` | `MGALegStrategyManager` | `DeriveProfile`<br>`AuditAndRepairChromosome` | **入**: `MGAConfig`, 拓扑链路<br>**出**: `MGALegStrategyProfile` (SSOT) | 航段动力学性质自适应决策、同星共振 1-DSM 激活、动力飞掠自适应评估 |
+| **拓扑预算推导** | `Solver/` | `MGATopologyBudget` | `Derive` | **入**: 天体引力势、任务时间跨度<br>**出**: 借力深度、共振上限、折返限制 | 开普勒邻接图、能量闭合比分析 |
+| **爬升链合成器** | `Solver/` | `MGAPlanetaryAssistManager` | `SynthesizePhysicalClimbingChains` | **入**: 恒星系星历<br>**出**: 候选拓扑链路家族 | 无硬编码星系引力势深排序、天体角色推选 |
+| **星历可达性分析** | `Solver/` | `MGAEphemerisReachabilityAnalyzer` | `AnalyzeChainReachability`<br>`SelectQualityDiversityTopologies` | **入**: 拓扑链路与历元<br>**出**: 能量合规拓扑、7维 QD 精英拓扑集 | Vis-Viva 动能定理、Max-Min 散度选择 |
+| **增广拉格朗日法** | `Optimizers/` | `MGAAugmentedLagrangian` | `ComputeAugmentedObjective`<br>`EndIteration` | **入**: 各约束违约量<br>**出**: 惩罚评价值、更新后的乘子 $\lambda, \rho$ | Powell-Hestenes-Rockafellar ALM 对偶上升 |
+| **物理损失引擎** | `Solver/` | `MGAPhysicsLossEngine` | `ComputeLoss` | **入**: 染色体与物理状态<br>**出**: 无量纲总损失 $J(x)$ | 11 项动力学约束归一化、L1 稀疏正则 |
+| **智能自愈引擎** | `Solver/` | `MGASelfHealingEngine` | `AuditAndHeal` | **入**: DE 收敛解<br>**出**: 修复后的高精无违例解 | 劳登主矢量理论、B 平面 3σ 弥散、阶梯打靶 |
+| **连续差分进化** | `Optimizers/` | `MGADifferentialEvolution` | `RunWindow`, `EvolveGenerations` | **入**: 单时间窗口、拓扑链<br>**出**: 最优连续染色体向量 | pbest-DE、柯西盆地跳跃、IDEA 膨胀排斥禁区 |
+| **环形群岛调度** | `Optimizers/` | `MGAArchipelagoOptimizer` | `EvolveWindows` | **入**: 候选窗口集、CPU 核心预算<br>**出**: 跨窗口演化解集 | 广义群岛模型、环形迁移拓扑、双层并发调度 |
+| **MCTS 拓扑搜索** | `Solver/` | `MGAMCTSTopologySelector` | `GenerateOptimalFlybySequences` | **入**: 出发/到达天体、历元区间<br>**出**: 帕累托排名前 $K$ 的借力序列 | AlphaZero PUCT 公式、Contraction 剪枝 |
+| **老虎机调参器** | `AI/` | `MGABanditHyperparameterTuner` | `SelectStrategy`, `AdaptHyperparameters` | **入**: 代际适应度增益、种群方差<br>**出**: 变异策略臂、变异率 $F$、交叉率 $CR$ | UCB1 离散臂、JADE/SHADE 莱维均值、香农熵 |
+| **子空间局部抛光** | `AI/` | `MGABayesianSubspacePolisher`<br>`Memetic Hooke-Jeeves` | `PolishSolution`<br>`HookeJeevesPatternSearch` | **入**: 差分进化粗解<br>**出**: 压降残差后的极限解 | Active Subspaces 降维、抛物线内插、顺流相位补偿 |
+| **解集排序优选** | `Numerics/` | `MGASolutionOrdering` | `Deterministic`, `ExtractParetoFront` | **入**: 原始解集合<br>**出**: 确定性排序解集、Pareto 前沿 | 位级可复现排序、$\mathcal{O}(M \log M)$ 非支配排序 |
+| **几何与点火对齐** | `Numerics/` | `MGAFlybyDynamicsHelper`<br>`MGAInjectionAligner` | `AcciariniFlybyDeltaV`<br>`AlignInjection` | **入**: 飞掠几何与停泊轨道<br>**出**: 偏折冲量、黄金分割点火历元 | Giacomo Acciarini 纯代数飞掠、正交基底投影 |
+| **猪排图与栅格** | `Numerics/` | `PorkchopGenerator` | `ComputeGrid` | **入**: 历元区间、天体<br>**出**: C3 / 特征能等高线网格 | 双中心多圈 Lambert 并发网格解算 |
+| **物理代理网络** | `AI/` | `MGAPhysicsSurrogateNetwork` | `Forward`, `AnalyticFallback` | **入**: 4 维无量纲特征向量<br>**出**: 可行性概率 $P$、估算 $\Delta V$ | 4-8-8-2 双头 MLP、解析开普勒退化契约 |
+| **手写训练系统** | `AI/` | `MGASurrogateTrainer` | `GenerateAndTrain` | **入**: 行星轨道分布<br>**出**: 训练好的网络权重 | C++ 兰伯特标签标定、手写 Adam、ROC-AUC 门禁 |
+| **在线安全门控** | `AI/` | `MGASurrogateGate` | `ScreenTransfer`, `ReportOutcome` | **入**: 候选转移轨道<br>**出**: 筛选决策 (Pass/Skip/Control) | 8% 对照组抽样、乘性阈值反馈、自动硬熔断 |
+| **策略-价值指引** | `AI/` | `MGAPolicyValueGuide` | `ComputeActionPriorProbabilities`<br>`EvaluateSequenceValue` | **入**: MCTS 树节点搜索状态<br>**出**: 动作先验分布 $P(s,a)$、状态价值 $V(s)$ | 天体力学引力势能评分、AlphaZero 树先验引导 |
+| **符号物理约束** | `AI/` | `MGASymbolicPhysicsConstraints` | `ComputeMaxDeflectionAngleRad`<br>`IsFlybyTurnFeasible` | **入**: 双曲超速、天体引力常数<br>**出**: 偏折角极限、动力机动下界 | 渐近几何极值定律、PINN $C^1$ 连续二次势垒 |
+| **代理网格预筛** | `Solver/` | `MGASurrogatePreFilter` | `FilterPromisingWindows`<br>`MgaCorridorGpuEvaluate` | **入**: 全域搜索时间区间<br>**出**: 候选会合周期时区列表 | 会合周期切分、DirectCompute 131,072 并发 |
+| **原生加载接口** | `Native/` | `PykepNative` | `EnsureLoaded`, `InitializeNativeEngine` | **入**: Native bin 文件<br>**出**: 非托管 C++ 函数指针委托表 | PE 拓扑预加载、进程隔离沙盒、安全双检锁 |
+| **底层动力学桥** | `Native/` | `PykepBridge` | `SolveLambert`, `EvaluateMGA`<br>`CalculateBPlaneCoordinates` | **入**: C# 托管天体与历元数据<br>**出**: 兰伯特速度矢量、Frenet分解分量 | 8字节对齐零拷贝、Izzo Householder-4 兰伯特 |
+| **高精星历系统** | `Data/` | `SolarSystemCatalog`<br>`SolarSystemBodies`<br>`EphemerisTimeSystem` | `GetPlanetState`, `RecalibrateFrameOffset`<br>`UtToJd`, `JdToUt` | **入**: 历元 UT<br>**出**: 天体日心位置与速度矢量 | Principia 与 SPICE DE440 双方案、圆周平均对齐 |
+| **物理尺度与经验库** | `Data/` | `MGAPhysicalScales`<br>`MGAEmpiricalRegistry` | `NormalizeLoss`, `GetSafeRadiusKm` | **入**: 物理量数值<br>**出**: 无量纲特征、天体物理底线 | 动力学特征尺度归一化、全太阳系物理常数真值源 |
+| **性能基准与诊断** | 根目录 / `Telemetry/` | `MGABenchmarkSuite`<br>`CPUMonitor` | `RunFullBenchmark`<br>`GetLogicalCores` | **入**: 硬件线程与基准任务<br>**出**: ops/sec、耗时剖析与核心拓扑 | 算法吞吐黄金参考基线、CPU 拓扑感知 |
 
 ---
 
