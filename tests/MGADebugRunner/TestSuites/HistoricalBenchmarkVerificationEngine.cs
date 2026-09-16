@@ -150,10 +150,32 @@ namespace MGADebugRunner.TestSuites
                     }
                     else
                     {
-                        sb.AppendLine($"      [引力助推飞掠] 转向角: {leg.FlybyTurningAngleDeg:F2}° | 近心净空: {clearanceStr} | 飞掠脉冲: {leg.FlybyDeltaVKms * 1000.0:F1} m/s | 可行性: {(leg.IsFeasible ? "✅ 物理可行" : "❌ 超出借力限度")}");
+                        double pulseMs = leg.FlybyDeltaVKms * 1000.0;
+                        bool isUnpoweredFlyby = (testCase.FlybyStrategies == null) ||
+                                                (k - 1 < testCase.FlybyStrategies.Count && testCase.FlybyStrategies[k - 1] == MGAFlybyStrategy.UnpoweredFlyby);
+
+                        sb.AppendLine($"      [引力助推飞掠] 转向角: {leg.FlybyTurningAngleDeg:F2}° | 近心净空: {clearanceStr} | 飞掠脉冲: {pulseMs:F1} m/s | 可行性: {(leg.IsFeasible ? "✅ 物理可行" : "❌ 超出借力限度")}");
+
                         if (!leg.IsFeasible)
                         {
                             outcome.FlybyFeasibilityPassed = false;
+                            outcome.FailReasons.Add($"第 {k + 1} 段飞掠 ({leg.FromBody}➔{leg.ToBody}) 超出物理可行界限");
+                        }
+
+                        // 硬门禁: 无动力飞掠严禁施加推进脉冲 (允许 PyKEP 原生代数判据 <= 5.0 m/s 数值底噪)
+                        if (isUnpoweredFlyby && leg.FlybyDeltaVKms > 0.005)
+                        {
+                            outcome.FlybyFeasibilityPassed = false;
+                            outcome.FailReasons.Add($"第 {k + 1} 段无动力借力出现非标机动脉冲 ({pulseMs:F1} m/s > 5.0 m/s 物理守恒门限)");
+                            sb.AppendLine($"       ❌ 拒绝通过: 无动力飞掠施加了 {pulseMs:F1} m/s 机动，存在假借力作弊嫌疑！");
+                        }
+
+                        // 硬门禁: 飞掠近心高度必须在天体表面/大气层之上
+                        if (leg.FlybyPeriapsisAltitudeKm < 0.0 && leg.FlybyPeriapsisRadiusKm > 0.0)
+                        {
+                            outcome.FlybyFeasibilityPassed = false;
+                            outcome.FailReasons.Add($"第 {k + 1} 段近心高度为负 ({leg.FlybyPeriapsisAltitudeKm:F1} km, 撞击天体表面)");
+                            sb.AppendLine($"       ❌ 拒绝通过: 飞掠近拱高度 {leg.FlybyPeriapsisAltitudeKm:F1} km 撞击地表！");
                         }
                     }
 
@@ -284,7 +306,8 @@ namespace MGADebugRunner.TestSuites
                               outcome.FlybyFeasibilityPassed &&
                               outcome.DeltaVWithinTolerance &&
                               outcome.FlightDaysWithinTolerance &&
-                              outcome.TopologyMatchesHistoric;
+                              outcome.TopologyMatchesHistoric &&
+                              outcome.PrimerVectorOptimal;
             outcome.Passed = casePassed;
 
             if (!casePassed)
@@ -294,6 +317,7 @@ namespace MGADebugRunner.TestSuites
                 if (!outcome.DeltaVWithinTolerance) outcome.FailReasons.Add($"总ΔV超出历史容差 ({outcome.ComputedTotalDV:F1} m/s vs {bandDesc})");
                 if (!outcome.FlightDaysWithinTolerance) outcome.FailReasons.Add($"总航时严重超标 ({outcome.ComputedFlightDays:F1} 天 vs 允许上限 {tofBandHi:F0} 天)");
                 if (!outcome.TopologyMatchesHistoric) outcome.FailReasons.Add($"拓扑构型与历史不符: {topoReason}");
+                if (!outcome.PrimerVectorOptimal) outcome.FailReasons.Add($"劳登主矢量极值非最优 (|p| = {pNorm:F3} > 1.15)");
             }
 
             sb.AppendLine("\n【独立裁决综合判定】: " + (casePassed ? "✅ PASS 物理全闭环收敛且严格符合历史！" : "❌ FAIL 校验失败: " + string.Join("; ", outcome.FailReasons)));
@@ -327,7 +351,7 @@ namespace MGADebugRunner.TestSuites
                 Console.WriteLine("• 冲量详细构成:");
                 Console.WriteLine($"    - 始发脱离脉冲 (Launch ΔV):     {sol.LaunchDeltaVKms * 1000.0,8:F1} m/s (C3 = {(sol.Legs != null && sol.Legs.Count > 0 ? sol.Legs[0].C3Kms2.ToString("F2") : "0.00")} km²/s²)");
                 Console.WriteLine($"    - 深空中途机动 (DSM ΔV):        {sol.TotalDsmDeltaVKms * 1000.0,8:F1} m/s");
-                Console.WriteLine($"    - 飞掠偏折脉冲 (Flyby ΔV):      {sol.TotalFlybyDeltaVKms * 1000.0,8:F1} m/s (无动力合规: {sol.TotalFlybyDeltaVKms < 1e-4})");
+                Console.WriteLine($"    - 飞掠偏折脉冲 (Flyby ΔV):      {sol.TotalFlybyDeltaVKms * 1000.0,8:F1} m/s (无动力合规: {sol.TotalFlybyDeltaVKms <= 0.005})");
                 Console.WriteLine($"    - 目标捕获制动 (Insertion ΔV):  {sol.InsertionDeltaVKms * 1000.0,8:F1} m/s");
                 Console.WriteLine($"• 劳登主矢量极值 (|p| Norm): {outcome.PrimerVectorNorm:F3} (最优性判据: {(outcome.PrimerVectorNorm <= 1.05 ? "严格冲量最优" : (outcome.PrimerVectorNorm <= 1.15 ? "次优" : "非最优"))})");
 

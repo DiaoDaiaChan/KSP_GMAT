@@ -61,9 +61,11 @@ namespace MGADebugRunner.TestSuites
                     // 过滤检查 (支持任务序号 1..21 或任务名称子串匹配)
                     if (!string.IsNullOrEmpty(MissionFilter))
                     {
-                        bool matchIndex = int.TryParse(MissionFilter, out int targetIdx) && (targetIdx == globalIndex);
-                        bool matchName = testCase.MissionName.IndexOf(MissionFilter, StringComparison.OrdinalIgnoreCase) >= 0;
-                        if (!matchIndex && !matchName)
+                        if (int.TryParse(MissionFilter, out int targetIdx))
+                        {
+                            if (targetIdx != globalIndex) continue;
+                        }
+                        else if (testCase.MissionName.IndexOf(MissionFilter, StringComparison.OrdinalIgnoreCase) < 0)
                         {
                             continue;
                         }
