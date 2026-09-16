@@ -309,8 +309,8 @@ namespace KSPGMAT.MGA {
         /// <summary>出发段最大航时相对霍曼的最小比例地板。取代原裸字面量 1.25。</summary>
         public const double DepartureLegMaxToFFloorFactor = 1.25;
 
-        /// <summary>抛物线转移航时的收窄系数 (欧拉-兰伯特极小航时界)。取代原裸字面量 0.90。</summary>
-        public const double ParabolicToFShrinkFactor = 0.90;
+        /// <summary>抛物线转移航时的收窄系数 (欧拉-兰伯特极小航时界，覆盖非180°弦长极速转移)。取代原过度保守的 0.90。</summary>
+        public const double ParabolicToFShrinkFactor = 0.70;
 
         /// <summary>恒星逃逸动能极速巡航航时的收窄系数。取代原裸字面量 0.80。</summary>
         public const double FastCruiseToFShrinkFactor = 0.80;

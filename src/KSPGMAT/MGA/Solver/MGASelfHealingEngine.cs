@@ -70,177 +70,214 @@ namespace KSPGMAT.MGA
                 ? budgetKms
                 : ((nominalHohmannTotKms > 0) ? nominalHohmannTotKms * config.HohmannEnergyCeilingFactor : nominalHohmannTotKms);
 
-            var bestSol = candidates[0];
-            bool isHighEnergyTrap = (bestSol.LaunchDeltaVKms > depCeilingKms || bestSol.TotalDeltaVKms > totCeilingKms);
-            bool hasLawdenViolation = (bestSol.PrimerVector != null && !bestSol.PrimerVector.IsOptimal
-                                       && bestSol.PrimerVector.MaxPMag > PrimerVectorLawdenTolerance);
-            
-            // 检查 B 平面 3-sigma 安全防撞风险
-            bool hasBPlaneSafetyViolation = false;
-            if (config.EnableBPlaneCovarianceAnalysis && config.EnforceSafeFlybyMargin && bestSol.Legs != null && bestSol.Legs.Count > 1)
+            // 选取候选池中属于不同发射时区 (相距 >= 15 天) 的前 2 个代表性拓扑候选解执行多盆地自愈
+            var basinSols = new List<MGASolution>();
+            foreach (var cand in candidates)
             {
-                for (int k = 0; k < bestSol.Legs.Count - 1; k++)
+                if (cand == null || !cand.AllLegsFeasible) continue;
+                if (!basinSols.Any(b => Math.Abs(b.DepartureUT - cand.DepartureUT) < 15.0 * 86400.0))
                 {
-                    var leg = bestSol.Legs[k];
-                    var fbP = SolarSystemCatalog.GetPlanet(leg.ToBody);
-                    if (fbP != null && fbP.Mu > 0)
+                    basinSols.Add(cand);
+                    if (basinSols.Count >= (fastTier ? 1 : 2)) break;
+                }
+            }
+            if (basinSols.Count == 0 && candidates.Count > 0)
+            {
+                basinSols.Add(candidates[0]);
+            }
+
+            foreach (var bestSol in basinSols)
+            {
+                bool isHighEnergyTrap = (bestSol.LaunchDeltaVKms > depCeilingKms || bestSol.TotalDeltaVKms > totCeilingKms);
+                bool hasLawdenViolation = (bestSol.PrimerVector != null && !bestSol.PrimerVector.IsOptimal
+                                           && bestSol.PrimerVector.MaxPMag > PrimerVectorLawdenTolerance);
+                
+                // 检查 B 平面 3-sigma 安全防撞风险
+                bool hasBPlaneSafetyViolation = false;
+                if (config.EnableBPlaneCovarianceAnalysis && config.EnforceSafeFlybyMargin && bestSol.Legs != null && bestSol.Legs.Count > 1)
+                {
+                    for (int k = 0; k < bestSol.Legs.Count - 1; k++)
                     {
-                        double dt = leg.ToFDays * 86400.0;
-                        var bpCov = PykepBridge.CalculateBPlaneCovariance(
-                            leg.DeparturePosKm, leg.DepartureVelKms, dt, SolarSystemCatalog.SunMu,
-                            config.InitialPosSigmaKm, config.InitialVelSigmaMs / 1000.0,
-                            leg.ArrivalPosKm, leg.ArrivalVelKms,
-                            fbP.Mu, fbP.RadiusKm, config.FlybySafeAtmosphereMarginKm);
-                        if (bpCov != null)
+                        var leg = bestSol.Legs[k];
+                        var fbP = SolarSystemCatalog.GetPlanet(leg.ToBody);
+                        if (fbP != null && fbP.Mu > 0)
                         {
-                            bestSol.BPlane = bpCov;
-                            if (!bpCov.IsSafeFlyby)
+                            double dt = leg.ToFDays * 86400.0;
+                            var bpCov = PykepBridge.CalculateBPlaneCovariance(
+                                leg.DeparturePosKm, leg.DepartureVelKms, dt, SolarSystemCatalog.SunMu,
+                                config.InitialPosSigmaKm, config.InitialVelSigmaMs / 1000.0,
+                                leg.ArrivalPosKm, leg.ArrivalVelKms,
+                                fbP.Mu, fbP.RadiusKm, config.FlybySafeAtmosphereMarginKm);
+                            if (bpCov != null)
                             {
-                                hasBPlaneSafetyViolation = true;
-                                break;
+                                bestSol.BPlane = bpCov;
+                                if (!bpCov.IsSafeFlyby)
+                                {
+                                    hasBPlaneSafetyViolation = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                bool needHealing = (isHighEnergyTrap || hasLawdenViolation || hasBPlaneSafetyViolation) && config.EnableSelfHealing;
+                if (!needHealing) continue;
+
+                // 触发数值自愈: 围绕最佳时间节点展开精细网格打靶重构 (0.5天步长)
+                if (hasLawdenViolation && config.EngineMode == MGAEngineMode.BallisticImpulsive)
+                {
+                    KSPGMATLog.Warn("Solver", $"[MGASelfHealing] 检测到劳登引向量极大值超标 (|p|={bestSol.PrimerVector.MaxPMag:F2} > 1.0)，自动闭环激活深空机动 (1DSM) 并插入最优脉冲...");
+                }
+                else if (hasBPlaneSafetyViolation)
+                {
+                    KSPGMATLog.Warn("Solver", "[MGASelfHealing] 检测到 B 平面 3-sigma 弥散穿透行星安全边界 (裕度 < 0)，自动启动安全规避微调自愈...");
+                }
+                else
+                {
+                    KSPGMATLog.Warn("Solver", $"[MGASelfHealing] 检测到候选解 ΔV 偏高 ({bestSol.LaunchDeltaVKms:F1} km/s > 门禁 {depCeilingKms:F1} km/s)，自动启动逆向打靶自愈...");
+                }
+
+                double healCenterUT = bestSol.DepartureUT;
+                double spanSec = config.HealingWindowSpanDays * MGADefaults.SecondsPerDay;
+                double healStartUT = Math.Max(config.SearchStartUT, healCenterUT - spanSec);
+                double healEndUT = Math.Min(config.SearchEndUT, healCenterUT + spanSec);
+
+                var bestFlybys = (bestSol.Legs != null && bestSol.Legs.Count > 1)
+                    ? bestSol.Legs.Take(bestSol.Legs.Count - 1).Select(l => l.ToBody).ToList()
+                    : (config.FlybySequence ?? new List<string>());
+
+                var healBounds = (bestSol.Legs != null && bestSol.Legs.Count > 0)
+                    ? bestSol.Legs.Select((l, idx) => {
+                        bool isRes = !string.IsNullOrEmpty(l.FromBody) && l.FromBody.Equals(l.ToBody, StringComparison.OrdinalIgnoreCase);
+                        if (isRes)
+                        {
+                            var pB = SolarSystemCatalog.GetPlanet(l.FromBody);
+                            double smaB = PykepBridge.GetRelativeSMA(pB, config.CentralBody, 0.0);
+                            double tOrbD = PykepBridge.CalcOrbitPeriodSec(smaB, SolarSystemCatalog.GetCentralMu(config.CentralBody ?? "Sun")) / 86400.0;
+                            if (tOrbD > 0)
+                            {
+                                return (MinDays: Math.Max(0.5, tOrbD * 0.85), MaxDays: tOrbD * 3.25);
+                            }
+                        }
+                        var baseBounds = MGAMCTSTopologySelector.AutoDeriveResonantLegBounds(config.DeparturePlanet, config.ArrivalPlanet, bestFlybys, config.CentralBody);
+                        double minPhysical = (baseBounds != null && idx < baseBounds.Count) ? baseBounds[idx].MinDays : 0.5;
+                        double maxPhysical = (baseBounds != null && idx < baseBounds.Count) ? baseBounds[idx].MaxDays : l.ToFDays * 2.5;
+                        return (MinDays: Math.Min(minPhysical, Math.Max(0.5, l.ToFDays * 0.60)), MaxDays: Math.Max(maxPhysical, l.ToFDays * 1.50));
+                    }).ToList()
+                    : ((config.LegToFBounds != null && config.LegToFBounds.Count > 0)
+                        ? config.LegToFBounds
+                        : MGAMCTSTopologySelector.AutoDeriveResonantLegBounds(config.DeparturePlanet, config.ArrivalPlanet, bestFlybys, config.CentralBody));
+
+                if (config.TotalToFMaxDays > 0 && healBounds != null && healBounds.Count > 0)
+                {
+                    double sumMin = healBounds.Sum(b => b.MinDays);
+                    healBounds = healBounds.Select(b => {
+                        double otherMins = sumMin - b.MinDays;
+                        double maxAllowedByTotal = config.TotalToFMaxDays - otherMins;
+                        double effectiveMax = Math.Max(b.MinDays + 5.0, Math.Min(b.MaxDays, maxAllowedByTotal));
+                        return (MinDays: b.MinDays, MaxDays: effectiveMax);
+                    }).ToList();
+                }
+
+                var fineCfg = new MGAConfig
+                {
+                    CentralBody = config.CentralBody,
+                    DepartureBody = config.DeparturePlanet,
+                    DestinationBody = config.ArrivalPlanet,
+                    FlybySequence = bestFlybys,
+                    EarliestDepartureUT = healStartUT,
+                    LatestDepartureUT = healEndUT,
+                    DeparturePeAKm = config.DepPeKm,
+                    DepartureApAKm = config.DepApKm,
+                    DepartureInclinationDeg = -1.0, // 强制纯切向
+                    DepartureMode = MGADepartureMode.PreLaunchFreeOrbit,
+                    DestinationPeAKm = config.ArrPeKm,
+                    DestinationApAKm = config.ArrApKm,
+                    NoInsertionBurn = config.NoInsertionBurn,
+                    EnableMaxDuration = (config.TotalToFMaxDays > 0),
+                    MaxDurationDays = (config.TotalToFMaxDays > 0) ? config.TotalToFMaxDays : 0.0,
+                    EngineMode = config.EngineMode,
+                    LegStrategies = config.LegStrategies != null ? new List<MGALegStrategy>(config.LegStrategies) : null,
+                    FlybyStrategies = config.FlybyStrategies != null ? new List<MGAFlybyStrategy>(config.FlybyStrategies) : null,
+                    DsmEtas = config.DsmEtas != null ? new List<double>(config.DsmEtas) : null,
+                    DsmEtaDefault = config.DsmEtaDefault,
+                    ConstrainByVesselDeltaV = config.ConstrainByVesselDeltaV,
+                    VesselMaxDeltaVMs = config.VesselMaxDeltaVMs,
+                    MaxDsmDeltaVMs = config.MaxDsmDeltaVMs,
+                    LaunchDeltaVCeilingMs = config.LaunchDeltaVCeilingMs,
+                    ConstraintProfile = config.ConstraintProfile,
+                    LambertMaxRevs = config.LambertMaxRevs,
+                    PopulationSize = fastTier ? Math.Max(24, config.PopulationSize / 3) : Math.Max(36, config.PopulationSize / 2),
+                    MaxGenerations = fastTier ? Math.Max(30, config.MaxGenerations / 3) : Math.Max(40, config.MaxGenerations / 2),
+                    MinToFDays = healBounds.Select(b => b.MinDays).ToList(),
+                    MaxToFDays = healBounds.Select(b => b.MaxDays).ToList()
+                };
+                // 优化器自动自适应决策: 若劳登引矢量出现极大值违背 (|p| > 1.15)，
+                // 说明纯弹道在此处存在动力学最优性缺陷，只要未显式硬性禁止 DSM (即工质或 DSM 上限允许)，
+                // 由优化器自动在此航段插入 1-DSM 并注入最优脉冲历元 η 尝试自愈
+                bool allowDsmByBudget = (config.MaxDsmDeltaVMs > 0.0) ||
+                                        (!config.ConstrainByVesselDeltaV) ||
+                                        (config.VesselMaxDeltaVMs >= 100.0);
+                bool dsmHardForbidden = (config.ConstraintProfile != null &&
+                                         config.ConstraintProfile.IsEnforced(MGAConstraintType.MaxDsmDeltaV) &&
+                                         config.ConstraintProfile.GetThreshold(MGAConstraintType.MaxDsmDeltaV) <= 0.0);
+
+                if (hasLawdenViolation && allowDsmByBudget && !dsmHardForbidden)
+                {
+                    if (MGALegStrategyManager.TryInsertDSMByPrimerVector(fineCfg, bestSol, out _, out _))
+                    {
+                        if (fineCfg.EngineMode == MGAEngineMode.BallisticImpulsive)
+                        {
+                            fineCfg.EngineMode = MGAEngineMode.HeterogeneousHybrid;
+                        }
+                    }
+                }
+
+                double auditBudgetMs = (config.ConstrainByVesselDeltaV && config.VesselMaxDeltaVMs > 0) ? config.VesselMaxDeltaVMs : double.MaxValue;
+                double auditDsmBudgetMs = (config.MaxDsmDeltaVMs > 0) ? config.MaxDsmDeltaVMs : auditBudgetMs;
+
+                var healedSols = MGADifferentialEvolution.RunWindow(fineCfg, healStartUT, healEndUT, null, ct);
+                if (healedSols != null && healedSols.Count > 0)
+                {
+                    foreach (var hs in healedSols.Deterministic())
+                    {
+                        if (hs.AllLegsFeasible)
+                        {
+                            bool isStrictlyBetter = (hs.TotalDeltaVKms < bestSol.TotalDeltaVKms);
+                            bool withinBudget = (auditBudgetMs >= 1e8 || hs.TotalDeltaVKms * 1000.0 <= auditBudgetMs * BudgetAcceptanceSlack)
+                                && (auditDsmBudgetMs >= 1e8 || (hs.TotalDsmDeltaVKms * 1000.0 <= auditDsmBudgetMs * BudgetAcceptanceSlack && (hs.Legs == null || !hs.Legs.Any(l => l.DSM != null && l.DSM.DeltaVMs > auditDsmBudgetMs * BudgetAcceptanceSlack))));
+                            if (withinBudget || isStrictlyBetter)
+                            {
+                                healedList.Add(hs);
                             }
                         }
                     }
                 }
             }
 
-            bool needHealing = (isHighEnergyTrap || hasLawdenViolation || hasBPlaneSafetyViolation) && config.EnableSelfHealing;
-
-            // 如果健康度合格且无劳登极值异常或B平面安全告警，直接保留
-            if (!needHealing)
-            {
-                return candidates;
-            }
-
-            // 触发数值自愈: 围绕最佳时间节点展开精细网格打靶重构 (0.5天步长)
-            if (hasLawdenViolation && config.EngineMode == MGAEngineMode.BallisticImpulsive)
-            {
-                KSPGMATLog.Warn("Solver", $"[MGASelfHealing] 检测到劳登引向量极大值超标 (|p|={bestSol.PrimerVector.MaxPMag:F2} > 1.0)，自动闭环激活深空机动 (1DSM) 并插入最优脉冲...");
-            }
-            else if (hasBPlaneSafetyViolation)
-            {
-                KSPGMATLog.Warn("Solver", "[MGASelfHealing] 检测到 B 平面 3-sigma 弥散穿透行星安全边界 (裕度 < 0)，自动启动安全规避微调自愈...");
-            }
-            else
-            {
-                KSPGMATLog.Warn("Solver", $"[MGASelfHealing] 检测到候选解 ΔV 偏高 ({bestSol.LaunchDeltaVKms:F1} km/s > 门禁 {depCeilingKms:F1} km/s)，自动启动逆向打靶自愈...");
-            }
-
-            double healCenterUT = bestSol.DepartureUT;
-            double spanSec = config.HealingWindowSpanDays * MGADefaults.SecondsPerDay;
-            double healStartUT = Math.Max(config.SearchStartUT, healCenterUT - spanSec);
-            double healEndUT = Math.Min(config.SearchEndUT, healCenterUT + spanSec);
-
-            var bestFlybys = (bestSol.Legs != null && bestSol.Legs.Count > 1)
-                ? bestSol.Legs.Take(bestSol.Legs.Count - 1).Select(l => l.ToBody).ToList()
-                : (config.FlybySequence ?? new List<string>());
-
-            var healBounds = (bestSol.Legs != null && bestSol.Legs.Count > 0)
-                ? bestSol.Legs.Select((l, idx) => {
-                    bool isRes = !string.IsNullOrEmpty(l.FromBody) && l.FromBody.Equals(l.ToBody, StringComparison.OrdinalIgnoreCase);
-                    if (isRes)
-                    {
-                        var pB = SolarSystemCatalog.GetPlanet(l.FromBody);
-                        double smaB = PykepBridge.GetRelativeSMA(pB, config.CentralBody, 0.0);
-                        double tOrbD = PykepBridge.CalcOrbitPeriodSec(smaB, SolarSystemCatalog.GetCentralMu(config.CentralBody ?? "Sun")) / 86400.0;
-                        if (tOrbD > 0)
-                        {
-                            return (MinDays: Math.Max(0.5, tOrbD * 0.85), MaxDays: tOrbD * 3.25);
-                        }
-                    }
-                    var baseBounds = MGAMCTSTopologySelector.AutoDeriveResonantLegBounds(config.DeparturePlanet, config.ArrivalPlanet, bestFlybys, config.CentralBody);
-                    double minPhysical = (baseBounds != null && idx < baseBounds.Count) ? baseBounds[idx].MinDays : 0.5;
-                    double maxPhysical = (baseBounds != null && idx < baseBounds.Count) ? baseBounds[idx].MaxDays : l.ToFDays * 2.5;
-                    return (MinDays: Math.Min(minPhysical, Math.Max(0.5, l.ToFDays * 0.60)), MaxDays: Math.Max(maxPhysical, l.ToFDays * 1.50));
-                }).ToList()
-                : ((config.LegToFBounds != null && config.LegToFBounds.Count > 0)
-                    ? config.LegToFBounds
-                    : MGAMCTSTopologySelector.AutoDeriveResonantLegBounds(config.DeparturePlanet, config.ArrivalPlanet, bestFlybys, config.CentralBody));
-
-            if (config.TotalToFMaxDays > 0 && healBounds != null && healBounds.Count > 0)
-            {
-                double sumMin = healBounds.Sum(b => b.MinDays);
-                healBounds = healBounds.Select(b => {
-                    double otherMins = sumMin - b.MinDays;
-                    double maxAllowedByTotal = config.TotalToFMaxDays - otherMins;
-                    double effectiveMax = Math.Max(b.MinDays + 5.0, Math.Min(b.MaxDays, maxAllowedByTotal));
-                    return (MinDays: b.MinDays, MaxDays: effectiveMax);
-                }).ToList();
-            }
-
-            var fineCfg = new MGAConfig
-            {
-                CentralBody = config.CentralBody,
-                DepartureBody = config.DeparturePlanet,
-                DestinationBody = config.ArrivalPlanet,
-                FlybySequence = bestFlybys,
-                EarliestDepartureUT = healStartUT,
-                LatestDepartureUT = healEndUT,
-                DeparturePeAKm = config.DepPeKm,
-                DepartureApAKm = config.DepApKm,
-                DepartureInclinationDeg = -1.0, // 强制纯切向
-                DepartureMode = MGADepartureMode.PreLaunchFreeOrbit,
-                DestinationPeAKm = config.ArrPeKm,
-                DestinationApAKm = config.ArrApKm,
-                NoInsertionBurn = config.NoInsertionBurn,
-                EnableMaxDuration = (config.TotalToFMaxDays > 0),
-                MaxDurationDays = (config.TotalToFMaxDays > 0) ? config.TotalToFMaxDays : 0.0,
-                EngineMode = config.EngineMode,
-                LegStrategies = config.LegStrategies != null ? new List<MGALegStrategy>(config.LegStrategies) : null,
-                FlybyStrategies = config.FlybyStrategies != null ? new List<MGAFlybyStrategy>(config.FlybyStrategies) : null,
-                DsmEtas = config.DsmEtas != null ? new List<double>(config.DsmEtas) : null,
-                DsmEtaDefault = config.DsmEtaDefault,
-                ConstrainByVesselDeltaV = config.ConstrainByVesselDeltaV,
-                VesselMaxDeltaVMs = config.VesselMaxDeltaVMs,
-                MaxDsmDeltaVMs = config.MaxDsmDeltaVMs,
-                LaunchDeltaVCeilingMs = config.LaunchDeltaVCeilingMs,
-                ConstraintProfile = config.ConstraintProfile,
-                LambertMaxRevs = config.LambertMaxRevs,
-                PopulationSize = fastTier ? Math.Max(24, config.PopulationSize / 3) : Math.Max(36, config.PopulationSize / 2),
-                MaxGenerations = fastTier ? Math.Max(30, config.MaxGenerations / 3) : Math.Max(40, config.MaxGenerations / 2),
-                MinToFDays = healBounds.Select(b => b.MinDays).ToList(),
-                MaxToFDays = healBounds.Select(b => b.MaxDays).ToList()
-            };
-            if (config.EngineMode != MGAEngineMode.BallisticImpulsive && hasLawdenViolation)
-            {
-                MGALegStrategyManager.TryInsertDSMByPrimerVector(fineCfg, bestSol, out _, out _);
-            }
-
-            double auditBudgetMs = (config.ConstrainByVesselDeltaV && config.VesselMaxDeltaVMs > 0) ? config.VesselMaxDeltaVMs : double.MaxValue;
-            double auditDsmBudgetMs = (config.MaxDsmDeltaVMs > 0) ? config.MaxDsmDeltaVMs : auditBudgetMs;
-
-            var healedSols = MGADifferentialEvolution.RunWindow(fineCfg, healStartUT, healEndUT, null, ct);
-            if (healedSols != null && healedSols.Count > 0)
-            {
-                foreach (var hs in healedSols.Deterministic())
-                {
-                    if (hs.AllLegsFeasible)
-                    {
-                        bool isStrictlyBetter = (hs.TotalDeltaVKms < bestSol.TotalDeltaVKms);
-                        bool withinBudget = (auditBudgetMs >= 1e8 || hs.TotalDeltaVKms * 1000.0 <= auditBudgetMs * BudgetAcceptanceSlack)
-                            && (auditDsmBudgetMs >= 1e8 || (hs.TotalDsmDeltaVKms * 1000.0 <= auditDsmBudgetMs * BudgetAcceptanceSlack && (hs.Legs == null || !hs.Legs.Any(l => l.DSM != null && l.DSM.DeltaVMs > auditDsmBudgetMs * BudgetAcceptanceSlack))));
-                        if (withinBudget || isStrictlyBetter)
-                        {
-                            healedList.Add(hs);
-                        }
-                    }
-                }
-            }
-
             // 若自愈成功找到更优解，置于最前
-            if (healedList.Count > 0 && healedList[0].TotalDeltaVKms < bestSol.TotalDeltaVKms)
+            if (healedList.Count > 0)
             {
-                double savedKms = bestSol.TotalDeltaVKms - healedList[0].TotalDeltaVKms;
-                Telemetry.MGAPipelineTelemetryProbe.AiMetrics.RecordSelfHealing(true, savedKms);
-                KSPGMATLog.Success("Solver", $"[MGASelfHealing] ✅ 自愈成功！总机动从 {bestSol.TotalDeltaVKms*1000:F0} m/s 降至 {healedList[0].TotalDeltaVKms*1000:F0} m/s");
-                foreach (var old in candidates)
+                var sortedHealed = healedList
+                    .OrderBy(h => h.TotalDeltaVKms)
+                    .ThenBy(h => Math.Round(h.DepartureUT * 1000.0))
+                    .ToList();
+                double bestInitialDv = (candidates.Count > 0) ? candidates[0].TotalDeltaVKms : 1e9;
+                if (sortedHealed[0].TotalDeltaVKms < bestInitialDv)
                 {
-                    if (!healedList.Any(h => Math.Abs(h.DepartureUT - old.DepartureUT) < 86400.0))
+                    double savedKms = bestInitialDv - sortedHealed[0].TotalDeltaVKms;
+                    Telemetry.MGAPipelineTelemetryProbe.AiMetrics.RecordSelfHealing(true, savedKms);
+                    KSPGMATLog.Success("Solver", $"[MGASelfHealing] ✅ 自愈成功！总机动从 {bestInitialDv*1000:F0} m/s 降至 {sortedHealed[0].TotalDeltaVKms*1000:F0} m/s");
+                    foreach (var old in candidates)
                     {
-                        healedList.Add(old);
+                        if (!sortedHealed.Any(h => Math.Abs(h.DepartureUT - old.DepartureUT) < 86400.0))
+                        {
+                            sortedHealed.Add(old);
+                        }
                     }
+                    return sortedHealed;
                 }
-                return healedList;
             }
 
             Telemetry.MGAPipelineTelemetryProbe.AiMetrics.RecordSelfHealing(false, 0.0);

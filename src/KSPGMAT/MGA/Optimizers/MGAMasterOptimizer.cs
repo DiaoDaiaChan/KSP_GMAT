@@ -58,9 +58,9 @@ namespace KSPGMAT.MGA.Solver {
         public double MaxVesselDeltaVMs { get; set; } = 4000.0;
 
         /// <summary>
-        /// 航路中途允许施加的最大深空机动 (DSM) 上限 (m/s)。调小迫使深度利用引力滑翔。
+        /// 航路中途允许施加的最大深空机动 (DSM) 上限 (m/s)。若为 0.0 则表示自动联动飞船总工质预算 (不设人为单段上限，只要在总预算内均可接受)。
         /// </summary>
-        public double MaxDsmDeltaVMs { get; set; } = 500.0;
+        public double MaxDsmDeltaVMs { get; set; } = 0.0;
 
         /// <summary>
         /// 始发天体停泊轨道 (如地球 LEO) 的最大允许切向注入出射速度增量 (m/s) (C3 门禁)。
@@ -138,9 +138,19 @@ namespace KSPGMAT.MGA.Solver {
         public double MaxTotalMissionDurationYears { get; set; } = 25.0;
 
         /// <summary>
+        /// 任务全寿命最大飞行时间上限 (天)。若 > 0 则优先以此为准，否则由 MaxTotalMissionDurationYears * 365.25 换算。
+        /// </summary>
+        public double MaxMissionDurationDays { get; set; } = 0.0;
+
+        /// <summary>
         /// 任务允许的最短总飞行时间 (年)。
         /// </summary>
         public double MinTotalMissionDurationYears { get; set; } = 0.5;
+
+        /// <summary>
+        /// 任务允许的最短总飞行时间 (天)。若 > 0 则优先以此为准，否则由 MinTotalMissionDurationYears * 365.25 换算。
+        /// </summary>
+        public double MinMissionDurationDays { get; set; } = 0.0;
 
         /// <summary>
         /// 发射窗口全局搜索跨度 (天)。

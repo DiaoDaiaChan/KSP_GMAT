@@ -45,7 +45,7 @@ namespace KSPGMAT.MGA
             // 必须在时域上均匀保留各发射窗口候选 (至多 8 个窗口并发探索)；
             // 纯直达任务则聚焦能量最低的前 K 个黄金窗口。
             bool isMGA = (config != null && config.FlybySequence != null && config.FlybySequence.Count > 0);
-            int defaultMaxWindows = Math.Min(8, windows.Count);
+            int defaultMaxWindows = Math.Min(12, windows.Count);
             int maxEvalWindows = (config != null && config.MaxWindows > 0) ? config.MaxWindows : defaultMaxWindows;
 
             List<MGASurrogatePreFilter.SynodicWindowCandidate> prioritizedWindows;
@@ -56,12 +56,13 @@ namespace KSPGMAT.MGA
             else if (isMGA)
             {
                 // 多借力 (MGA) 任务：首段 2-body 转移能量无法预知后续多体引力偏折排列，
-                // 必须在时域上均匀铺开（保留不同时段的候选窗口并发探索），避免好窗口被 2-body 能量误杀
+                // 按时序排列后均匀铺开（保留不同时段的候选窗口并发探索），避免好窗口被 2-body 能量误杀
+                var timeOrdered = windows.OrderBy(w => w.WindowStartUT).ToList();
                 prioritizedWindows = new List<MGASurrogatePreFilter.SynodicWindowCandidate>();
                 for (int i = 0; i < maxEvalWindows; i++)
                 {
-                    int idx = (int)Math.Round(i * (windows.Count - 1.0) / (maxEvalWindows - 1.0));
-                    prioritizedWindows.Add(windows[idx]);
+                    int idx = (int)Math.Round(i * (timeOrdered.Count - 1.0) / (maxEvalWindows - 1.0));
+                    prioritizedWindows.Add(timeOrdered[idx]);
                 }
             }
             else

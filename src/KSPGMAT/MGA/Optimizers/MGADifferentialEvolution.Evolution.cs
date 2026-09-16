@@ -161,7 +161,7 @@ namespace KSPGMAT.MGA
                                         double offset = candidate[d] - bestResCenter;
                                         double maxOffset = (config != null && config.ResonantMaxOffsetDays > 0)
                                             ? config.ResonantMaxOffsetDays * 86400.0
-                                            : Math.Max(5.0 * 86400.0, tOrb * 0.10);
+                                            : Math.Max(10.0 * 86400.0, tOrb * 0.20);
                                         candidate[d] = Math.Max(lowerBounds[d], Math.Min(upperBounds[d], bestResCenter + Math.Max(-maxOffset, Math.Min(maxOffset, offset))));
                                     }
                                 }

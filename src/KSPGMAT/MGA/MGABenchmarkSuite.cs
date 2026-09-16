@@ -5,6 +5,7 @@ using System.Text;
 using System.Threading;
 using UnityEngine;
 using KSPGMAT.Model;
+using KSPGMAT.MGA.Solver;
 
 namespace KSPGMAT.MGA {
     /// <summary>
@@ -213,6 +214,9 @@ namespace KSPGMAT.MGA {
             public bool BlindSearchUsedFlyby { get; set; }
 
             public MGASolution Solution { get; set; }
+            public MGASolution BestFuelSolution { get; set; }
+            public MGASolution BestTimeSolution { get; set; }
+            public List<MGASolution> ParetoSolutions { get; set; }
             public string GMATScriptPreview { get; set; }
             public string DetailedReport { get; set; }
         }
@@ -283,6 +287,12 @@ namespace KSPGMAT.MGA {
                 HistoricToFDays = new List<double> { 193.0, 424.0, 55.0, 499.0, 1279.0 },
                 NoInsertionBurn = true,
                 EngineMode = MGAEngineMode.DeepSpaceManeuver1DSM,
+                FlybyStrategies = new List<MGAFlybyStrategy> {
+                    MGAFlybyStrategy.UnpoweredFlyby,
+                    MGAFlybyStrategy.UnpoweredFlyby,
+                    MGAFlybyStrategy.UnpoweredFlyby,
+                    MGAFlybyStrategy.UnpoweredFlyby
+                },
                 DsmEtaDefault = 0.5
             },
 
@@ -817,13 +827,38 @@ namespace KSPGMAT.MGA {
                 searchCfg.EnablePermutationsAndInsertions = (testCase.SearchMode == MGABenchmarkMode.TopologyBlind);
                 searchCfg.EnableEphemerisReachabilityFilter = true;
                 searchCfg.AutoTuneToFBounds = true;
+                double maxAllowedToF = (testCase.HistoricFlightDaysMax > 0)
+                    ? testCase.HistoricFlightDaysMax * (1.0 + testCase.MaxAcceptableToFRelTolerance)
+                    : -1.0;
+
                 if (legBounds != null && legBounds.Count > 0) {
-                    searchCfg.TotalToFMaxDays = legBounds.Sum(b => b.MaxDays);
-                } else if (testCase.HistoricFlightDaysMax > 0) {
-                    searchCfg.TotalToFMaxDays = testCase.HistoricFlightDaysMax * (1.0 + testCase.MaxAcceptableToFRelTolerance);
+                    double legSum = legBounds.Sum(b => b.MaxDays);
+                    searchCfg.TotalToFMaxDays = (maxAllowedToF > 0) ? Math.Min(legSum, maxAllowedToF) : legSum;
                 } else {
-                    searchCfg.TotalToFMaxDays = -1.0;
+                    searchCfg.TotalToFMaxDays = maxAllowedToF;
                 }
+
+                // 将工程寿命硬限与物理/工质约束注入约束管理器 Profile
+                var hp = new MGAHighValueParameters();
+                if (searchCfg.TotalToFMaxDays > 0) {
+                    hp.MaxMissionDurationDays = searchCfg.TotalToFMaxDays;
+                }
+                double dvBudget = (testCase.HistoricTotalDeltaVMs > 0)
+                    ? testCase.HistoricTotalDeltaVMs * (1.0 + testCase.MaxAcceptableDvRelTolerance)
+                    : testCase.HistoricTotalDeltaVMaxMs;
+                if (dvBudget > 0) {
+                    hp.MaxVesselDeltaVMs = dvBudget;
+                    hp.LaunchDeltaVCeilingMs = dvBudget;
+                }
+                if (testCase.EngineMode == MGAEngineMode.BallisticImpulsive) {
+                    hp.StrictUnpoweredFlyby = true;
+                    hp.MaxDsmDeltaVMs = 0.0;
+                } else if (testCase.FlybyStrategies != null && testCase.FlybyStrategies.All(s => s == MGAFlybyStrategy.UnpoweredFlyby)) {
+                    hp.StrictUnpoweredFlyby = true;
+                }
+                var constraintProfile = MGAConstraintManager.CreateProfile(hp, testCase.DepartureBody, testCase.FlybySequence.Last());
+                MGAConstraintManager.ApplyToSolverConfig(constraintProfile, searchCfg);
+                MGAConstraintManager.ApplyToMGAConfig(constraintProfile, searchMga);
 
                 KSPGMATLog.Info("Benchmark",
                     $"[{testCase.MissionName}] {DescribeMode(testCase.SearchMode)}: " +
@@ -854,19 +889,39 @@ namespace KSPGMAT.MGA {
                         return true;
                     }
 
-                    // 纯物理择优原则: 拓扑相符 ➔ 总ΔV最小 ➔ 航时较短 ➔ 航段数最小 (绝不依赖测试答案倒挑)
-                    sol = pool
-                        .OrderByDescending(s => IsTopologyCompliant(s))
-                        .ThenBy(s => s.TotalDeltaVKms)
-                        .ThenBy(s => s.TotalFlightDays)
-                        .ThenBy(s => (s.Legs != null) ? s.Legs.Count : int.MaxValue)
-                        .FirstOrDefault();
+                    // 1. 物理前置初筛: 拓扑合规 ➔ 飞掠无动力守恒 (若任务要求纯无动力) ➔ 任务寿命硬限
+                    var candidatePool = pool.Where(s => IsTopologyCompliant(s)).ToList();
+                    if (candidatePool.Count == 0) candidatePool = pool;
+
+                    bool requireUnpowered = (testCase.EngineMode == MGAEngineMode.BallisticImpulsive) ||
+                                            (testCase.FlybyStrategies != null && testCase.FlybyStrategies.All(st => st == MGAFlybyStrategy.UnpoweredFlyby));
+                    if (requireUnpowered) {
+                        var strictlyUnpowered = candidatePool.Where(s => s.TotalFlybyDeltaVKms <= 0.005).ToList();
+                        if (strictlyUnpowered.Count > 0) candidatePool = strictlyUnpowered;
+                    }
+
+                    if (maxAllowedToF > 0) {
+                        var durationCompliant = candidatePool.Where(s => s.TotalFlightDays <= maxAllowedToF + 10.0).ToList();
+                        if (durationCompliant.Count > 0) candidatePool = durationCompliant;
+                    }
+
+                    // 2. 导出多序列解集束与 Pareto 前沿，并自适应选定拐点平衡解 (Knee)
+                    double refDvKms = (testCase.HistoricTotalDeltaVMs > 0) ? testCase.HistoricTotalDeltaVMs / 1000.0 : 0.0;
+                    var bundle = MGASolutionOrdering.BuildSolutionBundle(candidatePool, config.CentralBody, refDvKms);
+
+                    sol = bundle.KneeSolution ?? bundle.BestFuelSolution ?? candidatePool.FirstOrDefault();
+                    res.BestFuelSolution = bundle.BestFuelSolution;
+                    res.BestTimeSolution = bundle.BestTimeSolution;
+                    res.ParetoSolutions = bundle.ParetoFront;
+
                     if (sol != null) {
                         int flybyLegs = (sol.Legs != null) ? Math.Max(0, sol.Legs.Count - 1) : 0;
                         KSPGMATLog.Info("Benchmark",
                             $"[{testCase.MissionName}] 候选解 {valid.Count} 个 (物理闭环 {feasibleSols.Count} 个), " +
-                            $"按 min(ΔV) 择优: 航段={sol.Legs?.Count ?? 0} (含 {flybyLegs} 次飞掠), " +
-                            $"总ΔV={sol.TotalDeltaVKms * 1000.0:F0} m/s, 航时={sol.TotalFlightDays:F0}d" +
+                            $"Pareto 拐点择优: 航段={sol.Legs?.Count ?? 0} (含 {flybyLegs} 次飞掠), " +
+                            $"总ΔV={sol.TotalDeltaVKms * 1000.0:F0} m/s, 航时={sol.TotalFlightDays:F0}d, " +
+                            $"解集束: [最省燃料] {(bundle.BestFuelSolution != null ? $"{bundle.BestFuelSolution.TotalDeltaVKms * 1000.0:F0}m/s, {bundle.BestFuelSolution.TotalFlightDays:F0}d" : "N/A")} | " +
+                            $"[最快到达] {(bundle.BestTimeSolution != null ? $"{bundle.BestTimeSolution.TotalDeltaVKms * 1000.0:F0}m/s, {bundle.BestTimeSolution.TotalFlightDays:F0}d" : "N/A")}" +
                             (flybyLegs == 0 ? " —— 注意: 择优结果为**直达转移**, 未使用引力助推" : ""));
                     }
                 }
@@ -1054,6 +1109,20 @@ namespace KSPGMAT.MGA {
                 if (!res.DeltaVWithinTolerance) sb.AppendLine($"   ❌ 总ΔV超出历史容差区间 (计算={res.ComputedTotalDV:F1} m/s)");
                 if (!res.FlightDaysWithinTolerance) sb.AppendLine($"   ❌ 总航时超出历史工程包络 (计算={res.ComputedFlightDays:F1} 天 vs 允许上限 {tofBandHi:F0} 天)");
                 if (!res.TopologyMatchesHistoric) sb.AppendLine($"   ❌ 拓扑构型与历史不符: {topologyMismatchReason}");
+            }
+
+            if (res.ParetoSolutions != null && res.ParetoSolutions.Count > 0) {
+                sb.AppendLine($"\n【八、 帕累托前沿与多候选序列方案集束】");
+                sb.AppendLine($"   • 帕累托非支配前沿方案总数: {res.ParetoSolutions.Count} 个");
+                if (res.BestFuelSolution != null) {
+                    sb.AppendLine($"   • [极致节能方案] 发射={GMATClient.FormatUtcGregorian(res.BestFuelSolution.DepartureUT)} | 总ΔV={res.BestFuelSolution.TotalDeltaVKms * 1000.0:F1} m/s | 航时={res.BestFuelSolution.TotalFlightDays:F1} 天");
+                }
+                if (res.BestTimeSolution != null) {
+                    sb.AppendLine($"   • [极速到达方案] 发射={GMATClient.FormatUtcGregorian(res.BestTimeSolution.DepartureUT)} | 总ΔV={res.BestTimeSolution.TotalDeltaVKms * 1000.0:F1} m/s | 航时={res.BestTimeSolution.TotalFlightDays:F1} 天");
+                }
+                if (sol != null) {
+                    sb.AppendLine($"   • [拐点交付方案 (Knee)] 发射={GMATClient.FormatUtcGregorian(sol.DepartureUT)} | 总ΔV={sol.TotalDeltaVKms * 1000.0:F1} m/s | 航时={sol.TotalFlightDays:F1} 天");
+                }
             }
 
             res.DetailedReport = sb.ToString();

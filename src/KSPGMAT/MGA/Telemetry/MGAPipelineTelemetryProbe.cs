@@ -622,7 +622,7 @@ namespace KSPGMAT.MGA.Telemetry
             sb.AppendLine($"| 最早始发历元 | {Mission.DepartureEpochUtcStr} (UT {Mission.EarliestDepartureUT:F0}) | 搜索起点 |");
             sb.AppendLine($"| 时间搜索跨度 | {Mission.SearchSpanDays:F1} | 天 (Days) |");
             sb.AppendLine($"| 航天器最大 ΔV 预算 | {(Mission.VesselMaxDvMs > 0 ? $"{Mission.VesselMaxDvMs:F1} m/s" : "无限制")} | 推进剂约束 |");
-            sb.AppendLine($"| 允许最大中途 DSM ΔV | {(Mission.MaxDsmDvMs > 0 ? $"{Mission.MaxDsmDvMs:F1} m/s" : "同总预算")} | 单脉冲机动上限 |");
+            sb.AppendLine($"| 允许最大中途 DSM ΔV | {(Mission.MaxDsmDvMs > 0 ? $"{Mission.MaxDsmDvMs:F1} m/s" : (Mission.VesselMaxDvMs > 0 ? $"自动 (联动总预算 {Mission.VesselMaxDvMs:F0} m/s)" : "自动 (无限制)"))} | 单脉冲机动上限 |");
             sb.AppendLine($"| 地表安全净空安全裕度 | {Mission.SafeFlybyAltMarginKm:F1} | km (大气/地形防撞) |");
             sb.AppendLine($"| 总计算耗时 | **{Mission.TotalElapsedSec:F2}** | 秒 (Seconds) |");
             sb.AppendLine($"| 最终收敛求解状态 | {(Mission.IsSuccess ? "✅ 成功收敛 (Converged)" : "❌ 未找到合规解 (Failed)")} | 物理合规解交付 |\n");

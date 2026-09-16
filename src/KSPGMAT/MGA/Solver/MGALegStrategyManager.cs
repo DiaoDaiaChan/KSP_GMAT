@@ -30,6 +30,7 @@ namespace KSPGMAT.MGA.Solver
         EngineModeLowThrust,             // 由连续低推力模式 (LowThrustSimsFlanagan) 激活低推力
         ResonantLegAutoDSM,              // 检测到同星共振段 (如 Venus➔Venus, Earth➔Earth)，智能激活 1-DSM 克服共振退化
         LawdenPrimerOptimalInsertion,    // 劳登引向量极大值超标 (|p| > 1.0)，在最优时间点智能插入 DSM 脉冲
+        PropulsionBudgetAmpleAutoDSM,    // 飞船工质预算充裕或借力几何苛刻，自适应启用 1-DSM 拓展转移走廊
         DefaultBallistic                 // 默认纯弹道 Lambert 转移
     }
 
@@ -193,15 +194,16 @@ namespace KSPGMAT.MGA.Solver
                 }
                 else
                 {
+                    // 结果导向自适应决策：在用户未显式锁定航段策略时，依据工质预算与推进模式智能判定
+                    double effectiveDsmMax = config.MaxDsmDeltaVMs > 0
+                        ? config.MaxDsmDeltaVMs
+                        : ((config.ConstrainByVesselDeltaV && config.VesselMaxDeltaVMs > 0) ? config.VesselMaxDeltaVMs : double.MaxValue);
+                    bool vesselBudgetAmple = (!config.ConstrainByVesselDeltaV) ||
+                                             (config.VesselMaxDeltaVMs >= 2500.0) ||
+                                             (effectiveDsmMax >= 100.0);
+
                     switch (config.EngineMode)
                     {
-                        case MGAEngineMode.BallisticImpulsive:
-                            // ★ 核心红线：非共振段严格纯弹道，绝不擅自注水 1-DSM
-                            spec.Strategy = MGALegStrategy.Ballistic;
-                            spec.Reason = MGALegStrategyReason.EngineModeBallistic;
-                            spec.Description = "纯弹道二体 Lambert 转移 (无中途推进)";
-                            break;
-
                         case MGAEngineMode.LowThrustSimsFlanagan:
                             spec.Strategy = MGALegStrategy.ContinuousLowThrust;
                             spec.Reason = MGALegStrategyReason.EngineModeLowThrust;
@@ -215,12 +217,17 @@ namespace KSPGMAT.MGA.Solver
                             break;
 
                         case MGAEngineMode.HeterogeneousHybrid:
-                        default:
                             if (k == 0)
                             {
                                 spec.Strategy = MGALegStrategy.Ballistic;
                                 spec.Reason = MGALegStrategyReason.DefaultBallistic;
                                 spec.Description = "首段始发逃逸，采用纯开普勒弹道转移";
+                            }
+                            else if (vesselBudgetAmple)
+                            {
+                                spec.Strategy = MGALegStrategy.DeepSpaceManeuver1DSM;
+                                spec.Reason = MGALegStrategyReason.PropulsionBudgetAmpleAutoDSM;
+                                spec.Description = "工质预算充足，中间段自适应开放 1-DSM 机动";
                             }
                             else
                             {
@@ -228,6 +235,13 @@ namespace KSPGMAT.MGA.Solver
                                 spec.Reason = MGALegStrategyReason.DefaultBallistic;
                                 spec.Description = "行星际中继航段默认纯弹道";
                             }
+                            break;
+
+                        case MGAEngineMode.BallisticImpulsive:
+                        default:
+                            spec.Strategy = MGALegStrategy.Ballistic;
+                            spec.Reason = MGALegStrategyReason.EngineModeBallistic;
+                            spec.Description = "纯弹道二体 Lambert 转移 (无中途推进，由优化器引矢量自愈按需自适应升级)";
                             break;
                     }
                 }
@@ -239,12 +253,13 @@ namespace KSPGMAT.MGA.Solver
             for (int j = 0; j < fbCount; j++)
             {
                 string fbBody = (j + 1 < chain.Count) ? chain[j + 1] : "FlybyBody";
+                bool allowPowered = config.AllowPoweredFlyby;
 
                 var fbSpec = new MGAFlybyStrategySpec
                 {
                     FlybyIndex = j,
                     Body = fbBody,
-                    AllowPoweredFlyby = config.AllowPoweredFlyby
+                    AllowPoweredFlyby = allowPowered
                 };
 
                 if (hasExplicitFlybys)
@@ -252,6 +267,12 @@ namespace KSPGMAT.MGA.Solver
                     fbSpec.Strategy = config.FlybyStrategies[j];
                     fbSpec.Reason = MGAFlybyStrategyReason.UserExplicit;
                     fbSpec.Description = "调用方或任务用例显式指定借力节点策略";
+                }
+                else if (allowPowered)
+                {
+                    fbSpec.Strategy = MGAFlybyStrategy.PoweredFlyby;
+                    fbSpec.Reason = MGAFlybyStrategyReason.DeflectionLimitPoweredFallback;
+                    fbSpec.Description = "工质充裕或允许动力飞掠，自适应开放动力借力";
                 }
                 else
                 {
@@ -362,15 +383,16 @@ namespace KSPGMAT.MGA.Solver
                 }
                 else
                 {
+                    // 结果导向自适应决策：在用户未显式锁定航段策略时，依据工质预算与推进模式智能判定
+                    double effectiveDsmMax = config.MaxDsmDeltaVMs > 0
+                        ? config.MaxDsmDeltaVMs
+                        : ((config.ConstrainByVesselDeltaV && config.VesselMaxDeltaVMs > 0) ? config.VesselMaxDeltaVMs : double.MaxValue);
+                    bool vesselBudgetAmple = (!config.ConstrainByVesselDeltaV) ||
+                                             (config.VesselMaxDeltaVMs >= 2500.0) ||
+                                             (effectiveDsmMax >= 100.0);
+
                     switch (config.EngineMode)
                     {
-                        case MGAEngineMode.BallisticImpulsive:
-                            // ★ 核心红线：非共振段严格纯弹道，绝不擅自注水 1-DSM
-                            spec.Strategy = MGALegStrategy.Ballistic;
-                            spec.Reason = MGALegStrategyReason.EngineModeBallistic;
-                            spec.Description = "纯弹道二体 Lambert 转移 (无中途推进)";
-                            break;
-
                         case MGAEngineMode.LowThrustSimsFlanagan:
                             spec.Strategy = MGALegStrategy.ContinuousLowThrust;
                             spec.Reason = MGALegStrategyReason.EngineModeLowThrust;
@@ -384,12 +406,17 @@ namespace KSPGMAT.MGA.Solver
                             break;
 
                         case MGAEngineMode.HeterogeneousHybrid:
-                        default:
                             if (k == 0)
                             {
                                 spec.Strategy = MGALegStrategy.Ballistic;
                                 spec.Reason = MGALegStrategyReason.DefaultBallistic;
                                 spec.Description = "首段始发逃逸，采用纯开普勒弹道转移";
+                            }
+                            else if (vesselBudgetAmple)
+                            {
+                                spec.Strategy = MGALegStrategy.DeepSpaceManeuver1DSM;
+                                spec.Reason = MGALegStrategyReason.PropulsionBudgetAmpleAutoDSM;
+                                spec.Description = "工质预算充足，中间段自适应开放 1-DSM 机动";
                             }
                             else
                             {
@@ -397,6 +424,13 @@ namespace KSPGMAT.MGA.Solver
                                 spec.Reason = MGALegStrategyReason.DefaultBallistic;
                                 spec.Description = "行星际中继航段默认纯弹道";
                             }
+                            break;
+
+                        case MGAEngineMode.BallisticImpulsive:
+                        default:
+                            spec.Strategy = MGALegStrategy.Ballistic;
+                            spec.Reason = MGALegStrategyReason.EngineModeBallistic;
+                            spec.Description = "纯弹道二体 Lambert 转移 (无中途推进，由优化器引矢量自愈按需自适应升级)";
                             break;
                     }
                 }
@@ -407,12 +441,13 @@ namespace KSPGMAT.MGA.Solver
             for (int j = 0; j < fbCount; j++)
             {
                 string fbBody = (j + 1 < chain.Count) ? chain[j + 1] : "FlybyBody";
+                bool allowPowered = (config.ArrivalOrbitType == MGAArrivalOrbitType.Flyby);
 
                 var fbSpec = new MGAFlybyStrategySpec
                 {
                     FlybyIndex = j,
                     Body = fbBody,
-                    AllowPoweredFlyby = (config.ArrivalOrbitType == MGAArrivalOrbitType.Flyby)
+                    AllowPoweredFlyby = allowPowered
                 };
 
                 if (hasExplicitFlybys)
@@ -420,6 +455,12 @@ namespace KSPGMAT.MGA.Solver
                     fbSpec.Strategy = config.FlybyStrategies[j];
                     fbSpec.Reason = MGAFlybyStrategyReason.UserExplicit;
                     fbSpec.Description = "调用方或任务用例显式指定借力节点策略";
+                }
+                else if (allowPowered)
+                {
+                    fbSpec.Strategy = MGAFlybyStrategy.PoweredFlyby;
+                    fbSpec.Reason = MGAFlybyStrategyReason.DeflectionLimitPoweredFallback;
+                    fbSpec.Description = "工质充裕或允许动力飞掠，自适应开放动力借力";
                 }
                 else
                 {

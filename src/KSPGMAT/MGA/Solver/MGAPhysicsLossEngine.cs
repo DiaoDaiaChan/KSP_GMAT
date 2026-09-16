@@ -301,6 +301,10 @@ namespace KSPGMAT.MGA
                 // =============================================================
                 int legCount = Math.Max(1, sol.Legs.Count);
                 double lambdaL1 = DsmSparsityWeight / legCount;
+                if (config.EngineMode == MGAEngineMode.DeepSpaceManeuver1DSM || (config.ConstrainByVesselDeltaV && config.VesselMaxDeltaVMs > 3000.0))
+                {
+                    lambdaL1 *= 0.1; // 预算充裕或明确开启 DSM 时，平滑稀疏惩罚，允许算法自主机动
+                }
                 loss += lambdaL1 * (sol.TotalDsmDeltaVKms / dvRefKms);
 
                 // =============================================================
@@ -377,13 +381,22 @@ namespace KSPGMAT.MGA
             // =================================================================
             // 约束 8: 纯无动力引力助推 —— 归一化尺度 = 参考预算的 1%
             //   (即"飞掠脉冲若超过总预算 1%, 视为发生了一次真实机动")
-            //   取代原 PoweredFlybyPenaltyScale = 2500 的手调凸模。
+            //   若设定为严格无动力飞掠，超出 5.0 m/s 门限施加陡峭二次势垒
             // =================================================================
             if (sol.TotalFlybyDeltaVKms > 1e-6)
             {
                 double pulseScaleKms = 0.01 * dvRefKms;
                 loss += lam.Penalty(MGAConstraint.PoweredFlyby,
                     MGAPhysicalScales.NormalizedViolation(sol.TotalFlybyDeltaVKms, pulseScaleKms));
+
+                bool isStrictUnpowered = (config.ConstraintProfile != null && config.ConstraintProfile.IsEnabled(MGAConstraintType.StrictUnpoweredFlyby))
+                                      || (!config.AllowPoweredFlyby && (config.FlybyStrategies == null || config.FlybyStrategies.All(s => s == MGAFlybyStrategy.UnpoweredFlyby)));
+                if (isStrictUnpowered && sol.TotalFlybyDeltaVKms > 0.005)
+                {
+                    // 物理不可行陡峭二次势垒：严防算法在中间飞掠点借 20 m/s 飞掠冲量套取 170 m/s 发射节能
+                    double fbOver = (sol.TotalFlybyDeltaVKms - 0.005) / 0.005;
+                    loss += 10.0 * fbOver + 20.0 * fbOver * fbOver;
+                }
             }
 
             // =================================================================
@@ -536,6 +549,12 @@ namespace KSPGMAT.MGA
         private static double ResolveMaxTofDays(MGAConfig config, MGASolution sol)
         {
             if (config != null && config.EnableMaxDuration && config.MaxDurationDays > 0) return config.MaxDurationDays;
+
+            if (config?.ConstraintProfile != null && config.ConstraintProfile.IsEnabled(MGAConstraintType.MaxMissionDuration))
+            {
+                double pMax = config.ConstraintProfile.GetThreshold(MGAConstraintType.MaxMissionDuration);
+                if (pMax > 0) return pMax;
+            }
 
             if (config != null && config.MaxToFDays != null && config.MaxToFDays.Count > 0)
             {

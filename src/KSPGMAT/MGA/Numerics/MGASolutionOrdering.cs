@@ -113,6 +113,68 @@ namespace KSPGMAT.MGA
             return sb.ToString();
         }
         /// <summary>
+        /// MGA 多序列决策候选解集束 (多维度多目标输出契约)
+        /// </summary>
+        public sealed class MGASolutionBundle
+        {
+            public MGASolution BestSolution => KneeSolution ?? BestFuelSolution ?? BestTimeSolution;
+            public MGASolution KneeSolution { get; set; }
+            public MGASolution BestFuelSolution { get; set; }
+            public MGASolution BestTimeSolution { get; set; }
+            public List<MGASolution> ParetoFront { get; set; } = new List<MGASolution>();
+            public List<MGASolution> AllRanked { get; set; } = new List<MGASolution>();
+        }
+
+        /// <summary>
+        /// 从任意解集中提取 (总ΔV vs 总航时) 帕累托非支配前沿 (Pareto-optimal Front)
+        /// </summary>
+        public static List<MGASolution> ExtractParetoFront(IEnumerable<MGASolution> source)
+        {
+            if (source == null) return new List<MGASolution>();
+            var valid = source.Where(s => s != null && s.AllLegsFeasible).ToList();
+            if (valid.Count == 0) valid = source.Where(s => s != null).ToList();
+            if (valid.Count <= 1) return valid;
+
+            var rankedFuel = valid.Deterministic().ToList();
+            var pareto = new List<MGASolution>();
+            double minTofSoFar = double.MaxValue;
+            foreach (var s in rankedFuel)
+            {
+                if (s.TotalFlightDays < minTofSoFar)
+                {
+                    pareto.Add(s);
+                    minTofSoFar = s.TotalFlightDays;
+                }
+            }
+            return pareto;
+        }
+
+        /// <summary>
+        /// 对候选解集进行帕累托与多目标系统分析，生成全景多序列解集束
+        /// </summary>
+        public static MGASolutionBundle BuildSolutionBundle(IEnumerable<MGASolution> source, string centralBody = "Sun", double dvRefKms = 0.0, double paretoSlopeMsPerYear = 150.0)
+        {
+            var bundle = new MGASolutionBundle();
+            if (source == null) return bundle;
+
+            var valid = source.Where(s => s != null && s.AllLegsFeasible).ToList();
+            if (valid.Count == 0) valid = source.Where(s => s != null).ToList();
+            if (valid.Count == 0) return bundle;
+
+            var rankedFuel = valid.Deterministic().ToList();
+            var rankedTime = valid.DeterministicByFlightDays().ToList();
+            var pareto = ExtractParetoFront(valid);
+
+            bundle.AllRanked = rankedFuel;
+            bundle.BestFuelSolution = rankedFuel.FirstOrDefault();
+            bundle.BestTimeSolution = rankedTime.FirstOrDefault();
+            bundle.ParetoFront = pareto;
+            bundle.KneeSolution = SelectParetoKneeSolution(pareto, centralBody, dvRefKms, paretoSlopeMsPerYear) ?? rankedFuel.FirstOrDefault();
+
+            return bundle;
+        }
+
+        /// <summary>
         /// 综合考虑工质最优与航时惩罚的帕累托平衡选解器 (Pareto-Knee Balanced Selector)。
         /// 在 Pareto 前沿解集中，识别边际替换率合理的膝部解，抑制航时无限拖延换取微小工质降低的伪最优陷阱。
         /// </summary>
@@ -124,18 +186,9 @@ namespace KSPGMAT.MGA
 
         /// <summary>
         /// 帕累托膝部选解。
-        ///
-        /// 【2026-09-14 第二轮审计修正 —— 消除"目标函数不一致"】
-        /// 原实现在此处**就地重写**了一份与 <c>MGAPhysicsLossEngine</c> 形式不同的航时软界:
-        ///     此处   : `dvKms += (0.15*e + 0.15*e²) * dvKms`   ← 乘在**解自身 ΔV** 上
-        ///     损失侧 : `loss  += (0.15*e + 0.15*e²)`           ← 加在**预算单位**上
-        /// 后果: 优化器最小化的目标与最终选解所用的排序**不是同一个函数** —— 同一个解在两个阶段的
-        /// 相对优劣可能相反; 且乘性形式会**对高 ΔV 解施加更大的绝对惩罚**, 与"压制低 ΔV 长航时退化解"
-        /// 的初衷方向相反。
-        /// 现改为: 两处共用 <see cref="MGAPhysicsLossEngine.ToFSoftExcessPenalty"/>, 并统一为
-        /// **以参考预算 <paramref name="dvRefKms"/> 为单位的加性惩罚**。
+        /// 两处共用 MGAPhysicsLossEngine.ToFSoftExcessPenalty, 并统一为以参考预算 dvRefKms 为单位的加性惩罚。
         /// </summary>
-        public static MGASolution SelectParetoKneeSolution(IEnumerable<MGASolution> paretoFront, string centralBody = "Sun", double dvRefKms = 0.0)
+        public static MGASolution SelectParetoKneeSolution(IEnumerable<MGASolution> paretoFront, string centralBody = "Sun", double dvRefKms = 0.0, double paretoSlopeMsPerYear = 150.0)
         {
             if (paretoFront == null) return null;
             var list = paretoFront.Where(s => s != null && s.AllLegsFeasible).ToList();
@@ -143,10 +196,7 @@ namespace KSPGMAT.MGA
             if (list.Count == 1) return list[0];
 
             double nominalDays = MGAPhysicsLossEngine.ResolveNominalTofDays(list[0], centralBody);
-            if (nominalDays <= 0) return list.OrderBy(s => s.TotalDeltaVKms).First();
 
-            // 参考预算未知时退化为"以本前沿中位 ΔV 为尺度" —— 仍在同一量纲上加性,
-            // 只是尺度来自当前解集而非任务预算; 该退化路径已在报告中登记。
             double penaltyScaleKms = dvRefKms;
             if (penaltyScaleKms <= 1e-9)
             {
@@ -156,8 +206,11 @@ namespace KSPGMAT.MGA
             if (penaltyScaleKms <= 1e-9) penaltyScaleKms = 1.0;
 
             return list
-                .OrderBy(s => s.TotalDeltaVKms
-                              + MGAPhysicsLossEngine.ToFSoftExcessPenalty(s.TotalFlightDays, nominalDays) * penaltyScaleKms)
+                .OrderBy(s => (s.PrimerVector != null && s.PrimerVector.MaxPMag > 1.15 ? 0.2 : 0.0) +
+                              ((nominalDays > 0)
+                                ? MGAPhysicsLossEngine.ToFSoftExcessPenalty(s.TotalFlightDays, nominalDays) * penaltyScaleKms
+                                : 0.0) +
+                              s.TotalDeltaVKms)
                 .ThenBy(s => s.TotalDeltaVKms)
                 .ThenBy(s => s.TotalFlightDays)
                 .First();

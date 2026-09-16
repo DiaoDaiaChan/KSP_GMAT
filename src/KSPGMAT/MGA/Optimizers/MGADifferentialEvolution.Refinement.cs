@@ -203,11 +203,13 @@ namespace KSPGMAT.MGA
                         // 1. 逐坐标探索移动 (Exploratory Move)
                         for (int d = 0; d < dim; d++) {
                             bool isResLeg = (d >= 1 && d <= legCount && fullChain[d - 1].Equals(fullChain[d], StringComparison.OrdinalIgnoreCase));
-                            double resOffsetMax = (config != null && config.ResonantMaxOffsetDays > 0) ? config.ResonantMaxOffsetDays * 86400.0 : 0.4 * 86400.0;
+                            double resOffsetMax = (config != null && config.ResonantMaxOffsetDays > 0)
+                                ? config.ResonantMaxOffsetDays * 86400.0
+                                : Math.Max(3.0 * 86400.0, (upperBounds[d] - lowerBounds[d]) * 0.05);
                             double span = isResLeg ? resOffsetMax : (upperBounds[d] - lowerBounds[d]);
                             double[] probeFactors;
                             if (isResLeg) {
-                                probeFactors = new double[] { -0.5, 0.5, -0.1, 0.1 };
+                                probeFactors = new double[] { -0.5, 0.5, -0.2, 0.2, -0.05, 0.05 };
                             } else if (d > legCount) {
                                 // DSM 航向分率 Eta 坐标探索: 涵盖向出发星靠拢与到达星靠拢典型值
                                 probeFactors = new double[] { -0.20, 0.20, -0.05, 0.05 };

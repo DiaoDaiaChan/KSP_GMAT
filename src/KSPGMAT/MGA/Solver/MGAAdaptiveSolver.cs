@@ -84,6 +84,9 @@ namespace KSPGMAT.MGA
         public bool AutoAdaptGiantPlanetEllipse { get; set; } = true; // 预留 GUI 自动按巨行星科学标准椭圆推算远拱点
         public MGAPropulsionType PropulsionType { get; set; } = MGAPropulsionType.ChemicalImpulsive; // 预留 GUI 推进系统模式 (化学脉冲 vs 低推力电推)
         public bool NoInsertionBurn { get; set; } = false; // 高速飞掠模式 (Flyby Only / 终点刹车为0)
+        public bool AllowPoweredFlyby { get; set; } = true;
+        public bool EnableMaxDuration { get; set; } = false;
+        public double MaxDurationDays { get; set; } = -1.0;
         public MGAEngineMode EngineMode { get; set; } = MGAEngineMode.BallisticImpulsive; // 纯弹道 vs 1-DSM深空机动
         public List<MGALegStrategy> LegStrategies { get; set; } = null;
         public List<MGAFlybyStrategy> FlybyStrategies { get; set; } = null;
@@ -172,6 +175,9 @@ namespace KSPGMAT.MGA
             c.SeedEpochUT = this.SeedEpochUT;
             c.SeedToFDays = this.SeedToFDays;
             c.NoInsertionBurn = this.NoInsertionBurn;
+            c.AllowPoweredFlyby = this.AllowPoweredFlyby;
+            c.EnableMaxDuration = this.EnableMaxDuration;
+            c.MaxDurationDays = this.MaxDurationDays;
             c.EngineMode = this.EngineMode;
             c.LegStrategies = this.LegStrategies != null ? new List<MGALegStrategy>(this.LegStrategies) : null;
             c.FlybyStrategies = this.FlybyStrategies != null ? new List<MGAFlybyStrategy>(this.FlybyStrategies) : null;
@@ -199,6 +205,7 @@ namespace KSPGMAT.MGA
             c.InitialVelSigmaMs = this.InitialVelSigmaMs;
             c.FlybySafeAtmosphereMarginKm = this.FlybySafeAtmosphereMarginKm;
             c.EnforceSafeFlybyMargin = this.EnforceSafeFlybyMargin;
+            c.ConstraintProfile = this.ConstraintProfile?.Clone();
             return c;
         }
 
@@ -235,6 +242,9 @@ namespace KSPGMAT.MGA
                 AutoAdaptGiantPlanetEllipse = cfg.AutoAdaptGiantPlanetEllipse,
                 PropulsionType = cfg.PropulsionType,
                 NoInsertionBurn = cfg.NoInsertionBurn || (cfg.ArrivalOrbitType == MGAArrivalOrbitType.Flyby),
+                AllowPoweredFlyby = cfg.AllowPoweredFlyby,
+                EnableMaxDuration = cfg.EnableMaxDuration,
+                MaxDurationDays = cfg.MaxDurationDays,
                 EnableLowEnergyManifoldCapture = cfg.EnableLowEnergyManifoldCapture,
                 EngineMode = cfg.EngineMode,
                 LegStrategies = cfg.LegStrategies != null ? new List<MGALegStrategy>(cfg.LegStrategies) : null,
@@ -254,7 +264,8 @@ namespace KSPGMAT.MGA
                 TotalToFMaxDays = maxTof,
                 EnableAlternatingPumping = true,
                 AutoTuneToFBounds = true,
-                LambertMaxRevs = (maxTof > 400.0) ? 1 : 0
+                LambertMaxRevs = (maxTof > 400.0) ? 1 : 0,
+                ConstraintProfile = cfg.ConstraintProfile?.Clone()
             };
 
             if (cfg.MinToFDays != null && cfg.MaxToFDays != null && cfg.MinToFDays.Count > 0)
@@ -351,7 +362,7 @@ namespace KSPGMAT.MGA
                 config.SearchStartUT,
                 (config.SearchEndUT - config.SearchStartUT) / 86400.0,
                 (config.ConstrainByVesselDeltaV && config.VesselMaxDeltaVMs > 0) ? config.VesselMaxDeltaVMs : 4000.0,
-                config.MaxDsmDeltaVMs > 0 ? config.MaxDsmDeltaVMs : 500.0,
+                config.MaxDsmDeltaVMs,
                 0.0
             );
             var reportSw = System.Diagnostics.Stopwatch.StartNew();
@@ -698,9 +709,13 @@ namespace KSPGMAT.MGA
             double launchTol = config.ConstraintProfile?.GetSpec(MGAConstraintType.LaunchC3Ceiling)?.ToleranceValue ?? 10.0;
             double tofTolOrdering = config.ConstraintProfile?.GetSpec(MGAConstraintType.MaxMissionDuration)?.ToleranceValue ?? 10.0;
 
+            bool isStrictUnpowered = (config.ConstraintProfile != null && config.ConstraintProfile.IsEnabled(MGAConstraintType.StrictUnpoweredFlyby))
+                                  || (!config.AllowPoweredFlyby && (config.FlybyStrategies == null || config.FlybyStrategies.All(st => st == MGAFlybyStrategy.UnpoweredFlyby)));
+
             var rawSolutions = allRawSolutions
                 .OrderBy(s => (config.LaunchDeltaVCeilingMs > 0 && s.LaunchDeltaVKms * 1000.0 > (config.LaunchDeltaVCeilingMs + launchTol) ? 1e6 : 0.0)
                             + (effectiveMaxToF > 0 && s.TotalFlightDays > (effectiveMaxToF + tofTolOrdering) ? 1e6 : 0.0)
+                            + (isStrictUnpowered && s.TotalFlybyDeltaVKms > 0.005 ? 1e6 : 0.0)
                             + (!s.AllLegsFeasible ? 1e5 : 0.0)
                             + s.TotalDeltaVKms)
                 .ToList();
@@ -753,10 +768,15 @@ namespace KSPGMAT.MGA
                 {
                     continue;
                 }
+                if (isStrictUnpowered && sol.TotalFlybyDeltaVKms > 0.005)
+                {
+                    continue;
+                }
 
                 string chainKey = sol.FlybyChainSummary ?? "";
                 topoCounts.TryGetValue(chainKey, out int chainCount);
-                if (chainCount >= 2)
+                int maxPerChain = (totalTopos <= 1) ? 8 : (totalTopos <= 3 ? 4 : 2);
+                if (chainCount >= maxPerChain)
                 {
                     continue;
                 }
@@ -837,10 +857,14 @@ namespace KSPGMAT.MGA
                 finalSolutions.Add(bestAudited);
             }
 
-            var bestSol = finalSolutions.FirstOrDefault() ?? auditedSolutions.FirstOrDefault() ?? rawSolutions.FirstOrDefault();
-            if (bestSol != null)
+            foreach (var s in finalSolutions)
             {
-                MGAFlybyDynamicsHelper.EnrichSolutionFlybyDynamics(bestSol);
+                if (s != null) MGAFlybyDynamicsHelper.EnrichSolutionFlybyDynamics(s);
+            }
+            if (finalSolutions.Count == 0)
+            {
+                var fallback = auditedSolutions.FirstOrDefault() ?? rawSolutions.FirstOrDefault();
+                if (fallback != null) MGAFlybyDynamicsHelper.EnrichSolutionFlybyDynamics(fallback);
             }
 
             reportSw.Stop();

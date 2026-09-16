@@ -130,6 +130,16 @@ namespace KSPGMAT.MGA.Solver
             return _specs.TryGetValue(type, out var s) && s.IsEnabled;
         }
 
+        public bool IsHard(MGAConstraintType type)
+        {
+            return _specs.TryGetValue(type, out var s) && s.IsHardConstraint;
+        }
+
+        public bool IsEnforced(MGAConstraintType type)
+        {
+            return _specs.TryGetValue(type, out var s) && s.IsEnabled && s.IsHardConstraint;
+        }
+
         public double GetThreshold(MGAConstraintType type, double fallback = 0.0)
         {
             return _specs.TryGetValue(type, out var s) ? s.ThresholdValue : fallback;
@@ -223,7 +233,19 @@ namespace KSPGMAT.MGA.Solver
             profile.AddSpec(MGAConstraintType.TotalVesselDeltaV, "飞船总工质机动预算", MGAConstraintCategory.PropulsionBudget, (hp.MaxVesselDeltaVMs > 0), (hp.MaxVesselDeltaVMs > 0), hp.MaxVesselDeltaVMs, 10.0, vRef, "m/s", "全航程总机动 Delta-V (发射额外出射 + 途经 DSM + 终点捕获) 不得超出飞船推进上限");
 
             // 7. 单脉冲途经深空机动 (DSM) 预算
-            profile.AddSpec(MGAConstraintType.MaxDsmDeltaV, "单次深空机动预算", MGAConstraintCategory.PropulsionBudget, (hp.MaxDsmDeltaVMs > 0), (hp.MaxDsmDeltaVMs > 0), hp.MaxDsmDeltaVMs, 5.0, Math.Max(100.0, hp.MaxDsmDeltaVMs), "m/s", "中途任一单次深空机动脉冲不得超出推力器单次点火上限");
+            bool hasExplicitDsmLimit = (hp.MaxDsmDeltaVMs > 0);
+            double dsmVal = hasExplicitDsmLimit ? hp.MaxDsmDeltaVMs : ((hp.MaxVesselDeltaVMs > 0) ? hp.MaxVesselDeltaVMs : 0.0);
+            profile.AddSpec(
+                MGAConstraintType.MaxDsmDeltaV,
+                "单次深空机动预算",
+                MGAConstraintCategory.PropulsionBudget,
+                (dsmVal > 0),
+                hasExplicitDsmLimit,
+                dsmVal,
+                5.0,
+                Math.Max(100.0, dsmVal),
+                "m/s",
+                hasExplicitDsmLimit ? "中途任一单次深空机动脉冲不得超出推力器单次点火上限" : "单段深空机动不设固定上限，自动受飞船总工质预算约束");
 
             // 8. 始发天体停泊轨出射 C3 / 注入限额
             profile.AddSpec(MGAConstraintType.LaunchC3Ceiling, "始发停泊轨出射 C3 限额", MGAConstraintCategory.PropulsionBudget, (hp.LaunchDeltaVCeilingMs > 0), (hp.LaunchDeltaVCeilingMs > 0), hp.LaunchDeltaVCeilingMs, 10.0, Math.Max(1000.0, hp.LaunchDeltaVCeilingMs), "m/s", "运载火箭注入级提供的最大出射速度增量门禁");
@@ -238,10 +260,12 @@ namespace KSPGMAT.MGA.Solver
             profile.AddSpec(MGAConstraintType.MaxSolarDistance, "航天器最大远日点能源上限", MGAConstraintCategory.EnvironmentalCorridor, (hp.MaxSolarDistanceAu > 0), (hp.MaxSolarDistanceAu > 0), hp.MaxSolarDistanceAu, 0.1, 1.0, "AU", "全轨道远日点不得超出太阳能电池板或深空通讯链路维持极限");
 
             // 12. 任务总寿命航时上限
-            profile.AddSpec(MGAConstraintType.MaxMissionDuration, "任务全寿命总航时上限", MGAConstraintCategory.TemporalLifetime, (hp.MaxTotalMissionDurationYears > 0), (hp.MaxTotalMissionDurationYears > 0), hp.MaxTotalMissionDurationYears * 365.25, 10.0, Math.Max(100.0, hp.MaxTotalMissionDurationYears * 365.25), "天", "自始发离轨至最终抵达目标的总在轨时间上限");
+            double maxDays = (hp.MaxMissionDurationDays > 0) ? hp.MaxMissionDurationDays : (hp.MaxTotalMissionDurationYears > 0 ? hp.MaxTotalMissionDurationYears * 365.25 : 0.0);
+            profile.AddSpec(MGAConstraintType.MaxMissionDuration, "任务全寿命总航时上限", MGAConstraintCategory.TemporalLifetime, (maxDays > 0), (maxDays > 0), maxDays, 10.0, Math.Max(100.0, maxDays), "天", "自始发离轨至最终抵达目标的总在轨时间上限");
 
             // 13. 任务总航时下限
-            profile.AddSpec(MGAConstraintType.MinMissionDuration, "任务总航时下限", MGAConstraintCategory.TemporalLifetime, false, (hp.MinTotalMissionDurationYears > 0), hp.MinTotalMissionDurationYears * 365.25, 5.0, Math.Max(50.0, hp.MinTotalMissionDurationYears * 365.25), "天", "保证引力助推有足够几何转移时间展开");
+            double minDays = (hp.MinMissionDurationDays > 0) ? hp.MinMissionDurationDays : (hp.MinTotalMissionDurationYears > 0 ? hp.MinTotalMissionDurationYears * 365.25 : 0.0);
+            profile.AddSpec(MGAConstraintType.MinMissionDuration, "任务总航时下限", MGAConstraintCategory.TemporalLifetime, false, (minDays > 0), minDays, 5.0, Math.Max(50.0, minDays), "天", "保证引力助推有足够几何转移时间展开");
 
             // 14. 共振等待时间上限
             profile.AddSpec(MGAConstraintType.MaxResonanceWait, "同星共振段最大等待时间", MGAConstraintCategory.TemporalLifetime, false, (hp.MaxResonanceWaitYears > 0), hp.MaxResonanceWaitYears * 365.25, 10.0, Math.Max(30.0, hp.MaxResonanceWaitYears * 365.25), "天", "限制同星共振等待飞行时间，避免航天器在中间轨道空转耗费任务寿命");
@@ -276,9 +300,13 @@ namespace KSPGMAT.MGA.Solver
                 config.VesselMaxDeltaVMs = vMax;
             }
 
-            if (profile.IsEnabled(MGAConstraintType.MaxDsmDeltaV))
+            if (profile.IsEnforced(MGAConstraintType.MaxDsmDeltaV))
             {
                 config.MaxDsmDeltaVMs = profile.GetThreshold(MGAConstraintType.MaxDsmDeltaV);
+            }
+            else
+            {
+                config.MaxDsmDeltaVMs = 0.0;
             }
 
             if (profile.IsEnabled(MGAConstraintType.LaunchC3Ceiling))
@@ -294,6 +322,8 @@ namespace KSPGMAT.MGA.Solver
             if (profile.IsEnabled(MGAConstraintType.MaxMissionDuration))
             {
                 config.TotalToFMaxDays = profile.GetThreshold(MGAConstraintType.MaxMissionDuration);
+                config.EnableMaxDuration = (config.TotalToFMaxDays > 0);
+                config.MaxDurationDays = config.TotalToFMaxDays;
             }
 
             if (profile.IsEnabled(MGAConstraintType.MinMissionDuration))
@@ -322,14 +352,24 @@ namespace KSPGMAT.MGA.Solver
                 config.VesselMaxDeltaVMs = vMax;
             }
 
-            if (profile.IsEnabled(MGAConstraintType.MaxDsmDeltaV))
+            if (profile.IsEnforced(MGAConstraintType.MaxDsmDeltaV))
             {
                 config.MaxDsmDeltaVMs = profile.GetThreshold(MGAConstraintType.MaxDsmDeltaV);
+            }
+            else
+            {
+                config.MaxDsmDeltaVMs = 0.0;
             }
 
             if (profile.IsEnabled(MGAConstraintType.LaunchC3Ceiling))
             {
                 config.LaunchDeltaVCeilingMs = profile.GetThreshold(MGAConstraintType.LaunchC3Ceiling);
+            }
+
+            if (profile.IsEnabled(MGAConstraintType.MaxMissionDuration))
+            {
+                config.MaxDurationDays = profile.GetThreshold(MGAConstraintType.MaxMissionDuration);
+                config.EnableMaxDuration = (config.MaxDurationDays > 0);
             }
         }
 
@@ -568,17 +608,17 @@ namespace KSPGMAT.MGA.Solver
             {
                 var spec = profile.GetSpec(MGAConstraintType.MaxMissionDuration);
                 double totDays = sol.TotalFlightDays;
-                double maxDays = spec.ThresholdValue * 365.25;
+                double maxDays = spec.ThresholdValue;
                 double excess = Math.Max(0.0, totDays - maxDays);
-                bool tofViolated = excess > spec.ToleranceValue * 365.25;
+                bool tofViolated = excess > spec.ToleranceValue;
                 EvaluateAndRecordConstraint(
                     report, profile, MGAConstraintType.MaxMissionDuration,
-                    actualValue: totDays / 365.25,
-                    thresholdValue: spec.ThresholdValue,
-                    rawViolation: excess / 365.25,
+                    actualValue: totDays,
+                    thresholdValue: maxDays,
+                    rawViolation: excess,
                     isViolated: tofViolated,
-                    passDescription: $"总航时满足任务寿命要求 ({totDays / 365.25:F2} 年 <= {spec.ThresholdValue:F1} 年)",
-                    failDescription: $"总航时超出最大寿命走廊 (实际: {totDays / 365.25:F2} 年 > 限额: {spec.ThresholdValue:F1} 年)",
+                    passDescription: $"总航时满足任务寿命要求 ({totDays:F1} 天 <= {maxDays:F0} 天, 约 {totDays / 365.25:F2} 年)",
+                    failDescription: $"总航时超出最大寿命走廊 (实际: {totDays:F1} 天 > 限额: {maxDays:F0} 天, 超出 {excess:F1} 天)",
                     ref fullyOk, ref totalV, ref hardV, ref worstNormV, ref worstItem);
             }
 
@@ -642,17 +682,17 @@ namespace KSPGMAT.MGA.Solver
             {
                 var spec = profile.GetSpec(MGAConstraintType.MinMissionDuration);
                 double totDays = sol.TotalFlightDays;
-                double minDays = spec.ThresholdValue * 365.25;
+                double minDays = spec.ThresholdValue;
                 double deficit = Math.Max(0.0, minDays - totDays);
-                bool minViolated = deficit > spec.ToleranceValue * 365.25;
+                bool minViolated = deficit > spec.ToleranceValue;
                 EvaluateAndRecordConstraint(
                     report, profile, MGAConstraintType.MinMissionDuration,
-                    actualValue: totDays / 365.25,
-                    thresholdValue: spec.ThresholdValue,
-                    rawViolation: deficit / 365.25,
+                    actualValue: totDays,
+                    thresholdValue: minDays,
+                    rawViolation: deficit,
                     isViolated: minViolated,
-                    passDescription: $"总航时满足最短历时门槛 ({totDays / 365.25:F2} 年 >= {spec.ThresholdValue:F2} 年)",
-                    failDescription: $"总航时过短: {totDays / 365.25:F2} 年 < 最短要求 {spec.ThresholdValue:F2} 年",
+                    passDescription: $"总航时满足最短历时门槛 ({totDays:F1} 天 >= {minDays:F0} 天)",
+                    failDescription: $"总航时过短: {totDays:F1} 天 < 最短要求 {minDays:F0} 天",
                     ref fullyOk, ref totalV, ref hardV, ref worstNormV, ref worstItem);
             }
 

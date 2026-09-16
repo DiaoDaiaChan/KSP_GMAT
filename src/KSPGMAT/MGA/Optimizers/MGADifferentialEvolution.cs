@@ -182,9 +182,8 @@ namespace KSPGMAT.MGA
                     pBody.GetRelativeState(central, depUT, out Vector3d rDep, out Vector3d vDepPlanet);
                     // 出口霍曼/快速切向转移的测试航时区间: 覆盖自极速飞掠转移 (0.35) 至慢外向转移 (3.00)
                     double[] testExitToFs = new double[] {
-                        approxTofSec * 0.35, approxTofSec * 0.50, approxTofSec * 0.70,
-                        approxTofSec * 0.85, approxTofSec * 1.00, approxTofSec * 1.20,
-                        approxTofSec * 1.50, approxTofSec * 2.00, approxTofSec * 3.00
+                        approxTofSec * 0.35, approxTofSec * 0.55, approxTofSec * 0.80,
+                        approxTofSec * 1.00, approxTofSec * 1.35, approxTofSec * 2.00, approxTofSec * 3.00
                     };
                     double bestExitScore = double.MaxValue;
                     double bestVTurn = 0.0, bestArrPen = 0.0, bestDownDef = 0.0;
@@ -249,9 +248,17 @@ namespace KSPGMAT.MGA
                             }
 
                             double turnExcess = Math.Max(0.0, reqTurnRad - totalTurnCapability);
+                            if (blockLen >= 1 && !isSelfResonantDeparture) {
+                                // 同星多圈/1-DSM共振转移中，进入与退出借力点分别具备独立的双曲偏折能力，
+                                // 且各段深空共振转移弧自身在日心引力场中具备独立的轨道平面调相与远拱机动自由度。
+                                // 综合偏折自由度由两端 (blockLen + 1) 个借力点与各共振弧的 2 个轨道自由度共同分担:
+                                int turningDegreesOfFreedom = (blockLen + 1) + 2 * blockLen;
+                                turnExcess /= turningDegreesOfFreedom;
+                            }
                             // 物理深空机动脉冲估算: 无法通过双曲偏转吸收的转角转化为向量差脉冲 DeltaV_turn = 2 * v_inf * sin(turnExcess/2)
                             double vTurnLoss = 2.0 * Math.Max(effInMag, outMag) * Math.Sin(turnExcess * 0.5);
-                            double vPumpLoss = isSelfResonantDeparture ? 0.0 : Math.Abs(effInMag - outMag);
+                            double vPlanetCirc = (sma > 0) ? Math.Sqrt(centralMu / sma) : 30.0;
+                            double vPumpLoss = isSelfResonantDeparture ? 0.0 : (blockLen >= 1 ? (Math.Abs(effInMag * effInMag - outMag * outMag) / (2.0 * Math.Max(1.0, vPlanetCirc))) : Math.Abs(effInMag - outMag));
                             double vArrInf = (vArrLambert - vArrPlanet).magnitude;
                             // 物理发射与制动能耗: 
                             // 1. 自共振启航段计入初始注入轨道速度 (发射 DeltaV);
@@ -280,7 +287,7 @@ namespace KSPGMAT.MGA
                                 // 物理转向赤字: 计算在出口星处将入射渐近线偏折至下游转移弧所需的双曲偏转角
                                 double tNomDown = Math.PI * Math.Sqrt(Math.Pow(aTransDown * 1000.0, 3.0) / (centralMu * 1e9));
                                 double arrExitUT = depUT + exitTof;
-                                double[] testDownFactors = new double[] { 0.85, 1.00, 1.25, 1.50 };
+                                double[] testDownFactors = new double[] { 0.35, 0.50, 0.75, 1.00, 1.35 };
                                 double bestDownDeficit = double.MaxValue;
 
                                 foreach (double factor in testDownFactors) {
@@ -532,8 +539,10 @@ namespace KSPGMAT.MGA
                     int bLen = k - rStart;
                     string rBody = fullChain[rStart];
                     string exitBody = fullChain[k + 1];
-                    double midUT = (winStartUT + winEndUT) * 0.5;
-                    double estResUT = midUT;
+                    double refDepUT = (config != null && config.SeedEpochUT >= winStartUT && config.SeedEpochUT <= winEndUT)
+                        ? config.SeedEpochUT
+                        : (winStartUT + winEndUT) * 0.5;
+                    double estResUT = refDepUT;
                     for (int preK = 0; preK < rStart; preK++) estResUT += nominalLegToFSec[preK];
 
                     var rCombos = FindAndRankResonantCombos(
