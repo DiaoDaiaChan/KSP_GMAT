@@ -35,7 +35,16 @@ namespace KSPGMAT.MGA {
     ///           航时边界一律由 <c>AutoDeriveResonantLegBounds</c> 物理推导，不用历史航时 ±10% 夹逼。
     ///
     ///   保留: 历史 ΔV / 航时 / 借力序列数值仅用于**事后比对**与结果标注，不进入任何搜索边界或目标函数。
-    /// <summary>
+    ///
+    /// 【2026-09-16 架构解耦修正记录 · 套件确认通过代码剥离与独立维护】
+    ///   问题: 考核侧的权威物理动力学验证判据与通过确认逻辑原耦合在生产模块中，存在生产代码
+    ///         自我认证 (Self-Certification) 与为迎合考核在生产层注入答案约束的应试作弊风险。
+    ///   整改: 考题评判与确认通过代码 (5维硬物理门禁、容差判定、主矢量最优性评估与 PASS/FAIL 裁决)
+    ///         已彻底剥离至测试工程 <c>tests/MGADebugRunner/TestSuites/HistoricalBenchmarkVerificationEngine.cs</c>
+    ///         独立维护，形成考卷与考生物理隔离；
+    ///         本类回归为历史任务元数据真值源 (SSOT) 与通用的轨迹求解执行通道，供游戏 GUI (TabMGA) 与
+    ///         预设状态管理器 (MGAStateManager.LoadPreset) 稳定调用。
+    /// </summary>
     /// 盲搜维度的定义枚举 (消歧口径)。
     /// 彻底规范声明算法对哪些物理维度盲。
     /// </summary>
