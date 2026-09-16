@@ -32,6 +32,7 @@
 #include <kep3/core_astro/kepler_equations.hpp>
 #include <kep3/core_astro/stm.hpp>
 #include <kep3/core_astro/basic_transfers.hpp>
+#include <kep3/core_astro/encodings.hpp>
 #include <kep3/udpla/keplerian.hpp>
 #include <kep3/udpla/jpl_lp.hpp>
 
@@ -398,6 +399,10 @@ static inline double calc_vis_viva_dep_inc(
     double v_inf, double mu, double radius, double pe_km, double ap_km,
     double dep_inc_deg, double v_inf_z, double* out_ej_inc) 
 {
+    if (std::isnan(v_inf) || std::isnan(mu) || std::isnan(radius) || std::isnan(pe_km) || std::isnan(ap_km)) {
+        if (out_ej_inc) *out_ej_inc = 0.0;
+        return 1e6;
+    }
     if (mu <= 0.0 || radius <= 0.0) {
         if (out_ej_inc) *out_ej_inc = std::abs(dep_inc_deg);
         return v_inf;
@@ -405,14 +410,26 @@ static inline double calc_vis_viva_dep_inc(
     double rp = radius + std::max(0.0, pe_km);
     double ra = radius + std::max(pe_km, ap_km);
     double a = (rp + ra) * 0.5;
-    double v_park = std::sqrt(mu * (2.0 / rp - 1.0 / a));
-    double v_hyp = std::sqrt(v_inf * v_inf + 2.0 * mu / rp);
+    double v_park_sq = mu * (2.0 / rp - 1.0 / a);
+    if (v_park_sq < 0.0 || std::isnan(v_park_sq)) {
+        if (out_ej_inc) *out_ej_inc = 0.0;
+        return 1e6;
+    }
+    double v_park = std::sqrt(v_park_sq);
+    double v_hyp_sq = v_inf * v_inf + 2.0 * mu / rp;
+    if (v_hyp_sq < 0.0 || std::isnan(v_hyp_sq)) {
+        if (out_ej_inc) *out_ej_inc = 0.0;
+        return 1e6;
+    }
+    double v_hyp = std::sqrt(v_hyp_sq);
 
     // 模式 1: 自由发射 / 纯切向规划 (dep_inc_deg < -0.01)
     // 强制消除黄赤交角和赤纬对发射造成的伪变面惩罚，纯切向出射
     if (dep_inc_deg < -0.01) {
         if (out_ej_inc) *out_ej_inc = 0.0;
-        return std::max(0.0, v_hyp - v_park);
+        double diff = v_hyp - v_park;
+        if (std::isnan(diff)) return 1e6;
+        return std::max(0.0, diff);
     }
 
     double park_inc_deg = std::abs(dep_inc_deg);
@@ -428,15 +445,21 @@ static inline double calc_vis_viva_dep_inc(
     if (out_ej_inc) *out_ej_inc = ej_inc;
 
     if (delta_i_deg <= 1e-4) {
-        return std::max(0.0, v_hyp - v_park);
+        double diff = v_hyp - v_park;
+        if (std::isnan(diff)) return 1e6;
+        return std::max(0.0, diff);
     } else {
         double d_rad = delta_i_deg * DEG2RAD;
         double dv_sq = v_park * v_park + v_hyp * v_hyp - 2.0 * v_park * v_hyp * std::cos(d_rad);
-        return std::sqrt(std::max(0.0, dv_sq));
+        if (dv_sq < 0.0 || std::isnan(dv_sq)) return 1e6;
+        return std::sqrt(dv_sq);
     }
 }
 
 static inline double calc_vis_viva_arr(double v_inf, double mu, double radius, double pe_km, double ap_km) {
+    if (std::isnan(v_inf) || std::isnan(mu) || std::isnan(radius) || std::isnan(pe_km) || std::isnan(ap_km)) {
+        return 1e6;
+    }
     if (mu <= 0.0 || radius <= 0.0) return v_inf;
     double rp = radius + std::max(0.0, pe_km);
     double effective_ap_km = ap_km;
@@ -447,9 +470,15 @@ static inline double calc_vis_viva_arr(double v_inf, double mu, double radius, d
     }
     double ra = radius + std::max(pe_km, effective_ap_km);
     double a = (rp + ra) * 0.5;
-    double v_tgt = std::sqrt(mu * (2.0 / rp - 1.0 / a));
-    double v_hyp = std::sqrt(v_inf * v_inf + 2.0 * mu / rp);
-    return std::max(0.0, v_hyp - v_tgt);
+    double v_tgt_sq = mu * (2.0 / rp - 1.0 / a);
+    if (v_tgt_sq < 0.0 || std::isnan(v_tgt_sq)) return 1e6;
+    double v_tgt = std::sqrt(v_tgt_sq);
+    double v_hyp_sq = v_inf * v_inf + 2.0 * mu / rp;
+    if (v_hyp_sq < 0.0 || std::isnan(v_hyp_sq)) return 1e6;
+    double v_hyp = std::sqrt(v_hyp_sq);
+    double diff = v_hyp - v_tgt;
+    if (std::isnan(diff)) return 1e6;
+    return std::max(0.0, diff);
 }
 
 static inline double calc_central_departure_dv(
@@ -652,7 +681,7 @@ EXPORT_API inline int pykep_flyby_con(
             if (sin_half > 1e-6 && vin2 > 1e-6) {
                 *rp_km = (mu / vin2) * (1.0 / sin_half - 1.0);
             } else {
-                *rp_km = safe_radius;
+                *rp_km = 1e9; // 零偏转或近直飞掠对应无穷远渐近线，不受重力摄动
             }
         }
 
@@ -972,12 +1001,49 @@ EXPORT_API inline int kep3_flyby_vout(
 {
     if (!v_in || !v_pla || !out_v_out || rp_km <= 0.0 || mu <= 0.0) return -1;
     try {
-        std::array<double, 3> vin = {v_in[0], v_in[1], v_in[2]};
-        std::array<double, 3> vpla = {v_pla[0], v_pla[1], v_pla[2]};
-        std::array<double, 3> vout = kep3::fb_vout(vin, vpla, rp_km, beta_rad, mu);
-        out_v_out[0] = vout[0];
-        out_v_out[1] = vout[1];
-        out_v_out[2] = vout[2];
+        double v_rel[3] = { v_in[0] - v_pla[0], v_in[1] - v_pla[1], v_in[2] - v_pla[2] };
+        double v_rel2 = v_rel[0]*v_rel[0] + v_rel[1]*v_rel[1] + v_rel[2]*v_rel[2];
+        double v_rel_norm = std::sqrt(v_rel2);
+        if (v_rel_norm < 1e-9) {
+            out_v_out[0] = v_pla[0];
+            out_v_out[1] = v_pla[1];
+            out_v_out[2] = v_pla[2];
+            return 0;
+        }
+
+        double i_hat[3] = { v_rel[0] / v_rel_norm, v_rel[1] / v_rel_norm, v_rel[2] / v_rel_norm };
+        double j_vec[3] = {
+            i_hat[1]*v_pla[2] - i_hat[2]*v_pla[1],
+            i_hat[2]*v_pla[0] - i_hat[0]*v_pla[2],
+            i_hat[0]*v_pla[1] - i_hat[1]*v_pla[0]
+        };
+        double j_len = std::sqrt(j_vec[0]*j_vec[0] + j_vec[1]*j_vec[1] + j_vec[2]*j_vec[2]);
+        if (j_len < 1e-6) {
+            // 共线或微小叉积时的非奇异正交标架兜底
+            double ref[3] = { (std::abs(i_hat[2]) < 0.9) ? 0.0 : 1.0, 0.0, (std::abs(i_hat[2]) < 0.9) ? 1.0 : 0.0 };
+            j_vec[0] = i_hat[1]*ref[2] - i_hat[2]*ref[1];
+            j_vec[1] = i_hat[2]*ref[0] - i_hat[0]*ref[2];
+            j_vec[2] = i_hat[0]*ref[1] - i_hat[1]*ref[0];
+            j_len = std::sqrt(j_vec[0]*j_vec[0] + j_vec[1]*j_vec[1] + j_vec[2]*j_vec[2]);
+            if (j_len < 1e-6) { j_vec[0] = 1.0; j_len = 1.0; }
+        }
+        double j_hat[3] = { j_vec[0] / j_len, j_vec[1] / j_len, j_vec[2] / j_len };
+        double k_hat[3] = {
+            i_hat[1]*j_hat[2] - i_hat[2]*j_hat[1],
+            i_hat[2]*j_hat[0] - i_hat[0]*j_hat[2],
+            i_hat[0]*j_hat[1] - i_hat[1]*j_hat[0]
+        };
+
+        double ecc = 1.0 + (rp_km / mu) * v_rel2;
+        double delta = 2.0 * std::asin(1.0 / std::max(1.0000001, ecc));
+        double cos_d = std::cos(delta);
+        double sin_d = std::sin(delta);
+        double cos_b = std::cos(beta_rad);
+        double sin_b = std::sin(beta_rad);
+
+        out_v_out[0] = v_pla[0] + v_rel_norm * (cos_d * i_hat[0] + sin_d * (cos_b * j_hat[0] + sin_b * k_hat[0]));
+        out_v_out[1] = v_pla[1] + v_rel_norm * (cos_d * i_hat[1] + sin_d * (cos_b * j_hat[1] + sin_b * k_hat[1]));
+        out_v_out[2] = v_pla[2] + v_rel_norm * (cos_d * i_hat[2] + sin_d * (cos_b * j_hat[2] + sin_b * k_hat[2]));
         return 0;
     } catch (...) {
         return -1;
@@ -1001,6 +1067,100 @@ EXPORT_API inline int kep3_vsop2013_planet_state(
         auto pv = s_jpl_cache[name_str]->eph(mjd2000);
         *out_rx = pv[0][0] / 1000.0; *out_ry = pv[0][1] / 1000.0; *out_rz = pv[0][2] / 1000.0;
         *out_vx = pv[1][0] / 1000.0; *out_vy = pv[1][1] / 1000.0; *out_vz = pv[1][2] / 1000.0;
+        return 0;
+    } catch (...) {
+        return -1;
+    }
+}
+
+// ============================================================================
+// PyKEP 官方标准编码与球面坐标映射工具函数导出 (Alpha, Eta, uvV <-> Cartesian)
+// ============================================================================
+
+EXPORT_API inline int kep3_alpha2direct(const double* alphas, int count, double tof, double* out_tofs) {
+    if (!alphas || !out_tofs || count <= 0 || tof <= 0.0) return -1;
+    try {
+        std::vector<double> a_vec(alphas, alphas + count);
+        auto res = kep3::alpha2direct(a_vec, tof);
+        for (int i = 0; i < count; ++i) out_tofs[i] = res[i];
+        return 0;
+    } catch (...) {
+        return -1;
+    }
+}
+
+EXPORT_API inline int kep3_direct2alpha(const double* tofs, int count, double* out_alphas, double* out_total_tof) {
+    if (!tofs || !out_alphas || count <= 0) return -1;
+    try {
+        std::vector<double> t_vec(tofs, tofs + count);
+        auto res = kep3::direct2alpha(t_vec);
+        for (int i = 0; i < count; ++i) out_alphas[i] = res.first[i];
+        if (out_total_tof) *out_total_tof = res.second;
+        return 0;
+    } catch (...) {
+        return -1;
+    }
+}
+
+EXPORT_API inline int kep3_eta2direct(const double* etas, int count, double max_tof, double* out_tofs) {
+    if (!etas || !out_tofs || count <= 0 || max_tof <= 0.0) return -1;
+    try {
+        std::vector<double> e_vec(etas, etas + count);
+        auto res = kep3::eta2direct(e_vec, max_tof);
+        for (int i = 0; i < count; ++i) out_tofs[i] = res[i];
+        return 0;
+    } catch (...) {
+        return -1;
+    }
+}
+
+EXPORT_API inline int kep3_direct2eta(const double* tofs, int count, double max_tof, double* out_etas) {
+    if (!tofs || !out_etas || count <= 0 || max_tof <= 0.0) return -1;
+    try {
+        std::vector<double> t_vec(tofs, tofs + count);
+        auto res = kep3::direct2eta(t_vec, max_tof);
+        for (int i = 0; i < count; ++i) out_etas[i] = res[i];
+        return 0;
+    } catch (...) {
+        return -1;
+    }
+}
+
+EXPORT_API inline int kep3_uvV_to_cartesian(double u, double v, double V, double* out_vx, double* out_vy, double* out_vz) {
+    if (!out_vx || !out_vy || !out_vz) return -1;
+    try {
+        double theta = 2.0 * PI * u;
+        double tmp = 2.0 * v - 1.0;
+        double phi = 0.0;
+        if (tmp * tmp > 1.0) {
+            phi = (tmp < -1.0) ? (0.5 * PI) : (-0.5 * PI);
+        } else {
+            phi = std::acos(tmp) - 0.5 * PI;
+        }
+        *out_vx = V * std::cos(phi) * std::cos(theta);
+        *out_vy = V * std::cos(phi) * std::sin(theta);
+        *out_vz = V * std::sin(phi);
+        return 0;
+    } catch (...) {
+        return -1;
+    }
+}
+
+EXPORT_API inline int kep3_cartesian_to_uvV(double vx, double vy, double vz, double* out_u, double* out_v, double* out_V) {
+    if (!out_u || !out_v || !out_V) return -1;
+    try {
+        double v_norm = std::sqrt(vx*vx + vy*vy + vz*vz);
+        *out_V = v_norm;
+        if (v_norm < 1e-12) {
+            *out_u = 0.0;
+            *out_v = 0.5;
+            return 0;
+        }
+        double theta = std::atan2(vy, vx);
+        if (theta < 0.0) theta += 2.0 * PI;
+        *out_u = theta / (2.0 * PI);
+        double sin_phi = std::max(-1.0, std::min(1.0, vz / v_norm));
+        *out_v = (-sin_phi + 1.0) * 0.5;
         return 0;
     } catch (...) {
         return -1;

@@ -457,7 +457,12 @@ EXPORT_API int pykep_mga_evaluate_mu(
             total_dv += out_sol->insertion_dv_kms;
         }
 
-        out_sol->total_dv_kms = total_dv;
+        if (std::isnan(total_dv) || std::isinf(total_dv) || std::isnan(out_sol->insertion_dv_kms) || std::isnan(out_sol->launch_dv_kms)) {
+            out_sol->all_feasible = 0;
+            out_sol->total_dv_kms = 1e9;
+        } else {
+            out_sol->total_dv_kms = total_dv;
+        }
         out_sol->total_flight_days = total_tof_sec / 86400.0;
         return 0;
     } catch (...) {

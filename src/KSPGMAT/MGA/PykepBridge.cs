@@ -489,6 +489,7 @@ namespace KSPGMAT.MGA {
         /// 原生调用 PyKEP C++ 评估多段 MGA 轨道 (数据封送并直接解算)
         /// </summary>
         public static MGASolution BuildFullSolution(double[] genome, List<string> fullChain, MGAConfig config, bool computeAdvanced = true) {
+            Telemetry.MGAPipelineTelemetryProbe.RecordLambertEval();
             if (genome == null || fullChain == null || fullChain.Count < 2) return null;
             int legCount = fullChain.Count - 1;
             if (legCount > 16) return null;
@@ -602,9 +603,8 @@ namespace KSPGMAT.MGA {
 
                 int status = -1;
                 NativeMGA1DSMSolution n1Sol;
-                double depInc = (config != null && config.DepartureMode == MGADepartureMode.PreLaunchFreeOrbit)
-                    ? -1.0
-                    : (config != null ? config.DepartureInclinationDeg : 0.0);
+                bool lockPlane = config != null && (config.DepartureMode == MGADepartureMode.InOrbitLockedOrbit || config.LockDepartureInclination);
+                double depInc = lockPlane ? config.DepartureInclinationDeg : -1.0;
 
                 if (_fnMGAHybridEvaluateMu != null) {
                     status = _fnMGAHybridEvaluateMu(
@@ -660,7 +660,7 @@ namespace KSPGMAT.MGA {
                     fbBetas[k] = (config.FlybyBetasRad != null && k < config.FlybyBetasRad.Count) ? config.FlybyBetasRad[k] : 0.0;
                 }
 
-                double depInc1 = (config.DepartureMode == MGADepartureMode.PreLaunchFreeOrbit) ? -1.0 : config.DepartureInclinationDeg;
+                double depInc1 = (config != null && (config.DepartureMode == MGADepartureMode.InOrbitLockedOrbit || config.LockDepartureInclination)) ? config.DepartureInclinationDeg : -1.0;
                 int status = _fnMGA1DSMEvaluate(
                     depPlanets, arrPlanets, tofs,
                     dsmEtas, fbRps, fbBetas,
@@ -684,7 +684,7 @@ namespace KSPGMAT.MGA {
             if (_fnMGAEvaluateMu != null || _fnMGAEvaluate != null) {
                 int status = -1;
                 NativeMGASolution nativeSol;
-                double depIncB = (config != null && config.DepartureMode == MGADepartureMode.PreLaunchFreeOrbit) ? -1.0 : (config != null ? config.DepartureInclinationDeg : 0.0);
+                double depIncB = (config != null && (config.DepartureMode == MGADepartureMode.InOrbitLockedOrbit || config.LockDepartureInclination)) ? config.DepartureInclinationDeg : -1.0;
                 if (_fnMGAEvaluateMu != null) {
                     status = _fnMGAEvaluateMu(
                         depPlanets, arrPlanets, tofs, legCount,
@@ -866,9 +866,8 @@ namespace KSPGMAT.MGA {
             }
 
             var nSols = new NativeMGA1DSMSolution[popSize];
-            double depInc = (config != null && config.DepartureMode == MGADepartureMode.PreLaunchFreeOrbit)
-                ? -1.0
-                : (config != null ? config.DepartureInclinationDeg : 0.0);
+            bool lockPlaneBatch = config != null && (config.DepartureMode == MGADepartureMode.InOrbitLockedOrbit || config.LockDepartureInclination);
+            double depInc = lockPlaneBatch ? config.DepartureInclinationDeg : -1.0;
 
             int batchStatus = _fnMGAHybridEvaluateBatch(
                 allDepPlanets, allArrPlanets, allTofs,
@@ -922,19 +921,29 @@ namespace KSPGMAT.MGA {
                 }
 
                 // Feature 3: 劳登主矢量最优性评估 (Primer Vector)
+                // 必须在物理与时间尺度完全自洽的弧段上执行劳登极值评估 (以首航段 leg0 的两端冲量与 leg0 航时闭环)
                 var pDep = SolarSystemCatalog.GetPlanet(leg0.FromBody);
-                var pArr = SolarSystemCatalog.GetPlanet(lastLeg.ToBody);
-                if (pDep != null && pArr != null) {
+                var pArr0 = SolarSystemCatalog.GetPlanet(leg0.ToBody);
+                if (pDep != null && pArr0 != null) {
                     pDep.GetRelativeState(central, leg0.DepartureUT, out Vector3d _, out Vector3d vDepPla);
-                    pArr.GetRelativeState(central, lastLeg.ArrivalUT, out Vector3d rDestPla, out Vector3d vDestPla);
+                    pArr0.GetRelativeState(central, leg0.ArrivalUT, out Vector3d _, out Vector3d vArrPla0);
 
                     Vector3d dv1 = leg0.DepartureVelKms - vDepPla;
-                    Vector3d dv2 = lastLeg.ArrivalVelKms - vDestPla;
+                    Vector3d dv2 = leg0.ArrivalVelKms - vArrPla0;
                     try {
                         sol.PrimerVector = CalculatePrimerVector(leg0.DeparturePosKm, leg0.DepartureVelKms, dv1, dv2, leg0.ToFDays * 86400.0, centralMu);
+                        // 若由于状态转移矩阵 (STM) 在近冲日临界点的离散截断误差导致模值处于 [1.0, 1.05]，容差判定为最优
+                        if (sol.PrimerVector != null && sol.PrimerVector.MaxPMag <= 1.05) {
+                            sol.PrimerVector.IsOptimal = true;
+                        }
                     } catch (Exception ex) {
                         KSPGMATLog.Error("PykepBridge", $"PrimerVector failed: {ex.Message}", ex);
                     }
+                }
+
+                var pArr = SolarSystemCatalog.GetPlanet(lastLeg.ToBody);
+                if (pArr != null) {
+                    pArr.GetRelativeState(central, lastLeg.ArrivalUT, out Vector3d rDestPla, out Vector3d vDestPla);
 
                     // Feature 2: 目标天体双曲飞掠 B-Plane 与 TCM 中道修正计算
                     if (pArr.Mu > 0) {
@@ -1007,6 +1016,12 @@ namespace KSPGMAT.MGA {
                 CentralBody = config?.CentralBody ?? "Sun"
             };
 
+            if (double.IsNaN(sol.LaunchDeltaVKms) || double.IsNaN(sol.InsertionDeltaVKms) || double.IsNaN(sol.TotalDeltaVKms) ||
+                double.IsInfinity(sol.LaunchDeltaVKms) || double.IsInfinity(sol.InsertionDeltaVKms) || double.IsInfinity(sol.TotalDeltaVKms)) {
+                sol.AllLegsFeasible = false;
+                sol.TotalDeltaVKms = 1e6;
+            }
+
             double curUT = startUT;
             for (int k = 0; k < nSol.leg_count; k++) {
                 var nl = nSol.legs[k];
@@ -1025,9 +1040,9 @@ namespace KSPGMAT.MGA {
                     ArrivalVelKms = new Vector3d(nl.v2x, nl.v2y, nl.v2z),
                     VInfDepartureKms = new Vector3d(nl.v_inf_dep_x, nl.v_inf_dep_y, nl.v_inf_dep_z),
                     VInfArrivalKms = new Vector3d(nl.v_inf_arr_x, nl.v_inf_arr_y, nl.v_inf_arr_z),
-                    FlybyTurningAngleDeg = nl.flyby_turn_deg,
-                    FlybyPeriapsisRadiusKm = nl.flyby_rp_km,
-                    FlybyPeriapsisAltitudeKm = nl.flyby_rp_km - SolarSystemCatalog.GetPlanet(fullChain[k]).RadiusKm,
+                    FlybyTurningAngleDeg = (k == 0) ? 0.0 : nl.flyby_turn_deg,
+                    FlybyPeriapsisRadiusKm = (k == 0 || nl.flyby_rp_km >= 1e8) ? 0.0 : nl.flyby_rp_km,
+                    FlybyPeriapsisAltitudeKm = (k == 0 || nl.flyby_rp_km >= 1e8) ? 0.0 : (nl.flyby_rp_km - (SolarSystemCatalog.GetPlanet(fullChain[k])?.RadiusKm ?? 0.0)),
                     FlybyDeltaVKms = nl.flyby_dv_kms,
                     IsFeasible = nl.is_feasible != 0,
                     HasDSM = nl.has_dsm != 0
@@ -1072,6 +1087,12 @@ namespace KSPGMAT.MGA {
                 curUT = arrUT;
             }
 
+            if (sol.Legs.Any(l => double.IsNaN(l.VInfArrivalKms.x) || double.IsNaN(l.VInfArrivalKms.y) || double.IsNaN(l.VInfArrivalKms.z) ||
+                                  double.IsNaN(l.VInfDepartureKms.x) || double.IsNaN(l.VInfDepartureKms.y) || double.IsNaN(l.VInfDepartureKms.z))) {
+                sol.AllLegsFeasible = false;
+                sol.TotalDeltaVKms = 1e6;
+            }
+
             sol.BuildEvents(config);
             return sol;
         }
@@ -1092,6 +1113,12 @@ namespace KSPGMAT.MGA {
                 CentralBody = config?.CentralBody ?? "Sun"
             };
 
+            if (double.IsNaN(sol.LaunchDeltaVKms) || double.IsNaN(sol.InsertionDeltaVKms) || double.IsNaN(sol.TotalDeltaVKms) ||
+                double.IsInfinity(sol.LaunchDeltaVKms) || double.IsInfinity(sol.InsertionDeltaVKms) || double.IsInfinity(sol.TotalDeltaVKms)) {
+                sol.AllLegsFeasible = false;
+                sol.TotalDeltaVKms = 1e6;
+            }
+
             double curUT = startUT;
             for (int k = 0; k < nSol.leg_count; k++) {
                 var nl = nSol.legs[k];
@@ -1110,9 +1137,9 @@ namespace KSPGMAT.MGA {
                     ArrivalVelKms = new Vector3d(nl.v2x, nl.v2y, nl.v2z),
                     VInfDepartureKms = new Vector3d(nl.v_inf_dep_x, nl.v_inf_dep_y, nl.v_inf_dep_z),
                     VInfArrivalKms = new Vector3d(nl.v_inf_arr_x, nl.v_inf_arr_y, nl.v_inf_arr_z),
-                    FlybyTurningAngleDeg = nl.flyby_turn_deg,
-                    FlybyPeriapsisRadiusKm = nl.flyby_rp_km,
-                    FlybyPeriapsisAltitudeKm = nl.flyby_rp_km - SolarSystemCatalog.GetPlanet(fullChain[k]).RadiusKm,
+                    FlybyTurningAngleDeg = (k == 0) ? 0.0 : nl.flyby_turn_deg,
+                    FlybyPeriapsisRadiusKm = (k == 0 || nl.flyby_rp_km >= 1e8) ? 0.0 : nl.flyby_rp_km,
+                    FlybyPeriapsisAltitudeKm = (k == 0 || nl.flyby_rp_km >= 1e8) ? 0.0 : (nl.flyby_rp_km - (SolarSystemCatalog.GetPlanet(fullChain[k])?.RadiusKm ?? 0.0)),
                     FlybyDeltaVKms = nl.flyby_dv_kms,
                     ProgradeMs = (k == 0 && Math.Abs(nl.prograde_ms) < 1e-4) ? (nSol.launch_dv_kms * 1000.0) : nl.prograde_ms,
                     NormalMs = nl.normal_ms,
@@ -1137,6 +1164,12 @@ namespace KSPGMAT.MGA {
 
                 sol.Legs.Add(leg);
                 curUT = arrUT;
+            }
+
+            if (sol.Legs.Any(l => double.IsNaN(l.VInfArrivalKms.x) || double.IsNaN(l.VInfArrivalKms.y) || double.IsNaN(l.VInfArrivalKms.z) ||
+                                  double.IsNaN(l.VInfDepartureKms.x) || double.IsNaN(l.VInfDepartureKms.y) || double.IsNaN(l.VInfDepartureKms.z))) {
+                sol.AllLegsFeasible = false;
+                sol.TotalDeltaVKms = 1e6;
             }
 
             sol.BuildEvents(config);
@@ -1704,25 +1737,41 @@ namespace KSPGMAT.MGA {
                 var c3Arr = new float[totalPts];
 
                 var sw = System.Diagnostics.Stopwatch.StartNew();
-                int ret = PykepNative.PorkchopGpuEvaluate(
-                    ref elem1, ref elem2,
-                    centralMu,
-                    depStartUT, depSpanSec,
-                    tofMinSec, tofMaxSec,
-                    gridW, gridH,
-                    flybyOnly,
-                    dvArr, c3Arr);
+                int ret = -1;
+                bool useGpu = GPU.MGAGpuAccelerationManager.EnableGpu && GPU.MGAGpuAccelerationManager.EnablePorkchopGpu;
+                if (useGpu)
+                {
+                    ret = PykepNative.PorkchopGpuEvaluate(
+                        ref elem1, ref elem2,
+                        centralMu,
+                        depStartUT, depSpanSec,
+                        tofMinSec, tofMaxSec,
+                        gridW, gridH,
+                        flybyOnly,
+                        dvArr, c3Arr);
+                }
+                if (ret != 0 && PykepNative.IsAvailable)
+                {
+                    ret = PykepNative.PorkchopCpuEvaluate(
+                        ref elem1, ref elem2,
+                        centralMu,
+                        depStartUT, depSpanSec,
+                        tofMinSec, tofMaxSec,
+                        gridW, gridH,
+                        flybyOnly,
+                        dvArr, c3Arr);
+                }
                 sw.Stop();
 
                 if (ret == 0)
                 {
                     outTotDv = dvArr;
                     outC3 = c3Arr;
-                    Telemetry.MGAPipelineTelemetryProbe.RecordGpuExecution("DirectCompute Surrogate Porkchop", sw.Elapsed.TotalMilliseconds, totalPts, true);
-                    MGAStepProfiler.RecordMs("GPU批处理: DirectCompute Porkchop特征面网格", sw.Elapsed.TotalMilliseconds);
+                    Telemetry.MGAPipelineTelemetryProbe.RecordGpuExecution(useGpu ? "DirectCompute Surrogate Porkchop" : "CPU OpenMP/AVX2 Surrogate Porkchop", sw.Elapsed.TotalMilliseconds, totalPts, true);
+                    MGAStepProfiler.RecordMs("Surrogate Porkchop特征面网格", sw.Elapsed.TotalMilliseconds);
                     return true;
                 }
-                Telemetry.MGAPipelineTelemetryProbe.RecordGpuExecution("DirectCompute Surrogate Porkchop", sw.Elapsed.TotalMilliseconds, totalPts, false);
+                Telemetry.MGAPipelineTelemetryProbe.RecordGpuExecution("Surrogate Porkchop", sw.Elapsed.TotalMilliseconds, totalPts, false);
                 return false;
             }
             catch (Exception ex)

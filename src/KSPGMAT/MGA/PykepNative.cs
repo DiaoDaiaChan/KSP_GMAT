@@ -210,6 +210,24 @@ namespace KSPGMAT.MGA {
             out double out_wedge_angle_deg);
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int Kep3Alpha2DirectDelegate([In] double[] alphas, int count, double tof, [Out] double[] outTofs);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int Kep3Direct2AlphaDelegate([In] double[] tofs, int count, [Out] double[] outAlphas, out double outTotalTof);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int Kep3Eta2DirectDelegate([In] double[] etas, int count, double maxTof, [Out] double[] outTofs);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int Kep3Direct2EtaDelegate([In] double[] tofs, int count, double maxTof, [Out] double[] outEtas);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int Kep3UvVToCartesianDelegate(double u, double v, double V, out double outVx, out double outVy, out double outVz);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int Kep3CartesianToUvVDelegate(double vx, double vy, double vz, out double outU, out double outV, out double outV_norm);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate double PykepCalcCentralDepartureDvDelegate(
             double mu, double radius, double pe_km, double ap_km, double r_dest_km);
 
@@ -285,6 +303,13 @@ namespace KSPGMAT.MGA {
         private static PykepFindNodalCrossingDelegate _fnFindNodalCrossing;
         private static PykepFindTransferWindowDelegate _fnFindTransferWindow;
         private static PykepSynthesizeParkingStateDelegate _fnSynthesizeParkingState;
+
+        private static Kep3Alpha2DirectDelegate _fnKep3Alpha2Direct;
+        private static Kep3Direct2AlphaDelegate _fnKep3Direct2Alpha;
+        private static Kep3Eta2DirectDelegate _fnKep3Eta2Direct;
+        private static Kep3Direct2EtaDelegate _fnKep3Direct2Eta;
+        private static Kep3UvVToCartesianDelegate _fnKep3UvVToCartesian;
+        private static Kep3CartesianToUvVDelegate _fnKep3CartesianToUvV;
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate int PykepCheckCpuFeaturesDelegate(out int sse2, out int avx, out int avx2, out int fma);
@@ -638,6 +663,19 @@ namespace KSPGMAT.MGA {
 
                             IntPtr pSynPark = GetProcAddress(_dllHandle, "pykep_synthesize_parking_state");
                             if (pSynPark != IntPtr.Zero) _fnSynthesizeParkingState = (PykepSynthesizeParkingStateDelegate)Marshal.GetDelegateForFunctionPointer(pSynPark, typeof(PykepSynthesizeParkingStateDelegate));
+
+                            IntPtr pAlpha2Dir = GetProcAddress(_dllHandle, "kep3_alpha2direct");
+                            if (pAlpha2Dir != IntPtr.Zero) _fnKep3Alpha2Direct = (Kep3Alpha2DirectDelegate)Marshal.GetDelegateForFunctionPointer(pAlpha2Dir, typeof(Kep3Alpha2DirectDelegate));
+                            IntPtr pDir2Alpha = GetProcAddress(_dllHandle, "kep3_direct2alpha");
+                            if (pDir2Alpha != IntPtr.Zero) _fnKep3Direct2Alpha = (Kep3Direct2AlphaDelegate)Marshal.GetDelegateForFunctionPointer(pDir2Alpha, typeof(Kep3Direct2AlphaDelegate));
+                            IntPtr pEta2Dir = GetProcAddress(_dllHandle, "kep3_eta2direct");
+                            if (pEta2Dir != IntPtr.Zero) _fnKep3Eta2Direct = (Kep3Eta2DirectDelegate)Marshal.GetDelegateForFunctionPointer(pEta2Dir, typeof(Kep3Eta2DirectDelegate));
+                            IntPtr pDir2Eta = GetProcAddress(_dllHandle, "kep3_direct2eta");
+                            if (pDir2Eta != IntPtr.Zero) _fnKep3Direct2Eta = (Kep3Direct2EtaDelegate)Marshal.GetDelegateForFunctionPointer(pDir2Eta, typeof(Kep3Direct2EtaDelegate));
+                            IntPtr pUvV2Cart = GetProcAddress(_dllHandle, "kep3_uvV_to_cartesian");
+                            if (pUvV2Cart != IntPtr.Zero) _fnKep3UvVToCartesian = (Kep3UvVToCartesianDelegate)Marshal.GetDelegateForFunctionPointer(pUvV2Cart, typeof(Kep3UvVToCartesianDelegate));
+                            IntPtr pCart2UvV = GetProcAddress(_dllHandle, "kep3_cartesian_to_uvV");
+                            if (pCart2UvV != IntPtr.Zero) _fnKep3CartesianToUvV = (Kep3CartesianToUvVDelegate)Marshal.GetDelegateForFunctionPointer(pCart2UvV, typeof(Kep3CartesianToUvVDelegate));
 
                             IntPtr ptr = _fnGetVersion();
                             if (ptr != IntPtr.Zero) {
@@ -1436,6 +1474,97 @@ namespace KSPGMAT.MGA {
                 } catch { }
             }
             return 0.0;
+        }
+
+        /// <summary>
+        /// PyKEP 官方 Alpha 飞行时间编码转换为各航段实际飞时 (100% 原生 C++ kep3_alpha2direct)
+        /// </summary>
+        public static bool Alpha2Direct(double[] alphas, double tof, out double[] outTofs) {
+            EnsureLoaded();
+            outTofs = (alphas != null) ? new double[alphas.Length] : new double[0];
+            if (_isAvailable && _fnKep3Alpha2Direct != null && alphas != null && alphas.Length > 0 && tof > 0.0) {
+                try {
+                    return _fnKep3Alpha2Direct(alphas, alphas.Length, tof, outTofs) == 0;
+                } catch { }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 实际航段飞时编码为 PyKEP 官方 Alpha 染色体格式 (100% 原生 C++ kep3_direct2alpha)
+        /// </summary>
+        public static bool Direct2Alpha(double[] tofs, out double[] outAlphas, out double totalTof) {
+            EnsureLoaded();
+            totalTof = 0.0;
+            outAlphas = (tofs != null) ? new double[tofs.Length] : new double[0];
+            if (_isAvailable && _fnKep3Direct2Alpha != null && tofs != null && tofs.Length > 0) {
+                try {
+                    return _fnKep3Direct2Alpha(tofs, tofs.Length, outAlphas, out totalTof) == 0;
+                } catch { }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// PyKEP 官方 Eta 飞行时间比例编码转换为各航段实际飞时 (100% 原生 C++ kep3_eta2direct)
+        /// </summary>
+        public static bool Eta2Direct(double[] etas, double maxTof, out double[] outTofs) {
+            EnsureLoaded();
+            outTofs = (etas != null) ? new double[etas.Length] : new double[0];
+            if (_isAvailable && _fnKep3Eta2Direct != null && etas != null && etas.Length > 0 && maxTof > 0.0) {
+                try {
+                    return _fnKep3Eta2Direct(etas, etas.Length, maxTof, outTofs) == 0;
+                } catch { }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 实际航段飞时编码为 PyKEP 官方 Eta 染色体格式 (100% 原生 C++ kep3_direct2eta)
+        /// </summary>
+        public static bool Direct2Eta(double[] tofs, double maxTof, out double[] outEtas) {
+            EnsureLoaded();
+            outEtas = (tofs != null) ? new double[tofs.Length] : new double[0];
+            if (_isAvailable && _fnKep3Direct2Eta != null && tofs != null && tofs.Length > 0 && maxTof > 0.0) {
+                try {
+                    return _fnKep3Direct2Eta(tofs, tofs.Length, maxTof, outEtas) == 0;
+                } catch { }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// PyKEP 官方 (u, v, V) 球面等面积染色体坐标转换为笛卡尔速度矢量 (100% 原生 C++ kep3_uvV_to_cartesian)
+        /// </summary>
+        public static bool UvVToCartesian(double u, double v, double V, out Vector3d outV) {
+            EnsureLoaded();
+            outV = Vector3d.zero;
+            if (_isAvailable && _fnKep3UvVToCartesian != null) {
+                try {
+                    int rc = _fnKep3UvVToCartesian(u, v, V, out double vx, out double vy, out double vz);
+                    if (rc == 0) {
+                        outV = new Vector3d(vx, vy, vz);
+                        return true;
+                    }
+                } catch { }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 笛卡尔速度矢量转换为 PyKEP 官方 (u, v, V) 球面等面积染色体坐标 (100% 原生 C++ kep3_cartesian_to_uvV)
+        /// </summary>
+        public static bool CartesianToUvV(Vector3d v, out double outU, out double outV, out double outV_norm) {
+            EnsureLoaded();
+            outU = 0.0;
+            outV = 0.5;
+            outV_norm = 0.0;
+            if (_isAvailable && _fnKep3CartesianToUvV != null) {
+                try {
+                    return _fnKep3CartesianToUvV(v.x, v.y, v.z, out outU, out outV, out outV_norm) == 0;
+                } catch { }
+            }
+            return false;
         }
 
         /// <summary>

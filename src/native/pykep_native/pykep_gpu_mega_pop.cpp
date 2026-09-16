@@ -369,7 +369,7 @@ void CSMain(uint3 id : SV_DispatchThreadID) {
                     if (reqTurn > maxTurn + 1e-4f) {
                         float excess = reqTurn - maxTurn;
                         total_dv += 2.0f * vRef * sin(excess * 0.5f) + abs(vInMag - vOutMag);
-                        penalty += 2.5f * excess * excess;
+                        penalty += 10.0f * (excess + excess * excess);
                     } else {
                         total_dv += abs(vInMag - vOutMag);
                     }
@@ -421,7 +421,7 @@ void CSMain(uint3 id : SV_DispatchThreadID) {
                 if (reqTurn > maxTurn + 1e-4f) {
                     float excess = reqTurn - maxTurn;
                     total_dv += 2.0f * vRef * sin(excess * 0.5f) + abs(vInMag - vOutMag);
-                    penalty += 2.5f * excess * excess;
+                    penalty += 10.0f * (excess + excess * excess);
                 } else {
                     total_dv += abs(vInMag - vOutMag);
                 }
@@ -460,7 +460,7 @@ void CSMain(uint3 id : SV_DispatchThreadID) {
     }
 
     // 3. 飞船总工质上限平滑二次势垒 (场景 1 或场景 2)
-    float subject_dv = (flyby_only > 0.5f) ? (launch_dv + total_dsm) : total_dv;
+    float subject_dv = total_dv;
     if (vessel_budget_kms > 0.0f && subject_dv > vessel_budget_kms) {
         float over_vessel = subject_dv - vessel_budget_kms;
         penalty += barrier_scale * (over_vessel + over_vessel * over_vessel);

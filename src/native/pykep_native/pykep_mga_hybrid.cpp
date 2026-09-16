@@ -718,30 +718,31 @@ EXPORT_API int pykep_mga_hybrid_evaluate_mu(
                         u_h[0]*u_r1[1] - u_h[1]*u_r1[0]
                     };
 
-                    // 构造借力偏折锥面的局部正交标架 {u_in, e1, e2}
-                    double dot_th_in = u_theta[0]*u_in[0] + u_theta[1]*u_in[1] + u_theta[2]*u_in[2];
-                    double w1[3] = {
-                        u_theta[0] - dot_th_in * u_in[0],
-                        u_theta[1] - dot_th_in * u_in[1],
-                        u_theta[2] - dot_th_in * u_in[2]
+                    // 构造借力偏折锥面的 ESA PyKEP 官方标准正交标架 {i_hat, j_hat, k_hat}
+                    // i_hat = u_in (进场渐近线方向)
+                    // j_hat = normalize(i_hat x v_pla) (面外垂直方向)
+                    // k_hat = i_hat x j_hat (面内正交方向)
+                    // u_out = cos(delta) * i_hat + sin(delta) * (cos(beta) * j_hat + sin(beta) * k_hat)
+                    double j_vec[3] = {
+                        u_in[1] * p1.vz - u_in[2] * p1.vy,
+                        u_in[2] * p1.vx - u_in[0] * p1.vz,
+                        u_in[0] * p1.vy - u_in[1] * p1.vx
                     };
-                    double w1_len = std::sqrt(w1[0]*w1[0] + w1[1]*w1[1] + w1[2]*w1[2]);
-                    if (w1_len < 1e-5) {
-                        double dot_p1_in = u_p1[0]*u_in[0] + u_p1[1]*u_in[1] + u_p1[2]*u_in[2];
-                        w1[0] = u_p1[0] - dot_p1_in * u_in[0];
-                        w1[1] = u_p1[1] - dot_p1_in * u_in[1];
-                        w1[2] = u_p1[2] - dot_p1_in * u_in[2];
-                        w1_len = std::sqrt(w1[0]*w1[0] + w1[1]*w1[1] + w1[2]*w1[2]);
-                        if (w1_len < 1e-5) {
-                            w1[0] = u_h[0]; w1[1] = u_h[1]; w1[2] = u_h[2];
-                            w1_len = std::sqrt(w1[0]*w1[0] + w1[1]*w1[1] + w1[2]*w1[2]);
-                        }
+                    double j_len = std::sqrt(j_vec[0]*j_vec[0] + j_vec[1]*j_vec[1] + j_vec[2]*j_vec[2]);
+                    if (j_len < 1e-6) {
+                        // 共线或行星速度接近 0 时的非奇异兜底参考矢量
+                        double ref[3] = { (std::abs(u_in[2]) < 0.9) ? 0.0 : 1.0, 0.0, (std::abs(u_in[2]) < 0.9) ? 1.0 : 0.0 };
+                        j_vec[0] = u_in[1]*ref[2] - u_in[2]*ref[1];
+                        j_vec[1] = u_in[2]*ref[0] - u_in[0]*ref[2];
+                        j_vec[2] = u_in[0]*ref[1] - u_in[1]*ref[0];
+                        j_len = std::sqrt(j_vec[0]*j_vec[0] + j_vec[1]*j_vec[1] + j_vec[2]*j_vec[2]);
+                        if (j_len < 1e-6) { j_vec[0] = 1.0; j_len = 1.0; }
                     }
-                    double e1[3] = { w1[0] / w1_len, w1[1] / w1_len, w1[2] / w1_len };
-                    double e2[3] = {
-                        u_in[1]*e1[2] - u_in[2]*e1[1],
-                        u_in[2]*e1[0] - u_in[0]*e1[2],
-                        u_in[0]*e1[1] - u_in[1]*e1[0]
+                    double j_hat[3] = { j_vec[0] / j_len, j_vec[1] / j_len, j_vec[2] / j_len };
+                    double k_hat[3] = {
+                        u_in[1]*j_hat[2] - u_in[2]*j_hat[1],
+                        u_in[2]*j_hat[0] - u_in[0]*j_hat[2],
+                        u_in[0]*j_hat[1] - u_in[1]*j_hat[0]
                     };
 
                     auto get_cone_v_dep = [&](double delta, double beta) -> std::array<double, 3> {
@@ -750,9 +751,9 @@ EXPORT_API int pykep_mga_hybrid_evaluate_mu(
                         double cos_b = std::cos(beta);
                         double sin_b = std::sin(beta);
                         double u_out[3] = {
-                            cos_d * u_in[0] + sin_d * (cos_b * e1[0] + sin_b * e2[0]),
-                            cos_d * u_in[1] + sin_d * (cos_b * e1[1] + sin_b * e2[1]),
-                            cos_d * u_in[2] + sin_d * (cos_b * e1[2] + sin_b * e2[2])
+                            cos_d * u_in[0] + sin_d * (cos_b * j_hat[0] + sin_b * k_hat[0]),
+                            cos_d * u_in[1] + sin_d * (cos_b * j_hat[1] + sin_b * k_hat[1]),
+                            cos_d * u_in[2] + sin_d * (cos_b * j_hat[2] + sin_b * k_hat[2])
                         };
                         return {
                             p1.vx + v_in_mag * u_out[0],
@@ -889,9 +890,9 @@ EXPORT_API int pykep_mga_hybrid_evaluate_mu(
                                     double dot = std::max(-1.0, std::min(1.0, u_in[0]*u_tgt[0] + u_in[1]*u_tgt[1] + u_in[2]*u_tgt[2]));
                                     double req_ang = std::acos(dot);
                                     double turn_d = std::min(req_ang, delta_max);
-                                    double dot_e1 = u_tgt[0]*e1[0] + u_tgt[1]*e1[1] + u_tgt[2]*e1[2];
-                                    double dot_e2 = u_tgt[0]*e2[0] + u_tgt[1]*e2[1] + u_tgt[2]*e2[2];
-                                    double b_ang = std::atan2(dot_e2, dot_e1);
+                                    double dot_j = u_tgt[0]*j_hat[0] + u_tgt[1]*j_hat[1] + u_tgt[2]*j_hat[2];
+                                    double dot_k = u_tgt[0]*k_hat[0] + u_tgt[1]*k_hat[1] + u_tgt[2]*k_hat[2];
+                                    double b_ang = std::atan2(dot_k, dot_j);
                                     angle_candidates.push_back({ turn_d, b_ang });
                                 }
                             }
@@ -911,9 +912,9 @@ EXPORT_API int pykep_mga_hybrid_evaluate_mu(
                                     double dot = std::max(-1.0, std::min(1.0, u_in[0]*u_lam[0] + u_in[1]*u_lam[1] + u_in[2]*u_lam[2]));
                                     double req_ang = std::acos(dot);
                                     double turn_d = std::min(req_ang, delta_max);
-                                    double dot_e1 = u_lam[0]*e1[0] + u_lam[1]*e1[1] + u_lam[2]*e1[2];
-                                    double dot_e2 = u_lam[0]*e2[0] + u_lam[1]*e2[1] + u_lam[2]*e2[2];
-                                    double b_ang = std::atan2(dot_e2, dot_e1);
+                                    double dot_j = u_lam[0]*j_hat[0] + u_lam[1]*j_hat[1] + u_lam[2]*j_hat[2];
+                                    double dot_k = u_lam[0]*k_hat[0] + u_lam[1]*k_hat[1] + u_lam[2]*k_hat[2];
+                                    double b_ang = std::atan2(dot_k, dot_j);
                                     angle_candidates.push_back({ turn_d, b_ang });
                                 }
                             }
@@ -1143,9 +1144,14 @@ EXPORT_API int pykep_mga_hybrid_evaluate_mu(
             total_dv += out_sol->insertion_dv_kms;
         }
 
+        if (std::isnan(total_dv) || std::isinf(total_dv) || std::isnan(out_sol->insertion_dv_kms) || std::isnan(out_sol->launch_dv_kms)) {
+            out_sol->all_feasible = 0;
+            out_sol->total_dv_kms = 1e9;
+        } else {
+            out_sol->total_dv_kms = total_dv;
+        }
         out_sol->total_dsm_dv_kms = total_dsm_dv;
         out_sol->total_flyby_dv_kms = total_flyby_dv;
-        out_sol->total_dv_kms = total_dv;
         out_sol->total_flight_days = total_tof_sec / 86400.0;
         return 0;
     } catch (...) {
