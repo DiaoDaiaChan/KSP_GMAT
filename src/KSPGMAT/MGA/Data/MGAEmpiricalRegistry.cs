@@ -413,6 +413,47 @@ namespace KSPGMAT.MGA
                 Rationale = "【第二轮已注销并删除】原兜底为 `return (149598023.0, 0.0167, 0.0, 398600.4418, 6378.14)` —— 即**任何未识别天体名静默变成地球** (1 AU / μ_Earth / R_Earth)。在 Kerbol 缩尺星系 / JNSQ / 自建星球包下, 所有自定义天体与地球物理等价, 由此产生的航时/ΔV/共振阶数全部是伪值且无断言可发现。现改为返回全零 + 置 IsOrbitUnresolved, 由消费侧显式拒绝 (ResolveNominalTofDays 亦同步删除 `?? AU_KM` 的静默替代)。",
                 FailureMode = "已消除。",
                 ReplacementPath = "已完成 (显式未解析标志)。"
+            },
+
+            // ============================================================
+            // 【第三轮新增 2026-09-17】MGAEphemerisReachabilityAnalyzer.cs
+            // 复核 reports/mga_empirical_and_magic_audit.md 时, 把该文件中 4 处未命名的
+            // 内联经验系数具名化, 并接入 MGAUnits 单位/公式真值源。
+            // ============================================================
+            new MGAEmpiricalEntry {
+                File = "Solver/MGAEphemerisReachabilityAnalyzer.cs", Symbol = "HalfDeflectionProjectionFloor (0.60)",
+                Status = MGAEmpiricalStatus.Uncalibrated,
+                Rationale = "【第三轮新增】终点共振自减速的**单次速率消减量下限比例**。物理式为 Δv = 2·v∞·sin(δ/2); v∞ 低时 sin(δ/2) 退化为小量, 会使消减量被高估、共振圈数被低估。此处对 sin(δ/2) 施加下限以表征偏折角的有效几何投影比例。取代原内联裸字面量 `Math.Max(0.60, sinHalf)`。",
+                FailureMode = "该下限依赖具体交会几何的统计分布, 对势阱深度与 v∞ 量级差异大的目标不会同样适用。",
+                ReplacementPath = "用 chain_truth_labels.csv 的真值共振圈数反标定: 以 (v∞, δ, 实际圈数) 为样本拟合有效投影比例。"
+            },
+            new MGAEmpiricalEntry {
+                File = "Solver/MGAEphemerisReachabilityAnalyzer.cs", Symbol = "TerminalCaptureResonanceToFFraction (0.2)",
+                Status = MGAEmpiricalStatus.Uncalibrated,
+                Rationale = "【第三轮新增】终点捕获共振环的**航时计权比例**。终点自减速环是近目标天体的低速捕获机动 (周期由目标势阱主导), 不属行星际深空巡航漂移, 故按此比例计入残余调相时间。取代原内联裸字面量 `periodDays * 0.2`。",
+                FailureMode = "比例本身无解析依据; 对捕获圈数多的任务 (如水星类深井) 会系统性低估航时。",
+                ReplacementPath = "以真值航时 (chain_truth_labels.csv 的 ToF 分量) 回归终点段实际占比。"
+            },
+            new MGAEmpiricalEntry {
+                File = "Solver/MGAEphemerisReachabilityAnalyzer.cs", Symbol = "MaxPumpUpSemiMajorAxisRatio (2.5)",
+                Status = MGAEmpiricalStatus.PhysicallyDerived,
+                Rationale = "【第三轮新增】引力泵升轨道半长轴的**合理性上界** (以当前天体日心半径为 1 单位)。由能量守恒反解的 a_pump 必须仍处于本段转移范围。2:1 共振半长轴为 2^(2/3) ≈ 1.587 倍, 上界取 2.5 为其留出高能转移裕度。取代原内联裸字面量 `r1 * 2.5`。",
+                FailureMode = "2.5 与 1.587 之间的裕度是工程口径, 非解析推导。",
+                ReplacementPath = "由可达 a_max (MGAFlybyDynamicsHelper.DerivePhysicalInterplanetaryBounds) 反解, 替换为系统导出量。"
+            },
+            new MGAEmpiricalEntry {
+                File = "Solver/MGAEphemerisReachabilityAnalyzer.cs", Symbol = "OutboundResonanceExitRatio (1.5) / InboundResonanceExitRatio (0.8)",
+                Status = MGAEmpiricalStatus.Uncalibrated,
+                Rationale = "【第三轮新增】共振进场轨道方向判据的两个**半径比门限**。r2 > 1.5·r1 判为冲向外侧的高能升轨 (进场取 2:1 泵升共振); r2 < 0.8·r1 判为潜向内侧的降轨 (进场取 1:2 共振降轨); 之间按 1:1 处理。取代原内联裸字面量 `r1 * 1.5` / `r1 * 0.8`。",
+                FailureMode = "1.5 与 0.8 是「显著外向/内向」的经验分界, 对两端轨道半径接近的任务 (如地-金) 敏感性高。",
+                ReplacementPath = "以 2:1 与 1:2 共振半长轴 (即 2^(2/3) ≈ 1.587 与 2^(-2/3) ≈ 0.630) 作为解析分界重新标定。"
+            },
+            new MGAEmpiricalEntry {
+                File = "Solver/MGAEphemerisReachabilityAnalyzer.cs", Symbol = "DeepWellInwardAlignmentRatio (0.9) / AlignedInwardResidualVInfKms (1.0)",
+                Status = MGAEmpiricalStatus.Uncalibrated,
+                Rationale = "【第三轮新增】内侧深井进场的**对齐判定门限**与**对齐后离面残差上限**。前者: 目标半径 < 0.9×出发半径时视为深井目标 (如地→水的 0.39), 配合 clusterCount≥2 判定轨道面已对齐。后者: 共面近圆交会的真实残余离面分量量级 ~1 km/s。取代原内联 `pDep.SMA * 0.9` 与 `Math.Min(1.0, orthoVinfRaw)`。",
+                FailureMode = "0.9 过宽 (未真正深井的任务也会被判定为可对齐); 1 km/s 是量级估计而非逐任务真值。",
+                ReplacementPath = "0.9 改为由 MGAPhysicalScales 的系统内分位判据给出 (与 LowerQuantileLevel 同源); 1.0 由实际倾角差的 sin 分量解析给出。"
             }
         };
 

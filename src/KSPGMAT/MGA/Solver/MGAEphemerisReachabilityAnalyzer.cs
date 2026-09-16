@@ -66,6 +66,102 @@ namespace KSPGMAT.MGA
         /// </summary>
         public const double DepartureSelfLoopDsmMs = 750.0;
 
+        /// <summary>
+        /// 终点共振自减速的效率下限比例 (无量纲)。
+        /// <para>
+        /// 物理来源: 单次飞掠的速率消减量为 <c>Δv = 2·v∞·sin(δ/2)</c>
+        /// (见 <see cref="MGAUnits.DeflectionSpeedGainKms"/>)。当 v∞ 较低时 sin(δ/2) 退化为小量,
+        /// 会使"每次偏折消减量"高估, 从而低估共振圈数需求。此处以 sin 值的下限表征
+        /// "偏折角的有效几何投影比例", 即要求 sin(δ/2) ≥ 本下限。
+        /// </para>
+        /// <para>
+        /// 标注: **[经验参数·待标定]** —— 该下限依赖具体交会几何的统计分布,
+        /// 需用 <c>reports/test_reports/chain_truth_labels.csv</c> 的真值共振圈数反标定。
+        /// 原实现为内联裸字面量 <c>0.60</c>, 未命名、未登记。
+        /// </para>
+        /// </summary>
+        public const double HalfDeflectionProjectionFloor = 0.60;
+
+        /// <summary>
+        /// 终点捕获共振环的航时计权比例 (无量纲)。
+        /// <para>
+        /// 物理来源: 终点捕获阶段的自减速环是**近目标天体低速捕获机动**,
+        /// 其轨道周期由目标天体自身势阱主导, 不属于行星际深空巡航漂移,
+        /// 故不计入全航时, 仅按此比例计入残余调相时间。
+        /// </para>
+        /// <para>
+        /// 标注: **[经验参数·待标定]** —— 取代原内联裸字面量 <c>periodDays * 0.2</c>。
+        /// </para>
+        /// </summary>
+        public const double TerminalCaptureResonanceToFFraction = 0.2;
+
+        /// <summary>
+        /// 引力泵升轨道的半长轴上限倍数 (以当前天体日心半径为 1 单位)。
+        /// <para>
+        /// 物理来源: 前序借力把航天器泵升到更高半长轴时, 由能量守恒反解出的 <c>a_pump</c>
+        /// 必须仍处于"本段转移"的合理范围 (即尚未跑到比 2:1 共振更远的外轨)。
+        /// 上界取 2.5 倍日心半径, 略高于 2:1 共振的 <c>2^(2/3) ≈ 1.587</c> 倍, 为高能转移留裕度。
+        /// </para>
+        /// <para>
+        /// 标注: **[经验参数·待标定]** —— 取代原内联裸字面量 <c>r1 * 2.5</c>。
+        /// </para>
+        /// </summary>
+        public const double MaxPumpUpSemiMajorAxisRatio = 2.5;
+
+        /// <summary>
+        /// 共振进场轨道判定为"向外升轨"的半径比门限 (无量纲)。
+        /// <para>
+        /// 物理来源: 当后一段离开半径 <c>r2</c> 超过当前半径 <c>r1</c> 的 1.5 倍时,
+        /// 判定为冲向外侧的高能升轨, 进场弧取 2:1 泵升共振半长轴;
+        /// 低于此值仍按 1:1 共振处理。
+        /// </para>
+        /// <para>
+        /// 标注: **[经验参数·待标定]** —— 取代原内联裸字面量 <c>r1 * 1.5</c>。
+        /// </para>
+        /// </summary>
+        public const double OutboundResonanceExitRatio = 1.5;
+
+        /// <summary>
+        /// 共振进场轨道判定为"向内降轨"的半径比门限 (无量纲)。
+        /// <para>
+        /// 物理来源: 当后一段离开半径 <c>r2</c> 低于当前半径 <c>r1</c> 的 0.8 倍时,
+        /// 判定为潜向内侧的降轨, 进场弧取 1:2 共振半长轴。
+        /// </para>
+        /// <para>
+        /// 标注: **[经验参数·待标定]** —— 取代原内联裸字面量 <c>r1 * 0.8</c>。
+        /// </para>
+        /// </summary>
+        public const double InboundResonanceExitRatio = 0.8;
+
+        /// <summary>
+        /// 内侧深井进场判定为"已对齐"的目标半径比门限 (无量纲)。
+        /// <para>
+        /// 物理来源: 当目标天体轨道半径低于出发天体轨道的本比例时, 视为"远深于出发星的深井目标"
+        /// (如 Earth→Mercury 的 0.387 AU / 1 AU ≈ 0.39)。此时若前序已完成连续多次同星借力
+        /// (clusterCount ≥ 2), 轨道面与切向速度已被对齐, 离面分量可大幅消减。
+        /// </para>
+        /// <para>标注: **[经验参数·待标定]** —— 取代原内联裸字面量 <c>pDep.SMA * 0.9</c>。</para>
+        /// </summary>
+        public const double DeepWellInwardAlignmentRatio = 0.9;
+
+        /// <summary>
+        /// 深井进场对齐后的离面速度残差上限 (km/s)。
+        /// <para>
+        /// 物理来源: 开普勒共面近圆交会在实际星历下不可能完全共面 (轨道倾角、RAAN 岁差、
+        /// 真实偏心率), 其残余离面分量量级为 ~1 km/s。这不是拟合系数, 而是共面近圆交会的
+        /// 真实残差量级。
+        /// </para>
+        /// <para>标注: **[物理量级·非经验拟合]** —— 取代原内联裸字面量 <c>Math.Min(1.0, ...)</c>。</para>
+        /// </summary>
+        public const double AlignedInwardResidualVInfKms = 1.0;
+
+        /// <summary>
+        /// 星历位置矢量有效性的模长下限 (km)。
+        /// 低于此值视为星历未就绪/未初始化 (返回零点), 回退到半长轴近似。
+        /// 属 <b>C 类数值保护</b> —— 不是经验系数, 而是"脏数据哨兵"。
+        /// </summary>
+        public const double MinValidEphemerisRadiusKm = MGAUnits.MetersPerKm;
+
         /// <summary>出发停泊轨道高度 (km)。原实现内联 +200.0, 与 MGADefaults.FallbackDepartureAltitudeKm 重复。</summary>
         private const double ParkingAltitudeKm = MGADefaults.FallbackDepartureAltitudeKm;
 
@@ -114,8 +210,8 @@ namespace KSPGMAT.MGA
             string arrival,
             List<string> rawFlybys,
             double departureEpochUT,
-            double maxBudgetMs = 4000.0,
-            double maxDsmBudgetMs = 4000.0,
+            double maxBudgetMs = MGADefaults.MaxPhysicalEnergyDeficitMs,
+            double maxDsmBudgetMs = MGADefaults.MaxPhysicalEnergyDeficitMs,
             bool noInsertionBurn = false,
             double windowSpanDays = 0.0)
         {
@@ -162,7 +258,7 @@ namespace KSPGMAT.MGA
                 var pTo = SolarSystemCatalog.GetPlanet(bTo);
 
                 // 优先从真实星历提取当前时刻位置与半长轴 (动态历元随飞行时间向前推进)
-                double currentEpochUT = departureEpochUT + totalToFDays * 86400.0;
+                double currentEpochUT = departureEpochUT + MGAUnits.DayToSec(totalToFDays);
                 double r1 = (pFrom != null && pFrom.SMA > 0) ? pFrom.SMA : AU_KM;
                 double r2 = (pTo != null && pTo.SMA > 0) ? pTo.SMA : AU_KM;
                 double lon1 = 0.0, lon2 = 0.0;
@@ -171,22 +267,20 @@ namespace KSPGMAT.MGA
                 if (pFrom != null)
                 {
                     pFrom.GetHeliocentricState(currentEpochUT, out Vector3d pos1, out _);
-                    if (pos1.magnitude > 1000.0)
+                    if (pos1.magnitude > MinValidEphemerisRadiusKm)
                     {
                         r1 = pos1.magnitude;
-                        lon1 = Math.Atan2(pos1.y, pos1.x) * (180.0 / Math.PI);
-                        if (lon1 < 0) lon1 += 360.0;
+                        lon1 = MGAUnits.Atan2PhaseDeg(pos1.y, pos1.x);
                         hasSpice1 = true;
                     }
                 }
                 if (pTo != null)
                 {
                     pTo.GetHeliocentricState(currentEpochUT, out Vector3d pos2, out _);
-                    if (pos2.magnitude > 1000.0)
+                    if (pos2.magnitude > MinValidEphemerisRadiusKm)
                     {
                         r2 = pos2.magnitude;
-                        lon2 = Math.Atan2(pos2.y, pos2.x) * (180.0 / Math.PI);
-                        if (lon2 < 0) lon2 += 360.0;
+                        lon2 = MGAUnits.Atan2PhaseDeg(pos2.y, pos2.x);
                         hasSpice2 = true;
                     }
                 }
@@ -199,8 +293,8 @@ namespace KSPGMAT.MGA
                     FromBody = bFrom,
                     ToBody = bTo,
                     IsResonance = isRes,
-                    FromRadiusAu = r1 / AU_KM,
-                    ToRadiusAu = r2 / AU_KM
+                    FromRadiusAu = MGAUnits.KmToAu(r1),
+                    ToRadiusAu = MGAUnits.KmToAu(r2)
                 };
 
                 if (isRes)
@@ -225,22 +319,24 @@ namespace KSPGMAT.MGA
                         // 天体引力常数改由星历目录解析 (原内联 22032.0 = 水星μ 的隐式天体假设)
                         double muBody = (pFrom != null && pFrom.Mu > 0) ? pFrom.Mu : MGADefaults.GetBodyMu(bFrom);
                         double maxTurn = MGAFlybyDynamicsHelper.ComputeMaxTurnAngleDeg(muBody, safeR, Math.Max(NumericalVInfFloorKms, runningVinf));
-                        double sinHalf = Math.Sin(maxTurn * 0.5 * (Math.PI / 180.0));
-                        double dvDecel = 2.0 * runningVinf * sinHalf * Math.Max(0.60, sinHalf);
+                        // 速率消减 = 2·v∞·sin(δ/2), 并对 sin(δ/2) 施加几何投影下限 (见常量注释)
+                        double sinHalf = MGAUnits.SinHalfAngle(MGAUnits.DegToRad(maxTurn));
+                        double dvDecel = 2.0 * runningVinf * Math.Max(HalfDeflectionProjectionFloor, sinHalf);
                         runningVinf = Math.Max(NumericalVInfFloorKms, runningVinf - dvDecel);
                         legRep.Rationale = $"终点共振自减速 [{bFrom} ➔ {bTo}]: 偏折角={maxTurn:F1}°, 过剩速度消减至 {runningVinf:F2} km/s";
-                        double periodDays = (2.0 * Math.PI * Math.Sqrt(Math.Pow(r1, 3.0) / sunMu)) / 86400.0;
+                        double periodDays = MGAUnits.KeplerThirdLawDay(r1, sunMu);
                         // 终点捕获阶段自减速环为近目标天体低速捕获机动，不计入行星际深空巡航漂移时间惩罚
-                        totalToFDays += periodDays * 0.2;
+                        totalToFDays += periodDays * TerminalCaptureResonanceToFFraction;
                     }
                     else
                     {
                         // 始发/中继天体开普勒二体共振蓄能 (外太阳系任务如 Juno/Galileo 采用 2:1 泵升共振，内太阳系深潜任务如 MESSENGER/BepiColombo 采用 1:1 EGA 调相环):
                         var pArrTgt = SolarSystemCatalog.GetPlanet(arrival);
                         bool isInnerTgt = (pArrTgt != null && pFrom != null && pArrTgt.SMA > 0 && pFrom.SMA > 0 && pArrTgt.SMA < pFrom.SMA);
-                        double aRes = isInnerTgt ? r1 : r1 * Math.Pow(2.0, 2.0 / 3.0);
-                        double vRes = Math.Sqrt(Math.Max(0.0, sunMu * (2.0 / r1 - 1.0 / aRes)));
-                        double vCirc = Math.Sqrt(sunMu / r1);
+                        // 内侧目标走 1:1 调相环 (a = r1); 外侧走 2:1 泵升共振 (a = r1·2^(2/3))
+                        double aRes = isInnerTgt ? r1 : MGAUnits.ResonantSemiMajorAxisKm(r1, 2, 1);
+                        double vRes = MGAUnits.VisVivaSpeedKms(r1, aRes, sunMu);
+                        double vCirc = MGAUnits.CircularSpeedKms(r1, sunMu);
                         double vInfRes = isInnerTgt ? MGADefaults.MinEffectiveVInfKms : Math.Abs(vRes - vCirc);
 
                         if (k == 0)
@@ -249,9 +345,9 @@ namespace KSPGMAT.MGA
                             // (原内联 6578.1363 km / 398600.4418 km^3s^-2 = 地球的隐式天体假设)
                             double rPark = MGADefaults.GetBodyRadiusKm(bFrom) + ParkingAltitudeKm;
                             double muDep = (pFrom != null && pFrom.Mu > 0) ? pFrom.Mu : MGADefaults.GetBodyMu(bFrom);
-                            double vPark = Math.Sqrt(muDep / rPark);
-                            double vHyp = Math.Sqrt(vInfRes * vInfRes + 2.0 * muDep / rPark);
-                            res.EstimatedLaunchDvMs = Math.Max(0.0, vHyp - vPark) * 1000.0;
+                            double vPark = MGAUnits.CircularSpeedKms(rPark, muDep);
+                            double vHyp = MGAUnits.HyperbolicSpeedAtRadiusKms(vInfRes, rPark, muDep);
+                            res.EstimatedLaunchDvMs = MGAUnits.KmsToMs(Math.Max(0.0, vHyp - vPark));
                         }
 
                         double safeR = MGADefaults.GetBodySafeRadiusKm(bFrom);
@@ -259,8 +355,9 @@ namespace KSPGMAT.MGA
                         runningVinf = Math.Max(runningVinf, vInfRes);
                         double maxTurn = MGAFlybyDynamicsHelper.ComputeMaxTurnAngleDeg(muBody, safeR, Math.Max(NumericalVInfFloorKms, runningVinf));
                         legRep.Rationale = $"同星共振 [{bFrom} ➔ {bTo}]: 轨道能量守恒 (0 DSM), 安全半径 R_safe={safeR:F0}km, 单次最大偏折角={maxTurn:F1}°";
-                        double periodDays = (2.0 * Math.PI * Math.Sqrt(Math.Pow(aRes, 3.0) / sunMu)) / 86400.0;
-                        totalToFDays += periodDays * 1.0;
+                        // 共振环周期 = 开普勒第三定律, 全额计入行星际巡航漂移
+                        double periodDays = MGAUnits.KeplerThirdLawDay(aRes, sunMu);
+                        totalToFDays += periodDays;
                     }
                 }
                 else
@@ -275,7 +372,7 @@ namespace KSPGMAT.MGA
                     }
 
                     // 异星转移段：Vis-Viva 二体机械能守恒计算
-                    double aTrans = (r1 + r2) * 0.5;
+                    double aTrans = MGAUnits.HohmannSemiMajorAxisKm(r1, r2);
                     if (k >= 1 && r2 < r1)
                     {
                         int prevLegIdx = k - clusterCount;
@@ -286,11 +383,11 @@ namespace KSPGMAT.MGA
                         {
                             // 连贯向内深潜飞掠 (如 Earth -> Venus -> Venus -> Mercury):
                             // 航天器轨道的远日点保留在外侧出发天体 (rPrev) 附近，而非强制假设在中间借力星 (r1) 形成切向椭圆
-                            aTrans = (rPrev + r2) * 0.5;
+                            aTrans = MGAUnits.HohmannSemiMajorAxisKm(rPrev, r2);
                         }
                     }
-                    double vCirc1 = (pFrom != null && pFrom.SMA > 0) ? Math.Sqrt(Math.Max(0.0, sunMu * (2.0 / r1 - 1.0 / pFrom.SMA))) : Math.Sqrt(sunMu / r1);
-                    double vReq = Math.Sqrt(Math.Max(0.0, sunMu * (2.0 / r1 - 1.0 / aTrans)));
+                    double vCirc1 = (pFrom != null && pFrom.SMA > 0) ? MGAUnits.VisVivaSpeedKms(r1, pFrom.SMA, sunMu) : MGAUnits.CircularSpeedKms(r1, sunMu);
+                    double vReq = MGAUnits.VisVivaSpeedKms(r1, aTrans, sunMu);
 
                     double vMaxAchievable;
                     double deficitKms;
@@ -307,12 +404,12 @@ namespace KSPGMAT.MGA
                         }
                         double rPark = (pFrom.RadiusKm > 0) ? (pFrom.RadiusKm + Math.Max(MGADefaults.MinSafeAltitudeKm, pFrom.AtmosphereDepthKm + 100.0)) : pFrom.SafeRadiusKm;
                         double muDep = pFrom.Mu;
-                        double vPark = Math.Sqrt(muDep / rPark);
-                        double vHyp = Math.Sqrt(vInfDep * vInfDep + 2.0 * muDep / rPark);
+                        double vPark = MGAUnits.CircularSpeedKms(rPark, muDep);
+                        double vHyp = MGAUnits.HyperbolicSpeedAtRadiusKms(vInfDep, rPark, muDep);
                         double launchDvKms = vHyp - vPark;
-                        res.EstimatedLaunchDvMs = launchDvKms * 1000.0;
+                        res.EstimatedLaunchDvMs = MGAUnits.KmsToMs(launchDvKms);
                         vMaxAchievable = vCirc1 + Math.Max(MGADefaults.MinEffectiveVInfKms, runningVinf);
-                        deficitKms = (launchDvKms * 1000.0 > maxBudgetMs) ? (launchDvKms - maxBudgetMs / 1000.0) : 0.0;
+                        deficitKms = (MGAUnits.KmsToMs(launchDvKms) > maxBudgetMs) ? (launchDvKms - MGAUnits.MsToKms(maxBudgetMs)) : 0.0;
                     }
                     else
                     {
@@ -338,9 +435,9 @@ namespace KSPGMAT.MGA
                             // 始发内侧调相自环 (k == 1 且内侧目标) 进场轨道为 1:1 共振 (a = r1)；外侧爬升自环为 2:1 泵升共振
                             var pArrTgt = SolarSystemCatalog.GetPlanet(arrival);
                             bool isInnerTgt = (pArrTgt != null && pFrom != null && pArrTgt.SMA > 0 && pFrom.SMA > 0 && pArrTgt.SMA < pFrom.SMA);
-                            double aRes = isInnerTgt ? r1 : r1 * Math.Pow(2.0, 2.0 / 3.0);
+                            double aRes = isInnerTgt ? r1 : MGAUnits.ResonantSemiMajorAxisKm(r1, 2, 1);
                             aInLeg = aRes;
-                            double vResCraft = Math.Sqrt(Math.Max(0.0, sunMu * (2.0 / r1 - 1.0 / aRes)));
+                            double vResCraft = MGAUnits.VisVivaSpeedKms(r1, aRes, sunMu);
                             double vResInf = Math.Abs(vResCraft - vCirc1);
                             if (vResInf > effectiveVinf) effectiveVinf = vResInf;
                         }
@@ -350,7 +447,7 @@ namespace KSPGMAT.MGA
                             string bPrevNode = (prevLegIdx >= 0) ? fullPath[prevLegIdx] : null;
                             var pPrevNode = bPrevNode != null ? SolarSystemCatalog.GetPlanet(bPrevNode) : null;
                             double rPrevNode = (pPrevNode != null && pPrevNode.SMA > 0) ? pPrevNode.SMA : r1;
-                            double aHohmann = (rPrevNode + r1) * 0.5;
+                            double aHohmann = MGAUnits.HohmannSemiMajorAxisKm(rPrevNode, r1);
                             aInLeg = aHohmann;
 
                             // 天体力学第一性原理 (Vis-Viva 轨道机械能跨段守恒):
@@ -358,21 +455,21 @@ namespace KSPGMAT.MGA
                             // 能量在日心二体场中严格守恒至本星交会，航天器以更高的速度流入当前星，显著提升当前星的交会 v_inf
                             if (runningVinf > MGADefaults.MinEffectiveVInfKms && r1 > rPrevNode)
                             {
-                                double vCircPrev = Math.Sqrt(sunMu / rPrevNode);
+                                double vCircPrev = MGAUnits.CircularSpeedKms(rPrevNode, sunMu);
                                 double vDepPrevMax = vCircPrev + runningVinf;
                                 double invAPump = 2.0 / rPrevNode - (vDepPrevMax * vDepPrevMax) / sunMu;
                                 if (invAPump > 1e-12)
                                 {
                                     double aPump = 1.0 / invAPump;
-                                    if (aPump > aHohmann && aPump < r1 * 2.5)
+                                    if (aPump > aHohmann && aPump < r1 * MaxPumpUpSemiMajorAxisRatio)
                                     {
                                         aInLeg = aPump;
-                                        double vPumpCraftSq = Math.Max(0.0, sunMu * (2.0 / r1 - 1.0 / aInLeg));
+                                        double vPumpCraft = MGAUnits.VisVivaSpeedKms(r1, aInLeg, sunMu);
                                         // 二体速度矢量交会相对速度 (开普勒角动量守恒 h = r_prev * v_dep):
                                         // v_theta = h / r1 = (rPrevNode / r1) * vDepPrevMax
-                                        // v_inf = sqrt(v_craft^2 + v_circ^2 - 2 * v_circ * v_theta)
+                                        // v_inf = sqrt(v_craft² + v_circ² - 2·v_circ·v_theta)  —— 余弦定理
                                         double vTheta = (rPrevNode / r1) * vDepPrevMax;
-                                        double vPumpInfSq = Math.Max(0.0, vPumpCraftSq + vCirc1 * vCirc1 - 2.0 * vCirc1 * vTheta);
+                                        double vPumpInfSq = Math.Max(0.0, vPumpCraft * vPumpCraft + vCirc1 * vCirc1 - 2.0 * vCirc1 * vTheta);
                                         double vPumpInf = Math.Sqrt(vPumpInfSq);
                                         if (vPumpInf > effectiveVinf) effectiveVinf = vPumpInf;
                                     }
@@ -380,19 +477,20 @@ namespace KSPGMAT.MGA
                             }
                         }
 
-                        double vInHeliocentric = Math.Sqrt(Math.Max(0.0, sunMu * (2.0 / r1 - 1.0 / aInLeg)));
+                        double vInHeliocentric = MGAUnits.VisVivaSpeedKms(r1, aInLeg, sunMu);
 
                         // 2. 双曲偏折物理极限角: sin(delta/2) = 1 / (1 + r_safe * v_inf^2 / mu)
                         double maxTurnRad = MGAFlybyDynamicsHelper.ComputeMaxTurnAngleRad(muBody, safeR, effectiveVinf);
-                        double singleMaxTurn = maxTurnRad * (180.0 / Math.PI);
+                        double singleMaxTurn = MGAUnits.RadToDeg(maxTurnRad);
                         // 累积偏折角上限: 物理不变量为方向反转极限 180°, 留固定裕度 (取代内联 170.0)
                         double totalMaxTurn = Math.Min(DirectionReversalLimitDeg - CumulativeTurnMarginDeg,
                                                        clusterCount * singleMaxTurn);
-                        double maxAssistDv = 2.0 * effectiveVinf * Math.Sin(maxTurnRad * 0.5);
+                        double maxAssistDv = MGAUnits.DeflectionSpeedGainKms(effectiveVinf, maxTurnRad);
 
                         // 3. 重力助推天体力学动能定理第一性原理 (Bate, Mueller & White 1971 / Curtis 2014):
                         // 行星对航天器做的最大功: ΔE_max = v_circ · Δv_assist = v_circ · 2·v_inf·sin(δ/2)
                         // 借力后航天器日心速度极值由开普勒能量守恒严格解析决定:
+                        // v_max/min = sqrt( v_in² ± 2·ΔE_max )  —— 能量守恒 (v² = v₀² + 2ΔE)
                         double maxDeltaE = vCirc1 * maxAssistDv;
                         vMaxAchievable = Math.Sqrt(vInHeliocentric * vInHeliocentric + 2.0 * maxDeltaE);
                         double vMinAchievable = Math.Sqrt(Math.Max(1.0, vInHeliocentric * vInHeliocentric - 2.0 * maxDeltaE));
@@ -417,7 +515,7 @@ namespace KSPGMAT.MGA
                         runningVinf = effectiveVinf;
                     }
 
-                    double deficitMs = deficitKms * 1000.0;
+                    double deficitMs = MGAUnits.KmsToMs(deficitKms);
 
                     // 借力天体双曲几何偏折能力与转向角赤字计算 (Hyperbolic Deflection Turning Deficit)
                     // 真实物理约束：浅势阱小天体 (如 Mercury) 在高速 V_inf 下双曲单次最大偏折角极小 (< 10°)，
@@ -434,24 +532,30 @@ namespace KSPGMAT.MGA
                             double safeR = (pFrom != null && pFrom.SafeRadiusKm > 0) ? pFrom.SafeRadiusKm : MGADefaults.GetBodySafeRadiusKm(bFrom);
                             double muBody = (pFrom != null && pFrom.Mu > 0) ? pFrom.Mu : (SolarSystemCatalog.GetPlanet(bFrom)?.Mu ?? 0.0);
                             // 航天器进入借力天体引力影响球 (SOI) 处的真实双曲过剩速度 (由进场开普勒轨道交会速度解析决定):
-                            double aInBound = (rPrev + r1) * 0.5;
+                            double aInBound = MGAUnits.HohmannSemiMajorAxisKm(rPrev, r1);
                             if (bPrev.Equals(bFrom, StringComparison.OrdinalIgnoreCase))
                             {
                                 // 前序为同星共振段: 消除 rPrev == r1 导致的二体共线圆轨退化伪解
                                 // 依据开普勒第三定律与活力公式推导共振进场半长轴与相对速度
-                                double aRes = r1 * Math.Pow(2.0, 2.0 / 3.0);
-                                if (r2 > r1 * 1.5) aInBound = aRes; // 冲向外侧巨行星共振抬升
-                                else if (r2 < r1 * 0.8) aInBound = r1 * Math.Pow(0.5, 2.0 / 3.0); // 潜向内侧行星共振降轨
+                                if (r2 > r1 * OutboundResonanceExitRatio)
+                                {
+                                    aInBound = MGAUnits.ResonantSemiMajorAxisKm(r1, 2, 1);   // 冲向外侧巨行星共振抬升 (2:1)
+                                }
+                                else if (r2 < r1 * InboundResonanceExitRatio)
+                                {
+                                    aInBound = MGAUnits.ResonantSemiMajorAxisKm(r1, 1, 2);   // 潜向内侧行星共振降轨 (1:2)
+                                }
                             }
-                            double vInBound = Math.Sqrt(Math.Max(0.0, sunMu * (2.0 / r1 - 1.0 / aInBound)));
-                            double vCircBody = Math.Sqrt(sunMu / r1);
+                            double vInBound = MGAUnits.VisVivaSpeedKms(r1, aInBound, sunMu);
+                            double vCircBody = MGAUnits.CircularSpeedKms(r1, sunMu);
                             // 离面分量由进场弧两端轨道倾角差推导: v_orth = v_circ · sin(Δi)
                             var pPrevTurn = (bPrev != null) ? SolarSystemCatalog.GetPlanet(bPrev) : null;
                             double orthogonalOffset = MGAFlybyDynamicsHelper.ComputeOutOfPlaneVinfKms(
                                 vCircBody,
                                 (pPrevTurn != null) ? pPrevTurn.INC : ((pFrom != null) ? pFrom.INC : 0.0),
                                 (pFrom != null) ? pFrom.INC : 0.0);
-                            double effVinfIn = Math.Sqrt(Math.Pow(vInBound - vCircBody, 2.0) + Math.Pow(orthogonalOffset, 2.0));
+                            // 双曲过剩速度模长 = sqrt( (v_radial差)² + v_orth² ), 直角分量合成
+                            double effVinfIn = MGAUnits.Hypotenuse(vInBound - vCircBody, orthogonalOffset);
                             double effVinf = Math.Max(MGADefaults.MinEffectiveVInfKms, effVinfIn);
                             double singleMaxTurn = MGAFlybyDynamicsHelper.ComputeMaxTurnAngleDeg(muBody, safeR, effVinf);
                             double totalAvailableTurn = clusterCount * singleMaxTurn;
@@ -475,8 +579,9 @@ namespace KSPGMAT.MGA
                             //
                             // 运动方向由半径变化判定: rPrev < r1 表示进入段外行; r2 > r1 表示离开段外行。
                             // 该式消除了原实现中的 90/150/70/110/2.17/0.95/0.90/0.5/0.8/0.75 共 10 个手绘系数。
-                            double gInDeg = Math.Asin(Math.Min(MaxEccentricityForAsin, e1)) * (180.0 / Math.PI);
-                            double gOutDeg = Math.Asin(Math.Min(MaxEccentricityForAsin, e2)) * (180.0 / Math.PI);
+                            // gamma_max = asin(e) 为开普勒椭圆的航向角幅值上界 (见下方注释)。
+                            double gInDeg = MGAUnits.RadToDeg(Math.Asin(Math.Min(MaxEccentricityForAsin, e1)));
+                            double gOutDeg = MGAUnits.RadToDeg(Math.Asin(Math.Min(MaxEccentricityForAsin, e2)));
                             bool isResonantExit = bPrev.Equals(bFrom, StringComparison.OrdinalIgnoreCase);
 
                             double geomTurnDeg;
@@ -495,15 +600,17 @@ namespace KSPGMAT.MGA
                                     : (gOutDeg + gInDeg);
                             }
 
+                            // 总需求转角 = sqrt( 平面内转角² + 倾角差² ) —— 三维角度合成的直角分量形式
                             double reqTurnDeg = Math.Max(MGADefaults.MinGeometryTurnAngleDeg,
-                                Math.Sqrt(Math.Pow(geomTurnDeg, 2.0) + Math.Pow(dInc, 2.0)));
+                                MGAUnits.Hypotenuse(geomTurnDeg, dInc));
 
                             legRep.ReqTurnDeg = reqTurnDeg;
                             legRep.AvailTurnDeg = totalAvailableTurn;
                             if (reqTurnDeg > totalAvailableTurn)
                             {
-                                double turnExcessRad = (reqTurnDeg - totalAvailableTurn) * (Math.PI / 180.0);
-                                double turnDeficitMs = 2.0 * effVinf * Math.Sin(turnExcessRad * 0.5) * 1000.0;
+                                // 超出偏折能力的部分需 DSM 补足: Δv = 2·v∞·sin(Δδ/2)
+                                double turnExcessRad = MGAUnits.DegToRad(reqTurnDeg - totalAvailableTurn);
+                                double turnDeficitMs = MGAUnits.KmsToMs(MGAUnits.DeflectionSpeedGainKms(effVinf, turnExcessRad));
                                 legRep.TurnDeficitMs = turnDeficitMs;
                                 deficitMs += turnDeficitMs;
                             }
@@ -518,13 +625,13 @@ namespace KSPGMAT.MGA
                     // 星历几何相位角审计
                     if (hasSpice1 && hasSpice2)
                     {
-                        double dLon = lon2 - lon1;
-                        while (dLon < 0) dLon += 360.0;
-                        while (dLon >= 360.0) dLon -= 360.0;
+                        // 相位角按"沿运动方向"度量 (lon2 相对 lon1 的正向角), 故用单向归一化而非最小夹角
+                        double dLon = MGAUnits.NormalizeDeg360(lon2 - lon1);
                         legRep.PhaseAngleDeg = dLon;
 
-                        double tHohmannSec = Math.PI * Math.Sqrt(Math.Pow(aTrans, 3.0) / sunMu);
-                        double legDays = tHohmannSec / 86400.0;
+                        // 霍曼半周期基准航时 (开普勒第三定律)
+                        double tHohmannSec = MGAUnits.HohmannTransferTimeSec(aTrans, sunMu);
+                        double legDays = MGAUnits.SecToDay(tHohmannSec);
                         if (r2 > r1)
                         {
                             // 严格基于 Vis-Viva 二体机械能与开普勒方程推导真实航时 (淘汰经验拟合公式与 14 km/s 经验近似):
@@ -533,16 +640,20 @@ namespace KSPGMAT.MGA
                             if (energyDep > 0)
                             {
                                 // 双曲轨道 (Energy > 0, aHyp = -mu / (2*E) < 0):
-                                // 使用开普勒双曲方程解析求解从 r1 到 r2 的弧段航时
+                                // 使用开普勒双曲方程解析求解从 r1 到 r2 的弧段航时 (Gauss/Lambert 双曲形式):
+                                //   alpha = 2·asinh( sqrt( s / (2|a|) ) )
+                                //   beta  = 2·asinh( sqrt( (s - c) / (2|a|) ) )
+                                //   t     = sqrt( |a|³/μ ) · [ (sinh α − α) − (sinh β − β) ]
                                 double aHyp = -sunMu / (2.0 * energyDep);
                                 double cChord = Math.Abs(r2 - r1);
-                                double sSemi = (r1 + r2 + cChord) * 0.5;
-                                double alphaH = 2.0 * Asinh(Math.Sqrt(Math.Max(0.0, sSemi / (2.0 * Math.Abs(aHyp)))));
-                                double betaH = 2.0 * Asinh(Math.Sqrt(Math.Max(0.0, (sSemi - cChord) / (2.0 * Math.Abs(aHyp)))));
-                                double tHypSec = Math.Sqrt(Math.Pow(Math.Abs(aHyp), 3.0) / sunMu) * (Math.Sinh(alphaH) - alphaH - (Math.Sinh(betaH) - betaH));
+                                double sSemi = (r1 + r2 + cChord) * 0.5;   // 半周长
+                                double absAHyp = Math.Abs(aHyp);
+                                double alphaH = 2.0 * MGAUnits.Asinh(Math.Sqrt(Math.Max(0.0, sSemi / (2.0 * absAHyp))));
+                                double betaH = 2.0 * MGAUnits.Asinh(Math.Sqrt(Math.Max(0.0, (sSemi - cChord) / (2.0 * absAHyp))));
+                                double tHypSec = Math.Sqrt(absAHyp * absAHyp * absAHyp / sunMu) * (Math.Sinh(alphaH) - alphaH - (Math.Sinh(betaH) - betaH));
                                 if (tHypSec > 0 && !double.IsNaN(tHypSec) && !double.IsInfinity(tHypSec))
                                 {
-                                    legDays = tHypSec / 86400.0;
+                                    legDays = MGAUnits.SecToDay(tHypSec);
                                 }
                             }
                             else if (energyDep < 0)
@@ -551,21 +662,19 @@ namespace KSPGMAT.MGA
                                 if (aActual > aTrans)
                                 {
                                     // 能量高于切向霍曼轨道，偏心率增大，高能航时随开普勒第三定律面积律缩短
-                                    double ratio = Math.Sqrt(Math.Pow(aTrans / aActual, 3.0));
-                                    legDays = Math.Min(legDays, (tHohmannSec / 86400.0) * ratio);
+                                    legDays = Math.Min(legDays, legDays * MGAUnits.KeplerPeriodRatio(aActual, aTrans));
                                 }
                             }
                         }
                         totalToFDays += legDays;
 
-                        double w2 = Math.Sqrt(sunMu / Math.Pow(r2, 3.0));
-                        double dTheta2 = (w2 * tHohmannSec) * (180.0 / Math.PI);
-                        double idealPhase = (180.0 - dTheta2) % 360.0;
-                        while (idealPhase < 0) idealPhase += 360.0;
+                        // 霍曼几何的理想发射相位: 目标在转移期间扫过的角度 (开普勒角速度 ω = sqrt(μ/a³))
+                        double w2 = Math.Sqrt(sunMu / (r2 * r2 * r2));
+                        double dTheta2 = MGAUnits.RadToDeg(w2 * tHohmannSec);
+                        double idealPhase = MGAUnits.NormalizeDeg360(MGAUnits.DegPerHalfCircle - dTheta2);
                         legRep.IdealHohmannPhaseDeg = idealPhase;
 
-                        double deltaPhase = Math.Abs(dLon - idealPhase);
-                        if (deltaPhase > 180.0) deltaPhase = 360.0 - deltaPhase;
+                        double deltaPhase = MGAUnits.AngularSeparationDeg(dLon, idealPhase);
                         legRep.PhaseDeltaDeg = deltaPhase;
 
                         // 星历几何相位角审计:
@@ -574,9 +683,9 @@ namespace KSPGMAT.MGA
                         double windowAdjustableDeg = 0.0;
                         if (windowSpanDays > 0.0)
                         {
-                            double w1 = Math.Sqrt(sunMu / Math.Pow(r1, 3.0));
+                            double w1 = Math.Sqrt(sunMu / (r1 * r1 * r1));
                             double wRel = Math.Abs(w2 - w1); // rad/s
-                            windowAdjustableDeg = (wRel * (windowSpanDays * 0.5 * 86400.0)) * (180.0 / Math.PI);
+                            windowAdjustableDeg = MGAUnits.RadToDeg(wRel * MGAUnits.Half(MGAUnits.DayToSec(windowSpanDays)));
                         }
                         double allowablePhaseDeg = MGADefaults.DeparturePhaseAngleToleranceDeg + windowAdjustableDeg;
                         if (k == 0 && deltaPhase > allowablePhaseDeg)
@@ -602,20 +711,21 @@ namespace KSPGMAT.MGA
                     // 若当前航段为终点目标天体共振自减速，保留已经双曲耗散降低的 runningVinf，杜绝被外轨转移开普勒假想交角强制抹杀
                     if (!bFrom.Equals(arrival, StringComparison.OrdinalIgnoreCase) || !bTo.Equals(arrival, StringComparison.OrdinalIgnoreCase))
                     {
-                        double vArr = Math.Sqrt(Math.Max(0.0, sunMu * (2.0 / r2 - 1.0 / aTrans)));
-                        double vCirc2 = (pTo != null && pTo.SMA > 0) ? Math.Sqrt(Math.Max(0.0, sunMu * (2.0 / r2 - 1.0 / pTo.SMA))) : Math.Sqrt(sunMu / r2);
+                        double vArr = MGAUnits.VisVivaSpeedKms(r2, aTrans, sunMu);
+                        double vCirc2 = (pTo != null && pTo.SMA > 0) ? MGAUnits.VisVivaSpeedKms(r2, pTo.SMA, sunMu) : MGAUnits.CircularSpeedKms(r2, sunMu);
                         double scalarDiff = Math.Abs(vArr - vCirc2);
                         // 非切向交会的离面分量由真实轨道倾角差推导: v_orth = v_circ · sin(Δi)
                         // 若前序借力天体已通过连续多次借力 (clusterCount >= 2) 对齐了轨道面和切向速度 (如 Venus x2 进场 Mercury)，
                         // 进场正交速度分量消减为开普勒共面小残差 (~1.0 km/s)
                         // 内侧深井进场 (目标远深于出发星轨道): 前序连续多次借力已消减大部分离面分量, 保留小残差;
-                        bool isAlignedInward = (clusterCount >= 2 && r2 < r1 && pTo != null && pTo.SMA < pDep.SMA * 0.9);
+                        bool isAlignedInward = (clusterCount >= 2 && r2 < r1 && pTo != null && pTo.SMA < pDep.SMA * DeepWellInwardAlignmentRatio);
                         double orthoVinfRaw = MGAFlybyDynamicsHelper.ComputeOutOfPlaneVinfKms(
                             vCirc2,
                             (pFrom != null) ? pFrom.INC : 0.0,
                             (pTo != null) ? pTo.INC : 0.0);
-                        double orthogonalVinf = isAlignedInward ? Math.Min(1.0, orthoVinfRaw) : orthoVinfRaw;
-                        double geometricVinf = Math.Sqrt(scalarDiff * scalarDiff + orthogonalVinf * orthogonalVinf);
+                        // 对齐后的共面残差上限: 由开普勒共面近圆交会的真实残差量级给定 (非拟合系数)
+                        double orthogonalVinf = isAlignedInward ? Math.Min(AlignedInwardResidualVInfKms, orthoVinfRaw) : orthoVinfRaw;
+                        double geometricVinf = MGAUnits.Hypotenuse(scalarDiff, orthogonalVinf);
                         if (isAlignedInward && bTo.Equals(arrival, StringComparison.OrdinalIgnoreCase))
                         {
                             // 终点行星进场对齐：流入目标天体的初始双曲过剩速度严格对齐至开普勒切向交会速度
@@ -649,18 +759,18 @@ namespace KSPGMAT.MGA
                     double vInfArr;
                     if (lastLeg.FromBody.Equals(arrival, StringComparison.OrdinalIgnoreCase))
                     {
-                        vInfArr = Math.Max(0.10, runningVinf);
+                        vInfArr = Math.Max(NumericalVInfFloorKms, runningVinf);
                     }
                     else
                     {
-                        double aTransLast = (rLastKm + rArrKm) * 0.5;
-                        double vArrHeliocentric = Math.Sqrt(Math.Max(0.0, sunMu * (2.0 / rArrKm - 1.0 / aTransLast)));
-                        double vCircArr = (pArr.SMA > 0) ? Math.Sqrt(Math.Max(0.0, sunMu * (2.0 / rArrKm - 1.0 / pArr.SMA))) : Math.Sqrt(sunMu / rArrKm);
+                        double aTransLast = MGAUnits.HohmannSemiMajorAxisKm(rLastKm, rArrKm);
+                        double vArrHeliocentric = MGAUnits.VisVivaSpeedKms(rArrKm, aTransLast, sunMu);
+                        double vCircArr = (pArr.SMA > 0) ? MGAUnits.VisVivaSpeedKms(rArrKm, pArr.SMA, sunMu) : MGAUnits.CircularSpeedKms(rArrKm, sunMu);
                         vInfArr = Math.Abs(vArrHeliocentric - vCircArr);
                     }
 
                     double rpSafe = MGADefaults.GetBodySafeRadiusKm(arrival);
-                    double vHypArr = Math.Sqrt(vInfArr * vInfArr + 2.0 * pArr.Mu / rpSafe);
+                    double vHypArr = MGAUnits.HyperbolicSpeedAtRadiusKms(vInfArr, rpSafe, pArr.Mu);
 
                     // 科学高偏心率捕获椭圆半长轴 (远拱点: 巨行星类 ~80 rp, 类地类 ~15 rp)
                     //
@@ -675,9 +785,9 @@ namespace KSPGMAT.MGA
                         pArr, Math.Max(vInfArr, 1e-3), sunMu, SolarSystemCatalog.GetAvailablePlanets());
                     double raKm = rpSafe * (isGiant ? GiantCaptureApoapsisRadii : TerrestrialCaptureApoapsisRadii);
                     if (pArr.SoiKm > 0) raKm = Math.Min(raKm, pArr.SoiKm * SoiApoapsisFraction);
-                    double aCapKm = (rpSafe + raKm) * 0.5;
-                    double vCaptureArr = Math.Sqrt(Math.Max(0.0, 2.0 * pArr.Mu / rpSafe - pArr.Mu / aCapKm));
-                    arrivalCaptureDvMs = Math.Max(0.0, vHypArr - vCaptureArr) * 1000.0;
+                    double aCapKm = MGAUnits.HohmannSemiMajorAxisKm(rpSafe, raKm);
+                    double vCaptureArr = MGAUnits.VisVivaSpeedKms(rpSafe, aCapKm, pArr.Mu);
+                    arrivalCaptureDvMs = MGAUnits.KmsToMs(Math.Max(0.0, vHypArr - vCaptureArr));
                 }
             }
 
@@ -690,7 +800,7 @@ namespace KSPGMAT.MGA
                 if (res.EstimatedLaunchDvMs <= 0) res.EstimatedLaunchDvMs = MGAPlanetaryAssistManager.EstimateLaunchInjectionDvMs(departure, null);
                 res.EstimatedTotalDvMs = res.EstimatedLaunchDvMs + arrivalCaptureDvMs;
                 res.EstimatedToFDays = totalToFDays > 0 ? totalToFDays : 250.0;
-                res.ParetoScore = (res.EstimatedTotalDvMs / 1000.0) * 1.2 + (res.EstimatedToFDays / 365.25) * 0.4;
+                res.ParetoScore = MGAUnits.MsToKms(res.EstimatedTotalDvMs) * 1.2 + MGAUnits.DayToJulianYear(res.EstimatedToFDays) * 0.4;
                 res.IsFeasible = (noInsertionBurn || arrivalCaptureDvMs <= maxBudgetMs * MGADefaults.FeasibilityBudgetMarginFactor);
                 res.SummaryRationale = res.IsFeasible
                     ? $"✅ 直达物理基准线 (Direct Transfer Baseline, 0 DSM, 捕获入轨 {arrivalCaptureDvMs:F0} m/s)"
@@ -721,9 +831,9 @@ namespace KSPGMAT.MGA
             // 1. 预估总冲量 (1.2 / km/s)
             // 2. 超预算赤字惩罚 (1.5 / km/s)
             // 3. 任务飞行时间平衡 (0.20 / 年): 兼顾深空借力公转周期与奥卡姆剃刀准则
-            res.ParetoScore = (res.EstimatedTotalDvMs / 1000.0) * 1.2 
-                            + (deficitPenaltyMs / 1000.0) * 1.5 
-                            + (totalToFDays / 365.25) * 0.20;
+            res.ParetoScore = MGAUnits.MsToKms(res.EstimatedTotalDvMs) * 1.2 
+                            + MGAUnits.MsToKms(deficitPenaltyMs) * 1.5 
+                            + MGAUnits.DayToJulianYear(totalToFDays) * 0.20;
 
             if (res.IsFeasible)
             {
@@ -795,8 +905,8 @@ namespace KSPGMAT.MGA
 
             // 基准霍曼半周期 (天)
             double muSun = SolarSystemCatalog.SunMu > 0 ? SolarSystemCatalog.SunMu : MGADefaults.FallbackSunMu;
-            double aHohmann = (rDep + rArr) * 0.5;
-            double tofHohmannDays = Math.PI * Math.Sqrt(Math.Pow(aHohmann, 3) / muSun) / MGADefaults.SecondsPerDay;
+            double aHohmann = MGAUnits.HohmannSemiMajorAxisKm(rDep, rArr);
+            double tofHohmannDays = MGAUnits.HohmannTransferTimeDay(aHohmann, muSun);
             if (tofHohmannDays < 30.0) tofHohmannDays = 30.0;
 
             double budgetRef = Math.Max(1000.0, maxBudgetMs);
@@ -854,7 +964,7 @@ namespace KSPGMAT.MGA
             }
             else
             {
-                tofPenalty = (c.EstimatedToFDays / 365.25) * 0.35;                  // 1 年 = -0.35 (深空航时成本)
+                tofPenalty = MGAUnits.DayToJulianYear(c.EstimatedToFDays) * 0.35;                  // 1 年 = -0.35 (深空航时成本)
             }
 
             // 阶段链长与同星共振区分: 异星转移增加深空导航与交会风险，而同星共振自减速/调相系纯二体引力耗散
@@ -903,7 +1013,7 @@ namespace KSPGMAT.MGA
                 double centralMu = SolarSystemCatalog.GetCentralMu(centralBody);
                 if (centralMu <= 0) centralMu = SolarSystemCatalog.SunMu;
                 double aH = 0.5 * (pDepObj.SMA + pArrObj.SMA);
-                refHohmannDays = Math.PI * Math.Sqrt(Math.Pow(aH, 3) / centralMu) / 86400.0;
+                refHohmannDays = MGAUnits.HohmannTransferTimeDay(aH, centralMu);
             }
 
             var cleanedCandidates = new List<ChainReachabilityResult>();
@@ -1115,8 +1225,8 @@ namespace KSPGMAT.MGA
             string arrival,
             List<List<string>> candidateChains,
             double departureEpochUT,
-            double maxBudgetMs = 4000.0,
-            double maxDsmBudgetMs = 4000.0,
+            double maxBudgetMs = MGADefaults.MaxPhysicalEnergyDeficitMs,
+            double maxDsmBudgetMs = MGADefaults.MaxPhysicalEnergyDeficitMs,
             List<string> userGoal = null,
             bool noInsertionBurn = false,
             double windowSpanDays = 0.0)
@@ -1261,17 +1371,17 @@ namespace KSPGMAT.MGA
 
                     pairsA.Add(new PykepNative.GpuPlanetElements
                     {
-                        sma_km = pA.SMA, ecc = pA.ECC, inc_rad = pA.INC * Math.PI / 180.0,
-                        raan_rad = pA.RAAN * Math.PI / 180.0, aop_rad = pA.AOP * Math.PI / 180.0,
-                        ma0_rad = pA.MA0 * Math.PI / 180.0, epoch_ut = pA.EpochJ2000,
+                        sma_km = pA.SMA, ecc = pA.ECC, inc_rad = MGAUnits.DegToRad(pA.INC),
+                        raan_rad = MGAUnits.DegToRad(pA.RAAN), aop_rad = MGAUnits.DegToRad(pA.AOP),
+                        ma0_rad = MGAUnits.DegToRad(pA.MA0), epoch_ut = pA.EpochJ2000,
                         mu_self = pA.Mu, radius_km = pA.RadiusKm, park_alt_km = 100.0
                     });
 
                     pairsB.Add(new PykepNative.GpuPlanetElements
                     {
-                        sma_km = pB.SMA, ecc = pB.ECC, inc_rad = pB.INC * Math.PI / 180.0,
-                        raan_rad = pB.RAAN * Math.PI / 180.0, aop_rad = pB.AOP * Math.PI / 180.0,
-                        ma0_rad = pB.MA0 * Math.PI / 180.0, epoch_ut = pB.EpochJ2000,
+                        sma_km = pB.SMA, ecc = pB.ECC, inc_rad = MGAUnits.DegToRad(pB.INC),
+                        raan_rad = MGAUnits.DegToRad(pB.RAAN), aop_rad = MGAUnits.DegToRad(pB.AOP),
+                        ma0_rad = MGAUnits.DegToRad(pB.MA0), epoch_ut = pB.EpochJ2000,
                         mu_self = pB.Mu, radius_km = pB.RadiusKm, park_alt_km = 100.0
                     });
                 }
@@ -1307,10 +1417,7 @@ namespace KSPGMAT.MGA
             return result;
         }
 
-        private static double Asinh(double x)
-        {
-            return Math.Log(x + Math.Sqrt(x * x + 1.0));
-        }
+        // 原本地 Asinh 实现已上移至 MGAUnits.Asinh (统一公式真值源), 并加了大数溢出保护。
 
         /// <summary>
         /// 深势阱目标(需同星多圈共振减速)的**解析共振阶数下界** N_req。
